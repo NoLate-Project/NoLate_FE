@@ -1,7 +1,56 @@
 import SwiftUI
 import WidgetKit
+import CoreText
 
 private let noLateAccent = Color(uiColor: .systemBlue)
+private let noLateSecondaryText = Color(uiColor: UIColor { traits in
+  traits.userInterfaceStyle == .dark
+    ? UIColor(red: 161 / 255, green: 167 / 255, blue: 179 / 255, alpha: 1)
+    : UIColor(red: 98 / 255, green: 105 / 255, blue: 119 / 255, alpha: 1)
+})
+private let noLateDepartureInk = Color(uiColor: UIColor { traits in
+  traits.userInterfaceStyle == .dark
+    ? UIColor(red: 121 / 255, green: 180 / 255, blue: 255 / 255, alpha: 1)
+    : UIColor(red: 21 / 255, green: 93 / 255, blue: 195 / 255, alpha: 1)
+})
+
+private enum NoLateWidgetIcons {
+  private static let fontName: String? = {
+    guard let url = Bundle.main.url(forResource: "Ionicons", withExtension: "ttf"),
+          let provider = CGDataProvider(url: url as CFURL),
+          let font = CGFont(provider), let name = font.postScriptName else { return nil }
+    CTFontManagerRegisterGraphicsFont(font, nil)
+    return name as String
+  }()
+
+  static func image(_ code: UInt32, size: CGFloat) -> Image {
+    guard let name = fontName, let font = UIFont(name: name, size: size),
+          let scalar = UnicodeScalar(code) else {
+      assertionFailure("The bundled NoLate outline font is unavailable")
+      return Image(uiImage: UIImage())
+    }
+    let glyph = String(scalar) as NSString
+    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.black]
+    let measured = glyph.size(withAttributes: attributes)
+    let image = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
+      glyph.draw(at: CGPoint(x: (size - measured.width) / 2, y: (size - measured.height) / 2), withAttributes: attributes)
+    }
+    return Image(uiImage: image.withRenderingMode(.alwaysTemplate))
+  }
+
+  static func timing(_ timing: NoLateWidgetPresentation.Timing, size: CGFloat) -> Image {
+    // Ionicons outline: arrow-redo, time, calendar, checkmark-circle and map.
+    let code: UInt32
+    switch timing {
+    case .departure, .leaveNow: code = 61757
+    case .start, .ongoing: code = 62942
+    case .allDay: code = 61910
+    case .departed: code = 61983
+    case .routeRequired: code = 62531
+    }
+    return image(code, size: size)
+  }
+}
 
 struct NoLateWidgetEntry: TimelineEntry {
   let date: Date
@@ -155,11 +204,11 @@ private struct NoLateWidgetHeader: View {
         .accessibilityHidden(true)
       Text("NoLate")
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(noLateSecondaryText)
       Spacer(minLength: 4)
       Text(NoLateWidgetFormatting.headerDate(date, compact: compact))
-        .font(.system(size: 10, weight: .medium))
-        .foregroundStyle(.secondary)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(noLateSecondaryText)
         .lineLimit(1)
     }
   }
@@ -264,8 +313,8 @@ private struct NoLateFeaturedSchedule: View {
       NoLateDepartureLabel(schedule: schedule, now: now)
       if let detail = NoLateWidgetFormatting.featureDetail(schedule, timing: timing, now: now) {
         Text(detail)
-          .font(.system(size: compact ? 10 : 12))
-          .foregroundStyle(.secondary)
+          .font(.system(size: compact ? 11 : 12))
+          .foregroundStyle(noLateSecondaryText)
           .lineLimit(1)
           .privacySensitive()
       }
@@ -292,8 +341,7 @@ private struct NoLateDepartureLabel: View {
 
   var body: some View {
     HStack(spacing: 5) {
-      Image(systemName: NoLateWidgetFormatting.symbol(timing))
-        .font(.system(size: 10, weight: .semibold))
+      NoLateWidgetIcons.timing(timing, size: 12)
         .accessibilityHidden(true)
       Text(NoLateWidgetFormatting.lockHeadline(schedule, now: now))
         .font(.system(size: 13, weight: .semibold))
@@ -303,7 +351,7 @@ private struct NoLateDepartureLabel: View {
     }
     .padding(.horizontal, 9)
     .padding(.vertical, 6)
-    .foregroundStyle(isDeparture ? noLateAccent : .secondary)
+    .foregroundStyle(isDeparture ? noLateDepartureInk : noLateSecondaryText)
     .background {
       Capsule().fill(isDeparture ? noLateAccent.opacity(0.09) : Color.primary.opacity(0.045))
     }
@@ -326,8 +374,8 @@ private struct NoLateAgendaRow: View {
               .monospacedDigit()
             if let start = schedule.startDate, !Calendar.current.isDate(start, inSameDayAs: now) {
               Text(NoLateWidgetFormatting.day(start, now: now))
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(noLateSecondaryText)
             }
           }
           .frame(width: 44, alignment: .leading)
@@ -338,18 +386,18 @@ private struct NoLateAgendaRow: View {
           .widgetAccentable()
         VStack(alignment: .leading, spacing: 4) {
           Text(schedule.title)
-            .font(.system(size: compact ? 12 : 14, weight: .medium))
+            .font(.system(size: compact ? 13 : 14, weight: .medium))
             .lineLimit(1)
             .privacySensitive()
           if compact {
             Text(NoLateWidgetFormatting.eventDateTime(schedule, relativeTo: now))
-              .font(.system(size: 10))
-              .foregroundStyle(.secondary)
+              .font(.system(size: 11))
+              .foregroundStyle(noLateSecondaryText)
               .lineLimit(1)
           } else if let location = schedule.displayLocation {
             Text(location)
-              .font(.system(size: 11))
-              .foregroundStyle(.secondary)
+              .font(.system(size: 12))
+              .foregroundStyle(noLateSecondaryText)
               .lineLimit(1)
               .privacySensitive()
           }
@@ -385,7 +433,9 @@ private struct NoLateInlineWidget: View {
           : "\(schedule.title) \(NoLateWidgetFormatting.lockHeadline(schedule, now: entry.date))")
           .privacySensitive()
       } else {
-        Label(entry.snapshot == nil ? "NoLate를 열어 주세요" : "다가오는 일정 없음", systemImage: "calendar")
+        Label {
+          Text(entry.snapshot == nil ? "NoLate를 열어 주세요" : "다가오는 일정 없음")
+        } icon: { NoLateWidgetIcons.image(61910, size: 12) }
       }
     }
     .widgetURL(entry.destination)
@@ -401,8 +451,7 @@ private struct NoLateRectangularWidget: View {
           Text(NoLateWidgetFormatting.lockHeadline(schedule, now: entry.date))
             .monospacedDigit()
         } icon: {
-          Image(systemName: NoLateWidgetFormatting.symbol(
-            NoLateWidgetPresentation.timing(for: schedule, at: entry.date)))
+          NoLateWidgetIcons.timing(NoLateWidgetPresentation.timing(for: schedule, at: entry.date), size: 12)
         }
         .font(.system(size: 12, weight: .medium))
         .widgetAccentable()
@@ -413,7 +462,9 @@ private struct NoLateRectangularWidget: View {
           .lineLimit(2)
           .privacySensitive()
       } else {
-        Label("NoLate", systemImage: "arrow.turn.up.right")
+        Label {
+          Text("NoLate")
+        } icon: { NoLateWidgetIcons.image(61757, size: 14) }
           .font(.headline)
         Text(entry.snapshot == nil ? "앱에서 일정을 불러오세요" : "다가오는 일정이 없어요")
           .font(.caption)
@@ -436,11 +487,11 @@ private struct NoLateCircularWidget: View {
           let timing = NoLateWidgetPresentation.timing(for: schedule, at: entry.date)
           if let date = timing.date, !Calendar.current.isDate(date, inSameDayAs: entry.date) {
             Text(NoLateWidgetFormatting.day(date, now: entry.date))
-              .font(.system(size: 9, weight: .medium))
+              .font(.system(size: 10, weight: .medium))
               .lineLimit(1)
               .minimumScaleFactor(0.8)
           } else {
-            Image(systemName: NoLateWidgetFormatting.symbol(timing)).font(.caption2)
+            NoLateWidgetIcons.timing(timing, size: 12)
           }
           if let date = timing.date {
             Text(NoLateWidgetFormatting.numericTime(date))
@@ -449,14 +500,14 @@ private struct NoLateCircularWidget: View {
               .minimumScaleFactor(0.8)
               .lineLimit(1)
             Text(timing == .departure(date) ? "출발" : "시작")
-              .font(.system(size: 9, weight: .medium))
+              .font(.system(size: 10, weight: .medium))
           } else {
             Text(NoLateWidgetFormatting.circularLabel(timing))
               .font(.system(size: 12, weight: .semibold))
               .lineLimit(1)
           }
         } else {
-          Image(systemName: entry.snapshot == nil ? "arrow.clockwise" : "calendar")
+          NoLateWidgetIcons.image(entry.snapshot == nil ? 62744 : 61910, size: 14)
           Text(entry.snapshot == nil ? "앱 열기" : "일정 없음")
             .font(.system(size: 10, weight: .medium))
         }
@@ -466,7 +517,7 @@ private struct NoLateCircularWidget: View {
     .widgetURL(entry.destination)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(entry.featured.map {
-      NoLateWidgetFormatting.lockHeadline($0, now: entry.date)
+      "\($0.title), \(NoLateWidgetFormatting.lockHeadline($0, now: entry.date))"
     } ?? (entry.snapshot == nil ? "NoLate를 열어 일정을 불러오세요" : "다가오는 일정이 없어요"))
   }
 }
@@ -481,8 +532,8 @@ private struct NoLateEmptyState: View {
         .font(.system(size: compact ? 17 : 21, weight: .semibold))
         .lineLimit(2)
       Text(hasSnapshot ? "다가오는 일정이 없어요" : "NoLate를 열면 동기화돼요")
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
+        .font(.system(size: 12))
+        .foregroundStyle(noLateSecondaryText)
         .lineLimit(2)
       Spacer(minLength: 0)
     }
@@ -515,13 +566,6 @@ private enum NoLateWidgetFormatting {
     formatter.locale = Locale(identifier: "ko_KR")
     formatter.dateFormat = compact ? "M.d" : "M월 d일 EEEE"
     return formatter.string(from: date)
-  }
-
-  static func symbol(_ timing: NoLateWidgetPresentation.Timing) -> String {
-    switch timing {
-    case .departure, .leaveNow: return "arrow.turn.up.right"
-    default: return timing.symbol
-    }
   }
 
   static func featureDetail(

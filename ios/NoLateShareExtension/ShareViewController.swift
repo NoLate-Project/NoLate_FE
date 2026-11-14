@@ -4,6 +4,7 @@ import Vision
 import Security
 import UIKit
 import UniformTypeIdentifiers
+import CoreText
 
 private let noLateSharedKeychainAccessGroup = "457QQLB6H6.com.anonymous.nolatefe"
 
@@ -305,38 +306,134 @@ final class ShareViewController: UIViewController {
   )
 
   private let api = ShareAPIClient()
+  private let iconContainer = UIView()
   private let iconView = UIImageView()
   private let titleLabel = UILabel()
   private let messageLabel = UILabel()
-  private let spinner = UIActivityIndicatorView(style: .medium)
+  private let savedNameLabel = UILabel()
   private let primaryButton = UIButton(type: .system)
   private let closeButton = UIButton(type: .system)
   private var sharedText = ""
   private var saveTask: Task<Void, Never>?
+  private enum PrimaryAction { case openApp, finish }
+  private var primaryAction: PrimaryAction = .finish
+  private var showingSaving = true
+  private var playedSavingMotion = false
+
+  private static let secondaryContent = UIColor { traits in
+    traits.userInterfaceStyle == .dark
+      ? UIColor(red: 161 / 255, green: 167 / 255, blue: 179 / 255, alpha: 1)
+      : UIColor(red: 98 / 255, green: 105 / 255, blue: 119 / 255, alpha: 1)
+  }
+
+  private static let outlineFontName: String? = {
+    guard let url = Bundle.main.url(forResource: "Ionicons", withExtension: "ttf"),
+          let provider = CGDataProvider(url: url as CFURL),
+          let font = CGFont(provider), let name = font.postScriptName else { return nil }
+    CTFontManagerRegisterGraphicsFont(font, nil)
+    return name as String
+  }()
+
+  static func outlineIcon(_ code: UInt32, size: CGFloat) -> UIImage? {
+    guard let name = outlineFontName, let font = UIFont(name: name, size: size),
+          let scalar = UnicodeScalar(code) else {
+      assertionFailure("The bundled NoLate outline font is unavailable")
+      return nil
+    }
+    let glyph = String(scalar) as NSString
+    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.black]
+    let measured = glyph.size(withAttributes: attributes)
+    return UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
+      glyph.draw(at: CGPoint(x: (size - measured.width) / 2, y: (size - measured.height) / 2), withAttributes: attributes)
+    }.withRenderingMode(.alwaysTemplate)
+  }
 
   override func viewDidLoad() {
     super.viewDidLoad()
     configureUI()
+    NotificationCenter.default.addObserver(self, selector: #selector(updateSavingMotion), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
     saveTask = Task { @MainActor [weak self] in
       await self?.saveSharedSchedule()
     }
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    updateSavingMotion()
+  }
+
+  override func viewDidDisappear(_ animated: Bool) {
+    super.viewDidDisappear(animated)
+    iconContainer.layer.removeAnimation(forKey: "nolate.saving.depth")
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    iconContainer.layer.shadowPath = UIBezierPath(roundedRect: iconContainer.bounds, cornerRadius: 22).cgPath
+  }
+
+  deinit { NotificationCenter.default.removeObserver(self) }
+
+  @objc private func updateSavingMotion() {
+    iconContainer.layer.removeAnimation(forKey: "nolate.saving.depth")
+    guard showingSaving, !playedSavingMotion, view.window != nil else { return }
+    playedSavingMotion = true
+    guard !UIAccessibility.isReduceMotionEnabled else { return }
+    playStatusMotion(duration: 0.36, saving: true)
+  }
+
+  private func playStatusMotion(duration: CFTimeInterval, saving: Bool) {
+    guard !UIAccessibility.isReduceMotionEnabled else { return }
+    func pose(_ scale: CGFloat, _ xAngle: CGFloat, _ yAngle: CGFloat) -> CATransform3D {
+      var transform = CATransform3DIdentity
+      transform.m34 = -1 / 650
+      transform = CATransform3DScale(transform, scale, scale, 1)
+      transform = CATransform3DRotate(transform, xAngle, 1, 0, 0)
+      return CATransform3DRotate(transform, yAngle, 0, 1, 0)
+    }
+    let depth = CAKeyframeAnimation(keyPath: "transform")
+    depth.values = [NSValue(caTransform3D: pose(0.92, saving ? 0.35 : 0, saving ? -0.42 : 0)),
+                    NSValue(caTransform3D: pose(1.02, saving ? -0.07 : 0, saving ? 0.09 : 0)),
+                    NSValue(caTransform3D: CATransform3DIdentity)]
+    depth.keyTimes = [0, 0.72, 1]
+    depth.duration = duration
+    depth.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+    iconContainer.layer.add(depth, forKey: "nolate.saving.depth")
+  }
+
+  private func stopSavingMotion() {
+    showingSaving = false
+    iconContainer.layer.removeAnimation(forKey: "nolate.saving.depth")
+    iconContainer.layer.shadowOpacity = 0
+    iconView.contentMode = .center
   }
 
   private func configureUI() {
     view.backgroundColor = .systemGroupedBackground
     view.tintColor = Self.brandColor
 
-    iconView.image = UIImage(systemName: "calendar.badge.plus")
+    iconView.image = UIImage(named: "icon")
     iconView.tintColor = Self.brandColor
     iconView.backgroundColor = Self.brandColor.withAlphaComponent(0.12)
-    iconView.contentMode = .center
+    iconView.contentMode = .scaleAspectFill
     iconView.layer.cornerRadius = 22
-    iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 34, weight: .semibold)
-    iconView.widthAnchor.constraint(equalToConstant: 88).isActive = true
-    iconView.heightAnchor.constraint(equalToConstant: 88).isActive = true
+    iconView.clipsToBounds = true
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+    iconContainer.addSubview(iconView)
+    iconContainer.layer.shadowColor = UIColor.black.cgColor
+    iconContainer.layer.shadowOffset = CGSize(width: 0, height: 6)
+    iconContainer.layer.shadowRadius = 12
+    NSLayoutConstraint.activate([
+      iconContainer.widthAnchor.constraint(equalToConstant: 88),
+      iconContainer.heightAnchor.constraint(equalToConstant: 88),
+      iconView.leadingAnchor.constraint(equalTo: iconContainer.leadingAnchor),
+      iconView.trailingAnchor.constraint(equalTo: iconContainer.trailingAnchor),
+      iconView.topAnchor.constraint(equalTo: iconContainer.topAnchor),
+      iconView.bottomAnchor.constraint(equalTo: iconContainer.bottomAnchor),
+    ])
 
     titleLabel.text = "일정을 저장하고 있어요"
-    titleLabel.font = .preferredFont(forTextStyle: .title2)
+    titleLabel.font = UIFontMetrics(forTextStyle: .title2).scaledFont(for: .systemFont(ofSize: 22, weight: .semibold))
     titleLabel.adjustsFontForContentSizeCategory = true
     titleLabel.textAlignment = .center
     titleLabel.numberOfLines = 0
@@ -344,12 +441,16 @@ final class ShareViewController: UIViewController {
     messageLabel.text = "공유한 내용을 정리하는 중이에요.\n이동 경로는 앱에서 나중에 설정할 수 있어요."
     messageLabel.font = .preferredFont(forTextStyle: .body)
     messageLabel.adjustsFontForContentSizeCategory = true
-    messageLabel.textColor = .secondaryLabel
+    messageLabel.textColor = Self.secondaryContent
     messageLabel.textAlignment = .center
     messageLabel.numberOfLines = 0
 
-    spinner.color = Self.brandColor
-    spinner.startAnimating()
+    let nameFont = UIFont.preferredFont(forTextStyle: .headline)
+    savedNameLabel.font = nameFont
+    savedNameLabel.adjustsFontForContentSizeCategory = true
+    savedNameLabel.textAlignment = .center
+    savedNameLabel.numberOfLines = 0
+    savedNameLabel.isHidden = true
 
     var primaryConfiguration = UIButton.Configuration.filled()
     primaryConfiguration.title = "NoLate 열기"
@@ -358,24 +459,24 @@ final class ShareViewController: UIViewController {
     primaryConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 15, leading: 24, bottom: 15, trailing: 24)
     primaryButton.configuration = primaryConfiguration
     primaryButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
-    primaryButton.addTarget(self, action: #selector(openNoLate), for: .touchUpInside)
+    primaryButton.addTarget(self, action: #selector(performPrimaryAction), for: .touchUpInside)
     primaryButton.isHidden = true
 
     var closeConfiguration = UIButton.Configuration.plain()
-    closeConfiguration.image = UIImage(systemName: "xmark.circle.fill")
-    closeConfiguration.baseForegroundColor = .tertiaryLabel
-    closeConfiguration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 24)
+    // Ionicons close-circle-outline, from the same font used by the app.
+    closeConfiguration.image = Self.outlineIcon(62028, size: 24)
+    closeConfiguration.baseForegroundColor = Self.secondaryContent
     closeButton.configuration = closeConfiguration
-    closeButton.accessibilityLabel = "닫기"
-    closeButton.addTarget(self, action: #selector(cancel), for: .touchUpInside)
+    closeButton.accessibilityLabel = "공유 창 닫기"
+    closeButton.addTarget(self, action: #selector(closeStatus), for: .touchUpInside)
     closeButton.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(closeButton)
 
-    let stack = UIStackView(arrangedSubviews: [iconView, titleLabel, messageLabel, spinner, primaryButton])
+    let stack = UIStackView(arrangedSubviews: [iconContainer, titleLabel, savedNameLabel, messageLabel, primaryButton])
     stack.axis = .vertical
     stack.alignment = .center
     stack.spacing = 18
-    stack.setCustomSpacing(24, after: iconView)
+    stack.setCustomSpacing(24, after: iconContainer)
     stack.setCustomSpacing(28, after: messageLabel)
     stack.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(stack)
@@ -462,14 +563,14 @@ final class ShareViewController: UIViewController {
       try Task.checkCancellation()
       let _: SavedSchedule = try await api.post("api/schedules", json: payload)
       try Task.checkCancellation()
-      showSaved()
+      showSaved(title: scheduleTitle)
     } catch is CancellationError {
       return
     } catch ShareAPIError.loginRequired {
-      showFailure(title: "로그인이 필요해요", message: "NoLate 앱에서 로그인한 뒤 다시 공유해 주세요.")
+      showFailure(title: "로그인이 필요해요", message: "NoLate에서 로그인한 뒤 원래 앱에서 다시 공유해 주세요.", canOpenApp: true)
     } catch {
       if Task.isCancelled { return }
-      showFailure(title: "저장하지 못했어요", message: error.localizedDescription)
+      showFailure(title: "일정을 저장하지 못했어요", message: error.localizedDescription)
     }
   }
 
@@ -484,32 +585,35 @@ final class ShareViewController: UIViewController {
   }
 
   @MainActor
-  private func showSaved() {
-    spinner.stopAnimating()
-    iconView.image = UIImage(systemName: "checkmark.circle.fill")
-    iconView.tintColor = .systemGreen
+  private func showSaved(title: String) {
+    stopSavingMotion()
+    // Ionicons checkmark-circle-outline.
+    iconView.image = Self.outlineIcon(61983, size: 34)
+    iconView.tintColor = UIColor { traits in
+      traits.userInterfaceStyle == .dark ? UIColor(red: 69 / 255, green: 212 / 255, blue: 131 / 255, alpha: 1) : UIColor(red: 23 / 255, green: 134 / 255, blue: 73 / 255, alpha: 1)
+    }
     iconView.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.12)
     titleLabel.text = "일정을 저장했어요"
-    messageLabel.text = "경로가 필요한 일정으로 표시해 둘게요.\n앱에서 편한 때 이동 경로와 알림을 설정하세요."
-    UIAccessibility.post(notification: .announcement, argument: "일정을 저장했어요")
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
-      self?.extensionContext?.completeRequest(returningItems: nil)
-    }
+    savedNameLabel.text = title
+    savedNameLabel.isHidden = false
+    messageLabel.text = "이동 경로와 알림은 NoLate에서 설정할 수 있어요."
+    setPrimaryAction(.finish, title: "완료")
+    playStatusMotion(duration: 0.18, saving: false)
+    UIAccessibility.post(notification: .announcement, argument: "일정을 저장했어요. \(title)")
   }
 
   @MainActor
-  private func showFailure(title: String, message: String) {
-    spinner.stopAnimating()
-    iconView.image = UIImage(systemName: "exclamationmark.circle.fill")
-    iconView.tintColor = .systemOrange
+  private func showFailure(title: String, message: String, canOpenApp: Bool = false) {
+    stopSavingMotion()
+    // Ionicons alert-circle-outline.
+    iconView.image = Self.outlineIcon(61716, size: 34)
+    iconView.tintColor = UIColor { traits in
+      traits.userInterfaceStyle == .dark ? UIColor(red: 255 / 255, green: 181 / 255, blue: 101 / 255, alpha: 1) : UIColor(red: 143 / 255, green: 74 / 255, blue: 0, alpha: 1)
+    }
     iconView.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.12)
     titleLabel.text = title
     messageLabel.text = message
-    var configuration = primaryButton.configuration
-    configuration?.title = "NoLate 열기"
-    primaryButton.configuration = configuration
-    primaryButton.isEnabled = true
-    primaryButton.isHidden = false
+    setPrimaryAction(canOpenApp ? .openApp : .finish, title: canOpenApp ? "NoLate 열기" : "닫기")
     UIAccessibility.post(notification: .announcement, argument: "\(title). \(message)")
   }
 
@@ -520,7 +624,6 @@ final class ShareViewController: UIViewController {
       throw ShareAPIError.server("승차권 정보는 개인 카테고리에 저장합니다. 앱에서 개인 카테고리를 먼저 만들어 주세요.")
     }
     try Task.checkCancellation()
-    spinner.stopAnimating()
     titleLabel.text = "승차권 내용을 확인해 주세요"
     let payload: [String: Any]? = await withCheckedContinuation { continuation in
       let review = TrainTicketReviewController(draft: TrainTicketDraft.parse(text), source: source, categoryName: category.title) {
@@ -530,14 +633,18 @@ final class ShareViewController: UIViewController {
     }
     try Task.checkCancellation()
     guard let ticket = payload else { extensionContext?.completeRequest(returningItems: nil); return }
-    spinner.startAnimating(); titleLabel.text = "승차권 정보를 저장하고 있어요"
+    titleLabel.text = "일정을 저장하고 있어요"
+    messageLabel.text = "완료되면 저장한 일정을 보여드릴게요."
+    playedSavingMotion = false
+    updateSavingMotion()
     let departure = ticket["departureName"] as? String ?? ""
     let arrival = ticket["arrivalName"] as? String ?? ""
     let arrivalAt = ticket["arrivalAt"] as? String ?? ""
     let kindLabel = ticket["kind"] as? String == "TRAIN" ? "기차" : (ticket["kind"] as? String == "EXPRESS_BUS" ? "고속버스" : "시외버스")
+    let scheduleTitle = "\(kindLabel) \(departure) → \(arrival)"
     let notes = "승차권 입력 정보 · 사용자 확인 · 예매 상태 미검증\n\(departure) → \(arrival)\n출발 \(ticket["departureAt"] ?? "")\n도착 \(arrivalAt)\n\(kindLabel) \(ticket["grade"] ?? "") \(ticket["trainNumber"] ?? "")\n실제 승차권은 예매처에서 확인하세요."
     let _: SavedSchedule = try await api.post("api/schedules", json: [
-      "title": "\(kindLabel) \(departure) → \(arrival)", "startAt": arrivalAt, "endAt": arrivalAt,
+      "title": scheduleTitle, "startAt": arrivalAt, "endAt": arrivalAt,
       "hasEndTime": false, "allDay": false, "travelMode": "TRANSIT",
       "origin": ["name": departure], "destination": ["name": arrival], "locationName": "\(departure) → \(arrival)",
       "category": ["id": category.id, "title": category.title, "color": category.color],
@@ -545,7 +652,7 @@ final class ShareViewController: UIViewController {
       "route": ["schemaVersion": 3, "importedTicket": ticket],
     ])
     try Task.checkCancellation()
-    showSaved()
+    showSaved(title: scheduleTitle)
   }
 
   private func extractSharedContent() async throws -> (text: String, source: String) {
@@ -660,7 +767,23 @@ final class ShareViewController: UIViewController {
     }
   }
 
-  @objc private func openNoLate() {
+  private func setPrimaryAction(_ action: PrimaryAction, title: String) {
+    primaryAction = action
+    var configuration = primaryButton.configuration
+    configuration?.title = title
+    primaryButton.configuration = configuration
+    primaryButton.isEnabled = true
+    primaryButton.isHidden = false
+  }
+
+  @objc private func performPrimaryAction() {
+    switch primaryAction {
+    case .openApp: openNoLate()
+    case .finish: extensionContext?.completeRequest(returningItems: nil)
+    }
+  }
+
+  private func openNoLate() {
     guard let url = URL(string: "nolate://schedule"), let extensionContext else { return }
     primaryButton.isEnabled = false
     var configuration = primaryButton.configuration
@@ -673,15 +796,19 @@ final class ShareViewController: UIViewController {
           self.extensionContext?.completeRequest(returningItems: nil)
         } else {
           self.showFailure(
-            title: "앱을 열 수 없어요",
-            message: "NoLate가 설치되어 있는지 확인한 뒤 앱 아이콘에서 직접 열어 주세요."
+            title: "NoLate를 열 수 없어요",
+            message: "이 창을 닫고 홈 화면에서 NoLate를 직접 열어 주세요."
           )
         }
       }
     }
   }
 
-  @objc private func cancel() {
+  @objc private func closeStatus() {
+    if !showingSaving {
+      extensionContext?.completeRequest(returningItems: nil)
+      return
+    }
     saveTask?.cancel()
     saveTask = nil
     extensionContext?.cancelRequest(

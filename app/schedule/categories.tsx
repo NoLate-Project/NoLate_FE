@@ -2,6 +2,7 @@ import styles from "../../src/routeSupport/schedule/categories.styles";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+    AccessibilityInfo,
     Alert,
     ActionSheetIOS,
     KeyboardAvoidingView,
@@ -12,7 +13,9 @@ import {
     Text,
     TextInput,
     View,
+    useWindowDimensions,
 } from "react-native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -54,7 +57,7 @@ import {
 import BrandedLoader from "../../src/ui/BrandedLoader";
 import { useScreenFirstPaintPerformance } from "../../src/modules/performance/useScreenFirstPaintPerformance";
 import { useImmediateNavigationTransition } from "../../src/modules/performance/ImmediateNavigationTransition";
-import CategoryMoveSheet, { type CategoryMoveDestinationId } from "./CategoryMoveSheet";
+import CategoryMoveSheet, { type CategoryMoveDestinationId } from "../../src/routeSupport/schedule/CategoryMoveSheet";
 
 const CATEGORY_COLORS = [
     "#ff3b30",
@@ -65,6 +68,8 @@ const CATEGORY_COLORS = [
     "#af52de",
     "#ff2d55",
 ];
+const editorEntry = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+
 const CATEGORY_COLOR_LABELS = ["빨강", "주황", "초록", "파랑", "남색", "보라", "분홍"];
 
 const getErrorMessage = (error: unknown) =>
@@ -72,9 +77,9 @@ const getErrorMessage = (error: unknown) =>
 
 export default function ScheduleCategoriesScreen() {
     useScreenFirstPaintPerformance('/schedule/categories');
-    const { runWithTransitionShell } = useImmediateNavigationTransition();
+    const { closeActiveScene, runWithTransitionShell } = useImmediateNavigationTransition();
     const router = useRouter();
-    const params = useLocalSearchParams<{ calendarId?: string; calendarTitle?: string }>();
+    const params = useLocalSearchParams<{ calendarId?: string; calendarTitle?: string; returnTo?: string }>();
     const calendarId = useMemo(() => {
         const raw = Array.isArray(params.calendarId) ? params.calendarId[0] : params.calendarId;
         const parsed = raw ? Number(raw) : NaN;
@@ -85,6 +90,7 @@ export default function ScheduleCategoriesScreen() {
         : params.calendarTitle;
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
+    const largeText = useWindowDimensions().fontScale > 1.35;
     const { state, dispatch } = useScheduleStore();
     const hasCategorySnapshotRef = useRef(state.categories.length > 0);
     // A category can move while this screen still holds a cached row from its old calendar.
@@ -109,10 +115,15 @@ export default function ScheduleCategoriesScreen() {
     const [movePreviewLoading, setMovePreviewLoading] = useState(false);
     const [movePreviewError, setMovePreviewError] = useState<string | null>(null);
     const [moving, setMoving] = useState(false);
+    const [moveError, setMoveError] = useState<string | null>(null);
+    const [moveNotice, setMoveNotice] = useState<string | null>(null);
+    const categoryButtons = useRef(new Map<string, React.ElementRef<typeof Pressable>>());
+    const categoryHeading = useRef<Text>(null);
+    const moveReturnTarget = useRef<{ id?: string } | null>(null);
     const loadSequenceRef = useRef(0);
     const loadPendingRef = useRef(false);
     const mutationPendingRef = useRef(false);
-    const moveCalendarLoadPendingRef = useRef(false);
+    const moveCalendarSequenceRef = useRef(0);
     const movePreviewSequenceRef = useRef(0);
     const calendarAccessLoading = calendarId !== null && !calendarMembershipsLoaded;
     const controlsBusy = loading || calendarAccessLoading || saving || moving || movePreviewLoading;
@@ -215,32 +226,60 @@ export default function ScheduleCategoriesScreen() {
     }, []);
 
     const loadMoveCalendars = useCallback(async (sourceCalendarId?: number | null) => {
-        if (moveCalendarLoadPendingRef.current) return;
-        moveCalendarLoadPendingRef.current = true;
+        const sequence = ++moveCalendarSequenceRef.current;
         setMoveCalendarsLoading(true);
         setMoveCalendarError(null);
         try {
             const calendars = await getScheduleCalendars();
+            if (sequence !== moveCalendarSequenceRef.current) return;
             setCalendarMemberships(calendars);
             setCalendarMembershipsLoaded(true);
             setMoveCalendars(getCategoryMoveDestinationCalendars(calendars, sourceCalendarId));
         } catch (error) {
-            setMoveCalendarError(getErrorMessage(error));
+            if (sequence === moveCalendarSequenceRef.current) setMoveCalendarError(getErrorMessage(error));
         } finally {
-            moveCalendarLoadPendingRef.current = false;
-            setMoveCalendarsLoading(false);
+            if (sequence === moveCalendarSequenceRef.current) setMoveCalendarsLoading(false);
         }
     }, []);
 
-    const closeMoveSheet = useCallback(() => {
-        if (moving) return;
+    const restoreMoveFocus = useCallback(() => {
+        if (!moveReturnTarget.current) return;
+        const id = moveReturnTarget.current.id;
+        const target = (id && categoryButtons.current.get(id)) || categoryHeading.current;
+        moveReturnTarget.current = null;
+        if (target) AccessibilityInfo.sendAccessibilityEvent?.(target, "focus");
+    }, []);
+
+    useEffect(() => {
+        if (movingCategory || Platform.OS === "ios") return;
+        const frame = requestAnimationFrame(restoreMoveFocus);
+        return () => cancelAnimationFrame(frame);
+    }, [movingCategory, restoreMoveFocus]);
+
+    useEffect(() => {
+        if (!moveNotice) return;
+        AccessibilityInfo.announceForAccessibility(moveNotice);
+        const timer = setTimeout(() => setMoveNotice(null), 3500);
+        return () => clearTimeout(timer);
+    }, [moveNotice]);
+
+    const clearMoveSheet = useCallback(() => {
+        moveCalendarSequenceRef.current += 1;
         movePreviewSequenceRef.current += 1;
+        setMoveCalendarsLoading(false);
         setMovePreviewLoading(false);
         setMovingCategory(null);
         setMoveDestinationId(null);
         setMovePreview(null);
         setMovePreviewError(null);
-    }, [moving]);
+        setMoveError(null);
+    }, []);
+
+    const closeMoveSheet = useCallback(() => {
+        if (moving || mutationPendingRef.current || !movingCategory) return;
+        moveReturnTarget.current = { id: movingCategory.id };
+        clearMoveSheet();
+    }, [clearMoveSheet, moving, movingCategory]);
 
     const openMoveSheet = useCallback((category: ScheduleCategoryItem) => {
         if (
@@ -251,6 +290,8 @@ export default function ScheduleCategoriesScreen() {
                 category.calendarId == null ? null : calendarRoleById.get(category.calendarId),
             )
         ) return;
+        setMoveNotice(null);
+        setMoveCalendars([]);
         setMovingCategory(category);
         setMoveDestinationId(null);
         setMovePreview(null);
@@ -270,6 +311,7 @@ export default function ScheduleCategoriesScreen() {
         setMovePreview(null);
         setMovePreviewError(null);
         setMovePreviewLoading(true);
+        setMoveError(null);
         try {
             const preview = await getScheduleCategoryMovePreviewFromApi(
                 category.id,
@@ -288,9 +330,9 @@ export default function ScheduleCategoriesScreen() {
     }, []);
 
     const selectMoveDestination = useCallback((destinationId: CategoryMoveDestinationId) => {
-        if (!movingCategory || moving || movePreviewLoading) return;
+        if (!movingCategory || moving || destinationId === moveDestinationId) return;
         loadMovePreview(movingCategory, destinationId).catch(() => undefined);
-    }, [loadMovePreview, movePreviewLoading, moving, movingCategory]);
+    }, [loadMovePreview, moveDestinationId, moving, movingCategory]);
 
     const retryMovePreview = useCallback(() => {
         if (!movingCategory || moveDestinationId === null || moving || movePreviewLoading) return;
@@ -310,6 +352,7 @@ export default function ScheduleCategoriesScreen() {
 
         if (!beginCategoryMutation()) return;
         setMoving(true);
+        setMoveError(null);
         try {
             const result = await moveScheduleCategoryToApi(movingCategory.id, {
                 calendarId: moveDestinationId,
@@ -330,22 +373,21 @@ export default function ScheduleCategoriesScreen() {
                 hasCategorySnapshotRef.current = true;
                 dispatch({ type: "SET_CATEGORIES", categories: refreshedCategories });
             }
-            movePreviewSequenceRef.current += 1;
-            setMovingCategory(null);
-            setMoveDestinationId(null);
-            setMovePreview(null);
-            setMovePreviewError(null);
-            Alert.alert(
-                "카테고리 이동 완료",
-                `“${movingCategory.title}”의 일정 ${result.movedScheduleCount}개를 “${destination.title}”으로 이동했습니다. 기존 직접 공유 권한은 유지됩니다.`,
-            );
+            const sourceIndex = categoryList.findIndex(category => category.id === movingCategory.id);
+            moveReturnTarget.current = {
+                id: categoryList[sourceIndex + 1]?.id ?? categoryList[sourceIndex - 1]?.id,
+            };
+            clearMoveSheet();
+            setMoveNotice(`“${destination.title}”으로 일정 ${result.movedScheduleCount}개를 옮겼어요.`);
         } catch (error) {
-            Alert.alert("카테고리 이동 실패", getErrorMessage(error));
+            setMoveError(getErrorMessage(error));
         } finally {
             mutationPendingRef.current = false;
             setMoving(false);
         }
     }, [
+        categoryList,
+        clearMoveSheet,
         dispatch,
         moveDestinationId,
         moveCalendars,
@@ -546,10 +588,23 @@ export default function ScheduleCategoriesScreen() {
             Alert.alert("처리 중이에요", "카테고리 작업이 끝난 뒤 돌아가 주세요.");
             return;
         }
+        if (params.returnTo === "calendar-stack" && router.canGoBack()) {
+            router.back();
+            return;
+        }
+        if (closeActiveScene()) return;
+        // Parameterized category screens use the router rather than the
+        // personal-category pre-mounted scene. Its caller may itself be an
+        // overlay, so the router's previous entry can still be the main calendar.
+        const returnToCalendars = params.returnTo === "calendars" && calendarId !== null;
         runWithTransitionShell(
-            { route: "/schedule", title: "일정", showBack: false },
+            returnToCalendars
+                ? { route: "/schedule/calendars", title: "캘린더 관리" }
+                : { route: "/schedule", title: "일정", showBack: false },
             () => {
-                if (router.canGoBack()) router.back();
+                if (returnToCalendars) {
+                    router.replace({ pathname: "/schedule/calendars", params: { id: String(calendarId) } });
+                } else if (router.canGoBack()) router.back();
                 else router.replace("/schedule");
             },
         );
@@ -572,37 +627,48 @@ export default function ScheduleCategoriesScreen() {
                     accessibilityState={{ busy: controlsBusy }}
                     style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
                 >
-                    <Ionicons accessible={false} name="chevron-back" size={24} color={colors.textPrimary} />
+                    <Ionicons accessible={false} name="chevron-back-outline" size={24} color={colors.textPrimary} />
                 </Pressable>
-                <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.textPrimary }]}>
-                    {calendarId === null ? "개인 카테고리" : `${calendarTitle || "공유 캘린더"} 카테고리`}
+                <Text ref={categoryHeading} accessible accessibilityRole="header" maxFontSizeMultiplier={1.7} style={[styles.headerTitle, { color: colors.textPrimary }]}>
+                    {calendarId === null ? "개인 카테고리" : "카테고리 관리"}
                 </Text>
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="공유 캘린더 관리"
-                    onPress={() => runWithTransitionShell(
-                        { route: "/schedule/calendars", title: "공유 캘린더" },
-                        () => router.push("/schedule/calendars"),
-                    )}
-                    style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                >
-                    <Ionicons accessible={false} name="people-outline" size={21} color={colors.textPrimary} />
-                </Pressable>
+                {calendarId === null ? (
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="공유 캘린더 관리"
+                        onPress={() => runWithTransitionShell(
+                            { route: "/schedule/calendars", title: "공유 캘린더" },
+                            () => router.push("/schedule/calendars"),
+                        )}
+                        style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                    >
+                        <Ionicons accessible={false} name="people-outline" size={21} color={colors.textPrimary} />
+                    </Pressable>
+                ) : <View style={styles.headerButtonGhost} />}
             </View>
 
             <ScrollView
                 keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+                keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
                 contentContainerStyle={[
                     styles.content,
                     { paddingBottom: Math.max(insets.bottom, 16) + 20 },
                 ]}
             >
+                {calendarId !== null ? (
+                    <View style={styles.calendarContext}>
+                        <Ionicons accessible={false} name="calendar-outline" size={19} color={colors.textSecondary} />
+                        <Text maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.calendarName, { color: colors.textPrimary }]}>
+                            {calendarTitle || "공유 캘린더"}
+                        </Text>
+                    </View>
+                ) : null}
                 {canCreateCategory ? (
                     <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>새 카테고리</Text>
+                        <Text accessibilityRole="header" maxFontSizeMultiplier={1.8} style={[styles.sectionTitle, { color: colors.textPrimary }]}>새 카테고리</Text>
                         <TextInput
                             accessibilityLabel="새 카테고리 이름"
+                            maxFontSizeMultiplier={1.8}
                             textContentType="none"
                             autoComplete="off"
                             secureTextEntry={false}
@@ -644,7 +710,7 @@ export default function ScheduleCategoriesScreen() {
                                     accessibilityLabel="카테고리를 추가하고 있어요"
                                 />
                             ) : (
-                                <Text style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
+                                <Text maxFontSizeMultiplier={1.8} style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
                                     추가
                                 </Text>
                             )}
@@ -653,7 +719,7 @@ export default function ScheduleCategoriesScreen() {
                 ) : null}
 
                 <View style={styles.listHeader}>
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>카테고리 목록</Text>
+                    <Text accessibilityRole="header" maxFontSizeMultiplier={1.8} style={[styles.sectionTitle, { color: colors.textPrimary }]}>카테고리 목록</Text>
                     {loading || calendarAccessLoading ? (
                         <BrandedLoader
                             size="button"
@@ -692,9 +758,10 @@ export default function ScheduleCategoriesScreen() {
                             ]}
                         >
                             {editing ? (
-                                <View style={styles.editBody}>
+                                <Animated.View entering={editorEntry} style={styles.editBody}>
                                     <TextInput
-                                        autoFocus
+                                        autoFocus={!largeText}
+                                        maxFontSizeMultiplier={1.8}
                                         accessibilityLabel={`${category.title} 카테고리 이름 수정`}
                                         textContentType="none"
                                         autoComplete="off"
@@ -729,7 +796,7 @@ export default function ScheduleCategoriesScreen() {
                                                 controlsBusy && styles.disabledControl,
                                             ]}
                                         >
-                                            <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>
+                                            <Text maxFontSizeMultiplier={1.8} style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>
                                                 취소
                                             </Text>
                                         </Pressable>
@@ -747,38 +814,38 @@ export default function ScheduleCategoriesScreen() {
                                                 },
                                             ]}
                                         >
-                                            <Text style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
+                                            <Text maxFontSizeMultiplier={1.8} style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
                                                 저장
                                             </Text>
                                         </Pressable>
                                     </View>
-                                </View>
+                                </Animated.View>
                             ) : (
-                                <View style={styles.categoryRow}>
+                                <View style={[styles.categoryRow, largeText && styles.categoryRowLarge]}>
                                     <View style={styles.categoryInfo}>
                                         <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
                                         <View style={styles.categoryTitleWrap}>
-                                            <View style={styles.categoryTitleRow}>
-                                                <Text style={[styles.categoryTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                                            <View style={[styles.categoryTitleRow, largeText && styles.categoryTitleRowLarge]}>
+                                                <Text style={[styles.categoryTitle, largeText && styles.categoryTitleLarge, { color: colors.textPrimary }]} numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word">
                                                     {category.title}
                                                 </Text>
-                                                {isCalendarCategory && (
+                                                {calendarId === null && isCalendarCategory && (
                                                     <View style={[styles.sharedBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
                                                         <Ionicons accessible={false} name="calendar-outline" size={13} color={colors.textSecondary} />
-                                                        <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>캘린더 소속</Text>
+                                                        <Text maxFontSizeMultiplier={1.65} style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>캘린더 소속</Text>
                                                     </View>
                                                 )}
                                                 {isReceivedDirectShare && (
                                                     <View style={[styles.sharedBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
                                                         <Ionicons accessible={false} name="people-outline" size={13} color={colors.textSecondary} />
-                                                        <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>
+                                                        <Text maxFontSizeMultiplier={1.65} style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>
                                                             공유됨
                                                         </Text>
                                                     </View>
                                                 )}
                                             </View>
                                             {isReceivedDirectShare && (
-                                                <Text style={[styles.categoryAssist, { color: colors.textSecondary }]} numberOfLines={1}>
+                                                <Text style={[styles.categoryAssist, { color: colors.textSecondary }]} numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={1.8}>
                                                     받은 카테고리 · {getCategorySharePermissionLabel(category.sharePermission)}
                                                 </Text>
                                             )}
@@ -787,6 +854,10 @@ export default function ScheduleCategoriesScreen() {
                                     <View style={styles.rowActions}>
                                         {canManageAudience ? (
                                             <Pressable
+                                                ref={button => {
+                                                    if (button) categoryButtons.current.set(category.id, button);
+                                                    else categoryButtons.current.delete(category.id);
+                                                }}
                                                 accessibilityRole="button"
                                                 onPress={() => showPersonalCategoryActions(
                                                     category,
@@ -817,7 +888,7 @@ export default function ScheduleCategoriesScreen() {
                                                         { opacity: controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
                                                     ]}
                                                 >
-                                                    <Ionicons accessible={false} name="create-outline" size={20} color={colors.textPrimary} />
+                                                    <Ionicons accessible={false} name="pencil-outline" size={20} color={colors.textPrimary} />
                                                 </Pressable>
                                                 <Pressable
                                                     accessibilityRole="button"
@@ -867,9 +938,18 @@ export default function ScheduleCategoriesScreen() {
                 subtitle="현재와 앞으로 추가되는 일정에 보기 또는 편집 권한을 부여합니다"
                 onClose={() => setSharingCategory(null)}
             />
+            {moveNotice && (
+                <View pointerEvents="none" style={{
+                    position: "absolute", bottom: Math.max(insets.bottom, 16), left: 20, right: 20,
+                    borderRadius: 14, padding: 14, backgroundColor: colors.surface2,
+                }}>
+                    <Text style={{ color: colors.textPrimary, fontSize: 14, fontWeight: "700" }}>{moveNotice}</Text>
+                </View>
+            )}
             <CategoryMoveSheet
                 visible={!!movingCategory}
                 category={movingCategory}
+                sourceTitle={calendarId === null ? "개인 캘린더" : calendarTitle || "공유 캘린더"}
                 calendars={moveCalendars}
                 selectedDestinationId={moveDestinationId}
                 preview={movePreview}
@@ -878,6 +958,8 @@ export default function ScheduleCategoriesScreen() {
                 loadingPreview={movePreviewLoading}
                 previewError={movePreviewError}
                 moving={moving}
+                moveError={moveError}
+                onDismiss={restoreMoveFocus}
                 onClose={closeMoveSheet}
                 onSelectDestination={selectMoveDestination}
                 onRetryCalendars={() => {
@@ -890,7 +972,8 @@ export default function ScheduleCategoriesScreen() {
                 onManageCalendars={() => {
                     setMoveCalendars([]);
                     setMoveCalendarError(null);
-                    closeMoveSheet();
+                    moveReturnTarget.current = null;
+                    clearMoveSheet();
                     router.push("/schedule/calendars");
                 }}
             />

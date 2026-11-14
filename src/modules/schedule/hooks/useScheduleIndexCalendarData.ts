@@ -102,6 +102,8 @@ export function useScheduleIndexCalendarData({
   setCalendarDaysByDate,
   setCalendarMetadataRetrySequence,
 }: Options) {
+  const calendarFocusedRef = useRef(isFocused);
+  calendarFocusedRef.current = isFocused;
   const contentReadyTimerRef = useRef<PerformanceInteractionTimer | null>(null);
   const adjacentRangePrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScheduleLoadStartedRef = useRef(false);
@@ -126,6 +128,9 @@ export function useScheduleIndexCalendarData({
   /** 일정 배열의 항목 identity가 실제로 달라졌을 때만 전역 일정 저장소를 갱신한다. */
   const applyScheduleItemsToStore = useCallback(
     (items: ScheduleItem[]) => {
+      // A hidden index may warm its cache behind a detail route. Its summary
+      // must not replace the full item currently displayed by that route.
+      if (!calendarFocusedRef.current) return;
       const currentScheduleItemsById = scheduleItemsByIdRef.current;
       const hasItemSetChanged =
         items.length !== Object.keys(currentScheduleItemsById).length ||
@@ -308,7 +313,7 @@ export function useScheduleIndexCalendarData({
         revisionSync = measurePerformanceInteraction(
           'schedule.revision_sync',
           '/schedule',
-          synchronizeCalendarScheduleCacheRevision,
+          () => synchronizeCalendarScheduleCacheRevision({ force: forceRevisionCheck }),
           'NETWORK',
         );
         calendarRevisionSyncPromiseRef.current = revisionSync;
@@ -317,7 +322,8 @@ export function useScheduleIndexCalendarData({
       // Revision validation is an app-session/foreground concern, not a
       // month-navigation concern. A Redis-backed server cache can answer
       // this quickly. Range changes join the same promise, while the API
-      // layer single-flights and cools down foreground checks.
+      // layer single-flights requests. Foreground checks bypass the cooldown
+      // because a share extension can have saved a ticket while we were away.
       revisionSync
         .then(() => {
           if (calendarRevisionSyncPromiseRef.current === revisionSync) {

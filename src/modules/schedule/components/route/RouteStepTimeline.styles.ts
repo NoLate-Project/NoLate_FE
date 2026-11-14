@@ -5,6 +5,11 @@ const styles = StyleSheet.create({
     root: {
         gap: 0,
     },
+    estimatedClockHeading: {
+        fontSize: 12,
+        fontWeight: "600",
+        marginBottom: 8,
+    },
     guidanceCurrentRow: { borderLeftWidth: 3, borderLeftColor: '#2979FF', paddingVertical: 8, backgroundColor: 'rgba(41,121,255,0.08)' },
     guidanceCurrent: { paddingVertical: 4, paddingRight: 8 },
     guidanceCurrentText: { color: '#1264C7', fontSize: 13, fontWeight: '600' },
@@ -22,6 +27,10 @@ const styles = StyleSheet.create({
         backgroundColor: "transparent",
         borderColor: "transparent",
     },
+    legFocusSurface: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 8,
+    },
     itemPressTarget: {
         flex: 1,
         minWidth: 0,
@@ -29,10 +38,9 @@ const styles = StyleSheet.create({
     },
     disclosureButton: {
         position: "absolute",
-        right: -4,
-        width: 24,
-        height: 24,
-        borderRadius: 12,
+        right: 0,
+        minWidth: 44,
+        minHeight: 44,
         alignItems: "center",
         justifyContent: "center",
         zIndex: 3,
@@ -41,7 +49,25 @@ const styles = StyleSheet.create({
         top: 10,
     },
     disclosureButtonCompact: {
-        top: 3,
+        top: 0,
+    },
+    disclosureSurface: {
+        minHeight: 28,
+        minWidth: 28,
+        paddingHorizontal: 7,
+        paddingVertical: 4,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        flexDirection: "row",
+        gap: 3,
+    },
+    disclosureSurfaceLabelled: {
+        minWidth: 60,
+    },
+    disclosureLabel: {
+        fontSize: 11,
+        fontWeight: "600",
     },
     rail: {
         width: 42,
@@ -116,6 +142,28 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "800",
         letterSpacing: 0,
+        fontVariant: ["tabular-nums"],
+    },
+    timelineClockBadgeExpanded: {
+        position: "relative",
+        top: 0,
+        alignSelf: "flex-start",
+        marginBottom: 6,
+        paddingHorizontal: 9,
+        paddingVertical: 3,
+    },
+    timelineClockBadgeInline: {
+        marginBottom: 0,
+    },
+    boardingHeading: {
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 8,
+        marginBottom: 6,
+    },
+    boardingHeadingWithDisclosure: {
+        paddingRight: 92,
     },
     body: {
         flex: 1,
@@ -135,8 +183,13 @@ const styles = StyleSheet.create({
     titleRowCompact: {
         gap: 8,
     },
+    titleRowExpanded: {
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 4,
+    },
     titleRowWithDisclosure: {
-        paddingRight: 28,
+        paddingRight: 92,
     },
     badge: {
         minWidth: 32,
@@ -151,6 +204,10 @@ const styles = StyleSheet.create({
         minHeight: 25,
         borderRadius: 7,
         paddingHorizontal: 9,
+    },
+    badgeExpanded: {
+        maxWidth: "100%",
+        paddingVertical: 2,
     },
     pointBadge: {
         minWidth: 36,
@@ -194,6 +251,10 @@ const styles = StyleSheet.create({
         fontSize: 17,
         fontWeight: "900",
     },
+    titleExpanded: {
+        flex: 0,
+        alignSelf: "stretch",
+    },
     titleSuffix: {
         fontSize: 15,
         fontWeight: "900",
@@ -214,9 +275,17 @@ const styles = StyleSheet.create({
         alignItems: "flex-start",
         gap: 10,
     },
+    rideInfoRowExpanded: {
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: 5,
+    },
     rideInfoTextStack: {
         flex: 1,
         minWidth: 0,
+    },
+    rideInfoTextStackExpanded: {
+        flex: 0,
     },
     rideAssistText: {
         marginTop: 3,
@@ -256,6 +325,9 @@ const styles = StyleSheet.create({
     rideActionStack: {
         alignItems: "flex-end",
         gap: 3,
+    },
+    rideActionStackExpanded: {
+        alignItems: "flex-start",
     },
     rideActionChip: {
         minHeight: 28,
@@ -298,6 +370,13 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 8,
     },
+    arrivalRowExpanded: {
+        flexWrap: "wrap",
+    },
+    arrivalDirectionExpanded: {
+        flexGrow: 0,
+        flexBasis: "100%",
+    },
     arrivalInlineRow: {
         minHeight: 24,
         marginTop: 7,
@@ -319,10 +398,10 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     arrivalWaitText: {
-        color: "#FF5A52",
         fontSize: 16,
         fontWeight: "900",
         letterSpacing: 0,
+        fontVariant: ["tabular-nums"],
     },
     arrivalMutedText: {
         flex: 1,
@@ -349,20 +428,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "900",
     },
-    busArrivalBadge: {
-        minWidth: 44,
-        maxWidth: 70,
-        height: 28,
-        borderRadius: 7,
-        paddingHorizontal: 8,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    busArrivalBadgeText: {
-        color: "#FFFFFF",
-        fontSize: 14,
-        fontWeight: "900",
-    },
     itemDivider: {
         height: StyleSheet.hairlineWidth,
         marginTop: 12,
@@ -377,6 +442,57 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         gap: 0,
     },
+    inlineDisclosure: {
+        minHeight: 44,
+        marginTop: 10,
+        paddingVertical: 10,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    inlineDisclosureText: {
+        flexShrink: 1,
+        fontSize: 15,
+        fontWeight: "700",
+    },
+    inlineStopList: {
+        zIndex: 2,
+    },
+    inlineStopRow: {
+        paddingLeft: 0,
+    },
+    inlineAlighting: {
+        zIndex: 2,
+        minHeight: 36,
+        justifyContent: "center",
+        paddingVertical: 6,
+    },
+    inlineAlightingTimed: {
+        minHeight: 52,
+        justifyContent: "flex-start",
+        paddingTop: 7,
+    },
+    inlineAlightingRail: {
+        bottom: undefined,
+        height: 30,
+    },
+    inlineAlightingClock: {
+        top: 27,
+        left: -52,
+    },
+    inlineStopRail: {
+        position: "absolute",
+        left: -33,
+        top: 0,
+        bottom: 0,
+        width: 10,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    inlineStopDot: {
+        marginTop: 0,
+    },
     stopRow: {
         minHeight: 30,
         flexDirection: "row",
@@ -389,6 +505,20 @@ const styles = StyleSheet.create({
         width: 12,
         alignSelf: "stretch",
         alignItems: "center",
+    },
+    stopRowMapAction: {
+        minHeight: 44,
+    },
+    stopSelectionSurface: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 6,
+    },
+    stopMapIcon: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
     },
     stopDot: {
         width: 8,

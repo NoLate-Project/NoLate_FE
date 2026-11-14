@@ -37,6 +37,26 @@ export function getAppNotificationNavigationTarget(
     return getPushNavigationTargetFromNotificationData(data);
 }
 
+const sharedNotificationTypes: Record<string, { label: string; titleKey: string; bodySuffix: string }> = {
+    SCHEDULE_SHARE_RECEIVED: { label: "공유 일정", titleKey: "scheduleTitle", bodySuffix: "일정이 공유됐어요." },
+    CALENDAR_SHARE_RECEIVED: { label: "공유 캘린더", titleKey: "calendarTitle", bodySuffix: "캘린더가 공유됐어요." },
+    CATEGORY_SHARE_RECEIVED: { label: "공유 카테고리", titleKey: "categoryTitle", bodySuffix: "캘린더가 공유됐어요." },
+};
+
+export function getAppNotificationCopy(notification: AppNotification) {
+    const sharedType = sharedNotificationTypes[notification.type];
+    if (!sharedType) return { title: notification.title, description: notification.body };
+
+    const suffix = `' ${sharedType.bodySuffix}`;
+    const archivedName = notification.body.startsWith("'") && notification.body.endsWith(suffix)
+        ? notification.body.slice(1, -suffix.length).trim()
+        : "";
+    const name = notification.data[sharedType.titleKey]?.trim() || archivedName;
+    return name
+        ? { title: name, description: sharedType.label, shared: true }
+        : { title: notification.title, description: notification.body };
+}
+
 export function getAppNotificationVisual(type: string): AppNotificationVisual {
     switch (type) {
         case "SCHEDULE_SHARE_RECEIVED":

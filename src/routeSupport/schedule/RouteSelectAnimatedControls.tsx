@@ -83,6 +83,7 @@ export type PlaceIconSource = {
     category?: string;
 };
 export type AnimatedTravelModeButtonProps = {
+    reduceMotion: boolean;
     selected: boolean;
     label: string;
     iconName: React.ComponentProps<typeof Ionicons>["name"];
@@ -92,19 +93,19 @@ export type AnimatedTravelModeButtonProps = {
     onPress: () => void;
 };
 export type AnimatedTransitFilterButtonProps = {
+    reduceMotion: boolean;
     selected: boolean;
     disabled: boolean;
+    wrapped?: boolean;
     label: string;
     textColor: string;
     accentColor: string;
     onPress: () => void;
 };
-export type AnimatedRouteCardShellProps = {
-    selected: boolean;
-    style: StyleProp<ViewStyle>;
-    children: React.ReactNode;
-};
 export type AnimatedRouteExpansionProps = {
+    restored?: boolean;
+    variant?: "detail" | "summary";
+    reduceMotion: boolean;
     children: React.ReactNode;
     style: StyleProp<ViewStyle>;
 };
@@ -132,29 +133,36 @@ export const ROUTE_SEGMENT_FALLBACK_COLORS = {
 };
 
 export const TRAVEL_MODE_ICONS: Partial<Record<TravelMode, React.ComponentProps<typeof Ionicons>["name"]>> = {
-    CAR: "car",
-    TRANSIT: "bus",
-    WALK: "walk",
-    BIKE: "bicycle",
+    CAR: "car-outline",
+    TRANSIT: "bus-outline",
+    WALK: "walk-outline",
+    BIKE: "bicycle-outline",
 };
 /** 선택 여부를 0~1 스프링 값으로 변환해 버튼과 카드가 같은 전환 감각을 공유하게 한다. */
-export function useSelectedSpring(selected: boolean) {
+function useSelectedSpring(selected: boolean, reduceMotion: boolean) {
     const progress = useRef(new Animated.Value(selected ? 1 : 0)).current;
 
     useEffect(() => {
-        Animated.spring(progress, {
+        if (reduceMotion) {
+            progress.setValue(selected ? 1 : 0);
+            return;
+        }
+        const animation = Animated.spring(progress, {
             toValue: selected ? 1 : 0,
             friction: 8,
             tension: 120,
             useNativeDriver: true,
-        }).start();
-    }, [progress, selected]);
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [progress, reduceMotion, selected]);
 
     return progress;
 }
 
 /** 이동수단 선택 상태를 아이콘 크기와 카드 스케일로 표현하고 접근성 선택 상태를 함께 제공한다. */
 export function AnimatedTravelModeButton({
+    reduceMotion,
     selected,
     label,
     iconName,
@@ -163,7 +171,7 @@ export function AnimatedTravelModeButton({
     textColor,
     onPress,
 }: AnimatedTravelModeButtonProps) {
-    const progress = useSelectedSpring(selected);
+    const progress = useSelectedSpring(selected, reduceMotion);
     const scale = progress.interpolate({
         inputRange: [0, 1],
         outputRange: [1, 1.018],
@@ -196,14 +204,16 @@ export function AnimatedTravelModeButton({
 
 /** 대중교통 필터 선택 여부를 하단 인디케이터 애니메이션으로 표시하며 비활성 상태의 입력을 차단한다. */
 export function AnimatedTransitFilterButton({
+    reduceMotion,
     selected,
     disabled,
+    wrapped,
     label,
     textColor,
     accentColor,
     onPress,
 }: AnimatedTransitFilterButtonProps) {
-    const progress = useSelectedSpring(selected);
+    const progress = useSelectedSpring(selected, reduceMotion);
     const indicatorScale = progress.interpolate({
         inputRange: [0, 1],
         outputRange: [0.32, 1],
@@ -218,6 +228,7 @@ export function AnimatedTransitFilterButton({
             accessibilityState={{ selected, disabled }}
             style={[
                 styles.transitFilterTab,
+                wrapped && styles.transitFilterTabWrapped,
                 {
                     opacity: disabled ? 0.38 : 1,
                     borderColor: "transparent",
@@ -225,7 +236,7 @@ export function AnimatedTransitFilterButton({
                 },
             ]}
         >
-            <Text style={[styles.transitFilterText, { color: textColor }]}>
+            <Text maxFontSizeMultiplier={wrapped ? 2 : undefined} style={[styles.transitFilterText, { color: textColor }]}>
                 {label}
             </Text>
             <Animated.View
@@ -242,37 +253,31 @@ export function AnimatedTransitFilterButton({
     );
 }
 
-/** 선택된 경로 카드에 미세한 스프링 스케일을 적용해 선택 피드백을 제공한다. */
-export function AnimatedRouteCardShell({ selected, style, children }: AnimatedRouteCardShellProps) {
-    const progress = useSelectedSpring(selected);
-    const scale = progress.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0.997, 1],
-    });
-
-    return (
-        <Animated.View style={[style, { transform: [{ scale }] }]}>
-            {children}
-        </Animated.View>
-    );
-}
-
-/** 경로 상세 내용이 열릴 때 투명도와 세로 이동을 결합한 짧은 진입 애니메이션을 적용한다. */
-export function AnimatedRouteExpansion({ children, style }: AnimatedRouteExpansionProps) {
-    const progress = useRef(new Animated.Value(0)).current;
+/** 사용자가 새로 펼친 상세에만 진입 모션을 적용한다. */
+export function AnimatedRouteExpansion({ children, style, reduceMotion, restored = false, variant = "detail" }: AnimatedRouteExpansionProps) {
+    const skipEntrance = useRef(restored || reduceMotion);
+    const progress = useRef(new Animated.Value(skipEntrance.current ? 1 : 0)).current;
+    const isSummary = variant === "summary";
 
     useEffect(() => {
-        Animated.timing(progress, {
+        if (reduceMotion || skipEntrance.current) {
+            skipEntrance.current = true;
+            progress.setValue(1);
+            return;
+        }
+        const animation = Animated.timing(progress, {
             toValue: 1,
-            duration: 190,
+            duration: isSummary ? 160 : 190,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
-        }).start();
-    }, [progress]);
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [progress, reduceMotion, isSummary]);
 
     const translateY = progress.interpolate({
         inputRange: [0, 1],
-        outputRange: [-4, 0],
+        outputRange: [isSummary ? 3 : -4, 0],
     });
 
     return (
@@ -342,10 +347,6 @@ export function FavoriteFilterSelectionIndicator({
 export function configureRouteExpansionAnimation(duration = 210) {
     LayoutAnimation.configureNext({
         duration,
-        create: {
-            type: LayoutAnimation.Types.easeInEaseOut,
-            property: LayoutAnimation.Properties.opacity,
-        },
         update: {
             type: LayoutAnimation.Types.easeInEaseOut,
         },

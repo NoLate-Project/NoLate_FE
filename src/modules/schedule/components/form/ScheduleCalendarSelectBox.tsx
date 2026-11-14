@@ -10,6 +10,7 @@ type Props = {
     loading?: boolean;
     error?: string | null;
     locked?: boolean;
+    optionWidth?: number;
     onChange: (calendarId: number | null) => void;
     onRetry?: () => void;
     onManageCalendars?: () => void;
@@ -31,6 +32,7 @@ export default function ScheduleCalendarSelectBox({
     loading = false,
     error,
     locked = false,
+    optionWidth,
     onChange,
     onRetry,
     onManageCalendars,
@@ -73,6 +75,7 @@ export default function ScheduleCalendarSelectBox({
                         selected
                         accent={accent}
                         disabled
+                        optionWidth={optionWidth}
                         onPress={() => undefined}
                     />
                 ) : (
@@ -82,6 +85,7 @@ export default function ScheduleCalendarSelectBox({
                             color={colors.textSecondary}
                             selected={value === null}
                             accent={accent}
+                            optionWidth={optionWidth}
                             onPress={() => onChange(null)}
                         />
                         {calendars.map((calendar) => (
@@ -91,6 +95,7 @@ export default function ScheduleCalendarSelectBox({
                                 color={calendar.color}
                                 selected={calendar.id === value}
                                 accent={accent}
+                                optionWidth={optionWidth}
                                 onPress={() => onChange(calendar.id)}
                             />
                         ))}
@@ -128,6 +133,7 @@ function CalendarOption({
     selected,
     accent,
     disabled = false,
+    optionWidth,
     onPress,
 }: {
     title: string;
@@ -135,6 +141,7 @@ function CalendarOption({
     selected: boolean;
     accent: string;
     disabled?: boolean;
+    optionWidth?: number;
     onPress: () => void;
 }) {
     const { colors } = useTheme();
@@ -151,6 +158,7 @@ function CalendarOption({
             onPress={onPress}
             style={({ pressed }) => [
                 styles.option,
+                optionWidth !== undefined && [styles.optionLarge, { maxWidth: optionWidth }],
                 {
                     borderColor: selected ? accent : colors.border,
                     backgroundColor: selected ? `${accent}14` : colors.surface2,
@@ -159,7 +167,13 @@ function CalendarOption({
             ]}
         >
             <View style={[styles.dot, { backgroundColor: color }]} />
-            <Text numberOfLines={1} style={[styles.optionText, { color: colors.textPrimary }]}>{title}</Text>
+            <Text
+                numberOfLines={optionWidth === undefined ? 1 : undefined}
+                lineBreakStrategyIOS="hangul-word"
+                style={[styles.optionText, optionWidth !== undefined && styles.optionTextLarge, { color: colors.textPrimary }]}
+            >
+                {title}
+            </Text>
             {selected ? <Ionicons name="checkmark" size={15} color={accent} /> : null}
         </Pressable>
     );
@@ -205,10 +219,19 @@ const styles = StyleSheet.create({
         height: 8,
         borderRadius: 4,
     },
+    optionLarge: {
+        height: "auto",
+        minHeight: 44,
+        paddingVertical: 6,
+    },
     optionText: {
         maxWidth: 124,
         fontSize: 12,
         fontWeight: "700",
+    },
+    optionTextLarge: {
+        maxWidth: undefined,
+        flexShrink: 1,
     },
     hint: {
         marginTop: 4,

@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, StyleSheet, Text } from "react-native";
+import { ScrollView, StyleSheet, Text, useWindowDimensions } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import CalendarYearOverviewModal from "../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
@@ -21,6 +21,7 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
 }));
 
 let mockSafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+let mockWindowDimensions = { width: 393, height: 800, scale: 2, fontScale: 1 };
 
 jest.mock("react-native-safe-area-context", () => ({
     useSafeAreaInsets: () => mockSafeAreaInsets,
@@ -38,10 +39,13 @@ describe("CalendarYearOverviewModal Today focus", () => {
     });
 
     beforeEach(() => {
+        jest.spyOn(require("react-native") as { useWindowDimensions: typeof useWindowDimensions }, "useWindowDimensions")
+            .mockImplementation(() => mockWindowDimensions);
         jest.useFakeTimers();
         jest.setSystemTime(new Date(2026, 6, 15, 12, 0, 0));
         mockThemeMode = "light";
         mockSafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+        mockWindowDimensions = { width: 393, height: 800, scale: 2, fontScale: 1 };
     });
 
     afterEach(async () => {
@@ -49,6 +53,7 @@ describe("CalendarYearOverviewModal Today focus", () => {
         renderer = undefined;
         jest.clearAllTimers();
         jest.useRealTimers();
+        jest.restoreAllMocks();
     });
 
     function calendar(
@@ -154,6 +159,22 @@ describe("CalendarYearOverviewModal Today focus", () => {
         expect(scrollView.props.contentInsetAdjustmentBehavior).toBe("never");
         expect(StyleSheet.flatten(scrollView.props.style).marginBottom).toBe(94);
         expect(StyleSheet.flatten(scrollView.props.contentContainerStyle).paddingBottom).toBe(24);
+    });
+
+    test.each([
+        [393, 1, "31%", 1.05],
+        [393, 2, "48%", 1.6],
+        [320, 2, "48%", 1.35],
+    ])("연간 월과 날짜 크기를 화면과 글자 크기에 맞춘다 (%s, %s)", async (width, fontScale, monthWidth, dayScale) => {
+        mockWindowDimensions = { width, height: 800, scale: 2, fontScale };
+        await act(async () => {
+            renderer = TestRenderer.create(calendar(0));
+        });
+        const month = renderer!.root.findAllByProps({ testID: "calendar-year-today-month" })
+            .find(node => typeof node.props.style === "function");
+        expect(StyleSheet.flatten(month!.props.style({ pressed: false })).width).toBe(monthWidth);
+        const day = month!.findAllByType(Text).find(node => node.props.children === 31);
+        expect(day?.props.maxFontSizeMultiplier).toBe(dayScale);
     });
 
     test("같은 연도를 다시 열어도 해당 연도 상단으로 스크롤 위치를 복원한다", async () => {

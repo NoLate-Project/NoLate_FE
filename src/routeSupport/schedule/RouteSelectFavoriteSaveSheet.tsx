@@ -1,15 +1,19 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import {
+    AccessibilityInfo,
+    Animated as NativeAnimated,
+    Easing,
     Modal,
     Platform,
     Pressable,
     ScrollView,
     Text,
     TextInput,
+    useWindowDimensions,
     View,
 } from "react-native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
-import CalendarGlassSurface from "../../modules/schedule/components/calendar/CalendarGlassSurface";
 import BrandedLoader from "../../ui/BrandedLoader";
 import {
     getFavoritePlaceCategoryDisplayName,
@@ -26,20 +30,30 @@ type RouteSelectFavoriteSaveSheetProps = {
     controller: RouteSelectController;
 };
 
+const defaultAddressNoticeEntry = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+
 /** 선택한 장소를 기존 또는 새 즐겨찾기 분류에 저장하는 모달 흐름을 표시한다. */
 export function RouteSelectFavoriteSaveSheet({
     controller,
 }: RouteSelectFavoriteSaveSheetProps) {
     const {
         favoriteSheetSaving,
+        activeTarget,
+        hasConfiguredDefaultOrigin,
+        favoriteSaveError,
+        announceFavoriteSave,
         modeSelectedText,
         insets,
         favoriteSheetPlace,
+        favoriteSheetExisting,
+        favoriteSheetLabel,
+        setFavoriteSheetLabel,
         saveFavoriteAsDefaultOrigin,
         setSaveFavoriteAsDefaultOrigin,
         favoriteCategories,
         favoriteCategoryLoading,
         favoriteCategoryError,
+        loadFavoriteCategories,
         selectedFavoriteCategoryId,
         setSelectedFavoriteCategoryId,
         showNewCategoryForm,
@@ -53,51 +67,79 @@ export function RouteSelectFavoriteSaveSheet({
         createFavoriteCategory,
         saveFavoriteSheetPlace,
         routeUi,
+        reduceFavoriteMotionEnabled,
     } = controller;
+    const largeText = useWindowDimensions().fontScale > 1.35;
+    const busy = favoriteSheetSaving || creatingFavoriteCategory;
+    const visible = Boolean(favoriteSheetPlace);
+    const entrance = useRef(new NativeAnimated.Value(0)).current;
+    const title = useRef<Text>(null);
+    const saveLabel = saveFavoriteAsDefaultOrigin ? "기본 주소로 저장" : "장소 저장";
+    const disabled = !favoriteSheetLabel.trim() || busy;
+    useEffect(() => {
+        if (!visible || reduceFavoriteMotionEnabled) entrance.setValue(visible ? 1 : 0);
+        if (Platform.OS !== "ios" && !visible) announceFavoriteSave();
+    }, [announceFavoriteSave, entrance, reduceFavoriteMotionEnabled, visible]);
+
+    const showSheet = () => {
+        if (!reduceFavoriteMotionEnabled) {
+            NativeAnimated.timing(entrance, {
+                toValue: 1, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+            }).start();
+        }
+        if (title.current) AccessibilityInfo.sendAccessibilityEvent?.(title.current, "focus");
+    };
     return (
         <Modal
-            visible={Boolean(favoriteSheetPlace)}
+            visible={visible}
             transparent
-            animationType="fade"
+            animationType="none"
+            onShow={showSheet}
             onRequestClose={closeFavoriteSaveSheet}
+            onDismiss={announceFavoriteSave}
         >
             <View accessibilityViewIsModal style={styles.favoriteModalRoot}>
                 <Pressable
                     onPress={closeFavoriteSaveSheet}
-                    disabled={favoriteSheetSaving || creatingFavoriteCategory}
-                    accessibilityRole="button"
-                    accessibilityLabel="즐겨찾기 저장 창 닫기"
+                    disabled={busy}
+                    accessible={false}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
                     style={styles.favoriteModalBackdrop}
                 />
-                <CalendarGlassSurface
-                    prominent
-                    variant="sheet"
+                <NativeAnimated.View
+                    onAccessibilityEscape={closeFavoriteSaveSheet}
                     style={[
                         styles.favoriteSheet,
                         {
+                            opacity: entrance,
+                            transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }],
+                        },
+                        {
                             borderColor: routeUi.border,
+                            backgroundColor: routeUi.surface,
                             paddingBottom: Math.max(insets.bottom + 16, 22),
                         },
                     ]}
                 >
                     <View style={[styles.favoriteSheetHandle, { backgroundColor: routeUi.borderStrong }]} />
                     <View style={styles.favoriteSheetHeader}>
-                        <View>
-                            <Text style={[styles.favoriteSheetTitle, { color: routeUi.textPrimary }]}>
-                                즐겨찾기 저장
+                        <View style={styles.favoritePlaceTextWrap}>
+                            <Text ref={title} accessible accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.favoriteSheetTitle, { color: routeUi.textPrimary }]}>
+                                {favoriteSheetExisting ? "즐겨찾기 수정" : "즐겨찾기 추가"}
                             </Text>
-                            <Text style={[styles.favoriteSheetSubtitle, { color: routeUi.textSecondary }]}>
-                                저장할 카테고리를 선택하세요
+                            <Text maxFontSizeMultiplier={1.8} style={[styles.favoriteSheetSubtitle, { color: routeUi.textSecondary }]}>
+                                장소 이름과 분류를 확인해 주세요
                             </Text>
                         </View>
                         <Pressable
                             onPress={closeFavoriteSaveSheet}
-                            disabled={favoriteSheetSaving || creatingFavoriteCategory}
+                            disabled={busy}
                             accessibilityRole="button"
                             accessibilityLabel="즐겨찾기 저장 창 닫기"
                             style={[styles.favoriteSheetCloseButton, { backgroundColor: routeUi.surface2 }]}
                         >
-                            <Text style={[styles.favoriteSheetCloseText, { color: routeUi.textSecondary }]}>×</Text>
+                            <Ionicons name="close-outline" size={23} color={routeUi.textSecondary} />
                         </Pressable>
                     </View>
 
@@ -110,17 +152,32 @@ export function RouteSelectFavoriteSaveSheet({
                         showsVerticalScrollIndicator={false}
                     >
                     <View style={[styles.favoritePlaceBox, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}>
-                        <Ionicons name="star" size={18} color={routeUi.accentBlue} />
+                        <Ionicons name="location-outline" size={18} color={routeUi.accentBlue} />
                         <View style={styles.favoritePlaceTextWrap}>
-                            <Text numberOfLines={1} style={[styles.favoritePlaceName, { color: routeUi.textPrimary }]}>
+                            <Text numberOfLines={largeText ? undefined : 2} style={[styles.favoritePlaceName, { color: routeUi.textPrimary }]}>
                                 {favoriteSheetPlace ? getPlaceDisplayText(favoriteSheetPlace) : ""}
                             </Text>
                             {!!favoriteSheetPlace?.address && (
-                                <Text numberOfLines={1} style={[styles.favoritePlaceAddress, { color: routeUi.textSecondary }]}>
+                                <Text numberOfLines={largeText ? undefined : 2} style={[styles.favoritePlaceAddress, { color: routeUi.textSecondary }]}>
                                     {favoriteSheetPlace.address}
                                 </Text>
                             )}
                         </View>
+                    </View>
+
+                    <View style={styles.favoriteNameField}>
+                        <Text style={[styles.favoriteSectionLabel, { color: routeUi.textPrimary }]}>표시할 이름</Text>
+                        <TextInput
+                            accessibilityLabel="표시할 이름"
+                            maxLength={120}
+                            selectTextOnFocus
+                            clearButtonMode="while-editing"
+                            editable={!busy}
+                            value={favoriteSheetLabel}
+                            onChangeText={setFavoriteSheetLabel}
+                            returnKeyType="done"
+                            style={[styles.favoriteDisplayNameInput, { borderColor: routeUi.border, color: routeUi.textPrimary }]}
+                        />
                     </View>
 
                     <View style={styles.favoriteSectionHeaderRow}>
@@ -141,8 +198,8 @@ export function RouteSelectFavoriteSaveSheet({
                             }}
                             disabled={favoriteSheetSaving || creatingFavoriteCategory}
                             accessibilityRole="button"
-                            accessibilityLabel="기본 주소 카테고리"
-                            accessibilityHint="이 장소를 다음 경로부터 사용할 기본 주소로 저장합니다"
+                            accessibilityLabel="기본 주소"
+                            accessibilityHint="즐겨찾기에 저장하고 이후 경로 검색에 사용할 기본 출발지로 설정합니다"
                             accessibilityState={{ selected: saveFavoriteAsDefaultOrigin }}
                             style={[
                                 styles.favoriteCategoryChip,
@@ -237,7 +294,7 @@ export function RouteSelectFavoriteSaveSheet({
                                         ]}
                                     />
                                     <Text
-                                        numberOfLines={1}
+                                        numberOfLines={largeText ? undefined : 2}
                                         style={[
                                             styles.favoriteCategoryChipText,
                                             { color: selected ? modeSelectedText : routeUi.textPrimary },
@@ -265,10 +322,40 @@ export function RouteSelectFavoriteSaveSheet({
                             </Text>
                         </Pressable>
                     </View>
+                    {saveFavoriteAsDefaultOrigin && (
+                        <Animated.View entering={defaultAddressNoticeEntry} style={[styles.favoriteDefaultAddressNotice, { backgroundColor: routeUi.surface2 }]}>
+                            <Ionicons name="home-outline" size={18} color={routeUi.accentBlue} />
+                            <Text accessibilityLiveRegion="polite" maxFontSizeMultiplier={2} style={[styles.favoriteDefaultAddressNoticeText, { color: routeUi.textPrimary }]}>
+                                {hasConfiguredDefaultOrigin ? "기존 기본 주소를 이 장소로 바꿔요. " : ""}
+                                {activeTarget === "origin"
+                                    ? "이번 경로와 다음 경로의 출발지에 이 장소를 사용해요."
+                                    : "다음에 경로를 검색할 때 이 장소를 출발지로 사용해요."}
+                            </Text>
+                        </Animated.View>
+                    )}
+
                     {!!favoriteCategoryError && (
-                        <Text style={[styles.favoriteCategoryError, { color: routeUi.accentRed }]}>
-                            {favoriteCategoryError}
-                        </Text>
+                        <View style={[styles.favoriteCategoryRecovery, { backgroundColor: routeUi.surface2 }]}>
+                            <Text accessibilityLiveRegion="polite" maxFontSizeMultiplier={2} style={[styles.favoriteCategoryError, { color: routeUi.textPrimary }]}>
+                                {favoriteCategoryError}
+                            </Text>
+                            <Text maxFontSizeMultiplier={2} style={[styles.favoriteCategoryHelp, { color: routeUi.textSecondary }]}>
+                                다시 불러오거나 미분류를 선택할 수 있어요.
+                            </Text>
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="즐겨찾기 카테고리 다시 불러오기"
+                                disabled={busy || favoriteCategoryLoading}
+                                accessibilityState={{ busy: favoriteCategoryLoading, disabled: busy || favoriteCategoryLoading }}
+                                onPress={() => void loadFavoriteCategories()}
+                                style={styles.favoriteCategoryRetry}
+                            >
+                                <Ionicons name="refresh-outline" size={17} color={routeUi.accentBlue} />
+                                <Text maxFontSizeMultiplier={2} style={[styles.favoriteCategoryError, { color: routeUi.accentBlue }]}>
+                                    {favoriteCategoryLoading ? "불러오는 중" : "다시 불러오기"}
+                                </Text>
+                            </Pressable>
+                        </View>
                     )}
 
                     {showNewCategoryForm && (
@@ -335,16 +422,23 @@ export function RouteSelectFavoriteSaveSheet({
                         </View>
                     )}
 
+                    </ScrollView>
+                    {!!favoriteSaveError && (
+                        <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" maxFontSizeMultiplier={2} style={[styles.favoriteCategoryError, { color: routeUi.textPrimary }]}>
+                            {favoriteSaveError}
+                        </Text>
+                    )}
                     <Pressable
                         onPress={saveFavoriteSheetPlace}
-                        disabled={!favoriteSheetPlace || favoriteSheetSaving || creatingFavoriteCategory}
+                        disabled={disabled}
                         accessibilityRole="button"
-                        accessibilityLabel="즐겨찾기 저장"
+                        accessibilityLabel={saveLabel}
+                        accessibilityState={{ disabled, busy }}
                         style={[
                             styles.favoriteSaveButton,
                             {
                                 backgroundColor: routeUi.accentBlue,
-                                opacity: favoriteSheetSaving || creatingFavoriteCategory ? 0.58 : 1,
+                                opacity: disabled ? 0.58 : 1,
                             },
                         ]}
                     >
@@ -355,13 +449,12 @@ export function RouteSelectFavoriteSaveSheet({
                                 accessibilityLabel="즐겨찾기를 저장하고 있어요"
                             />
                         ) : (
-                            <Text style={[styles.favoriteSaveButtonText, { color: modeSelectedText }]}>
-                                즐겨찾기 저장
+                            <Text maxFontSizeMultiplier={2} style={[styles.favoriteSaveButtonText, { color: modeSelectedText }]}>
+                                {saveLabel}
                             </Text>
                         )}
                     </Pressable>
-                    </ScrollView>
-                </CalendarGlassSurface>
+                </NativeAnimated.View>
             </View>
         </Modal>
     );

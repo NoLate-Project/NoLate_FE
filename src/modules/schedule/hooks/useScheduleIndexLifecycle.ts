@@ -24,7 +24,6 @@ export function useScheduleIndexLifecycle({
     calendarMetadataMountedRef,
     calendarMetadataRetryTimerRef,
     calendarViewMode,
-    dayDisplayPrepareRef,
     dayLayerMounted,
     dayPageNavigationActiveRef,
     detailMonthMotionActiveRef,
@@ -145,14 +144,6 @@ export function useScheduleIndexLifecycle({
     }
   }, [pendingSelectedDay, setPendingSelectedDay, state.selectedDay]);
 
-  /** 일간 화면이 전환 전에 호출할 준비 함수를 등록하거나 해제한다. */
-  const registerDayDisplayPrepare = useCallback(
-    (prepare: ((day: string) => void) | null) => {
-      dayDisplayPrepareRef.current = prepare;
-    },
-    [dayDisplayPrepareRef],
-  );
-
   /** 일간 페이지 스와이프 활성 상태를 ref에 기록해 다른 깊이 전환을 차단한다. */
   const handleDayPageNavigationActiveChange = useCallback(
     (active: boolean) => {
@@ -169,7 +160,6 @@ export function useScheduleIndexLifecycle({
   return {
     handleDayPageNavigationActiveChange,
     overviewYear,
-    registerDayDisplayPrepare,
     setOverviewYear,
     visibleYear,
   };

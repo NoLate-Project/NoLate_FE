@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     BackHandler,
+    Keyboard,
     LayoutChangeEvent,
     Platform,
     TextInput,
     useWindowDimensions,
+    type KeyboardEvent,
 } from "react-native";
-import {
+import Reanimated, {
+    FadeIn,
+    ReduceMotion,
     useAnimatedStyle,
     useSharedValue,
     withSpring,
@@ -119,7 +123,8 @@ export default function QuickScheduleModal({
     morphPresenterRef,
 }: Props) {
     const { colors, mode } = useTheme();
-    const { width, height } = useWindowDimensions();
+    const { width, height, fontScale } = useWindowDimensions();
+    const largeText = fontScale > 1.35;
     const insets = useSafeAreaInsets();
     const {
         previewCategoryChevronRotation,
@@ -133,6 +138,23 @@ export default function QuickScheduleModal({
         writableCategories,
     } = useQuickScheduleCategorySelection({ categories, defaultCategory, visible });
     const [rendered, setRendered] = useState(visible || prewarm);
+    const [keyboardTop, setKeyboardTop] = useState<number>();
+    useEffect(() => {
+        if (Platform.OS !== "ios" || !visible) {
+            setKeyboardTop(undefined);
+            return;
+        }
+        setKeyboardTop(Keyboard.metrics()?.screenY);
+        const update = ({ endCoordinates }: KeyboardEvent) => {
+            setKeyboardTop(endCoordinates.height > 0 && endCoordinates.screenY > 0 ? endCoordinates.screenY : undefined);
+        };
+        const change = Keyboard.addListener("keyboardWillChangeFrame", update);
+        const hide = Keyboard.addListener("keyboardWillHide", () => setKeyboardTop(undefined));
+        return () => {
+            change.remove();
+            hide.remove();
+        };
+    }, [visible]);
     const [text, setText] = useState("");
     const [inputMode, setInputMode] = useState<InputMode>("text");
     const {
@@ -145,11 +167,8 @@ export default function QuickScheduleModal({
         resetPhotoRecognition,
         selectPhotoForRecognition,
         selectedPhoto,
-        setPhotoRecognitionAttempt,
-        setPhotoRecognitionConfidence,
-        setPhotoRecognitionError,
-        setPhotoTranscript,
-        setPhotoTranscriptTruncated,
+        retryPhotoRecognition,
+        editPhotoTranscript,
     } = useQuickSchedulePhotoRecognition();
     const [submitting, setSubmitting] = useState(false);
     const [cardRasterized, setCardRasterized] = useState(false);
@@ -201,7 +220,6 @@ export default function QuickScheduleModal({
         durationMillis: voiceDurationMillis,
     };
     const {
-        analysisError,
         cancelEditField,
         confirmEditField,
         editingAlertMode,
@@ -215,6 +233,7 @@ export default function QuickScheduleModal({
         previewSourceText,
         resetDraftFlow,
         routePlannerHidden,
+        routeDraftChange,
         savePreview,
         setEditingAlertMode,
         setEditingValue,
@@ -264,6 +283,37 @@ export default function QuickScheduleModal({
         if (flowStep !== "preview") setPreviewCategoryPickerOpen(false);
     }, [flowStep, setPreviewCategoryPickerOpen]);
 
+    const [showAnalysisWait, setShowAnalysisWait] = useState(false);
+    const [inputReturning, setInputReturning] = useState(false);
+    const previousInputStep = useRef<"input" | "analysisError">("input");
+    const previousFlowStep = useRef(flowStep);
+    const previewScrollY = useRef(0);
+    const [previewSourceExpanded, setPreviewSourceExpanded] = useState(false);
+    const returningFromField = flowStep === "preview" && previousFlowStep.current === "edit";
+    const destinationChange = routeDraftChange?.kind === "destinationChanged" ? routeDraftChange : undefined;
+    const displayedDestinationChange = useRef(destinationChange);
+    const showNewDestinationNotice = destinationChange !== displayedDestinationChange.current && Boolean(destinationChange);
+    useEffect(() => {
+        previousFlowStep.current = flowStep;
+        if (flowStep === "preview") displayedDestinationChange.current = destinationChange;
+        if (!visible || flowStep === "input" || flowStep === "analyzing") {
+            previewScrollY.current = 0;
+            setPreviewSourceExpanded(false);
+        }
+    }, [destinationChange, flowStep, visible]);
+    useEffect(() => {
+        if (flowStep === "input" || flowStep === "analysisError") previousInputStep.current = flowStep;
+        if (flowStep !== "input") setInputReturning(false);
+        if (!visible || flowStep !== "analyzing") {
+            setShowAnalysisWait(false);
+            return;
+        }
+        const revealTimer = setTimeout(() => setShowAnalysisWait(true), 120);
+        return () => clearTimeout(revealTimer);
+    }, [flowStep, visible]);
+
+    const presentedStep = flowStep === "analyzing" && !showAnalysisWait ? previousInputStep.current : flowStep;
+
     useEffect(() => {
         mountedRef.current = true;
         return () => {
@@ -271,7 +321,7 @@ export default function QuickScheduleModal({
         };
     }, []);
 
-    const cardWidth = Math.min(width - 60, 348);
+    const cardWidth = largeText ? Math.min(width - 32, 400) : Math.min(width - 60, 348);
     const sourceRight = width - sourceRightOffset;
     const openSourceWidth = sourceWidth;
     const openSourceHeight = sourceHeight;
@@ -281,22 +331,30 @@ export default function QuickScheduleModal({
     const closeSourceLeft = sourceRight - closeSourceWidth;
     const sourceTop = insets.top + sourceTopOffset;
     const cardTop = sourceTop;
+    const notificationRouteReady = canUseRouteNotification(previewDraft);
     const baseCardHeight =
-        flowStep === "input"
+        presentedStep === "input"
             ? inputMode === "photo" && !selectedPhoto
                 ? 378
                 : CARD_HEIGHT_BY_MODE[inputMode]
-            : flowStep === "edit" && editingField
-            ? EDIT_CARD_HEIGHT_BY_FIELD[editingField]
-            : FLOW_CARD_HEIGHT_BY_STEP[flowStep];
+            : presentedStep === "edit" && editingField
+            ? editingField === "notification" && !notificationRouteReady
+                ? 344
+                : EDIT_CARD_HEIGHT_BY_FIELD[editingField]
+            : FLOW_CARD_HEIGHT_BY_STEP[presentedStep];
     const targetCardHeight = baseCardHeight + (categoryError && onRetryCategories ? 58 : 0);
-    const cardHeight = Math.min(targetCardHeight, height - cardTop - Math.max(insets.bottom, 16) - 12);
+    const restingCardBottom = height - Math.max(insets.bottom, 16) - 12;
+    const cardBottom = keyboardTop === undefined ? restingCardBottom : Math.min(restingCardBottom, keyboardTop - 8);
+    const availableCardHeight = Math.max(1, cardBottom - cardTop);
+    const keepLargeCard = largeText && (
+        ["input", "analyzing", "analysisError", "preview", "saving", "saved"].includes(presentedStep)
+        || (presentedStep === "edit" && editingField === "notification")
+    );
+    const cardHeight = keepLargeCard ? availableCardHeight : Math.min(targetCardHeight, availableCardHeight);
     const expandedCardHeight = useSharedValue(cardHeight);
     const cardLeft = (width - cardWidth) / 2;
     const openSourceRadius = Math.min(openSourceHeight / 2, ADD_MENU_SOURCE.nativeRadius);
     const closeSourceRadius = Math.min(closeSourceHeight / 2, ADD_MENU_SOURCE.nativeRadius);
-
-    const notificationRouteReady = canUseRouteNotification(previewDraft);
 
     const handleModeLayout = useCallback(
         (key: InputMode) => (event: LayoutChangeEvent) => {
@@ -391,6 +449,7 @@ export default function QuickScheduleModal({
                 return;
             }
 
+            if (nextMode !== inputMode) Keyboard.dismiss();
             invalidatePhotoSource();
             if (nextMode === "voice") {
                 if (inputMode !== "voice") {
@@ -406,6 +465,12 @@ export default function QuickScheduleModal({
         [activatePhotoMode, inputMode, invalidatePhotoSource, stopActiveRecording],
     );
 
+    const cancelAnalysisToInput = useCallback(() => {
+        invalidatePendingAnalysis();
+        setSubmitting(false);
+        setFlowStep("input");
+    }, [invalidatePendingAnalysis, setFlowStep]);
+
     useEffect(() => {
         if (Platform.OS !== "android" || routePlannerHidden || (!visible && !rendered)) {
             return undefined;
@@ -420,9 +485,7 @@ export default function QuickScheduleModal({
                 return true;
             }
             if (flowStep === "analyzing") {
-                invalidatePendingAnalysis();
-                setSubmitting(false);
-                setFlowStep("input");
+                cancelAnalysisToInput();
                 return true;
             }
             if (flowStep === "saving") return true;
@@ -431,9 +494,9 @@ export default function QuickScheduleModal({
         });
         return () => subscription.remove();
     }, [
+        cancelAnalysisToInput,
         cancelEditField,
         flowStep,
-        invalidatePendingAnalysis,
         rendered,
         requestClose,
         routePlannerHidden,
@@ -450,7 +513,7 @@ export default function QuickScheduleModal({
     }, [inputMode, modeIndicatorWidth, modeIndicatorX, modeLayouts]);
 
     useEffect(() => {
-        expandedCardHeight.value = withSpring(cardHeight, CARD_SIZE_SPRING);
+        expandedCardHeight.value = withSpring(cardHeight, { ...CARD_SIZE_SPRING, reduceMotion: ReduceMotion.System });
     }, [cardHeight, expandedCardHeight]);
 
     const {
@@ -497,13 +560,7 @@ export default function QuickScheduleModal({
         photoErrorTextColor,
         photoErrorTitleColor,
         photoNeedsReview,
-        photoRecognitionState,
         photoScanFrameStyle,
-        photoStatusAccessibilityLabel,
-        photoStatusBackground,
-        photoStatusColor,
-        photoStatusIcon,
-        photoStatusText,
         previewChevronColor,
         previewDividerColor,
         previewIconBackground,
@@ -517,14 +574,13 @@ export default function QuickScheduleModal({
     } = buildQuickSchedulePresentation({
         cardWidth,
         editingField,
-        flowStep,
+        flowStep: presentedStep,
         inputMode,
         isDark: mode === "dark",
         isPhotoRecognizing,
         isVoiceFinalizing,
         isVoiceRecording,
         photoRecognitionConfidence,
-        photoRecognitionError,
         photoTranscript,
         selectedPhoto,
         submitting,
@@ -536,19 +592,6 @@ export default function QuickScheduleModal({
         voiceUri,
     });
     const getPreviewValue = getQuickSchedulePreviewValue;
-
-    /** 사용자가 수정한 사진 인식 문장을 반영하고 자동 인식 오류·신뢰도 표시는 초기화한다. */
-    const handlePhotoTranscriptChange = useCallback((value: string) => {
-        setPhotoTranscript(value);
-        setPhotoTranscriptTruncated(false);
-        setPhotoRecognitionConfidence(undefined);
-        setPhotoRecognitionError("");
-    }, [
-        setPhotoRecognitionConfidence,
-        setPhotoRecognitionError,
-        setPhotoTranscript,
-        setPhotoTranscriptTruncated,
-    ]);
 
     /** 현재 입력 모드에 필요한 상태와 명령을 입력 단계 전용 화면에 전달한다. */
     const renderInputStep = () => (
@@ -564,12 +607,13 @@ export default function QuickScheduleModal({
             inputRef={inputRef}
             isPhotoRecognizing={isPhotoRecognizing}
             isVoiceFinalizing={isVoiceFinalizing}
+            keyboardVisible={keyboardTop !== undefined}
             mediaPanelBackground={mediaPanelBackground}
             mode={mode}
             modeIndicatorAnimatedStyle={modeIndicatorAnimatedStyle}
             onPhotoActionSheet={() => void openPhotoActionSheet()}
-            onPhotoRecognitionRetry={() => setPhotoRecognitionAttempt(current => current + 1)}
-            onPhotoTranscriptChange={handlePhotoTranscriptChange}
+            onPhotoRecognitionRetry={retryPhotoRecognition}
+            onPhotoTranscriptChange={editPhotoTranscript}
             onRemovePhoto={() => selectPhotoForRecognition(null)}
             onStartVoiceRecording={() => void startVoiceRecording()}
             onStopVoiceRecording={() => void stopVoiceRecording()}
@@ -581,13 +625,7 @@ export default function QuickScheduleModal({
             photoErrorTitleColor={photoErrorTitleColor}
             photoNeedsReview={photoNeedsReview}
             photoRecognitionError={photoRecognitionError}
-            photoRecognitionState={photoRecognitionState}
             photoScanFrameStyle={photoScanFrameStyle}
-            photoStatusAccessibilityLabel={photoStatusAccessibilityLabel}
-            photoStatusBackground={photoStatusBackground}
-            photoStatusColor={photoStatusColor}
-            photoStatusIcon={photoStatusIcon}
-            photoStatusText={photoStatusText}
             photoTranscript={photoTranscript}
             photoTranscriptTruncated={photoTranscriptTruncated}
             segmentedBackground={segmentedBackground}
@@ -595,6 +633,7 @@ export default function QuickScheduleModal({
             selectedPhoto={selectedPhoto}
             setText={setText}
             submitting={submitting}
+            showSubmitProgress={flowStep !== "analyzing"}
             text={text}
             voiceControlMeta={voiceControlMeta}
             voiceControlTitle={voiceControlTitle}
@@ -608,18 +647,17 @@ export default function QuickScheduleModal({
         />
     );
 
-    /** 분석·저장 단계에 맞는 제목과 설명으로 공통 로딩 화면을 구성한다. */
+    /** 저장 중에도 확인한 일정 이름을 유지한다. */
     const renderLoadingStep = () => {
         const isSaving = flowStep === "saving";
-        const headline = isSaving ? "일정을 저장하고 있어요" : "일정 초안을 만들고 있어요";
-        const caption = isSaving
-            ? "일정과 이동 정보를 정리하고 있어요"
-            : inputMode === "photo"
-            ? "사진 속 날짜와 장소를 확인하고 있어요"
-            : inputMode === "voice"
-            ? "말한 내용에서 일정 정보를 찾고 있어요"
-            : "입력한 내용에서 일정 정보를 찾고 있어요";
-        return <QuickScheduleLoadingStep caption={caption} colors={colors} headline={headline} />;
+        const analysisLabel = "일정을 확인하고 있어요";
+        return (
+            <QuickScheduleLoadingStep
+                colors={colors}
+                label={isSaving ? flowTitle : analysisLabel}
+                description={isSaving ? previewDraft?.title : analysisLabel}
+            />
+        );
     };
 
     /** 분석 오류와 재시도 명령을 오류 단계 전용 화면에 전달한다. */
@@ -627,12 +665,14 @@ export default function QuickScheduleModal({
         <QuickScheduleErrorStep
             cardBorderColor={cardBorderColor}
             colors={colors}
-            errorMessage={analysisError}
             inputBackground={inputBackground}
-            onEdit={() => setFlowStep("input")}
+            onEdit={() => {
+                setInputReturning(true);
+                setFlowStep("input");
+            }}
             onRetry={submit}
+            retainedInput={previewSourceText}
             submitting={submitting}
-            warningBackground={warningBackground}
             warningTextColor={warningTextColor}
         />
     );
@@ -644,18 +684,25 @@ export default function QuickScheduleModal({
             <QuickSchedulePreviewStep
                 colors={colors}
                 getPreviewValue={getPreviewValue}
+                initialScrollY={previewScrollY.current}
                 mode={mode}
                 onOpenEditField={openEditField}
+                onOpenRoutePlanner={openRoutePlannerFromPreview}
                 onSave={() => void savePreview()}
+                onScrollPositionChange={y => { previewScrollY.current = y; }}
+                onToggleSource={() => setPreviewSourceExpanded(expanded => !expanded)}
                 previewCategoryChevronRotation={previewCategoryChevronRotation}
                 previewCategoryPickerMarginBottom={previewCategoryPickerMarginBottom}
                 previewCategoryPickerOpen={previewCategoryPickerOpen}
                 previewCategoryPickerPaddingTop={previewCategoryPickerPaddingTop}
-                previewChevronColor={previewChevronColor}
                 previewDividerColor={previewDividerColor}
                 previewDraft={previewDraft}
+                destinationChanged={destinationChange}
+                animateDestinationNotice={showNewDestinationNotice}
+                routeDraftChange={routeDraftChange?.kind === "destinationChanged" ? undefined : routeDraftChange}
                 previewIconBackground={previewIconBackground}
                 previewLabelColor={previewLabelColor}
+                previewSourceExpanded={previewSourceExpanded}
                 previewSourceText={previewSourceText}
                 selectedCategory={selectedCategory}
                 selectedCategoryId={selectedCategoryId}
@@ -683,6 +730,7 @@ export default function QuickScheduleModal({
                 inputBackground={inputBackground}
                 mode={mode}
                 notificationRouteReady={notificationRouteReady}
+                routeDraftChange={routeDraftChange?.kind === "destinationChanged" ? undefined : routeDraftChange}
                 onCancel={cancelEditField}
                 onConfirm={confirmEditField}
                 onOpenRoutePlanner={openRoutePlannerFromPreview}
@@ -693,7 +741,6 @@ export default function QuickScheduleModal({
                 setEditingAlertMode={setEditingAlertMode}
                 setEditingValue={setEditingValue}
                 setTimeEditMode={setTimeEditMode}
-                successColor={successColor}
                 timeEditMode={timeEditMode}
                 warningBackground={warningBackground}
                 warningTextColor={warningTextColor}
@@ -708,26 +755,38 @@ export default function QuickScheduleModal({
             dateLabel={previewDraft ? formatKoreanDate(previewDraft.date) : undefined}
             onClose={requestClose}
             successColor={successColor}
+            timeLabel={previewDraft ? getPreviewValue(previewDraft, "time") : undefined}
+            title={previewDraft?.title}
         />
+    );
+
+    const revealReviewBody = (key: string, body: React.ReactNode, animate = true) => (
+        <Reanimated.View
+            key={key}
+            entering={animate ? FadeIn.duration(160).reduceMotion(ReduceMotion.System) : undefined}
+            style={{ flex: 1 }}
+        >
+            {body}
+        </Reanimated.View>
     );
 
     /** 현재 흐름 단계에 해당하는 전용 화면만 선택하여 렌더링한다. */
     const renderCurrentStep = () => {
-        switch (flowStep) {
+        switch (presentedStep) {
             case "analyzing":
             case "saving":
                 return renderLoadingStep();
             case "analysisError":
-                return renderErrorStep();
+                return revealReviewBody("analysis-error", renderErrorStep());
             case "preview":
-                return renderPreviewStep();
+                return revealReviewBody("preview", renderPreviewStep(), showAnalysisWait || (returningFromField && !showNewDestinationNotice));
             case "edit":
                 return renderEditStep();
             case "saved":
                 return renderSavedStep();
             case "input":
             default:
-                return renderInputStep();
+                return inputReturning || largeText ? revealReviewBody("input-return", renderInputStep()) : renderInputStep();
         }
     };
 
@@ -756,6 +815,7 @@ export default function QuickScheduleModal({
             contentRevealCurtainAnimatedStyle={contentRevealCurtainAnimatedStyle}
             currentStep={contentMounted ? renderCurrentStep() : null}
             flowStep={flowStep}
+            presentedStep={presentedStep}
             flowTitle={flowTitle}
             inputModeDescription={inputModeDescription}
             isPrewarmOnly={isPrewarmOnly}

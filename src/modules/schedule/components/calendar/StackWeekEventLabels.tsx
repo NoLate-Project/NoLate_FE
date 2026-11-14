@@ -113,6 +113,7 @@ export default function StackWeekEventLabels({ days, layout, eventTop }: Props) 
                         ) : null}
                         <Text
                             testID="stack-week-event-title"
+                            allowFontScaling={false}
                             numberOfLines={1}
                             ellipsizeMode="tail"
                             style={[styles.title, { color: colors.textPrimary }]}

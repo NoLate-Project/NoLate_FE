@@ -1,4 +1,6 @@
 """Pure launcher tests, not simulator execution evidence."""
+import copy
+import json
 import subprocess
 import tempfile
 import unittest
@@ -7,7 +9,69 @@ from unittest.mock import patch
 from eta_pinned_app import (
     DEVICE, require_private_development_client, reset_private_navigation,
     restore_private_endpoint, open_private_test_endpoint,
+    open_private_client_with_xcuitest, verify_lifecycle_summary,
 )
+
+
+class PinnedPublicLifecycleTest(unittest.TestCase):
+    def summary(self):
+        return {'result': 'Passed', 'passedTests': 1, 'totalTestCount': 1,
+                'failedTests': 0, 'skippedTests': 0,
+                'devicesAndConfigurations': [{'device': {'deviceId': DEVICE}}]}
+
+    def test_summary_rejects_skips_missing_devices_or_another_device(self):
+        verify_lifecycle_summary(self.summary())
+        for change in ('skip', 'wrong-device', 'missing-device', 'zero-tests'):
+            value = copy.deepcopy(self.summary())
+            if change == 'skip':
+                value['skippedTests'] = 1
+            elif change == 'wrong-device':
+                value['devicesAndConfigurations'][0]['device']['deviceId'] = 'another-device'
+            elif change == 'missing-device':
+                value['devicesAndConfigurations'] = []
+            else:
+                value['totalTestCount'] = value['passedTests'] = 0
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                verify_lifecycle_summary(value)
+
+    @patch('eta_pinned_app.subprocess.run')
+    def test_wrong_device_is_rejected_before_creating_any_output(self, run):
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / 'no-operation'
+            with self.assertRaises(ValueError):
+                open_private_client_with_xcuitest('another-device', output)
+            self.assertFalse(output.exists())
+        run.assert_not_called()
+
+    @patch('eta_pinned_app.subprocess.check_output')
+    @patch('eta_pinned_app.subprocess.run')
+    def test_public_ui_transport_uses_only_the_pinned_method_and_never_claims_eta(self, run, check):
+        def write_marker(command, **kwargs):
+            kwargs['stdout'].write(b'ETA_PINNED_PRIVATE_LIFECYCLE_URL_DISPATCHED\n')
+            return subprocess.CompletedProcess(command, 0)
+        run.side_effect = write_marker
+        check.return_value = json.dumps(self.summary()).encode()
+        with tempfile.TemporaryDirectory() as root:
+            result = open_private_client_with_xcuitest(DEVICE, Path(root) / 'new-run')
+        command = run.call_args.args[0]
+        self.assertIn('platform=iOS Simulator,id=' + DEVICE, command)
+        self.assertIn('-only-testing:NoLateE2ETests/NoLatePinnedDeviceControlsTests/testOpenPrivateDevelopmentClient', command)
+        self.assertEqual(run.call_args.kwargs['env']['TEST_RUNNER_E2E_PINNED_PRIVATE_LIFECYCLE'], '1')
+        self.assertEqual(result['result'], 'PASSED')
+        self.assertFalse(result['etaValidated'])
+        self.assertFalse(result['appDataDeleted'])
+        self.assertFalse(result['otherDevicesTouched'])
+        run.assert_called_once()
+
+    @patch('eta_pinned_app.subprocess.check_output')
+    @patch('eta_pinned_app.subprocess.run')
+    def test_failed_lifecycle_is_not_retried_or_replaced_with_a_simctl_reset(self, run, check):
+        run.side_effect = subprocess.CalledProcessError(65, 'owned-xcuitest')
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaises(subprocess.CalledProcessError):
+                open_private_client_with_xcuitest(DEVICE, Path(root) / 'failed-run')
+        run.assert_called_once()
+        check.assert_not_called()
 
 
 class PinnedDevelopmentClientTest(unittest.TestCase):

@@ -28,8 +28,7 @@ export type OnboardingStep =
   | 'enrich'
   | 'complete';
 
-export const STEP_MOTION_DURATION_MS = 260;
-export const FOOTER_MOTION_DURATION_MS = 220;
+export const STEP_MOTION_DURATION_MS = 220;
 
 export type CalendarProviderId = 'device' | 'google';
 export type CalendarConsentId =

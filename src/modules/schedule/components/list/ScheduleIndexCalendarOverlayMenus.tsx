@@ -111,6 +111,8 @@ type Props = { controller: ScheduleIndexController };
 /** 검색 결과, 고정 월 헤더와 폴백 보기·추가 메뉴를 렌더링합니다. */
 export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
   const {
+    isFocused,
+    reduceMotionEnabled,
     insets,
     mode,
     colors,
@@ -122,6 +124,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
     searchQuery,
     searchResults,
     searchLoading,
+    searchAwaitingCurrentQuery,
     searchError,
     setSearchRetryKey,
     todayFocusTranslateY,
@@ -206,16 +209,19 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
               top: insets.top + 74,
               right: searchHeaderRightInset,
               width: searchHeaderTargetWidth,
-              opacity: searchFieldContentOpacity,
-              transform: [{ translateY: searchFieldContentTranslateY }],
+              opacity: usesLiquidViewModeControl ? 1 : searchFieldContentOpacity,
+              transform: [{ translateY: usesLiquidViewModeControl ? 0 : searchFieldContentTranslateY }],
             },
           ]}
         >
           <CalendarSearchResults
             searchResults={searchResults}
-            searchLoading={searchLoading}
+            searchLoading={searchAwaitingCurrentQuery || searchLoading}
             searchError={searchError}
             searchKeywordLength={searchKeywordLength}
+            searchQuery={searchQuery}
+            isFocused={isFocused}
+            reduceMotionEnabled={reduceMotionEnabled}
             onRetry={() => setSearchRetryKey(value => value + 1)}
             onOpenSchedule={openScheduleFromSearch}
           />
@@ -229,7 +235,9 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
             stickyCalendarHeaderPosition,
             {
               height: reservedStickyCalendarHeaderHeight,
-              opacity: stickyCalendarHeaderTodayOpacity,
+              opacity: controller.savedAgendaTarget?.stackPending
+                ? 0
+                : stickyCalendarHeaderTodayOpacity,
               transform: [
                 { translateX: monthChromeTranslateX },
                 { translateY: todayFocusTranslateY },
@@ -263,7 +271,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
           />
           {showsStickyMonthTitle && (
             <View style={styles.stickyMonthHeader}>
-              <Text style={[styles.stickyMonthTitle, stickyMonthColorStyle]}>
+              <Text maxFontSizeMultiplier={1.15} style={[styles.stickyMonthTitle, stickyMonthColorStyle]}>
                 {stickyMonthTitle}
               </Text>
             </View>
@@ -280,6 +288,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
             {stickyWeekdayItems.map((item, index) => (
               <Text
                 key={`${item.label}-${index}`}
+                maxFontSizeMultiplier={1.25}
                 style={[
                   styles.stickyWeekdayText,
                   {
@@ -533,7 +542,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
               />
               <ToolbarDropdownAction
                 icon="calendar"
-                title="공유 캘린더"
+                title="공유 캘린더 관리"
                 onPress={openSharedCalendarManager}
                 colors={colors}
               />

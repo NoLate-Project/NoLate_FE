@@ -1,17 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-    NOLATE_ALARM_SOUNDS,
-    type NoLateAlarmSoundId,
-} from "../../../notification/customAlarmSounds";
+import { NOLATE_ALARM_SOUNDS, type NoLateAlarmSoundId } from "../../../notification/customAlarmSounds";
+import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotion";
+import { routeColorInk } from "../../routeColorContrast";
 
 type Props = {
     visible: boolean;
     selectedSoundId: NoLateAlarmSoundId;
     previewingSoundId: NoLateAlarmSoundId | null;
-    busy: boolean;
+    applying: boolean;
+    previewLoading: boolean;
+    error: string | null;
     accentColor: string;
     backgroundColor: string;
     surfaceColor: string;
@@ -19,26 +21,26 @@ type Props = {
     textPrimary: string;
     textSecondary: string;
     onSelect: (soundId: NoLateAlarmSoundId) => void;
+    onPreview: (soundId: NoLateAlarmSoundId) => void;
+    onApply: () => void;
     onClose: () => void;
 };
 
 export default function AlarmSoundPickerSheet({
-    visible,
-    selectedSoundId,
-    previewingSoundId,
-    busy,
-    accentColor,
-    backgroundColor,
-    surfaceColor,
-    borderColor,
-    textPrimary,
-    textSecondary,
-    onSelect,
-    onClose,
+    visible, selectedSoundId, previewingSoundId, applying, previewLoading, error,
+    accentColor, backgroundColor, surfaceColor, borderColor, textPrimary, textSecondary,
+    onSelect, onPreview, onApply, onClose,
 }: Props) {
+    const reduceMotion = useSystemReduceMotion();
+    const insets = useSafeAreaInsets();
+    const playbackDisabled = applying || previewLoading;
+    const selectionBackground = `${accentColor}14`;
+    const applyBackground = routeColorInk(backgroundColor) === "#000000" ? "#1E5DC7" : "#ACCCFF";
+    const applyInk = routeColorInk(applyBackground);
+
     return (
         <Modal
-            animationType="slide"
+            animationType={reduceMotion ? "none" : "slide"}
             onRequestClose={onClose}
             presentationStyle="overFullScreen"
             statusBarTranslucent
@@ -47,99 +49,111 @@ export default function AlarmSoundPickerSheet({
         >
             <View style={styles.overlay}>
                 <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="알람음 선택 닫기"
+                    accessible={false}
+                    importantForAccessibility="no"
+                    disabled={applying}
                     onPress={onClose}
                     style={StyleSheet.absoluteFill}
                 />
                 <View
                     testID="alarm-sound-picker-sheet"
                     accessibilityViewIsModal
-                    style={[styles.sheet, { backgroundColor }]}
+                    style={[styles.sheet, { backgroundColor, paddingBottom: Math.max(12, insets.bottom) }]}
                 >
+                    <View style={[styles.handle, { backgroundColor: textSecondary }]} />
                     <View style={styles.header}>
-                        <Text accessibilityRole="header" style={[styles.title, { color: textPrimary }]}>
-                            알람음
-                        </Text>
+                        <View style={styles.heading}>
+                            <Text accessibilityRole="header" style={[styles.title, { color: textPrimary }]}>
+                                기본 알람음
+                            </Text>
+                            <Text style={[styles.hint, { color: textSecondary }]}>
+                                모든 출발 알람에 적용돼요.
+                            </Text>
+                        </View>
                         <Pressable
                             accessibilityRole="button"
-                            accessibilityLabel="알람음 선택 완료"
-                            hitSlop={8}
+                            accessibilityLabel="알람음 선택 닫기"
+                            accessibilityState={{ disabled: applying }}
+                            disabled={applying}
                             onPress={onClose}
-                            style={({ pressed }) => [styles.doneButton, pressed && styles.pressed]}
+                            style={styles.closeButton}
                         >
-                            <Text style={[styles.doneText, { color: accentColor }]}>완료</Text>
+                            <Ionicons accessible={false} name="close-outline" size={22} color={textSecondary} />
                         </Pressable>
                     </View>
-
                     <ScrollView
-                        accessibilityRole="radiogroup"
                         accessibilityLabel="알람음 목록"
-                        contentContainerStyle={styles.soundListContent}
                         nestedScrollEnabled
-                        showsVerticalScrollIndicator
-                        style={[styles.soundList, { borderColor, backgroundColor: surfaceColor }]}
+                        style={styles.soundList}
                     >
                         {NOLATE_ALARM_SOUNDS.map((sound, index) => {
                             const selected = sound.id === selectedSoundId;
                             const previewing = sound.id === previewingSoundId;
-                            let accessibilityHint = "선택하고 미리 듣습니다";
-                            if (selected) accessibilityHint = "미리 듣습니다";
-                            if (previewing) accessibilityHint = "미리 듣기를 중지합니다";
-                            let trailingIcon: React.ComponentProps<typeof Ionicons>["name"] =
-                                "play-circle-outline";
-                            if (selected) trailingIcon = "checkmark-circle";
-                            if (previewing) trailingIcon = "stop-circle";
                             return (
-                                <Pressable
+                                <View
                                     key={sound.id}
-                                    accessibilityRole="radio"
-                                    accessibilityLabel={`${sound.label} 알람음`}
-                                    accessibilityHint={accessibilityHint}
-                                    accessibilityState={{ checked: selected, disabled: busy }}
-                                    disabled={busy}
-                                    onPress={() => onSelect(sound.id)}
-                                    style={({ pressed }) => [
+                                    style={[
                                         styles.soundRow,
-                                        index > 0 && {
-                                            borderTopColor: borderColor,
-                                            borderTopWidth: StyleSheet.hairlineWidth,
-                                        },
-                                        pressed && !busy && styles.pressed,
-                                        busy && styles.disabled,
+                                        index > 0 && { borderTopColor: borderColor, borderTopWidth: StyleSheet.hairlineWidth },
+                                        selected && { backgroundColor: selectionBackground },
                                     ]}
                                 >
-                                    <View
-                                        style={[
-                                            styles.soundIcon,
-                                            { backgroundColor: selected ? accentColor : backgroundColor },
-                                        ]}
+                                    <Pressable
+                                        accessibilityRole="radio"
+                                        accessibilityLabel={`${sound.label} 알람음`}
+                                        accessibilityState={{ checked: selected, disabled: applying }}
+                                        disabled={applying}
+                                        onPress={() => onSelect(sound.id)}
+                                        style={({ pressed }) => [styles.selectButton, pressed && styles.pressed]}
                                     >
                                         <Ionicons
                                             accessible={false}
-                                            name={sound.id === "BELL" ? "notifications-outline" : "musical-notes-outline"}
-                                            size={19}
-                                            color={selected ? "#FFFFFF" : textSecondary}
+                                            name={selected ? "radio-button-on-outline" : "radio-button-off-outline"}
+                                            size={20}
+                                            color={selected ? accentColor : textSecondary}
                                         />
-                                    </View>
-                                    <Text style={[styles.soundName, { color: textPrimary }]}>{sound.label}</Text>
-                                    {busy && selected ? (
-                                        <ActivityIndicator color={accentColor} size="small" />
-                                    ) : (
-                                        <Ionicons
-                                            accessible={false}
-                                            name={trailingIcon}
-                                            size={24}
-                                            color={selected || previewing ? accentColor : textSecondary}
-                                        />
-                                    )}
-                                </Pressable>
+                                        <Text style={[styles.soundName, { color: textPrimary }]}>{sound.label}</Text>
+                                    </Pressable>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`${sound.label} ${previewing ? "미리 듣기 중지" : "미리 듣기"}`}
+                                        accessibilityState={{ disabled: playbackDisabled }}
+                                        disabled={playbackDisabled}
+                                        onPress={() => onPreview(sound.id)}
+                                        style={({ pressed }) => [styles.previewButton, pressed && styles.pressed]}
+                                    >
+                                        <View style={[styles.previewIcon, { backgroundColor: previewing ? selectionBackground : surfaceColor }]}>
+                                            <Ionicons
+                                                accessible={false}
+                                                name={previewing ? "stop-outline" : "play-outline"}
+                                                size={17}
+                                                color={accentColor}
+                                            />
+                                        </View>
+                                    </Pressable>
+                                </View>
                             );
                         })}
                     </ScrollView>
-                    <Text style={[styles.hint, { color: textSecondary }]}>
-                        소리 모드에서는 진동과 함께 울리고, 무음일 때는 진동만 울려요.
-                    </Text>
+                    {error ? (
+                        <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: textPrimary }]}>
+                            {error}
+                        </Text>
+                    ) : (
+                        <Text style={[styles.hint, { color: textSecondary }]}>무음 모드에서는 진동만 울려요.</Text>
+                    )}
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="알람음 적용"
+                        accessibilityState={{ busy: applying, disabled: applying }}
+                        disabled={applying}
+                        onPress={onApply}
+                        style={({ pressed }) => [styles.applyButton, { backgroundColor: applyBackground }, pressed && styles.pressed]}
+                    >
+                        {applying ? <ActivityIndicator color={applyInk} /> : (
+                            <Text style={[styles.applyLabel, { color: applyInk }]}>적용</Text>
+                        )}
+                    </Pressable>
                 </View>
             </View>
         </Modal>
@@ -148,80 +162,56 @@ export default function AlarmSoundPickerSheet({
 
 const styles = StyleSheet.create({
     overlay: {
-        flex: 1,
-        justifyContent: "flex-end",
-        backgroundColor: "rgba(0,0,0,0.42)",
+        flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.42)",
     },
     sheet: {
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        paddingHorizontal: 20,
-        paddingTop: 12,
-        paddingBottom: 28,
+        maxHeight: "86%", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+        paddingHorizontal: 18, paddingTop: 9, gap: 8,
+    },
+    handle: {
+        width: 30, height: 4, borderRadius: 2, opacity: 0.6, alignSelf: "center",
     },
     header: {
-        minHeight: 52,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
+        flexDirection: "row", alignItems: "flex-start", gap: 8,
+    },
+    heading: {
+        flex: 1,
     },
     title: {
-        fontSize: 20,
-        lineHeight: 26,
-        fontWeight: "800",
-    },
-    doneButton: {
-        minWidth: 44,
-        minHeight: 44,
-        alignItems: "flex-end",
-        justifyContent: "center",
-    },
-    doneText: {
-        fontSize: 15,
-        lineHeight: 20,
-        fontWeight: "700",
-    },
-    soundList: {
-        marginTop: 8,
-        maxHeight: 528,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
-    },
-    soundListContent: {
-        overflow: "hidden",
-        borderRadius: 16,
-    },
-    soundRow: {
-        minHeight: 66,
-        paddingHorizontal: 14,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-    },
-    soundIcon: {
-        width: 38,
-        height: 38,
-        borderRadius: 12,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    soundName: {
-        flex: 1,
-        fontSize: 15,
-        lineHeight: 21,
-        fontWeight: "700",
+        fontSize: 21, fontWeight: "700",
     },
     hint: {
-        marginTop: 10,
-        paddingHorizontal: 4,
-        fontSize: 12,
-        lineHeight: 17,
-        fontWeight: "500",
+        fontSize: 13, lineHeight: 19,
+    },
+    closeButton: {
+        width: 44, height: 44, alignItems: "center", justifyContent: "center",
+    },
+    soundList: {
+        flexShrink: 1, borderRadius: 12,
+    },
+    soundRow: {
+        minHeight: 50, flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 4,
+    },
+    selectButton: {
+        flex: 1, flexDirection: "row", alignItems: "center", alignSelf: "stretch",
+        paddingHorizontal: 10, paddingVertical: 8, gap: 10,
+    },
+    soundName: {
+        flex: 1, fontSize: 15, fontWeight: "600",
+    },
+    previewButton: {
+        width: 44, height: 44, alignItems: "center", justifyContent: "center",
+    },
+    previewIcon: {
+        width: 34, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center",
+    },
+    applyButton: {
+        minHeight: 46, paddingVertical: 8, borderRadius: 12, alignItems: "center", justifyContent: "center",
+    },
+    applyLabel: {
+        fontSize: 16, fontWeight: "700",
     },
     pressed: {
-        opacity: 0.68,
-    },
-    disabled: {
-        opacity: 0.5,
+        opacity: 0.7,
     },
 });

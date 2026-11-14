@@ -173,7 +173,8 @@ export async function getFavoriteDeparturePlace(): Promise<Place | null> {
 
 async function persistFavoriteDeparturePlace(
     place: Place,
-    favoritePlaceId?: string
+    favoritePlaceId?: string,
+    cacheBeforeSave = true,
 ): Promise<Place | null> {
     const normalized = normalizePlace(place);
     if (!normalized) {
@@ -181,19 +182,27 @@ async function persistFavoriteDeparturePlace(
     }
 
     const current = await getFavoriteDeparturePlacesLocal();
-    await cacheDefaultOrigin(normalized, current);
+    if (cacheBeforeSave) await cacheDefaultOrigin(normalized, current);
 
     // 로컬 캐시는 즉시 갱신하되 호출자에게는 원격 저장 실패를 전달한다. 큐레이션은
     // 현재 세션에서 계속 진행할 수 있고, UI는 계정 동기화 실패를 별도로 안내할 수 있다.
     const saved = favoritePlaceId
         ? await setFavoritePlaceAsDefaultOriginToApi(favoritePlaceId)
         : await saveDefaultOriginToApi(normalized);
-    await cacheDefaultOrigin(saved, current);
+    if (cacheBeforeSave) {
+        await cacheDefaultOrigin(saved, current);
+    } else {
+        // This screen confirms the account setting. A local write failure cannot undo it.
+        await cacheDefaultOrigin(saved, current).catch(() => undefined);
+    }
     return saved;
 }
 
-export async function saveFavoriteDeparturePlace(place: Place): Promise<Place | null> {
-    return persistFavoriteDeparturePlace(place);
+export async function saveFavoriteDeparturePlace(
+    place: Place,
+    options?: { cacheBeforeSave?: boolean }
+): Promise<Place | null> {
+    return persistFavoriteDeparturePlace(place, undefined, options?.cacheBeforeSave);
 }
 
 /** 기존 즐겨찾기의 카테고리와 정렬을 보존하면서 기본주소로 전환한다. */

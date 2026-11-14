@@ -1,5 +1,6 @@
 import React, { ReactNode } from "react";
 import {
+    ActivityIndicator,
     Image,
     KeyboardAvoidingView,
     Platform,
@@ -21,12 +22,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../theme/ThemeContext";
 import type { AppColors } from "../../theme/ThemeContext";
-import BrandedLoader from "../../../ui/BrandedLoader";
+import Animated, { Keyframe, ReduceMotion } from "react-native-reanimated";
+
+import { useSystemReduceMotion } from "../../performance/useSystemReduceMotion";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 const APP_LOGO = require("../../../../assets/icon.png");
-const APP_LOGO_GLOW = require("../../../../assets/auth-logo-glow.png");
+
 
 type AuthScreenProps = {
     title?: string;
@@ -35,6 +38,8 @@ type AuthScreenProps = {
     footer?: ReactNode;
     onBack?: () => void;
     backDisabled?: boolean;
+    backLabel?: string;
+    signupStep?: 1 | 2;
     density?: AuthDensity;
 };
 
@@ -43,6 +48,8 @@ type AuthInputProps = TextInputProps & {
     icon: IconName;
     containerStyle?: StyleProp<ViewStyle>;
     inputStyle?: StyleProp<TextStyle>;
+    inputRef?: React.Ref<TextInput>;
+    errorMessage?: string;
 };
 
 type AuthPrimaryButtonProps = {
@@ -55,6 +62,10 @@ type AuthPrimaryButtonProps = {
 type AuthDensity = "regular" | "compact";
 
 const AuthDensityContext = React.createContext<AuthDensity>("regular");
+const authStageIn = new Keyframe({
+    0: { opacity: 0, transform: [{ translateX: 10 }] },
+    100: { opacity: 1, transform: [{ translateX: 0 }] },
+}).duration(220).reduceMotion(ReduceMotion.System);
 
 export function AuthScreen({
     title,
@@ -63,6 +74,8 @@ export function AuthScreen({
     footer,
     onBack,
     backDisabled = false,
+    backLabel,
+    signupStep,
     density = "regular",
 }: AuthScreenProps) {
     const insets = useSafeAreaInsets();
@@ -93,41 +106,58 @@ export function AuthScreen({
                     ]}
                 >
                     {onBack ? (
-                        <View style={styles.topBar}>
+                        <View style={[styles.topBar, backLabel && styles.labeledTopBar]}>
                             <Pressable
                                 accessibilityRole="button"
                                 onPress={onBack}
-                                accessibilityLabel="이전 화면으로 돌아가기"
+                                accessibilityLabel={backLabel ?? "이전 화면으로 돌아가기"}
                                 accessibilityState={{ disabled: backDisabled }}
                                 disabled={backDisabled}
                                 style={({ pressed }) => [
-                                    styles.backButton,
+                                    backLabel ? styles.labeledBackButton : styles.backButton,
                                     (pressed || backDisabled) && styles.pressed,
                                 ]}
                             >
-                                <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+                                <Ionicons name="chevron-back-outline" size={20} color={colors.textPrimary} />
+                                {backLabel ? <Text style={styles.backLabel}>{backLabel}</Text> : null}
                             </Pressable>
                         </View>
                     ) : null}
 
-                    <View style={styles.hero}>
-                        <View style={styles.heroBrand}>
-                            <View style={styles.heroLogoWrap}>
-                                <Image source={APP_LOGO_GLOW} resizeMode="contain" style={styles.heroLogoAura} />
-                                <Image source={APP_LOGO_GLOW} resizeMode="contain" style={styles.heroLogoAuraCore} />
-                                <Image source={APP_LOGO} resizeMode="cover" style={styles.heroLogo} />
-                            </View>
-                            <Text style={styles.heroBrandText}>NoLate</Text>
-                        </View>
-                        {title ? <Text style={styles.title}>{title}</Text> : null}
-                        <Text style={styles.subtitle}>{subtitle}</Text>
-                    </View>
-
-                    <View
-                        style={styles.formPanel}
+                    <Animated.View
+                        key={signupStep ?? "auth"}
+                        entering={authStageIn}
+                        style={styles.body}
                     >
-                        {children}
-                    </View>
+                        {signupStep ? (
+                            <View style={styles.signupHeader}>
+                                <View accessible accessibilityLabel={`가입 ${signupStep}/2단계, ${signupStep === 1 ? "계정 정보" : "필수 약관"}`} style={styles.signupProgress}>
+                                    <Text style={styles.signupProgressText}>가입 {signupStep}/2 · {signupStep === 1 ? "계정 정보" : "필수 약관"}</Text>
+                                    <View style={styles.signupProgressTrack}>
+                                        <View style={[styles.signupProgressSegment, styles.signupProgressActive]} />
+                                        <View style={[styles.signupProgressSegment, signupStep === 2 && styles.signupProgressActive]} />
+                                    </View>
+                                </View>
+                                {title ? <Text accessibilityRole="header" style={styles.signupTitle}>{title}</Text> : null}
+                                <Text style={styles.signupSubtitle}>{subtitle}</Text>
+                            </View>
+                        ) : (
+                            <View style={styles.hero}>
+                                <View style={styles.heroBrand}>
+                                    <View style={styles.heroLogoWrap}>
+                                        <Image source={APP_LOGO} resizeMode="cover" style={styles.heroLogo} />
+                                    </View>
+                                    <Text style={styles.heroBrandText}>NoLate</Text>
+                                </View>
+                                {title ? <Text accessibilityRole="header" style={styles.title}>{title}</Text> : null}
+                                <Text style={styles.subtitle}>{subtitle}</Text>
+                            </View>
+                        )}
+
+                        <View style={styles.formPanel}>
+                            {children}
+                        </View>
+                    </Animated.View>
 
                     {footer}
                 </ScrollView>
@@ -141,21 +171,29 @@ export function AuthInput({
     icon,
     containerStyle,
     inputStyle,
+    inputRef,
+    errorMessage,
     placeholderTextColor,
     accessibilityLabel,
     secureTextEntry,
+    onFocus,
+    onBlur,
     ...inputProps
 }: AuthInputProps) {
     const { colors, mode } = useTheme();
     const density = React.useContext(AuthDensityContext);
     const styles = createStyles(colors, mode, density);
     const [passwordVisible, setPasswordVisible] = React.useState(false);
+    const [focused, setFocused] = React.useState(false);
     const isPasswordField = secureTextEntry === true;
+    const errorColor = mode === "dark" ? "#FF9C96" : "#B42318";
 
     return (
         <View
             style={[
                 styles.field,
+                focused && { borderColor: colors.textSecondary, backgroundColor: colors.surface },
+                errorMessage && { borderColor: errorColor },
                 containerStyle,
             ]}
         >
@@ -167,9 +205,12 @@ export function AuthInput({
                 <Ionicons name={icon} size={19} color={colors.textSecondary} />
             </View>
             <View style={styles.fieldBody}>
-                <Text style={styles.fieldLabel}>{label}</Text>
+                <Text style={[styles.fieldLabel, focused && { color: colors.textPrimary }]}>{label}</Text>
                 <TextInput
                     {...inputProps}
+                    ref={inputRef}
+                    onFocus={(event) => { setFocused(true); onFocus?.(event); }}
+                    onBlur={(event) => { setFocused(false); onBlur?.(event); }}
                     accessibilityLabel={accessibilityLabel ?? label}
                     placeholderTextColor={
                         placeholderTextColor ?? colors.inputPlaceholder
@@ -177,6 +218,11 @@ export function AuthInput({
                     secureTextEntry={isPasswordField && !passwordVisible}
                     style={[styles.fieldInput, { color: colors.textPrimary }, inputStyle]}
                 />
+                {errorMessage && (
+                    <Text accessibilityRole="alert" style={{ color: errorColor, fontSize: 13, marginTop: 4 }}>
+                        {errorMessage}
+                    </Text>
+                )}
             </View>
             {isPasswordField ? (
                 <Pressable
@@ -205,6 +251,7 @@ export function AuthPrimaryButton({
     onPress,
 }: AuthPrimaryButtonProps) {
     const { colors, mode } = useTheme();
+    const reduceMotion = useSystemReduceMotion();
     const density = React.useContext(AuthDensityContext);
     const styles = createStyles(colors, mode, density);
 
@@ -220,22 +267,18 @@ export function AuthPrimaryButton({
                 {
                     backgroundColor: colors.selectedDayBg,
                     opacity: disabled || loading ? 0.58 : pressed ? 0.82 : 1,
-                    transform: [{ scale: pressed && !disabled && !loading ? 0.99 : 1 }],
+                    transform: [{ scale: pressed && !disabled && !loading && !reduceMotion ? 0.99 : 1 }],
                 },
             ]}
         >
             <Text style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
                 {label}
             </Text>
-            {loading ? (
-                <BrandedLoader
-                    size="button"
-                    variant="auth"
-                    accessibilityLabel={label}
-                />
-            ) : (
-                <Ionicons name="arrow-forward" size={18} color={colors.selectedDayText} />
-            )}
+            <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.primaryAccessory}>
+                {loading
+                    ? reduceMotion ? null : <ActivityIndicator size="small" color={colors.selectedDayText} />
+                    : <Ionicons name="arrow-forward-outline" size={18} color={colors.selectedDayText} />}
+            </View>
         </Pressable>
     );
 }
@@ -259,6 +302,30 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             alignItems: "center",
             justifyContent: "center",
         },
+        body: {
+            flexGrow: 1,
+        },
+        labeledTopBar: { justifyContent: "flex-start", minHeight: 44 },
+        labeledBackButton: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            minHeight: 44,
+        },
+        backLabel: { color: isDark ? "#9BBEFF" : "#205CC4", fontSize: 14, fontWeight: "600" },
+        signupHeader: {
+            paddingTop: 12,
+            paddingBottom: 20,
+            gap: 7,
+        },
+        signupProgress: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 },
+        signupProgressText: { flexShrink: 1, color: colors.textSecondary, fontSize: 13, fontWeight: "600" },
+        signupProgressTrack: { flexDirection: "row", gap: 5 },
+        signupProgressSegment: { width: 22, height: 4, borderRadius: 2, backgroundColor: colors.border },
+        signupProgressActive: { backgroundColor: isDark ? "#9BBEFF" : "#205CC4" },
+        signupTitle: { color: colors.textPrimary, fontSize: 28, fontWeight: "700", letterSpacing: -0.5 },
+        signupSubtitle: { color: colors.textSecondary, fontSize: 15, lineHeight: 22 },
+        primaryAccessory: { width: 20, height: 20, alignItems: "center", justifyContent: "center" },
         brandWrap: {
             flexDirection: "row",
             alignItems: "center",
@@ -273,7 +340,7 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
         brandText: {
             color: colors.textPrimary,
             fontSize: 18,
-            fontWeight: "900",
+            fontWeight: "700",
         },
         backButton: {
             position: "absolute",
@@ -289,46 +356,28 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
         },
         hero: {
             alignItems: "center",
-            justifyContent: "center",
-            flexGrow: isCompact ? 0 : 1,
-            minHeight: isCompact ? 176 : 220,
-            paddingTop: isCompact ? 14 : 28,
-            paddingBottom: isCompact ? 16 : 28,
+            paddingTop: isCompact ? 14 : 18,
+            paddingBottom: isCompact ? 16 : 22,
         },
         heroBrand: {
             alignItems: "center",
-            gap: 2,
-            marginBottom: isCompact ? 9 : 14,
+            gap: 7,
+            marginBottom: 12,
         },
         heroLogoWrap: {
-            position: "relative",
-            width: isCompact ? 100 : 108,
-            height: isCompact ? 100 : 108,
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "visible",
-        },
-        heroLogoAura: {
-            position: "absolute",
-            zIndex: 0,
-            width: isCompact ? 252 : 272,
-            height: isCompact ? 198 : 214,
-            opacity: isDark ? 0.82 : 0.5,
-            transform: [{ translateY: isCompact ? -5 : -6 }],
-        },
-        heroLogoAuraCore: {
-            position: "absolute",
-            zIndex: 1,
-            width: isCompact ? 176 : 190,
-            height: isCompact ? 138 : 150,
-            opacity: isDark ? 0.72 : 0.42,
-            transform: [{ translateY: isCompact ? -2 : -3 }],
+            width: 64,
+            height: 64,
+            borderRadius: 18,
+            shadowColor: "#173465",
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: isDark ? 0.26 : 0.14,
+            shadowRadius: 12,
         },
         heroLogo: {
             position: "relative",
-            width: isCompact ? 76 : 82,
-            height: isCompact ? 76 : 82,
-            borderRadius: isCompact ? 22 : 24,
+            width: 64,
+            height: 64,
+            borderRadius: 18,
             zIndex: 10,
             elevation: 10,
             shadowColor: "#0077FF",
@@ -340,7 +389,7 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             color: colors.textPrimary,
             fontSize: isCompact ? 17 : 18,
             lineHeight: isCompact ? 21 : 22,
-            fontWeight: "900",
+            fontWeight: "700",
             textAlign: "center",
             zIndex: 2,
         },
@@ -348,7 +397,7 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             color: colors.textPrimary,
             fontSize: 30,
             lineHeight: 36,
-            fontWeight: "900",
+            fontWeight: "700",
             textAlign: "center",
         },
         subtitle: {
@@ -357,7 +406,7 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             maxWidth: 270,
             fontSize: 13,
             lineHeight: 20,
-            fontWeight: "700",
+            fontWeight: "400",
             textAlign: "center",
         },
         formPanel: {
@@ -366,9 +415,9 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
         },
         field: {
             minHeight: isCompact ? 60 : 68,
-            borderRadius: isCompact ? 16 : 18,
+            borderRadius: 14,
             borderWidth: 1,
-            backgroundColor: colors.inputBackground,
+            backgroundColor: colors.surface,
             borderColor: colors.inputBorder,
             flexDirection: "row",
             alignItems: "center",
@@ -385,7 +434,7 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             paddingVertical: isCompact ? 7 : 9,
         },
         fieldAction: {
-            width: 38,
+            width: 44,
             height: 44,
             marginRight: -5,
             alignItems: "center",
@@ -393,15 +442,16 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
         },
         fieldLabel: {
             color: colors.textSecondary,
-            fontSize: 11,
-            fontWeight: "900",
+            fontSize: 12,
+            lineHeight: 17,
+            fontWeight: "500",
             marginBottom: 3,
         },
         fieldInput: {
             minHeight: isCompact ? 27 : 30,
             paddingVertical: 0,
             fontSize: isCompact ? 15 : 16,
-            fontWeight: "800",
+            fontWeight: "500",
         },
         primaryButton: {
             minHeight: isCompact ? 52 : 56,
@@ -414,7 +464,7 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
         },
         primaryButtonText: {
             fontSize: 16,
-            fontWeight: "900",
+            fontWeight: "600",
         },
         pressed: {
             opacity: 0.58,

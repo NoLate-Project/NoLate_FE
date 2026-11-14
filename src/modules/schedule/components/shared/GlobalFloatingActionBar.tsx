@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import {
     Animated,
     Pressable,
@@ -9,6 +9,7 @@ import {
     type ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useReducedMotion } from "react-native-reanimated";
 
 import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGlassSurface";
 import LiquidGlassIconButton, { isLiquidGlassIconButtonAvailable } from "../calendar/LiquidGlassIconButton";
@@ -41,6 +42,7 @@ type Props = {
     bottomInset?: number;
     hidden?: boolean;
     disabled?: boolean;
+    reduceMotionEnabled?: boolean;
     style?: ViewStyle;
 };
 
@@ -50,37 +52,40 @@ export default function GlobalFloatingActionBar({
     bottomInset = 0,
     hidden = false,
     disabled = false,
+    reduceMotionEnabled,
     style,
 }: Props) {
     const { colors, mode } = useTheme();
+    const systemReduceMotion = useReducedMotion();
+    const reduceMotion = reduceMotionEnabled ?? systemReduceMotion;
     const progress = useRef(new Animated.Value(hidden ? 0 : 1)).current;
-    const actionSignature = useMemo(
-        () => [...leftActions, ...rightActions]
-            .map((action) => `${action.key}:${action.badgeCount ?? 0}`)
-            .join("|"),
-        [leftActions, rightActions]
-    );
+    const previousHidden = useRef(hidden);
 
     useEffect(() => {
-        progress.stopAnimation();
-        if (hidden) {
-            Animated.timing(progress, {
+        const changed = previousHidden.current !== hidden;
+        previousHidden.current = hidden;
+        if (reduceMotion) {
+            progress.setValue(hidden ? 0 : 1);
+            return;
+        }
+        if (!changed) return;
+
+        const animation = hidden
+            ? Animated.timing(progress, {
                 toValue: 0,
                 duration: 160,
                 useNativeDriver: true,
-            }).start();
-            return;
-        }
-
-        progress.setValue(0.82);
-        Animated.spring(progress, {
-            toValue: 1,
-            damping: liquidGlassTokens.spring.damping,
-            stiffness: liquidGlassTokens.spring.stiffness,
-            mass: liquidGlassTokens.spring.mass,
-            useNativeDriver: true,
-        }).start();
-    }, [actionSignature, hidden, progress]);
+            })
+            : Animated.spring(progress, {
+                toValue: 1,
+                damping: liquidGlassTokens.spring.damping,
+                stiffness: liquidGlassTokens.spring.stiffness,
+                mass: liquidGlassTokens.spring.mass,
+                useNativeDriver: true,
+            });
+        animation.start();
+        return () => animation.stop();
+    }, [hidden, progress, reduceMotion]);
 
     const translateY = progress.interpolate({
         inputRange: [0, 1],
@@ -96,7 +101,7 @@ export default function GlobalFloatingActionBar({
 
         const singleIconOnly = actions.length === 1 && Boolean(actions[0].icon);
 
-        if (isLiquidGlassIconButtonAvailable && actions.length === 1) {
+        if (isLiquidGlassIconButtonAvailable && actions.length === 1 && !(actions[0].icon && actions[0].label)) {
             const action = actions[0];
             const nativeSymbolName = action.nativeSymbolName ?? getNativeSymbolName(action.icon);
             const buttonWidth = action.icon ? FLOATING_ICON_ONLY_WIDTH : FLOATING_LABEL_WIDTH;
@@ -153,6 +158,7 @@ export default function GlobalFloatingActionBar({
                             action={action}
                             colors={colors}
                             mode={mode}
+                            reduceMotion={reduceMotion}
                             wide={singleIconOnly}
                         />
                     ))}
@@ -254,13 +260,16 @@ function ActionButton({
     action,
     colors,
     mode,
+    reduceMotion,
     wide,
 }: {
     action: FloatingBarAction;
     colors: ReturnType<typeof useTheme>["colors"];
     mode: ReturnType<typeof useTheme>["mode"];
+    reduceMotion: boolean;
     wide?: boolean;
 }) {
+    const showIconLabel = Boolean(action.icon && action.label);
     return (
         <Pressable
             accessibilityRole="button"
@@ -272,6 +281,7 @@ function ActionButton({
                 styles.action,
                 wide && styles.wideIconAction,
                 !action.icon && !!action.label && styles.labelAction,
+                showIconLabel && styles.iconLabelAction,
                 pressed && {
                     backgroundColor: mode === "dark"
                         ? "rgba(255,255,255,0.10)"
@@ -279,27 +289,29 @@ function ActionButton({
                 },
                 {
                     opacity: action.disabled ? 0.38 : pressed ? 0.74 : 1,
-                    transform: [{ scale: pressed ? liquidGlassTokens.pressedScale : 1 }],
+                    transform: [{ scale: pressed && !reduceMotion ? liquidGlassTokens.pressedScale : 1 }],
                 },
             ]}
         >
             {!!action.icon && (
-                <View style={styles.iconHost}>
+                <View style={[styles.iconHost, showIconLabel && styles.labeledIconHost]}>
                     <Ionicons
                         accessible={false}
                         name={action.icon}
-                        size={SCHEDULE_ICON_SIZES.toolbar}
+                        size={showIconLabel ? 18 : SCHEDULE_ICON_SIZES.toolbar}
                         color={action.emphasized ? mode === "dark" ? "#4B9DFF" : "#2979FF" : colors.textPrimary}
                     />
                     <ActionBadge count={action.badgeCount} mode={mode} />
                 </View>
             )}
-            {!action.icon && !!action.label && (
+            {!!action.label && (
                 <Text
+                    accessible={false}
                     numberOfLines={1}
+                    maxFontSizeMultiplier={showIconLabel ? 1.15 : undefined}
                     adjustsFontSizeToFit
                     minimumFontScale={0.82}
-                    style={[styles.actionText, { color: colors.textPrimary }]}
+                    style={[showIconLabel ? styles.iconLabelText : styles.actionText, { color: colors.textPrimary }]}
                 >
                     {action.label}
                 </Text>
@@ -372,6 +384,16 @@ const styles = StyleSheet.create({
         minWidth: FLOATING_LABEL_WIDTH,
         paddingHorizontal: 16,
     },
+    iconLabelAction: {
+        minWidth: 51,
+        paddingHorizontal: 2,
+        flexDirection: "column",
+        gap: 1,
+    },
+    iconLabelText: {
+        fontSize: 10,
+        fontWeight: "600",
+    },
     actionText: {
         fontSize: 15,
         fontWeight: "800",
@@ -383,6 +405,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         position: "relative",
+    },
+    labeledIconHost: {
+        height: 20,
     },
     badge: {
         position: "absolute",

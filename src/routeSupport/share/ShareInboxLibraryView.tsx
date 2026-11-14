@@ -1,13 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { type RefObject } from 'react';
+import React, { useMemo, useRef, type RefObject } from 'react';
 import {
+  ActionSheetIOS,
+  Alert,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
+import Animated, { FadeIn, ReduceMotion } from 'react-native-reanimated';
 
 import CalendarGlassSurface from '../../modules/schedule/components/calendar/CalendarGlassSurface';
 import type {
@@ -23,6 +28,8 @@ import {
   ScheduleShareRow,
   ShareTabButton,
 } from './ShareInboxRows';
+
+const tabContentEntry = FadeIn.duration(140).reduceMotion(ReduceMotion.System);
 
 type ShareInboxLibraryViewProps = {
   colors: AppColors;
@@ -91,6 +98,34 @@ export default function ShareInboxLibraryView({
   onManageItem,
   onSafetyItem,
 }: ShareInboxLibraryViewProps) {
+  const largeText = useWindowDimensions().fontScale > 1.35;
+  const tabScrollOffsets = useRef<Record<ShareLibraryTab, number>>({ schedule: 0, calendar: 0 });
+  const firstTab = useRef(selectedTab);
+  const hasSwitchedTab = useRef(false);
+  const initialTabOffset = useMemo(() => {
+    return { x: 0, y: tabScrollOffsets.current[selectedTab] };
+  }, [selectedTab]);
+  if (selectedTab !== firstTab.current) hasSwitchedTab.current = true;
+  const openOptions = () => {
+    const actions = [
+      ...(!refreshing ? [{ text: '새로고침', onPress: onRefresh }] : []),
+      { text: '내 신고 내역', onPress: onOpenReports },
+      { text: '차단한 사용자 관리', onPress: onOpenBlocked },
+    ];
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: '공유함 옵션',
+          options: [...actions.map(action => action.text), '취소'],
+          cancelButtonIndex: actions.length,
+        },
+        index => actions[index]?.onPress(),
+      );
+      return;
+    }
+    Alert.alert('공유함 옵션', undefined, actions, { cancelable: true });
+  };
+
   return (
     <View
       style={[styles.screen, { paddingTop: topInset }]}
@@ -116,86 +151,35 @@ export default function ShareInboxLibraryView({
             ]}
           >
             <Ionicons
-              name="chevron-back"
+              name="chevron-back-outline"
               size={24}
               color={colors.textPrimary}
             />
           </Pressable>
         </CalendarGlassSurface>
-        <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
+        <Text accessibilityRole="header" maxFontSizeMultiplier={1.65} style={[styles.headerTitle, { color: colors.textPrimary }]}>
           공유함
         </Text>
-        <View style={styles.headerActions}>
-          <CalendarGlassSurface
-            interactive
-            clear
-            glow
-            variant="bottomBar"
-            tone="softGlass"
-            style={[styles.headerGlassButton, { borderColor: colors.border }]}
+        <CalendarGlassSurface
+          interactive
+          clear
+          glow
+          variant="bottomBar"
+          tone="softGlass"
+          style={[styles.headerGlassButton, { borderColor: colors.border }]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="공유함 옵션"
+            onPress={openOptions}
+            style={({ pressed }) => [
+              styles.headerButton,
+              { opacity: pressed ? 0.62 : 1 },
+            ]}
           >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="내 신고 내역"
-              onPress={onOpenReports}
-              style={({ pressed }) => [
-                styles.headerButton,
-                { opacity: pressed ? 0.62 : 1 },
-              ]}
-            >
-              <Ionicons
-                name="flag-outline"
-                size={20}
-                color={colors.textPrimary}
-              />
-            </Pressable>
-          </CalendarGlassSurface>
-          <CalendarGlassSurface
-            interactive
-            clear
-            glow
-            variant="bottomBar"
-            tone="softGlass"
-            style={[styles.headerGlassButton, { borderColor: colors.border }]}
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="차단한 사용자 관리"
-              onPress={onOpenBlocked}
-              style={({ pressed }) => [
-                styles.headerButton,
-                { opacity: pressed ? 0.62 : 1 },
-              ]}
-            >
-              <Ionicons
-                name="shield-checkmark-outline"
-                size={20}
-                color={colors.textPrimary}
-              />
-            </Pressable>
-          </CalendarGlassSurface>
-          <CalendarGlassSurface
-            interactive
-            clear
-            glow
-            variant="bottomBar"
-            tone="softGlass"
-            style={[styles.headerGlassButton, { borderColor: colors.border }]}
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="공유함 새로고침"
-              disabled={refreshing}
-              onPress={onRefresh}
-              style={({ pressed }) => [
-                styles.headerButton,
-                { opacity: refreshing ? 0.42 : pressed ? 0.62 : 1 },
-              ]}
-            >
-              <Ionicons name="refresh" size={21} color={colors.textPrimary} />
-            </Pressable>
-          </CalendarGlassSurface>
-        </View>
+            <Ionicons name="ellipsis-horizontal" size={22} color={colors.textPrimary} />
+          </Pressable>
+        </CalendarGlassSurface>
       </View>
 
       <CalendarGlassSurface
@@ -225,6 +209,12 @@ export default function ShareInboxLibraryView({
       </CalendarGlassSurface>
 
       <ScrollView
+        key={selectedTab}
+        contentOffset={initialTabOffset}
+        onScroll={({ nativeEvent }) => {
+          tabScrollOffsets.current[selectedTab] = Math.max(0, nativeEvent.contentOffset.y);
+        }}
+        scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -249,15 +239,17 @@ export default function ShareInboxLibraryView({
               },
             ]}
           >
-            <Ionicons name="search" size={19} color={colors.textSecondary} />
+            <Ionicons name="search-outline" size={19} color={colors.textSecondary} />
             <TextInput
               ref={searchInputRef}
               value={selectedFilter.query}
               onChangeText={onUpdateQuery}
+              accessibilityLabel={selectedTab === "schedule" ? "일정 또는 공유자 검색" : "캘린더 또는 소유자 검색"}
+              maxFontSizeMultiplier={1.65}
               placeholder={
                 selectedTab === 'schedule'
-                  ? '일정 또는 공유자 검색'
-                  : '캘린더 또는 소유자 검색'
+                  ? '일정 검색'
+                  : '캘린더 검색'
               }
               placeholderTextColor={colors.inputPlaceholder}
               returnKeyType="search"
@@ -307,8 +299,8 @@ export default function ShareInboxLibraryView({
           </CalendarGlassSurface>
         </View>
 
-        <View style={styles.listToolbar}>
-          <Text style={[styles.resultLabel, { color: colors.textSecondary }]}>
+        <View style={[styles.listToolbar, largeText && selectedTab === "calendar" && styles.listToolbarLarge]}>
+          <Text maxFontSizeMultiplier={1.8} style={[styles.resultLabel, { color: colors.textSecondary }]}>
             {selectedTab === 'schedule' ? '공유 일정' : '공유 캘린더'}
             {' · '}
             {resultCount}개
@@ -323,8 +315,9 @@ export default function ShareInboxLibraryView({
                 { borderColor: colors.border, opacity: pressed ? 0.62 : 1 },
               ]}
             >
-              <Ionicons name="add" size={16} color={accent} />
+              <Ionicons name="settings-outline" size={16} color={accent} />
               <Text
+                maxFontSizeMultiplier={1.8}
                 style={[styles.calendarManageActionText, { color: accent }]}
               >
                 캘린더 관리
@@ -333,68 +326,70 @@ export default function ShareInboxLibraryView({
           ) : null}
         </View>
 
-        {error && hasData ? (
-          <InlineErrorCard colors={colors} text={error} onRetry={onRefresh} />
-        ) : null}
+        <Animated.View entering={hasSwitchedTab.current ? tabContentEntry : undefined}>
+          {error && hasData ? (
+            <InlineErrorCard colors={colors} text={error} onRetry={onRefresh} />
+          ) : null}
 
-        {loading ? (
-          <StateView
-            colors={colors}
-            text="공유함을 불러오는 중이에요"
-            loading
-          />
-        ) : error && !hasData ? (
-          <StateView colors={colors} text={error} onRetry={onRefresh} />
-        ) : visibleItems.length === 0 ? (
-          <EmptyState
-            colors={colors}
-            searching={
-              Boolean(selectedFilter.query.trim()) || activeFilterCount > 0
-            }
-            tab={selectedTab}
-          />
-        ) : selectedTab === 'schedule' ? (
-          <View style={styles.groupStack}>
-            {scheduleGroups.map(group => (
-              <View key={group.label} style={styles.listGroup}>
-                <Text
-                  style={[styles.groupTitle, { color: colors.textSecondary }]}
-                >
-                  {group.label}
-                </Text>
-                <View style={styles.shareCardStack}>
-                  {group.items.map(item => (
-                    <ScheduleShareRow
-                      key={item.key}
-                      item={item}
-                      colors={colors}
-                      accent={accent}
-                      onOpen={() => onOpenItem(item)}
-                      onManage={() => onManageItem(item)}
-                      onSafety={() => onSafetyItem(item)}
-                      safetyPending={safetyPendingKey === item.key}
-                    />
-                  ))}
+          {loading ? (
+            <StateView
+              colors={colors}
+              text="공유함을 불러오는 중이에요"
+              loading
+            />
+          ) : error && !hasData ? (
+            <StateView colors={colors} text={error} onRetry={onRefresh} />
+          ) : visibleItems.length === 0 ? (
+            <EmptyState
+              colors={colors}
+              searching={
+                Boolean(selectedFilter.query.trim()) || activeFilterCount > 0
+              }
+              tab={selectedTab}
+            />
+          ) : selectedTab === 'schedule' ? (
+            <View style={styles.groupStack}>
+              {scheduleGroups.map(group => (
+                <View key={group.label} style={styles.listGroup}>
+                  <Text
+                    style={[styles.groupTitle, { color: colors.textSecondary }]}
+                  >
+                    {group.label}
+                  </Text>
+                  <View style={styles.shareCardStack}>
+                    {group.items.map(item => (
+                      <ScheduleShareRow
+                        key={item.key}
+                        item={item}
+                        colors={colors}
+                        accent={accent}
+                        onOpen={() => onOpenItem(item)}
+                        onManage={() => onManageItem(item)}
+                        onSafety={() => onSafetyItem(item)}
+                        safetyPending={safetyPendingKey === item.key}
+                      />
+                    ))}
+                  </View>
                 </View>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <View style={styles.calendarList}>
-            {visibleItems.map(item => (
-              <CalendarShareRow
-                key={item.key}
-                item={item}
-                colors={colors}
-                accent={accent}
-                onOpen={() => onOpenItem(item)}
-                onManage={() => onManageItem(item)}
-                onSafety={() => onSafetyItem(item)}
-                safetyPending={safetyPendingKey === item.key}
-              />
-            ))}
-          </View>
-        )}
+              ))}
+            </View>
+          ) : (
+            <View style={styles.calendarList}>
+              {visibleItems.map(item => (
+                <CalendarShareRow
+                  key={item.key}
+                  item={item}
+                  colors={colors}
+                  accent={accent}
+                  onOpen={() => onOpenItem(item)}
+                  onManage={() => onManageItem(item)}
+                  onSafety={() => onSafetyItem(item)}
+                  safetyPending={safetyPendingKey === item.key}
+                />
+              ))}
+            </View>
+          )}
+        </Animated.View>
       </ScrollView>
     </View>
   );

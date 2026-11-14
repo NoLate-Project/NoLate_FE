@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, useWindowDimensions } from 'react-native';
 
 import type { TmapMapViewHandle } from '../../modules/map/TmapMapView';
 import {
@@ -7,6 +7,7 @@ import {
   getCurrentLocationPermissionState,
 } from '../../modules/map/currentLocation';
 import { createLatestRequestGuard } from '../../modules/map/routeAsyncGuard';
+import { getPaddedBoundsCamera } from '../../modules/map/routeZoomStyle';
 import {
   buildSavedRouteMapPresentation,
   getSavedRouteFitCoords,
@@ -14,10 +15,13 @@ import {
   getSavedTransitLegBoardCoord,
   getSavedTransitLegCoords,
 } from '../../modules/map/savedRouteMapPresentation';
-import { parseTransitMapInteractionId } from '../../modules/map/transitMapInteraction';
+import { buildTransitStopInteractionId, parseTransitMapInteractionId } from '../../modules/map/transitMapInteraction';
+import { routeCoords, toRouteCoord } from '../../modules/map/savedRouteMapGeometry';
+import { nearestPathCoordinate } from '../../modules/map/savedRouteMapMarkers';
+import { isTransitRideKind } from '../../modules/map/transitModes';
 import { buildSavedRouteDetailInfo } from '../../modules/schedule/savedRouteDetailPresentation';
 import { buildTransitRouteProgressSegments } from '../../modules/schedule/transitRouteProgress';
-import type { RouteStep } from '../../modules/schedule/routeInfo';
+import { normalizeStopName, type RoutePassStop, type RouteStep } from '../../modules/schedule/routeInfo';
 import type {
   ScheduleItem,
   ScheduleTravelPlan,
@@ -43,8 +47,16 @@ type ScheduleDetailMapControllerOptions = {
   topInset: number;
   sheetMinHeight: number;
   openRouteDetail?: string | string[];
+  reduceMotion: boolean;
   snapSheet: (mode: SheetSnapMode) => void;
 };
+
+function isSameRouteStop(a: RoutePassStop, b: RoutePassStop) {
+  const name = normalizeStopName(a.name);
+  return !!name && name === normalizeStopName(b.name)
+    && (!a.code || !b.code || a.code === b.code)
+    && (a.sequence == null || b.sequence == null || a.sequence === b.sequence);
+}
 
 /**
  * 저장된 경로의 지도 표현, 구간·정류장 초점, 현재 위치 요청과 카메라 맞춤을 관리한다.
@@ -60,12 +72,16 @@ export function useScheduleDetailMapController({
   topInset,
   sheetMinHeight,
   openRouteDetail,
+  reduceMotion,
   snapSheet,
 }: ScheduleDetailMapControllerOptions) {
+  const { width: mapWidth, height: mapHeight } = useWindowDimensions();
   const mapRef = useRef<TmapMapViewHandle>(null);
   const lastOverviewFitKeyRef = useRef<string | undefined>(undefined);
   const [mapZoom, setMapZoom] = useState(DEFAULT_CAMERA.zoom);
   const [focusedLegIndex, setFocusedLegIndex] = useState<number | undefined>();
+  const [focusedEndpoint, setFocusedEndpoint] = useState<'ORIGIN' | 'DESTINATION'>();
+  const hasFocusedMapLocation = focusedLegIndex !== undefined || focusedEndpoint !== undefined;
   const [selectedTransitStop, setSelectedTransitStop] = useState<{
     legIndex: number;
     stopIndex: number;
@@ -82,16 +98,18 @@ export function useScheduleDetailMapController({
   /** 참여자 경로 등 표시 대상이 바뀔 때 이전 구간·정류장 선택을 함께 해제한다. */
   const clearRouteFocus = useCallback(() => {
     setFocusedLegIndex(undefined);
+    setFocusedEndpoint(undefined);
     setSelectedTransitStop(undefined);
   }, []);
 
   useEffect(() => {
+    clearRouteFocus();
     currentLocationRequestGuardRef.current.invalidate();
     currentLocationPendingRef.current = false;
     setCurrentLocationCoord(undefined);
     setCurrentLocationPending(false);
     autoOpenedRouteDetailItemIdRef.current = undefined;
-  }, [scheduleId]);
+  }, [clearRouteFocus, scheduleId]);
 
   useEffect(
     () => () => {
@@ -128,6 +146,7 @@ export function useScheduleDetailMapController({
         mapZoom,
         isDark,
         focusedLegIndex,
+        selectedTransitStop,
         guidanceWalkingPaths: guidanceWalkingCoordinates,
       }),
     [
@@ -135,6 +154,7 @@ export function useScheduleDetailMapController({
       displayOrigin,
       displayRoute,
       focusedLegIndex,
+      selectedTransitStop,
       isDark,
       mapZoom,
       guidanceWalkingCoordinates,
@@ -184,6 +204,27 @@ export function useScheduleDetailMapController({
     }),
     [sheetMinHeight, topInset],
   );
+  const fitRouteCoordinates = useCallback((coords: typeof mapCoords) => {
+    const map = mapRef.current;
+    if (!map || coords.length < 2) return;
+    if (!reduceMotion) {
+      map.fitToCoordinates(coords, { edgePadding: mapEdgePadding });
+      return;
+    }
+
+    const { latitude, longitude } = coords[0];
+    const bounds = { minLat: latitude, maxLat: latitude, minLng: longitude, maxLng: longitude };
+    for (const coord of coords) {
+      bounds.minLat = Math.min(bounds.minLat, coord.latitude);
+      bounds.maxLat = Math.max(bounds.maxLat, coord.latitude);
+      bounds.minLng = Math.min(bounds.minLng, coord.longitude);
+      bounds.maxLng = Math.max(bounds.maxLng, coord.longitude);
+    }
+    const target = getPaddedBoundsCamera(bounds, {
+      width: mapWidth, height: mapHeight, padding: mapEdgePadding,
+    }, { wholeZoomLevels: true, boundsPaddingFactor: 1.08 });
+    if (target) map.animateCameraTo({ ...target, duration: 0 });
+  }, [mapEdgePadding, mapHeight, mapWidth, reduceMotion]);
   const overviewFitKey = useMemo(
     () => getSavedRouteOverviewFitKey(mapCoords, mapEdgePadding),
     [mapCoords, mapEdgePadding],
@@ -219,17 +260,22 @@ export function useScheduleDetailMapController({
   const selectedRouteStepId =
     typeof focusedLegIndex === 'number'
       ? routeTravelSteps[focusedLegIndex]?.id
-      : undefined;
-  const selectedRoutePassStopStepId = selectedTransitStop
-    ? routeTravelSteps[selectedTransitStop.legIndex]?.id
+      : routeDetailInfo?.steps.find(step => step.type === focusedEndpoint)?.id;
+  const selectedStep = selectedTransitStop
+    ? routeTravelSteps[selectedTransitStop.legIndex]
     : undefined;
-  const selectedRoutePassStop =
-    selectedTransitStop && selectedRoutePassStopStepId
-      ? {
-          stepId: selectedRoutePassStopStepId,
-          stopIndex: selectedTransitStop.stopIndex,
-        }
-      : undefined;
+  const selectedRawStop = selectedTransitStop
+    ? routeLegs[selectedTransitStop.legIndex]?.passStops?.[selectedTransitStop.stopIndex]
+    : undefined;
+  const selectedRoutePassStopName = selectedRawStop?.name.replace(/\s+/g, ' ').trim() || undefined;
+  // Saved timeline rows can omit unnamed provider stops, so raw indices are not row indices.
+  const matchingStopRows = selectedRawStop && selectedRoutePassStopName
+    ? (selectedStep?.passStops ?? []).flatMap((stop, index) =>
+        isSameRouteStop(stop, selectedRawStop) ? [index] : [])
+    : [];
+  const selectedRoutePassStop = selectedStep && matchingStopRows.length === 1
+    ? { stepId: selectedStep.id, stopIndex: matchingStopRows[0] }
+    : undefined;
 
   useEffect(() => {
     if (
@@ -261,21 +307,13 @@ export function useScheduleDetailMapController({
       if (!leg) return;
 
       const legCoords = leg.kind === 'WALK' ? guidanceWalkingCoordinates.get(legIndex) ?? getSavedTransitLegCoords(leg) : getSavedTransitLegCoords(leg);
-      if (legCoords.length < 2) return;
-
       setFocusedLegIndex(legIndex);
+      setFocusedEndpoint(undefined);
       setSelectedTransitStop(undefined);
       snapSheet('compact');
-      mapRef.current?.fitToCoordinates(legCoords, {
-        edgePadding: {
-          top: topInset + 124,
-          right: 44,
-          bottom: sheetMinHeight + 28,
-          left: 44,
-        },
-      });
+      fitRouteCoordinates(legCoords);
     },
-    [routeLegs, sheetMinHeight, snapSheet, topInset, guidanceWalkingCoordinates],
+    [fitRouteCoordinates, routeLegs, snapSheet, guidanceWalkingCoordinates],
   );
 
   const focusRouteBoardingPoint = useCallback(
@@ -287,20 +325,21 @@ export function useScheduleDetailMapController({
       }
 
       setFocusedLegIndex(legIndex);
+      setFocusedEndpoint(undefined);
       setSelectedTransitStop(undefined);
       snapSheet('compact');
       mapRef.current?.animateCameraTo({
         ...boardingCoord,
         zoom: 17.2,
-        duration: 520,
-        easing: 'Fly',
+        duration: reduceMotion ? 0 : 520,
       });
     },
-    [focusRouteLeg, routeLegs, snapSheet],
+    [focusRouteLeg, routeLegs, snapSheet, reduceMotion],
   );
 
   const focusRouteEndpoint = useCallback(
     (step: RouteStep) => {
+      if (step.type !== 'ORIGIN' && step.type !== 'DESTINATION') return;
       const endpoint =
         step.type === 'ORIGIN' ? displayOrigin : displayDestination;
       const routeEndpointCoord =
@@ -312,35 +351,66 @@ export function useScheduleDetailMapController({
       if (!endpointCoord) return;
 
       setFocusedLegIndex(undefined);
+      setFocusedEndpoint(step.type);
       setSelectedTransitStop(undefined);
       snapSheet('compact');
       mapRef.current?.animateCameraTo({
         ...endpointCoord,
         zoom: 17.2,
-        duration: 520,
-        easing: 'Fly',
+        duration: reduceMotion ? 0 : 520,
       });
     },
-    [displayDestination, displayOrigin, mapCoords, snapSheet],
+    [displayDestination, displayOrigin, mapCoords, snapSheet, reduceMotion],
   );
 
   const focusTransitStop = useCallback(
-    (stop: { coord?: unknown }) => {
-      const coord = mapCoordFromUnknown(stop.coord);
+    (legIndex: number, stopIndex: number) => {
+      const leg = routeLegs[legIndex];
+      const rawCoord = toRouteCoord(leg?.passStops?.[stopIndex]?.coord);
+      if (!leg || !rawCoord) return;
+      const interactionId = buildTransitStopInteractionId(legIndex, stopIndex);
+      const marker = markers.find(candidate => candidate.interactionId === interactionId);
+      const coord = mapCoordFromUnknown(marker ?? nearestPathCoordinate(rawCoord, routeCoords(leg.pathCoords)));
       if (!coord) return;
 
+      setFocusedLegIndex(legIndex);
+      setFocusedEndpoint(undefined);
+      setSelectedTransitStop({ legIndex, stopIndex });
       snapSheet('compact');
       mapRef.current?.animateCameraTo({
         ...coord,
         zoom: 17.2,
-        duration: 420,
+        duration: reduceMotion ? 0 : 420,
       });
     },
-    [snapSheet],
+    [markers, routeLegs, snapSheet, reduceMotion],
   );
 
+  const timelineStopTargets = useMemo(() => new Map(routeTravelSteps.flatMap((step, legIndex) => {
+    const leg = routeLegs[legIndex];
+    if (!isTransitRideKind(step.type) || leg?.kind !== step.type || !leg.passStops?.length) return [];
+    const rawStops = leg.passStops;
+    return (step.passStops ?? []).flatMap((stop, rowIndex, rows) => {
+      if (rowIndex === 0 || rowIndex === rows.length - 1) return [];
+      const matches = rawStops.flatMap((raw, stopIndex) =>
+        isSameRouteStop(stop, raw) ? [stopIndex] : []);
+      const [stopIndex] = matches;
+      if (matches.length !== 1 || stopIndex === 0 || stopIndex === rawStops.length - 1
+        || !toRouteCoord(rawStops[stopIndex].coord)) return [];
+      return [[`${step.id}:${rowIndex}`, { legIndex, stopIndex }] as const];
+    });
+  })), [routeLegs, routeTravelSteps]);
+
+  const canShowPassStopOnMap = useCallback((stepId: string, index: number) =>
+    timelineStopTargets.has(`${stepId}:${index}`), [timelineStopTargets]);
+
+  const handleRoutePassStopPress = useCallback((stepId: string, index: number) => {
+    const target = timelineStopTargets.get(`${stepId}:${index}`);
+    if (target) focusTransitStop(target.legIndex, target.stopIndex);
+  }, [focusTransitStop, timelineStopTargets]);
+
   const handleMapMarkerPress = useCallback(
-    (event: { id: string; interactionId?: string }) => {
+    (event: { interactionId?: string }) => {
       const interaction = parseTransitMapInteractionId(event.interactionId);
       if (!interaction) return;
       if (interaction.kind === 'leg') {
@@ -348,17 +418,9 @@ export function useScheduleDetailMapController({
         return;
       }
 
-      const stop =
-        routeLegs[interaction.legIndex]?.passStops?.[interaction.stopIndex];
-      if (!stop) return;
-      setFocusedLegIndex(interaction.legIndex);
-      setSelectedTransitStop({
-        legIndex: interaction.legIndex,
-        stopIndex: interaction.stopIndex,
-      });
-      focusTransitStop(stop);
+      focusTransitStop(interaction.legIndex, interaction.stopIndex);
     },
-    [focusRouteLeg, focusTransitStop, routeLegs],
+    [focusRouteLeg, focusTransitStop],
   );
 
   const handleRouteStepPress = useCallback(
@@ -414,7 +476,7 @@ export function useScheduleDetailMapController({
       mapRef.current?.animateCameraTo({
         ...coord,
         zoom: 16,
-        duration: 420,
+        duration: reduceMotion ? 0 : 420,
       });
     } catch (error) {
       if (!guard.isCurrent(requestId)) return;
@@ -453,7 +515,7 @@ export function useScheduleDetailMapController({
         setCurrentLocationPending(false);
       }
     }
-  }, []);
+  }, [reduceMotion]);
   const camera = useMemo(() => {
     if (mapCoords.length === 0) return DEFAULT_CAMERA;
     const latitude =
@@ -465,21 +527,27 @@ export function useScheduleDetailMapController({
     return { latitude, longitude, zoom: mapCoords.length > 1 ? 11 : 14 };
   }, [mapCoords]);
 
-  const fitMap = useCallback(() => {
+  const fitMap = useCallback((force = false) => {
     const map = mapRef.current;
     if (!map || mapCoords.length < 2 || !overviewFitKey) return;
-    if (lastOverviewFitKeyRef.current === overviewFitKey) return;
+    if (!force && lastOverviewFitKeyRef.current === overviewFitKey) return;
 
     lastOverviewFitKeyRef.current = overviewFitKey;
-    map.fitToCoordinates(mapCoords, { edgePadding: mapEdgePadding });
-  }, [mapCoords, mapEdgePadding, overviewFitKey]);
+    fitRouteCoordinates(mapCoords);
+  }, [fitRouteCoordinates, mapCoords, overviewFitKey]);
+
+  const showWholeRoute = useCallback(() => {
+    clearRouteFocus();
+    fitMap(true);
+  }, [clearRouteFocus, fitMap]);
 
   useEffect(() => {
-    fitMap();
-  }, [fitMap]);
+    if (!hasFocusedMapLocation) fitMap();
+  }, [fitMap, hasFocusedMapLocation]);
 
   return {
     camera,
+    canShowPassStopOnMap,
     clearRouteFocus,
     currentLocationPending,
     displayDestination,
@@ -492,14 +560,19 @@ export function useScheduleDetailMapController({
     handleMapMarkerPress,
     handleMapZoomChanged,
     handleRouteStepPress,
+    handleRoutePassStopPress,
     mapCoords,
     mapRef,
     mapZoom,
     moveToCurrentLocation,
+    showWholeRoute,
     routeDetailInfo,
     routeOption,
     routeProgressSegments,
+    focusedLegIndex,
+    hasFocusedMapLocation,
     selectedRoutePassStop,
+    selectedRoutePassStopName,
     selectedRouteStepId,
   };
 }

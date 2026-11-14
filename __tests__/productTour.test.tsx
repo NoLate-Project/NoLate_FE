@@ -53,7 +53,7 @@ describe("product tour", () => {
         expect(PRODUCT_TOUR_STEPS[0].images.dark).toBeDefined();
         expect(PRODUCT_TOUR_STEPS[0].inputImages?.light).toBeDefined();
         expect(PRODUCT_TOUR_STEPS[0].inputImages?.dark).toBeDefined();
-        expect(getProductTourButtonLabel(0)).toBe("다음");
+        expect(getProductTourButtonLabel(0)).toBe("출발 시간 확인하기");
         expect(getProductTourButtonLabel(1)).toBe("NoLate 시작하기");
     });
 
@@ -68,7 +68,12 @@ describe("product tour", () => {
     });
 
     test("계속 버튼으로 두 단계를 본 뒤 NoLate를 시작한다", async () => {
-        for (const label of ["다음", "NoLate 시작하기"]) {
+        for (const label of ["출발 시간 확인하기", "NoLate 시작하기"]) {
+            if (label === "NoLate 시작하기") {
+                expect(renderer!.root.findAllByProps({
+                    accessibilityLabel: "사용법 건너뛰고 NoLate 시작하기",
+                })).toHaveLength(0);
+            }
             await act(async () => {
                 renderer!.root.findByProps({ accessibilityLabel: label }).props.onPress();
                 await new Promise<void>(resolve => setTimeout(() => resolve(), 420));

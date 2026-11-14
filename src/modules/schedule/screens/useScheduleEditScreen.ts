@@ -99,7 +99,12 @@ import {
 } from "./useScheduleEditPickerAnimations";
 
 /** 일정 편집 화면의 로딩·폼·경로·저장·삭제 상태와 탐색 차단을 관리합니다. */
-export function useScheduleEditScreen({ initialScrollToEnd = false, initialCategoryPickerOpen = false }: ScheduleEditScreenProps) {
+export function useScheduleEditScreen({
+    initialScrollToEnd = false,
+    initialCategoryPickerOpen = false,
+    onPreviewClose,
+    previewCurrentMemberId,
+}: ScheduleEditScreenProps) {
     const { id, preview } = useLocalSearchParams<{ id: string; preview?: string }>();
     const pathname = usePathname();
     const router     = useRouter();
@@ -119,8 +124,8 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
 
     const item = id ? state.itemsById[id] : undefined;
     const developmentPreview = __DEV__ && preview === "1";
-    const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
-    const canDeleteSchedule = canDeletePresentedSchedule(item, currentMemberId);
+    const [currentMemberId, setCurrentMemberId] = useState<number | null>(developmentPreview ? previewCurrentMemberId ?? null : null);
+    const canDeleteSchedule = !developmentPreview && canDeletePresentedSchedule(item, currentMemberId);
     const canChangeCalendar = canChangePresentedScheduleCalendar(item, currentMemberId);
 
     const [title,           setTitle]           = useState(item?.title ?? "");
@@ -213,8 +218,12 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
     /** 현재 편집 세션을 정리하고 이전 화면 또는 일정 목록으로 이동합니다. */
     const closeEditScreen = useCallback(() => {
         discardChanges();
+        if (developmentPreview && onPreviewClose) {
+            onPreviewClose();
+            return;
+        }
         router.setParams({ mode: undefined });
-    }, [discardChanges, router]);
+    }, [developmentPreview, discardChanges, onPreviewClose, router]);
 
     /** 변경 내용이 있으면 확인을 요청하고 그렇지 않으면 즉시 편집 화면을 닫습니다. */
     const requestCloseEditScreen = useCallback(() => {
@@ -442,7 +451,7 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
         setEndTime(new Date(startTime));
     }, [endDay, markFormDirty, setPicker, startDay, startTime]);
 
-    const { openRoutePlanner, clearRoute } = useScheduleEditRoutePlanner({
+    const { openRoutePlanner, clearRoute, routeDraftChange } = useScheduleEditRoutePlanner({
         pathname,
         router,
         routePlannerSessionId,
@@ -667,10 +676,13 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
         outerOpacity,
         contentFade,
         openRoutePlanner,
+        routeDraftChange,
         clearRoute,
         onDayPress,
         onTimeChange,
-        save,
+        save: developmentPreview
+            ? () => Alert.alert("저장 검토", "검토용 일정은 서버에 저장되지 않아요.")
+            : save,
         remove,
         calendarTheme,
         isDisplayDate,

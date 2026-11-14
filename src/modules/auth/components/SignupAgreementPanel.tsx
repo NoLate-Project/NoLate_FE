@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Pressable, StyleSheet, Text, View } from "react-native";
+import { useIsFocused } from "@react-navigation/native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
 import {
     getSignupConsentPolicy,
@@ -34,7 +36,12 @@ export default function SignupAgreementPanel({
     onOpenPrivacyPolicy,
 }: SignupAgreementPanelProps) {
     const { colors, mode } = useTheme();
+    const isFocused = useIsFocused();
     const styles = createStyles(colors, mode);
+    const termsLink = useRef<View>(null);
+    const collectionLink = useRef<View>(null);
+    const privacyLink = useRef<View>(null);
+    const returnFocus = useRef<React.RefObject<View | null> | null>(null);
     const [policy, setPolicy] = useState<SignupConsentPolicy>(SIGNUP_CONSENT_POLICY_FALLBACK);
     const [selection, setSelection] = useState<SignupConsentSelection>(EMPTY_SIGNUP_CONSENT_SELECTION);
     const [policyLoading, setPolicyLoading] = useState(true);
@@ -42,6 +49,18 @@ export default function SignupAgreementPanel({
     const mountedRef = useRef(true);
     const policyVersionRef = useRef<SignupConsentPolicy>(SIGNUP_CONSENT_POLICY_FALLBACK);
     const allAccepted = hasAllRequiredSignupConsents(selection);
+    const selectedCount = Number(selection.terms) + Number(selection.privacyCollection);
+
+    useEffect(() => {
+        if (!isFocused || !returnFocus.current) return;
+        const link = returnFocus.current;
+        const frame = requestAnimationFrame(() => {
+            returnFocus.current = null;
+            const target = findNodeHandle(link.current);
+            if (target != null) AccessibilityInfo.setAccessibilityFocus(target);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [isFocused]);
 
     const loadPolicy = useCallback(async () => {
         setPolicyLoading(true);
@@ -87,9 +106,9 @@ export default function SignupAgreementPanel({
                 style={[styles.agreementList, { borderColor: colors.border }]}
             >
                 <ConsentToggleRow
-                    checked={allAccepted}
+                    checked={allAccepted || (selectedCount > 0 ? "mixed" : false)}
                     title="필수 항목 모두 동의"
-                    subtitle="가입에 필요한 두 항목을 한 번에 선택합니다."
+                    subtitle={`필수 항목 ${selectedCount}/2개 선택`}
                     onToggle={toggleAll}
                     disabled={submitting}
                     emphasized
@@ -99,7 +118,8 @@ export default function SignupAgreementPanel({
                     checked={selection.terms}
                     document={policy.terms}
                     onToggle={() => toggle("terms")}
-                    onOpen={onOpenTerms}
+                    openRef={termsLink}
+                    onOpen={() => { returnFocus.current = termsLink; onOpenTerms(); }}
                     disabled={submitting}
                 />
                 <View style={[styles.divider, { backgroundColor: colors.border }]} />
@@ -107,7 +127,8 @@ export default function SignupAgreementPanel({
                     checked={selection.privacyCollection}
                     document={policy.privacyCollection}
                     onToggle={() => toggle("privacyCollection")}
-                    onOpen={onOpenPrivacyCollection}
+                    openRef={collectionLink}
+                    onOpen={() => { returnFocus.current = collectionLink; onOpenPrivacyCollection(); }}
                     disabled={submitting}
                 />
             </View>
@@ -136,14 +157,15 @@ export default function SignupAgreementPanel({
             ) : null}
 
             <Pressable
+                ref={privacyLink}
                 accessibilityRole="link"
                 accessibilityState={{ disabled: submitting }}
                 disabled={submitting}
-                onPress={onOpenPrivacyPolicy}
+                onPress={() => { returnFocus.current = privacyLink; onOpenPrivacyPolicy(); }}
                 style={({ pressed }) => [styles.policyLink, { opacity: submitting ? 0.45 : pressed ? 0.55 : 1 }]}
             >
                 <Text style={[styles.policyLinkText, { color: colors.textSecondary }]}>개인정보처리방침</Text>
-                <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
+                <Ionicons name="chevron-forward-outline" size={14} color={colors.textSecondary} />
             </Pressable>
 
             <AuthPrimaryButton
@@ -162,7 +184,7 @@ function isSamePolicyVersion(current: SignupConsentPolicy, next: SignupConsentPo
 }
 
 type ConsentToggleRowProps = {
-    checked: boolean;
+    checked: boolean | "mixed";
     title: string;
     subtitle?: string;
     onToggle: () => void;
@@ -210,10 +232,11 @@ type ConsentDocumentRowProps = {
     document: LegalDocument;
     onToggle: () => void;
     onOpen: () => void;
+    openRef: React.Ref<View>;
     disabled?: boolean;
 };
 
-function ConsentDocumentRow({ checked, document, onToggle, onOpen, disabled = false }: ConsentDocumentRowProps) {
+function ConsentDocumentRow({ checked, document, onToggle, onOpen, openRef, disabled = false }: ConsentDocumentRowProps) {
     const { colors, mode } = useTheme();
     const styles = createStyles(colors, mode);
 
@@ -241,6 +264,7 @@ function ConsentDocumentRow({ checked, document, onToggle, onOpen, disabled = fa
                 </View>
             </Pressable>
             <Pressable
+                ref={openRef}
                 accessibilityRole="link"
                 accessibilityLabel={`${document.title} 자세히 보기`}
                 accessibilityState={{ disabled }}
@@ -249,13 +273,13 @@ function ConsentDocumentRow({ checked, document, onToggle, onOpen, disabled = fa
                 hitSlop={6}
                 style={({ pressed }) => [styles.openButton, { opacity: disabled ? 0.45 : pressed ? 0.5 : 1 }]}
             >
-                <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+                <Ionicons name="chevron-forward-outline" size={18} color={colors.textSecondary} />
             </Pressable>
         </View>
     );
 }
 
-function ConsentCheckbox({ checked }: { checked: boolean }) {
+function ConsentCheckbox({ checked }: { checked: boolean | "mixed" }) {
     const { colors, mode } = useTheme();
     const styles = createStyles(colors, mode);
 
@@ -267,7 +291,14 @@ function ConsentCheckbox({ checked }: { checked: boolean }) {
             ]}
         >
             {checked ? (
-                <Ionicons name="checkmark" size={15} color={colors.selectedDayText} />
+                <Animated.View
+                    key={String(checked)}
+                    entering={FadeIn.duration(150).reduceMotion(ReduceMotion.System)}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                >
+                    <Ionicons name={checked === "mixed" ? "remove-outline" : "checkmark-outline"} size={15} color="#FFFFFF" />
+                </Animated.View>
             ) : null}
         </View>
     );
@@ -280,9 +311,9 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         },
         agreementList: {
             borderWidth: 1,
-            borderRadius: 8,
+            borderRadius: 15,
             overflow: "hidden",
-            backgroundColor: mode === "dark" ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.018)",
+            backgroundColor: colors.surface,
         },
         toggleRow: {
             minHeight: 62,
@@ -294,6 +325,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         },
         toggleRowEmphasized: {
             minHeight: 68,
+            backgroundColor: colors.surface2,
         },
         documentRow: {
             minHeight: 74,
@@ -324,8 +356,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             flexShrink: 0,
         },
         checkboxChecked: {
-            borderColor: colors.selectedDayBg,
-            backgroundColor: colors.selectedDayBg,
+            borderColor: mode === "dark" ? "#3978D8" : "#205CC4",
+            backgroundColor: mode === "dark" ? "#3978D8" : "#205CC4",
         },
         checkboxUnchecked: {
             borderColor: colors.border,
@@ -362,8 +394,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             height: StyleSheet.hairlineWidth,
         },
         policyLink: {
-            minHeight: 32,
-            alignSelf: "center",
+            minHeight: 44,
+            alignSelf: "flex-start",
             flexDirection: "row",
             alignItems: "center",
             gap: 2,

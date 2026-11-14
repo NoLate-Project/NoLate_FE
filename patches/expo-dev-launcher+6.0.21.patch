@@ -44,3 +44,22 @@ diff --git a/node_modules/expo-dev-launcher/ios/EXDevLauncherController.m b/node
      return;
    }
  
+@@ -442,6 +447,18 @@
+       onSuccess:(void (^ _Nullable)(void))onSuccess
+         onError:(void (^ _Nullable)(NSError *error))onError
+ {
++  // Reloads from the error screen/updates interface intentionally pass nil.
++  // A failed manifest request must return to the launcher, not invoke a null
++  // block and crash while the development server is unavailable.
++  if (onError == nil) {
++    __weak typeof(self) weakSelf = self;
++    onError = ^(NSError *error) {
++      dispatch_async(dispatch_get_main_queue(), ^{
++        [weakSelf navigateToLauncher];
++      });
++    };
++  }
++
+   EXDevLauncherUrl *devLauncherUrl = [[EXDevLauncherUrl alloc] init:url];
+   NSURL *expoUrl = devLauncherUrl.url;
+   _possibleManifestURL = expoUrl;

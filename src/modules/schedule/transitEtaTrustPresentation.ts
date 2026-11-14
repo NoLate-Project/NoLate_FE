@@ -2,6 +2,8 @@ import type { ScheduleDepartureStatus } from '../../api/schedule';
 import type { TravelMode } from './types';
 import { getFreshDepartureTiming } from './effectiveTransitRoutePresentation';
 
+export const SAVED_TRANSIT_ESTIMATE_WARNING = '운행시각 미확인 · 저장 경로 기준';
+
 /** 저장된 역산값은 유지하되, 운행·시간표 검증이 끝난 ETA처럼 안내하지 않는다. */
 export function getTransitEtaTrustPresentation({
   travelMode,
@@ -69,7 +71,7 @@ export function getTransitEtaTrustPresentation({
       ? '실시간 도착정보 없음 · 저장 경로 기준'
       : arrivalOutOfHorizon
       ? '실시간 조회 범위 밖 · 저장 경로 기준'
-      : '운행시각 미확인 · 저장 경로 기준';
+      : SAVED_TRANSIT_ESTIMATE_WARNING;
   return {
     departureLabel: '예상 출발',
     warning: preservingEarlierDeparture && !isInspectingTravelPlan

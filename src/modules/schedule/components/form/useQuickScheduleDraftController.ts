@@ -5,7 +5,8 @@ import { cancelAnimation, type SharedValue } from "react-native-reanimated";
 import type { ImagePickerAsset } from "expo-image-picker";
 
 import { canWriteScheduleCategory } from "../../categoryPermissions";
-import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
+import { consumeRoutePlannerResult, observeRoutePlannerReturn, setRoutePlannerInitial } from "../../routePlannerSession";
+import type { ScheduleRouteDraftChange } from "./ScheduleRouteDraftNotice";
 import {
   applyQuickScheduleNotificationSettings,
   applyQuickScheduleRouteResult as applyRouteResultToPreviewDraft,
@@ -13,6 +14,7 @@ import {
   buildQuickScheduleReliabilityFeedback,
   buildQuickSchedulePreviewDraft as buildPreviewDraft,
   getQuickScheduleBlockingReviewField,
+  isQuickScheduleRouteReady,
   quickSchedulePlaceFromLocation as placeFromDraftLocation,
   updateQuickSchedulePreviewDraft,
   type QuickSchedulePreviewDraft as PreviewDraft,
@@ -112,7 +114,6 @@ export function useQuickScheduleDraftController({
   const router = useRouter();
   const pathname = usePathname();
   const [flowStep, setFlowStep] = useState<FlowStep>("input");
-  const [analysisError, setAnalysisError] = useState("");
   const [previewDraft, setPreviewDraft] = useState<PreviewDraft | null>(null);
   const [previewSourceText, setPreviewSourceText] = useState("");
   const [editingField, setEditingField] = useState<PreviewField | null>(null);
@@ -121,32 +122,31 @@ export function useQuickScheduleDraftController({
   const [timeEditMode, setTimeEditMode] = useState<TimeEditMode>("picker");
   const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string>();
   const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
+  const [routeDraftChange, setRouteDraftChange] = useState<ScheduleRouteDraftChange | { kind: "destinationChanged"; revision: number; hadAlert: boolean }>();
   const routePlannerAwayRef = useRef(false);
   const routePlannerReturnFieldRef = useRef<PreviewField | null>(null);
+  const routePlannerReturnValueRef = useRef("");
   const initialRequestHandledRef = useRef<string | null>(null);
   const initialPreviewFieldHandledRef = useRef<string | null>(null);
   const analysisSequenceRef = useRef(0);
-  const analysisPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analysisInFlightRef = useRef(false);
   const saveInFlightRef = useRef(false);
 
-  /** 진행 중 분석과 지연된 미리보기 전환을 모두 무효화한다. */
+  /** 진행 중 분석을 무효화한다. */
   const invalidatePendingAnalysis = useCallback(() => {
     analysisSequenceRef.current += 1;
     analysisInFlightRef.current = false;
-    if (analysisPreviewTimerRef.current) {
-      clearTimeout(analysisPreviewTimerRef.current);
-      analysisPreviewTimerRef.current = null;
-    }
   }, []);
 
   /** 모달이 닫힐 때 초안·편집·경로 왕복 상태를 최초 값으로 되돌린다. */
   const resetDraftFlow = useCallback(() => {
-    setFlowStep("input"); setAnalysisError(""); setPreviewDraft(null); setPreviewSourceText("");
+    setFlowStep("input"); setPreviewDraft(null); setPreviewSourceText("");
     setEditingField(null); setEditingValue(""); setEditingAlertMode("STANDARD"); setTimeEditMode("picker");
     setRoutePlannerSessionId(undefined); setRoutePlannerHidden(false);
+    setRouteDraftChange(undefined);
     saveInFlightRef.current = false; invalidatePendingAnalysis();
     routePlannerAwayRef.current = false; routePlannerReturnFieldRef.current = null;
+    routePlannerReturnValueRef.current = "";
   }, [invalidatePendingAnalysis]);
 
   /** 현재 입력 매체를 분석 API에 전달하고 최신 요청 결과를 미리보기 초안으로 변환한다. */
@@ -160,9 +160,10 @@ export function useQuickScheduleDraftController({
     const sourceText = rawSource.slice(0, QUICK_TEXT_LIMIT);
     const sequence = analysisSequenceRef.current + 1;
     analysisSequenceRef.current = sequence; analysisInFlightRef.current = true;
-    if (analysisPreviewTimerRef.current) clearTimeout(analysisPreviewTimerRef.current);
+    Keyboard.dismiss();
     try {
-      setSubmitting(true); setAnalysisError(""); setFlowStep("analyzing");
+      setPreviewSourceText(sourceText);
+      setSubmitting(true); setFlowStep("analyzing");
       const parsed = await onAnalyze(sourceText, {
         inputMode: analysisInputMode,
         inputTypeOverride,
@@ -175,15 +176,11 @@ export function useQuickScheduleDraftController({
         recognitionConfidence: analysisInputMode === "voice" ? voiceRecognitionConfidence : analysisInputMode === "photo" ? photoRecognitionConfidence : undefined,
       });
       if (analysisSequenceRef.current !== sequence || !visibleRef.current) return;
-      analysisPreviewTimerRef.current = setTimeout(() => {
-        analysisPreviewTimerRef.current = null;
-        if (analysisSequenceRef.current !== sequence || !visibleRef.current) return;
-        setPreviewDraft(buildPreviewDraft(parsed, sourceText, defaultDay));
-        setPreviewSourceText(sourceText); setFlowStep("preview"); setSubmitting(false); analysisInFlightRef.current = false;
-      }, 220);
-    } catch (error) {
+      setRouteDraftChange(undefined);
+      setPreviewDraft(buildPreviewDraft(parsed, sourceText, defaultDay));
+      setFlowStep("preview"); setSubmitting(false); analysisInFlightRef.current = false;
+    } catch {
       if (analysisSequenceRef.current !== sequence || !visibleRef.current) return;
-      setAnalysisError(error instanceof Error ? error.message : "일정을 만들지 못했어요");
       setFlowStep("analysisError"); setSubmitting(false); analysisInFlightRef.current = false;
     }
   }, [defaultDay, inputMode, isPhotoRecognizing, isVoiceRecording, onAnalyze, photoRecognitionConfidence, photoTranscript, selectedPhoto?.uri, setSubmitting, submitting, text, visibleRef, voiceDurationMillis, voiceRecognitionAlternatives, voiceRecognitionConfidence, voiceTranscript, voiceUri]);
@@ -197,7 +194,7 @@ export function useQuickScheduleDraftController({
     if (!visible || !requestId || !seedText || initialRequestHandledRef.current === requestId) return;
     const bounded = seedText.slice(0, QUICK_TEXT_LIMIT);
     initialRequestHandledRef.current = requestId;
-    setInputMode("text"); setText(bounded); clearPhotoRecognition(); resetVoiceInput(); setAnalysisError(""); setFlowStep("input");
+    setInputMode("text"); setText(bounded); clearPhotoRecognition(); resetVoiceInput(); setFlowStep("input");
     startAnalysis(bounded, initialInputType).catch(() => undefined);
   }, [clearPhotoRecognition, initialInputType, initialRequestId, initialText, resetVoiceInput, setInputMode, setText, startAnalysis, visible]);
 
@@ -229,10 +226,14 @@ export function useQuickScheduleDraftController({
       setPreviewDraft(current => current ? applyQuickScheduleNotificationSettings(current, { leadMinutes, alertMode: editingAlertMode }) : current);
     } else {
       const nextValue = editingField === "time" ? normalizeTimeInput(editingValue, previewDraft?.time ?? "09:00") : editingValue.trim() || (editingField === "location" ? "장소 미정" : editingField === "title" ? "새 일정" : editingField === "memo" ? "메모 없음" : "");
+      if (editingField === "location" && nextValue !== previewDraft?.location.trim() && isQuickScheduleRouteReady(previewDraft)) {
+        const hadAlert = previewDraft?.notificationLeadMinutes !== undefined;
+        setRouteDraftChange(previous => ({ kind: "destinationChanged", revision: (previous?.revision ?? 0) + 1, hadAlert }));
+      }
       updatePreviewField(editingField, nextValue);
     }
     setEditingField(null); setEditingValue(""); setEditingAlertMode("STANDARD"); setTimeEditMode("picker"); setFlowStep("preview");
-  }, [editingAlertMode, editingField, editingValue, previewDraft?.time, updatePreviewField]);
+  }, [editingAlertMode, editingField, editingValue, previewDraft, updatePreviewField]);
 
   /** 변경을 버리고 편집 버퍼를 비운 뒤 미리보기로 돌아간다. */
   const cancelEditField = useCallback(() => {
@@ -246,6 +247,7 @@ export function useQuickScheduleDraftController({
     const sessionId = `quick-route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     routePlannerAwayRef.current = false;
     setRoutePlannerInitial(sessionId, {
+      returnToScheduleDraft: true,
       origin: previewDraft.origin, destination,
       travelMode: previewDraft.travelMode ?? previewDraft.parsed?.travelMode ?? "TRANSIT",
       travelMinutes: previewDraft.travelMinutes ?? previewDraft.parsed?.travelMinutes,
@@ -255,21 +257,23 @@ export function useQuickScheduleDraftController({
     });
     Keyboard.dismiss(); setRoutePlannerSessionId(sessionId); setRoutePlannerHidden(true);
     routePlannerReturnFieldRef.current = editingField;
+    routePlannerReturnValueRef.current = editingValue;
     setEditingField(null); setEditingValue(""); setTimeEditMode("picker"); setFlowStep("preview"); setRendered(false);
     try { router.push({ pathname: "/schedule/route-select", params: { sessionId } }); }
     catch {
       setRoutePlannerSessionId(undefined); setRoutePlannerHidden(false); setRendered(true); setContentMounted(true); progress.value = 1;
       const returnField = routePlannerReturnFieldRef.current;
       setEditingField(returnField);
-      setEditingValue(returnField === "notification" ? String(previewDraft.notificationLeadMinutes ?? "none") : returnField ? String(previewDraft[returnField] ?? "") : "");
+      setEditingValue(routePlannerReturnValueRef.current);
       setFlowStep(returnField ? "edit" : "preview"); routePlannerReturnFieldRef.current = null;
     }
-  }, [editingField, previewDraft, progress, router, setContentMounted, setRendered, submitting]);
+  }, [editingField, editingValue, previewDraft, progress, router, setContentMounted, setRendered, submitting]);
 
   useEffect(() => {
     if (!visible || !routePlannerSessionId) return;
-    if (pathname === "/schedule/route-select" || pathname === "/schedule/route-planner") { routePlannerAwayRef.current = true; return; }
-    if (!routePlannerAwayRef.current) return;
+    const observation = observeRoutePlannerReturn(pathname, routePlannerAwayRef.current);
+    routePlannerAwayRef.current = observation.hasVisitedRouteFlow;
+    if (!observation.shouldConsumeResult) return;
     const result = consumeRoutePlannerResult(routePlannerSessionId);
     const returnField = routePlannerReturnFieldRef.current;
     routePlannerAwayRef.current = false; setRoutePlannerSessionId(undefined); setRoutePlannerHidden(false);
@@ -277,12 +281,14 @@ export function useQuickScheduleDraftController({
     setEditingField(null); setEditingValue(""); setTimeEditMode("picker"); setFlowStep("preview");
     if (result && previewDraft) {
       const nextDraft = applyRouteResultToPreviewDraft(previewDraft, result); setPreviewDraft(nextDraft);
-      if (returnField === "notification") { setEditingField("notification"); setEditingValue(String(nextDraft.notificationLeadMinutes ?? "none")); setFlowStep("edit"); }
+      setRouteDraftChange(previous => ({ kind: "applied", revision: (previous?.revision ?? 0) + 1 }));
+      if (returnField === "notification") { setEditingField("notification"); setEditingValue(routePlannerReturnValueRef.current); setFlowStep("edit"); }
     } else if (returnField && previewDraft) {
       setEditingField(returnField);
-      setEditingValue(returnField === "notification" ? String(previewDraft.notificationLeadMinutes ?? "none") : String(previewDraft[returnField] ?? "")); setFlowStep("edit");
+      setEditingValue(routePlannerReturnValueRef.current); setFlowStep("edit");
     }
     routePlannerReturnFieldRef.current = null;
+    routePlannerReturnValueRef.current = "";
   }, [closingRef, pathname, previewDraft, progress, routePlannerSessionId, setContentMounted, setRendered, visible]);
 
   /** 검토와 카테고리를 확인한 뒤 초안을 일정으로 저장하고 신뢰도 피드백을 전송한다. */
@@ -307,7 +313,6 @@ export function useQuickScheduleDraftController({
   useEffect(() => invalidatePendingAnalysis, [invalidatePendingAnalysis]);
 
   return {
-    analysisError,
     cancelEditField,
     confirmEditField,
     editingAlertMode,
@@ -321,6 +326,7 @@ export function useQuickScheduleDraftController({
     previewSourceText,
     resetDraftFlow,
     routePlannerHidden,
+    routeDraftChange,
     savePreview,
     setEditingAlertMode,
     setEditingValue,

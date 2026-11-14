@@ -15,12 +15,14 @@ import { fromISO } from '../../../lib/util/data';
 import { APP_ACCENT_BLUE, hhmmText } from './ScheduleDetailChrome';
 import {
   formatCompactScheduleRange,
+  getDepartureDateLabel,
   getDepartureRemainingLabel,
   routeNumberText,
   travelModeLabel,
 } from './scheduleDetailModel';
 import type { ScheduleDetailController } from './useScheduleDetailController';
-import { getTransitEtaTrustPresentation } from '../../modules/schedule/transitEtaTrustPresentation';
+import { getTransitEtaTrustPresentation, SAVED_TRANSIT_ESTIMATE_WARNING } from '../../modules/schedule/transitEtaTrustPresentation';
+import { formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from '../../modules/schedule/transitRouteProgress';
 
 /**
  * 컨트롤러의 원시 상태를 일정 상세 각 영역이 바로 표시할 수 있는 읽기 전용 화면 모델로 변환한다.
@@ -30,7 +32,6 @@ export function buildScheduleDetailPresentation(
   controller: ScheduleDetailController,
 ) {
   const {
-    colors,
     currentMemberId,
     currentMemberDepartedAt,
     departureDisplayState,
@@ -86,16 +87,6 @@ export function buildScheduleDetailPresentation(
     ? 'rgba(255,255,255,0.07)'
     : 'rgba(15,23,42,0.05)';
   const topCardAccentText = isDark ? '#78B4FF' : APP_ACCENT_BLUE;
-  const departureStatusMuted =
-    departureDisplayState.kind === 'status' &&
-    departureDisplayState.tone === 'disabled';
-  const departureStatusAccent = departureCompleted
-    ? isDark
-      ? '#86EFAC'
-      : '#16A34A'
-    : departureStatusMuted
-    ? secondaryText
-    : colors.selectedDayBg;
   const participantPresentations = buildDepartureParticipantPresentations(
     departureParticipants,
     currentMemberId,
@@ -158,9 +149,10 @@ export function buildScheduleDetailPresentation(
     intercityJourneySelected: Boolean(routeDetailInfo?.intercityJourney),
     intercityTicketSelected: routeDetailInfo?.intercityJourney?.service.timingBasis === "TICKET",
   });
+  const isSavedRouteEstimate = etaTrust.warning === SAVED_TRANSIT_ESTIMATE_WARNING;
   const routeDetailMeta = [
     hasDetailedRoute
-      ? etaTrust.warning ?? (effectiveTransitRoutePresentation
+      ? isSavedRouteEstimate ? undefined : etaTrust.warning ?? (effectiveTransitRoutePresentation
         ? '지도에 표시된 저장 경로'
         : `${arrivalTimeLabel} 도착`)
       : routeSummaryKind === 'duration_only'
@@ -179,12 +171,6 @@ export function buildScheduleDetailPresentation(
     : routeSummaryKind === 'duration_only'
     ? '상세 경로 미설정'
     : '저장된 경로 없음';
-  const departureCountLabel =
-    departureOverview.totalCount > 0
-      ? `${departureOverview.departedCount}/${departureOverview.totalCount}`
-      : departureCompleted
-      ? '완료'
-      : '대기';
   const currentRouteDurationLabel = hasRouteSummary
     ? typeof currentTravelMinutes === 'number'
       ? `${currentTravelMinutes}분`
@@ -195,20 +181,30 @@ export function buildScheduleDetailPresentation(
       ? `${savedDisplayTravelMinutes}분`
       : routeNumberText(routeOption)
     : '미설정';
-  const departureRemainingLabel = getDepartureRemainingLabel(
-    departureDisplayState,
-  );
-  const recommendedDepartureTimeLabel = recommendedDepartureAt
-    ? hhmmText(recommendedDepartureAt)
+  const recordedDepartureAt = currentMemberDepartedAt && !inspectedTravelPlan
+    ? fromISO(currentMemberDepartedAt)
+    : undefined;
+  const displayedDepartureAt = recordedDepartureAt ?? recommendedDepartureAt;
+  const departureDateLabel = getDepartureDateLabel(displayedDepartureAt, nowMs);
+  const departureRemainingLabel = recordedDepartureAt || departureDateLabel
+    ? undefined
+    : getDepartureRemainingLabel(departureDisplayState);
+  const recommendedDepartureTimeLabel = displayedDepartureAt
+    ? hhmmText(displayedDepartureAt)
     : departureDisplayState.kind === 'status'
     ? departureDisplayState.text
     : scheduleCountdown.compactValue;
-  const departureTimeLabel = etaTrust.departureLabel;
-  const routeArrivalSummary = hasRouteSummary && etaTrust.warning
-    ? etaTrust.warning
-    : hasRouteSummary
-    ? `일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`
-    : scheduleRangeLabel;
+  const departureTimeLabel = recordedDepartureAt ? '실제 출발' : etaTrust.departureLabel;
+  const repeatsHeaderDuration = showTopRouteBar && hasDetailedRoute &&
+    !effectiveTransitRoutePresentation && Boolean(savedDisplayTravelMinutes) &&
+    currentRouteDurationLabel === routeDurationLabel;
+  const routeArrivalSummary = !hasRouteSummary
+    ? scheduleRangeLabel
+    : isSavedRouteEstimate
+    ? undefined
+    : etaTrust.warning ?? (repeatsHeaderDuration
+      ? `일정 ${arrivalTimeLabel}`
+      : `일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`);
   const effectiveRouteAccessibilityLabel = effectiveTransitRoutePresentation
     ? [
         effectiveTransitRoutePresentation.guidanceTitle,
@@ -220,8 +216,12 @@ export function buildScheduleDetailPresentation(
         .filter(Boolean)
         .join(', ')
     : undefined;
-  const routeWalkingMinutes =
-    routeDetailInfo?.steps.reduce(
+  // Use the same transit legs as the summary bar. Older timelines can store a
+  // physical transfer walk as TRANSFER, which can also mean waiting.
+  const transitLegs = routeOption?.transitLegs;
+  const routeWalkingMinutes = transitLegs?.length
+    ? getTransitRouteWalkingMinutes(transitLegs)
+    : routeDetailInfo?.steps.reduce(
       (total, step) =>
         step.type === 'WALK' && typeof step.durationMinutes === 'number'
           ? total + step.durationMinutes
@@ -236,7 +236,7 @@ export function buildScheduleDetailPresentation(
           : typeof routeOption?.transferCount === 'number'
           ? `환승 ${routeOption.transferCount}회`
           : undefined,
-        routeWalkingMinutes > 0 ? `도보 ${routeWalkingMinutes}분` : undefined,
+        formatTransitWalkingSummary(routeWalkingMinutes),
         typeof routeDetailInfo?.fare === 'number'
           ? `${routeDetailInfo.fare.toLocaleString()}원`
           : typeof routeOption?.fareWon === 'number'
@@ -247,8 +247,9 @@ export function buildScheduleDetailPresentation(
   return {
     ...controller,
     item,
-    routeTitle,
+    routeTitle: inspectedTravelPlan ? routeIdentityTitle : routeTitle,
     routeIdentityTitle,
+    showRouteIdentityInSheet: !showTopRouteBar || (!inspectedTravelPlan && routeIdentityTitle !== routeTitle),
     travelText,
     departureTimeLabel,
     hasDepartureInfo,
@@ -258,8 +259,6 @@ export function buildScheduleDetailPresentation(
     secondaryText,
     topCardControlBg,
     topCardAccentText,
-    departureStatusMuted,
-    departureStatusAccent,
     participantPresentations,
     travelPlanParticipants,
     inspectedParticipant,
@@ -279,9 +278,9 @@ export function buildScheduleDetailPresentation(
     notesText,
     routeDetailMeta,
     routeSummaryTitle,
-    departureCountLabel,
     currentRouteDurationLabel,
     routeDurationLabel,
+    departureDateLabel,
     departureRemainingLabel,
     recommendedDepartureTimeLabel,
     routeArrivalSummary,

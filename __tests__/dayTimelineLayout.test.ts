@@ -50,6 +50,15 @@ describe("day timeline layout", () => {
         expect(buildPositionedEvents([previousDay, nextDay], "2026-07-10")).toEqual([]);
     });
 
+    test("정오나 자정을 넘기면 시작과 종료의 오전·오후를 각각 표시한다", () => {
+        const midday = makeItem("midday", "2026-07-10T11:45:00", "2026-07-10T12:15:00");
+        const overnight = makeItem("overnight", "2026-07-10T23:45:00", "2026-07-11T00:15:00");
+
+        expect(formatDayTimelineTimeRange(midday)).toBe("오전 11:45 - 오후 12:15");
+        expect(formatDayTimelineTimeRange(overnight)).toBe("오후 11:45 - 오전 12:15");
+        expect(formatDayTimelineTimeRange({ ...midday, hasEndTime: false })).toBe("오전 11:45");
+    });
+
     test("짧은 일정도 제목과 시간 두 줄이 잘리지 않는 최소 높이를 가진다", () => {
         const item = makeItem(
             "short",
@@ -60,7 +69,7 @@ describe("day timeline layout", () => {
 
         expect(positioned.height).toBe(DAY_TIMELINE_MIN_EVENT_HEIGHT);
         expect(positioned.visualEndMinute).toBe(20 * 60 + 3 + 60);
-        expect(formatDayTimelineTimeRange(item)).toBe("8:03 - 8:26");
+        expect(formatDayTimelineTimeRange(item)).toBe("오후 8:03 - 8:26");
         expect(DAY_TIMELINE_MIN_EVENT_HEIGHT).toBeGreaterThanOrEqual(
             DAY_TIMELINE_CARD_VERTICAL_PADDING * 2
             + DAY_TIMELINE_TITLE_LINE_HEIGHT
@@ -128,6 +137,14 @@ describe("day timeline layout", () => {
         const metadata = getDayTimelineEventMetadata(item);
 
         expect(formatDayTimelineDeparture(metadata.departureAt)).toBe("오전 8:40");
+    });
+
+    test.each([
+        ["2026-11-07T10:00:00+09:00", "2026-11-07T09:56:00+09:00", 65, "2026-11-07T08:55:00+09:00"],
+        ["2026-11-01T15:20:00+09:00", "2026-11-01T17:35:00+09:00", 73, "2026-11-01T14:07:00+09:00"],
+    ])("일정에 늦는 저장 출발 시각을 그대로 권장하지 않는다 (%s)", (startAt, departAt, travelMinutes, expected) => {
+        const item = makeItem("inconsistent", startAt, startAt, { departAt, travelMinutes, travelMode: "TRANSIT" });
+        expect(new Date(getDayTimelineEventMetadata(item).departureAt!).toISOString()).toBe(new Date(expected).toISOString());
     });
 
     test("레거시 raw route의 현재 시각 대신 일정 기준 출발 시각을 사용한다", () => {

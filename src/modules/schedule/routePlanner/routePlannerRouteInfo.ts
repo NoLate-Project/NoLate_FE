@@ -45,9 +45,9 @@ import {
 /** 정규화 세그먼트 수단을 경로 진행 막대가 사용하는 대중교통 구간 종류로 변환합니다. 입력 경로 정보는 변경하지 않습니다. */
 export function routeSegmentModeToProgressKind(
   mode: RouteMode,
-): TransitLegDetail['kind'] {
+): TransitRouteProgressSegment['kind'] {
   if (isTransitRideKind(mode)) return mode;
-  if (mode === 'WALK') return 'WALK';
+  if (mode === 'WALK' || mode === 'TRANSFER') return mode;
   return 'ETC';
 }
 

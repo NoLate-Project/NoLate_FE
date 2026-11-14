@@ -58,7 +58,6 @@ import {
   CalendarConsentId,
   CalendarProviderId,
   CANDIDATE_PAGE_SIZE,
-  FOOTER_MOTION_DURATION_MS,
   isCalendarRouteCandidate,
   motionStepIndex,
   OnboardingStep,
@@ -82,7 +81,8 @@ export function useCalendarImportController() {
   const scanAttemptRef = useRef(0);
   const stepMotionDidMountRef = useRef(false);
   const stepMotion = useRef(new Animated.Value(1)).current;
-  const footerMotion = useRef(new Animated.Value(1)).current;
+  const scrollOffsets = useRef<Partial<Record<OnboardingStep, number>>>({});
+  const visibleStepRef = useRef<OnboardingStep>("intro");
   const goBackStepRef = useRef<() => void>(() => undefined);
 
   const googleCalendarRedirectUri = AuthSession.makeRedirectUri({
@@ -287,16 +287,10 @@ export function useCalendarImportController() {
       },
     ],
   };
-  const footerMotionStyle = {
-    opacity: footerMotion,
-    transform: [
-      {
-        translateY: footerMotion.interpolate({
-          inputRange: [0, 1],
-          outputRange: [14, 0],
-        }),
-      },
-    ],
+  const trackScroll = (offset: number) => {
+    if (currentStepRef.current === visibleStepRef.current) {
+      scrollOffsets.current[visibleStepRef.current] = Math.max(0, offset);
+    }
   };
 
   const goToStep = (nextStep: OnboardingStep) => {
@@ -331,36 +325,30 @@ export function useCalendarImportController() {
 
   useEffect(() => {
     currentStepRef.current = step;
-    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+    const frame = requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollTo({ y: scrollOffsets.current[step] ?? 0, animated: false });
+      visibleStepRef.current = step;
+    });
 
     if (!stepMotionDidMountRef.current || reduceMotionEnabled) {
       stepMotionDidMountRef.current = true;
       stepMotion.setValue(1);
-      footerMotion.setValue(1);
-      return;
+      return () => cancelAnimationFrame(frame);
     }
 
-    stepMotion.stopAnimation();
-    footerMotion.stopAnimation();
     stepMotion.setValue(0);
-    footerMotion.setValue(0);
-
-    Animated.parallel([
-      Animated.timing(stepMotion, {
-        toValue: 1,
-        duration: STEP_MOTION_DURATION_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(footerMotion, {
-        toValue: 1,
-        duration: FOOTER_MOTION_DURATION_MS,
-        delay: 45,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [footerMotion, reduceMotionEnabled, step, stepMotion]);
+    const animation = Animated.timing(stepMotion, {
+      toValue: 1,
+      duration: stepTransitionDirection < 0 ? 180 : STEP_MOTION_DURATION_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => {
+      cancelAnimationFrame(frame);
+      animation.stop();
+    };
+  }, [reduceMotionEnabled, step, stepMotion, stepTransitionDirection]);
 
   const {
     loadCategories,
@@ -683,7 +671,8 @@ export function useCalendarImportController() {
     failedImportCount,
     favoriteDeparturePlaces,
     finishCuration,
-    footerMotionStyle,
+    isManagementEntry,
+    trackScroll,
     goBackStep,
     goToStep,
     handleCategoryCreated,

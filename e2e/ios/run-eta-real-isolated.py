@@ -12,9 +12,10 @@ import tempfile
 import time
 import urllib.request
 from eta_pinned_app import (
-    require_private_development_client, reset_private_navigation,
-    restore_private_endpoint, open_private_test_endpoint,
+    require_private_development_client, restore_private_endpoint,
+    open_private_client_with_xcuitest,
 )
+from eta_fixture_snapshot import wait_for_phase_snapshot
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
@@ -199,8 +200,11 @@ def main():
         free(5523)
         free(8086)
         with log('compile.log') as output:
-            subprocess.run(['./gradlew', '-I', 'e2e/eta-fixture.init.gradle', 'etaSimulatorFixtureClasspath',
+            java_home = str(Path(args.java).resolve(strict=True).parent.parent)
+            subprocess.run(['./gradlew', '--no-daemon', '--max-workers=2', '-Dorg.gradle.java.home=' + java_home,
+                '-I', 'e2e/eta-fixture.init.gradle', 'etaSimulatorFixtureClasspath',
                 '-PetaFixtureOutput=' + str(root), '--console=plain'], cwd=BE,
+                env=dict(os.environ, JAVA_HOME=java_home),
                 stdout=output, stderr=subprocess.STDOUT, check=True, timeout=300)
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.real-isolated=true', '-classpath',
@@ -210,7 +214,7 @@ def main():
                 ([target_arrival_at] if target_arrival_at else []), cwd=BE, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
                 text=True, start_new_session=True)
         wait(ready, server)
-        prepared = json.loads((root / 'prepared.json').read_text())
+        prepared = wait_for_phase_snapshot(root / 'prepared.json', -1, server)
         assert prepared['providersMocked'] is False and prepared['database'] == 'H2_MEMORY_ONLY'
         assert prepared['alertMode'] == 'STANDARD' and prepared['nativeAlarmDeliveryTest'] is False
         assert prepared['journeyProvider'] == args.journey_provider
@@ -220,14 +224,14 @@ def main():
         env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=BASE, EXPO_PUBLIC_TRANSIT_PROVIDER=args.journey_provider,
                    REACT_NATIVE_PACKAGER_HOSTNAME='127.0.0.1', CI='1')
         with log('metro.log') as output:
-            metro = subprocess.Popen(['npx', 'expo', 'start', '--dev-client', '--localhost', '--port', '8086'],
+            metro = subprocess.Popen(['npx', 'expo', 'start', '--dev-client', '--localhost', '--port', '8086', '--max-workers', '2'],
                 cwd=FE, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         def metro_ready():
             with urllib.request.urlopen('http://127.0.0.1:8086/status', timeout=2) as response:
                 return response.read() == b'packager-status:running'
         wait(metro_ready, metro)
-        reset_private_navigation(DEVICE)
-        open_private_test_endpoint(DEVICE)
+        emit(state='reset_and_open_pinned_via_xcuitest')
+        report['startupTransport'] = open_private_client_with_xcuitest(DEVICE, root / 'ui-private-lifecycle')
         ui('testLoginDedicatedEtaAccount', 'ui-login', ('--credentials', str(root / 'credentials.json')))
         accepted_streak = 0
         previous = None
@@ -241,8 +245,7 @@ def main():
             server.stdin.write('evaluate\n')
             server.stdin.flush()
             path = root / f'evaluation-{index}.json'
-            wait(lambda: path.exists() and path.stat().st_size > 0, server, 90)
-            value = json.loads(path.read_text())
+            value = wait_for_phase_snapshot(path, -1, server, seconds=90)
             assert value['processed'] == 1 and value['historyCount'] == index and value['alertMode'] == 'STANDARD'
             assert all(a['operation'] != 'UPSERT' for a in value['alarmStates'])
             if previous is not None:

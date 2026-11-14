@@ -1,13 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
+import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { LegalDocument } from "../../api/legal";
 import { useAuth } from "../auth/AuthContext";
 import { getPostAuthRoute } from "../onboarding/curationRouting";
-import CalendarGlassSurface from "../schedule/components/calendar/CalendarGlassSurface";
 import { useTheme } from "../theme/ThemeContext";
 import BrandedLoader from "../../ui/BrandedLoader";
 import { useScreenFirstPaintPerformance } from "../performance/useScreenFirstPaintPerformance";
@@ -17,12 +17,14 @@ type LegalAgreementDocumentScreenProps = {
     fallback: LegalDocument;
     loadDocument: () => Promise<LegalDocument>;
     route: string;
+    collapsibleSections?: boolean;
 };
 
 export default function LegalAgreementDocumentScreen({
     fallback,
     loadDocument,
     route,
+    collapsibleSections = false,
 }: LegalAgreementDocumentScreenProps) {
     useScreenFirstPaintPerformance(route);
     const router = useRouter();
@@ -34,6 +36,29 @@ export default function LegalAgreementDocumentScreen({
     const [loading, setLoading] = useState(true);
     const [usingFallback, setUsingFallback] = useState(false);
     const [reloadKey, setReloadKey] = useState(0);
+
+    const [contentsOpen, setContentsOpen] = useState(false);
+    const [expandedSection, setExpandedSection] = useState<number>();
+    const scrollRef = useRef<ScrollView>(null);
+    const contentRef = useRef<View>(null);
+    const activeSectionRef = useRef<number | undefined>(undefined);
+    const sections = useRef(new Map<number, View>());
+
+    const scrollToSection = (index: number) => {
+        const content = contentRef.current;
+        const section = sections.current.get(index);
+        if (!content || !section) return;
+        section.measureLayout(content, (_left, top) => {
+            scrollRef.current?.scrollTo({ y: Math.max(top - 8, 0), animated: false });
+        }, () => undefined);
+    };
+
+    const selectSection = (index: number) => {
+        setContentsOpen(false);
+        activeSectionRef.current = index;
+        if (collapsibleSections) setExpandedSection(index);
+        requestAnimationFrame(() => scrollToSection(index));
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -72,37 +97,52 @@ export default function LegalAgreementDocumentScreen({
         <View style={[styles.root, { backgroundColor: colors.background }]}>
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
             <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-                <CalendarGlassSurface
-                    interactive
-                    variant="toolbar"
-                    style={[styles.backSurface, { borderColor: colors.border }]}
-                >
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="이전 화면으로 돌아가기"
                         onPress={goBack}
-                        style={({ pressed }) => [styles.backButton, { opacity: pressed ? 0.55 : 1 }]}
+                        style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface2, opacity: pressed ? 0.55 : 1 }]}
                     >
-                        <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+                        <Ionicons name="chevron-back-outline" size={22} color={colors.textPrimary} />
                     </Pressable>
-                </CalendarGlassSurface>
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>
                     {document.title}
                 </Text>
-                <View style={styles.headerSpacer} />
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: contentsOpen }}
+                    accessibilityLabel="문서 목차"
+                    onPress={() => setContentsOpen(open => !open)}
+                    style={styles.contentsButton}
+                >
+                    <Text style={[styles.contentsLabel, { color: colors.textPrimary }]}>목차</Text>
+                    <Ionicons name={contentsOpen ? "chevron-up-outline" : "chevron-down-outline"} size={14} color={colors.textSecondary} />
+                </Pressable>
             </View>
 
+            {contentsOpen && (
+                <Animated.View entering={sectionIn} exiting={sectionOut} style={[styles.contents, { borderColor: colors.border }]}>
+                    <ScrollView keyboardShouldPersistTaps="handled">
+                        {document.sections.map((section, index) => (
+                            <Pressable key={index} accessibilityRole="button" onPress={() => selectSection(index)} style={styles.contentsRow}>
+                                <Text style={[styles.contentsLabel, { color: colors.textPrimary }]}>{section.title}</Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                </Animated.View>
+            )}
             <ScrollView
-                showsVerticalScrollIndicator={false}
+                ref={scrollRef}
                 contentContainerStyle={[
                     styles.content,
                     { paddingBottom: Math.max(insets.bottom, 18) + 24 },
                 ]}
             >
+                <View ref={contentRef} collapsable={false} style={styles.document}>
                 <Text style={[styles.eyebrow, { color: colors.textSecondary }]}>
-                    필수 · 시행일 {document.effectiveDate}
+                    시행일 {document.effectiveDate} · 버전 {document.version}
                 </Text>
-                <Text style={[styles.title, { color: colors.textPrimary }]}>{document.title}</Text>
+                <Text accessibilityRole="header" style={[styles.title, { color: colors.textPrimary }]}>{document.title}</Text>
                 <Text style={[styles.summary, { color: colors.textSecondary }]}>{document.summary}</Text>
 
                 {loading ? (
@@ -148,23 +188,55 @@ export default function LegalAgreementDocumentScreen({
                     </Pressable>
                 ) : null}
 
-                {document.sections.map((section, sectionIndex) => (
-                    <View key={`${section.title}-${sectionIndex}`} style={[styles.section, { borderColor: colors.border }]}>
-                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{section.title}</Text>
-                        {section.body.map((paragraph, paragraphIndex) => (
-                            <View key={`${paragraphIndex}-${paragraph}`} style={styles.paragraphRow}>
-                                <Text style={[styles.bullet, { color: colors.textSecondary }]}>-</Text>
-                                <Text style={[styles.paragraph, { color: colors.textSecondary }]}>{paragraph}</Text>
-                            </View>
-                        ))}
-                    </View>
-                ))}
-
-                <Text style={[styles.version, { color: colors.textSecondary }]}>문서 버전 {document.version}</Text>
+                {document.sections.map((section, index) => {
+                    const expanded = !collapsibleSections || expandedSection === index;
+                    return (
+                        <View
+                            key={`${section.title}-${index}`}
+                            ref={view => {
+                                if (view) sections.current.set(index, view);
+                                else sections.current.delete(index);
+                            }}
+                            collapsable={false}
+                            onLayout={() => {
+                                if (activeSectionRef.current === index) {
+                                    activeSectionRef.current = undefined;
+                                    scrollToSection(index);
+                                }
+                            }}
+                            style={[styles.section, { borderColor: colors.border }]}
+                        >
+                            {collapsibleSections ? (
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityState={{ expanded }}
+                                    accessibilityLabel={section.title}
+                                    testID={`legal-article-${index}`}
+                                    onPress={() => setExpandedSection(expanded ? undefined : index)}
+                                    style={styles.sectionButton}
+                                >
+                                    <Text style={[styles.sectionTitle, styles.sectionButtonTitle, { color: colors.textPrimary }]}>{section.title}</Text>
+                                    <Ionicons name={expanded ? "chevron-up-outline" : "chevron-down-outline"} size={16} color={colors.textSecondary} />
+                                </Pressable>
+                            ) : <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.textPrimary }]}>{section.title}</Text>}
+                            {expanded && (
+                                <Animated.View entering={collapsibleSections ? sectionIn : undefined} style={styles.paragraphs}>
+                                    {section.body.map((paragraph, paragraphIndex) => (
+                                        <Text key={paragraphIndex} style={[styles.paragraph, { color: colors.textSecondary }]}>{paragraph}</Text>
+                                    ))}
+                                </Animated.View>
+                            )}
+                        </View>
+                    );
+                })}
+                </View>
             </ScrollView>
         </View>
     );
 }
+
+const sectionIn = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+const sectionOut = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
@@ -176,10 +248,13 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
     },
-    backSurface: { width: 44, height: 44, borderRadius: 22, borderWidth: 1 },
-    backButton: { flex: 1, alignItems: "center", justifyContent: "center" },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
     headerTitle: { flex: 1, minWidth: 0, textAlign: "center", fontSize: 17, fontWeight: "900" },
-    headerSpacer: { width: 44, height: 44 },
+    contentsButton: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8 },
+    contentsLabel: { fontSize: 14, fontWeight: "600" },
+    contents: { maxHeight: "35%", paddingHorizontal: 18, borderBottomWidth: StyleSheet.hairlineWidth },
+    contentsRow: { minHeight: 44, justifyContent: "center", paddingVertical: 8 },
+    document: { gap: 12 },
     content: { paddingHorizontal: 18, paddingTop: 18, gap: 12 },
     eyebrow: { fontSize: 12, lineHeight: 17, fontWeight: "900" },
     title: { fontSize: 28, lineHeight: 35, fontWeight: "900" },
@@ -209,8 +284,8 @@ const styles = StyleSheet.create({
     noticeText: { flex: 1, fontSize: 12, lineHeight: 18, fontWeight: "700" },
     section: { borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 16, gap: 9 },
     sectionTitle: { fontSize: 16, lineHeight: 22, fontWeight: "900" },
-    paragraphRow: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
-    bullet: { width: 7, fontSize: 13, lineHeight: 21, fontWeight: "900" },
-    paragraph: { flex: 1, minWidth: 0, fontSize: 13, lineHeight: 21, fontWeight: "700" },
-    version: { marginTop: 4, textAlign: "center", fontSize: 11, lineHeight: 16, fontWeight: "700" },
+    sectionButton: { minHeight: 44, gap: 12, flexDirection: "row", alignItems: "center" },
+    sectionButtonTitle: { flex: 1 },
+    paragraphs: { gap: 8 },
+    paragraph: { fontSize: 15, lineHeight: 23 },
 });

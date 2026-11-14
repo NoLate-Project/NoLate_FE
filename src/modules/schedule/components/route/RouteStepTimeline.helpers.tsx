@@ -10,6 +10,7 @@ import {
   type RouteStepType,
 } from '../../routeInfo';
 import { getBusArrivalStationIdentifiers } from '../../transitArrivalIdentifiers';
+import { formatTransferBoardingTarget, isTransitRideKind } from '../../../map/transitModes';
 import styles from './RouteStepTimeline.styles';
 
 /** 경로 단계의 제목·아이콘·실시간 도착정보 표시 규칙과 작은 UI 조각을 모읍니다. */
@@ -27,15 +28,15 @@ const DISCLOSURE_OPEN_DURATION = 200;
 const DISCLOSURE_CLOSE_DURATION = 170;
 
 /** 경로 단계 펼침·접힘에 맞는 LayoutAnimation을 설정해 높이와 투명도 전환을 동기화합니다. */
-export function configureRouteStepDisclosureAnimation(expanded: boolean) {
+export function configureRouteStepDisclosureAnimation(expanded: boolean, inlineStops = false) {
   LayoutAnimation.configureNext({
     duration: expanded ? DISCLOSURE_OPEN_DURATION : DISCLOSURE_CLOSE_DURATION,
-    create: {
+    create: inlineStops ? undefined : {
       type: LayoutAnimation.Types.easeInEaseOut,
       property: LayoutAnimation.Properties.opacity,
     },
     update: {
-      type: LayoutAnimation.Types.easeInEaseOut,
+      type: inlineStops ? LayoutAnimation.Types.easeOut : LayoutAnimation.Types.easeInEaseOut,
     },
     delete: {
       type: LayoutAnimation.Types.easeInEaseOut,
@@ -47,16 +48,22 @@ export function configureRouteStepDisclosureAnimation(expanded: boolean) {
 /** 경로 단계의 펼침 상태에 따라 회전하는 화살표를 렌더링합니다. */
 export function DisclosureChevron({
   expanded,
+  reduceMotion = false,
   size,
   color,
 }: {
   expanded: boolean;
+  reduceMotion?: boolean;
   size: number;
   color: string;
 }) {
   const progress = useRef(new Animated.Value(expanded ? 1 : 0)).current;
 
   useEffect(() => {
+    if (reduceMotion) {
+      progress.setValue(expanded ? 1 : 0);
+      return;
+    }
     const animation = Animated.timing(progress, {
       toValue: expanded ? 1 : 0,
       duration: expanded ? DISCLOSURE_OPEN_DURATION : DISCLOSURE_CLOSE_DURATION,
@@ -65,7 +72,7 @@ export function DisclosureChevron({
     });
     animation.start();
     return () => animation.stop();
-  }, [expanded, progress]);
+  }, [expanded, progress, reduceMotion]);
 
   const rotate = progress.interpolate({
     inputRange: [0, 1],
@@ -74,7 +81,7 @@ export function DisclosureChevron({
 
   return (
     <Animated.View pointerEvents="none" style={{ transform: [{ rotate }] }}>
-      <Ionicons name="chevron-down" size={size} color={color} />
+      <Ionicons name="chevron-down-outline" size={size} color={color} />
     </Animated.View>
   );
 }
@@ -87,13 +94,21 @@ export type RouteStepTimelineProps = {
     stopIndex: number;
   };
   onStepPress?: (step: RouteStep) => void;
+  onRevealFirstStop?: (row: View, animated: boolean, boardingRow?: View) => void;
+  selectedStopRowRef?: React.Ref<View>;
+  canShowPassStopOnMap?: (stepId: string, stopIndex: number) => boolean;
+  onPassStopPress?: (stepId: string, stopIndex: number) => void;
+  preserveStopDisclosureOnLegFocus?: boolean;
+  showLegFocus?: boolean;
   allowEndpointPress?: boolean;
   forceDark?: boolean;
   primaryTextColor?: string;
   secondaryTextColor?: string;
   initialExpandedStepId?: string;
   compact?: boolean;
+  inlineStationRail?: boolean;
   realtimeArrivalsEnabled?: boolean;
+  showEstimatedClockHeading?: boolean;
   currentGuidance?: { stepId: string; label: string };
   stepDisplayNames?: Record<string, string>;
 };
@@ -121,6 +136,7 @@ export type ArrivalRequest =
 function getStepIcon(type: RouteStepType): IoniconName {
   if (type === 'DESTINATION') return 'location';
   if (type === 'WALK') return 'walk-outline';
+  if (type === 'TRANSFER') return 'swap-horizontal-outline';
   if (type === 'SUBWAY' || type === 'TRAIN') return 'train-outline';
   if (type === 'BUS' || type === 'INTERCITY_BUS' || type === 'EXPRESS_BUS' || type === 'COACH') return 'bus-outline';
   if (type === 'UNKNOWN') return 'help-circle-outline';
@@ -176,7 +192,7 @@ export function StepIconGlyph({
 }
 
 /** 경로 단계의 노선, 승하차 지점, 이동 설명을 조합해 대표 제목을 만듭니다. */
-export function buildStepTitle(step: RouteStep): string {
+export function buildStepTitle(step: RouteStep, walkingLabel = '도보'): string {
   if (step.type !== 'WALK') {
     const badge = step.badgeText ?? step.lineName;
     const withoutBadge =
@@ -192,20 +208,39 @@ export function buildStepTitle(step: RouteStep): string {
     );
   }
   if (step.title.trim() !== '도보') return step.title;
-  const distance = formatRouteDistance(step.distanceMeters);
-  const duration =
-    typeof step.durationMinutes === 'number'
-      ? `${step.durationMinutes}분`
-      : undefined;
-  const summary = [distance, duration].filter(Boolean).join(' · ');
-  return summary ? `도보 ${summary}` : step.title;
+  const summary = walkingMetrics(step).join(' · ');
+  return summary ? `${walkingLabel} ${summary}` : walkingLabel;
 }
 
-/** 제목과 중복되지 않는 유효한 단계 설명이 있을 때만 표시하도록 판별합니다. */
-export function shouldShowDescription(step: RouteStep): boolean {
-  if (!step.description) return false;
-  if (step.type === 'WALK' && step.title.trim() === '도보') return false;
-  return true;
+function walkingMetrics(step: RouteStep): string[] {
+  return [
+    formatRouteDistance(step.distanceMeters),
+    typeof step.durationMinutes === 'number' ? `${step.durationMinutes}분` : undefined,
+  ].filter((item): item is string => item !== undefined);
+}
+
+/** 승차 구간 사이에서 다음 승차 직전의 도보에만 환승 정보를 표시합니다. */
+export function getTransferWalkDestination(steps: readonly RouteStep[], index: number): string | undefined {
+  const next = steps[index + 1];
+  const type = steps[index]?.type;
+  if ((type !== 'WALK' && type !== 'TRANSFER') || !next || !isTransitRideKind(next.type)) return;
+  if (type === 'TRANSFER') return formatTransferBoardingTarget(next.type, next.lineName?.trim() || next.badgeText);
+  let previousIndex = index - 1;
+  while (steps[previousIndex]?.type === 'WALK') previousIndex -= 1;
+  const previous = steps[previousIndex];
+  if (!previous || !isTransitRideKind(previous.type)) return;
+  return formatTransferBoardingTarget(next.type, next.lineName?.trim() || next.badgeText);
+}
+
+/** 제목에 이미 있는 도보 거리와 시간만 설명에서 제외합니다. */
+export function buildStepDescription(step: RouteStep, title: string): string | undefined {
+  if (!step.description || step.type !== 'WALK') return step.description;
+  const titleTokens = new Set(title.split(/[\s·(),]+/u));
+  const repeatedMetrics = new Set(walkingMetrics(step).filter(metric => titleTokens.has(metric)));
+  return step.description.split('·')
+    .map(part => part.trim())
+    .filter(part => part && !repeatedMetrics.has(part))
+    .join(' · ') || undefined;
 }
 
 /** 경로 지점의 이름·주소 중 사용자에게 보여 줄 값을 우선순위에 따라 선택합니다. */
@@ -344,53 +379,51 @@ export function buildArrivalLookupKey(steps: RouteStep[]): string {
     .join('|');
 }
 
-/** 초 단위 값을 mm:ss 형식으로 변환해 도착 남은 시간을 표시합니다. */
-function formatClockValue(value?: string | null): string | undefined {
-  if (!value) return undefined;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return undefined;
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${hours}:${minutes}`;
+function getReportedWaitSeconds(arrival: TransitArrivalInfo): number | undefined {
+  if (typeof arrival.waitSeconds === 'number' && Number.isFinite(arrival.waitSeconds)) {
+    return arrival.waitSeconds;
+  }
+  if (typeof arrival.waitMinutes === 'number' && Number.isFinite(arrival.waitMinutes)) {
+    return arrival.waitMinutes * 60;
+  }
+}
+
+function getExpectedArrivalTime(arrival: TransitArrivalInfo): number | undefined {
+  const expected = Date.parse(arrival.expectedAt ?? '');
+  if (Number.isFinite(expected)) return expected;
+
+  const waitSeconds = getReportedWaitSeconds(arrival);
+  if (waitSeconds === undefined) return undefined;
+  // A relative estimate belongs to the original observation, even after a cached refresh.
+  const source = Date.parse(arrival.sourceUpdatedAt ?? '');
+  const observed = Number.isFinite(source) ? source : Date.parse(arrival.observedAt ?? '');
+  const estimate = new Date(observed + Math.max(0, waitSeconds) * 1000).getTime();
+  return Number.isFinite(estimate) ? estimate : undefined;
 }
 
 /** 도착 예정 초를 분·초 기반의 짧은 대기 문구로 변환합니다. */
-export function getArrivalWaitText(arrival: TransitArrivalInfo): string {
-  if (arrival.arrivalStatus === 'APPROACHING') return '곧';
+export function getArrivalWaitText(arrival: TransitArrivalInfo, now = Date.now()): string {
   if (arrival.arrivalStatus === 'ARRIVED') return '도착';
   if (arrival.arrivalStatus === 'DEPARTED') return '출발';
-  if (
-    typeof arrival.waitMinutes === 'number' &&
-    Number.isFinite(arrival.waitMinutes)
-  ) {
-    return arrival.waitMinutes <= 0 ? '곧' : `${arrival.waitMinutes}분`;
-  }
-  if (
-    typeof arrival.waitSeconds === 'number' &&
-    Number.isFinite(arrival.waitSeconds)
-  ) {
-    const minutes = Math.ceil(Math.max(0, arrival.waitSeconds) / 60);
+  const expected = getExpectedArrivalTime(arrival);
+  if (expected !== undefined && expected < now) return '예정 시각 지남';
+  if (arrival.arrivalStatus === 'APPROACHING') return '곧';
+  const waitSeconds = expected === undefined ? getReportedWaitSeconds(arrival) : (expected - now) / 1000;
+  if (waitSeconds !== undefined) {
+    const minutes = Math.ceil(waitSeconds / 60);
     return minutes <= 0 ? '곧' : `${minutes}분`;
   }
   return arrival.arrivalMessage?.trim() || '도착 예정';
 }
 
-/** 도착 예정 시각을 현재 시각 기준의 읽기 쉬운 시계 문구로 변환합니다. */
+/** 도착 시계와 남은 시간이 같은 관측을 기준으로 표시되도록 합니다. */
 export function getArrivalClockText(arrival: TransitArrivalInfo): string {
-  const expectedClock = formatClockValue(arrival.expectedAt);
-  if (expectedClock) return expectedClock;
-
-  const waitMinutes =
-    typeof arrival.waitMinutes === 'number'
-      ? arrival.waitMinutes
-      : typeof arrival.waitSeconds === 'number'
-      ? Math.ceil(Math.max(0, arrival.waitSeconds) / 60)
-      : undefined;
-
-  if (typeof waitMinutes === 'number' && Number.isFinite(waitMinutes)) {
-    return formatArrivalClock(new Date().toISOString(), waitMinutes);
-  }
-  return '--:--';
+  const expected = getExpectedArrivalTime(arrival);
+  if (expected === undefined) return '--:--';
+  const date = new Date(expected);
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
 }
 
 /** 도착 정보의 방면·종점 데이터를 중복 없이 조합한 안내 문구로 만듭니다. */
@@ -438,8 +471,10 @@ export function getArrivalUpdatedAt(
   fallback: string,
 ): string {
   const timestamps = arrivals
-    .flatMap(arrival => [arrival.sourceUpdatedAt, arrival.observedAt])
-    .map(value => (value ? new Date(value).getTime() : Number.NaN))
+    .map(arrival => {
+      const source = Date.parse(arrival.sourceUpdatedAt ?? '');
+      return Number.isFinite(source) ? source : Date.parse(arrival.observedAt ?? '');
+    })
     .filter(value => Number.isFinite(value));
   if (!timestamps.length) return fallback;
   return new Date(Math.max(...timestamps)).toISOString();

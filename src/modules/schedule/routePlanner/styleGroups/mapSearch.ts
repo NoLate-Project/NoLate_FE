@@ -139,11 +139,6 @@ export function createMapSearchStyles(options: RoutePlannerStyleOptions) {
         fontWeight: "700",
         lineHeight: 18,
     },
-        routeDetailLoadingRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
         routeDetailActionBar: {
         position: "absolute",
         left: 0,
@@ -223,17 +218,35 @@ export function createMapSearchStyles(options: RoutePlannerStyleOptions) {
         fullMap: {
         ...StyleSheet.absoluteFillObject,
     },
-        mapLoadingSurface: {
-        ...StyleSheet.absoluteFillObject,
+        routeMapLoadingContext: {
+        width: "84%",
+        maxWidth: 340,
+        gap: 8,
+    },
+        routeMapLoadingStatus: {
+        flexDirection: "row",
         alignItems: "center",
+        gap: 8,
+    },
+        routeMapLoadingTitle: {
+        fontSize: 16,
+        fontWeight: "700",
+        flexShrink: 1,
+    },
+        routeMapRetry: {
+        alignSelf: "flex-start",
+        maxWidth: "100%",
+        minHeight: 44,
         justifyContent: "center",
-        zIndex: 6,
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 10,
+        marginTop: 4,
     },
-        mapLoadingSurfaceLight: {
-        backgroundColor: "#EEF2F6",
-    },
-        mapLoadingSurfaceDark: {
-        backgroundColor: "#0B1220",
+        routeMapRetryText: {
+        fontSize: 14,
+        fontWeight: "700",
     },
         transitMapRouteHeader: {
         position: "absolute",
@@ -258,6 +271,22 @@ export function createMapSearchStyles(options: RoutePlannerStyleOptions) {
         shadowRadius: 7,
         shadowOffset: { width: 0, height: 3 },
     },
+        transitMapRouteHeaderWithChoices: {
+        flexWrap: "wrap",
+        rowGap: 7,
+    },
+        transitMapChoices: { width: "100%", flexGrow: 0 },
+        transitMapChoicesRow: { gap: 6 },
+        transitMapChoicesWrapped: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+        transitMapChoice: {
+        minHeight: 44,
+        justifyContent: "center",
+        alignItems: "center",
+        borderRadius: 22,
+        paddingHorizontal: 14,
+    },
+        transitMapChoiceText: { fontSize: 13, fontWeight: "700" },
+        transitMapChoiceHighlight: { borderRadius: 22 },
         transitMapRouteSummaryPill: {
         flex: 1,
         minWidth: 0,
@@ -274,6 +303,17 @@ export function createMapSearchStyles(options: RoutePlannerStyleOptions) {
         shadowRadius: 8,
         shadowOffset: { width: 0, height: 3 },
     },
+        transitMapRouteSummaryIcon: {
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#235C9D",
+    },
+        transitMapRouteSummaryPressed: {
+        opacity: 0.82,
+    },
         transitMapRouteSummaryText: {
         flexShrink: 1,
         minWidth: 0,
@@ -282,6 +322,31 @@ export function createMapSearchStyles(options: RoutePlannerStyleOptions) {
         fontWeight: "900",
         lineHeight: 19,
         letterSpacing: 0,
+    },
+        transitMapRouteHeaderExpanded: {
+        flexWrap: "wrap",
+        columnGap: 8,
+        rowGap: 6,
+        paddingHorizontal: 14,
+    },
+        transitMapRouteExpandedIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+    },
+        transitMapRouteSummaryExpanded: {
+        flexBasis: 0,
+        height: "auto",
+        minHeight: 44,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+    },
+        transitMapRouteNextExpanded: {
+        width: "100%",
+        height: "auto",
+        minHeight: 44,
+        paddingVertical: 6,
+        paddingHorizontal: 12,
     },
         transitMapRouteNextChip: {
         height: 40,
@@ -337,12 +402,6 @@ export function createMapSearchStyles(options: RoutePlannerStyleOptions) {
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
-    },
-        inlineCloseBtnText: {
-        fontSize: 46,
-        fontWeight: "300",
-        lineHeight: 52,
-        marginTop: -4,
     },
         searchField: {
         flex: 1,

@@ -26,18 +26,63 @@ export function createTransitDetailStyles(options: RoutePlannerStyleOptions) {
         backgroundColor: "#090A0D",
     },
         transitCollapsedSummaryRow: {
-        height: TRANSIT_DETAIL_COLLAPSED_SUMMARY_HEIGHT,
+        minHeight: TRANSIT_DETAIL_COLLAPSED_SUMMARY_HEIGHT,
         borderBottomWidth: StyleSheet.hairlineWidth,
         marginBottom: 8,
         flexDirection: "row",
         alignItems: "center",
         gap: 12,
     },
+        transitCollapsedSummaryChevron: {
+        flexShrink: 0,
+        alignSelf: "center",
+    },
+        transitCollapsedSummaryExpanded: {
+        height: "auto",
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: 2,
+        paddingBottom: 8,
+    },
+        transitCollapsedRouteBar: {
+        paddingBottom: 8,
+    },
+        transitCollapsedSummaryWithWalk: {
+        paddingTop: 6,
+        paddingBottom: 8,
+    },
+        transitCollapsedDurationWithWalk: {
+        fontSize: 22,
+        lineHeight: 28,
+    },
+        transitCollapsedMetricsWithWalk: {
+        fontWeight: "600",
+    },
+        transitOverviewWalk: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingVertical: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+        transitOverviewWalkText: {
+        flex: 1,
+        flexDirection: "row",
+        flexWrap: "wrap",
+        columnGap: 8,
+        rowGap: 2,
+    },
+        transitOverviewWalkDestination: { fontSize: 13, fontWeight: "700", flexShrink: 1 },
+        transitOverviewWalkMetric: { fontSize: 13, fontWeight: "600" },
         transitCollapsedArrivalText: {
         flexShrink: 0,
         fontSize: 16,
         fontWeight: "900",
         lineHeight: 22,
+    },
+        transitCollapsedArrivalExpanded: {
+        fontSize: 12.5,
+        lineHeight: 16,
     },
         transitCollapsedMetricsText: {
         flex: 1,
@@ -47,10 +92,32 @@ export function createTransitDetailStyles(options: RoutePlannerStyleOptions) {
         fontWeight: "700",
         lineHeight: 19,
     },
+        transitCollapsedMetricsExpanded: {
+        flex: 0,
+        textAlign: "left",
+        fontSize: 11.5,
+        lineHeight: 16,
+    },
         transitDetailActionButtonRow: {
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
+    },
+        transitDetailActionButtonStack: {
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: 8,
+    },
+        transitDetailActionButtonExpanded: {
+        flex: 0,
+        height: "auto",
+        minHeight: 44,
+        paddingVertical: 6,
+        borderRadius: 14,
+    },
+        transitDetailActionTextExpanded: {
+        flexShrink: 1,
+        textAlign: "center",
     },
         transitDetailSaveButton: {
         flex: 1.18,
@@ -65,6 +132,12 @@ export function createTransitDetailStyles(options: RoutePlannerStyleOptions) {
     },
         transitDetailSaveButtonDisabled: {
         opacity: 0.48,
+    },
+        transitDetailActionIcon: {
+        width: 18,
+        height: 18,
+        alignItems: "center",
+        justifyContent: "center",
     },
         transitDetailSaveText: {
         fontSize: 14,
@@ -207,17 +280,6 @@ export function createTransitDetailStyles(options: RoutePlannerStyleOptions) {
         transitDepartureNowText: {
         fontSize: 13,
         fontWeight: "800",
-    },
-        confirmBtn: {
-        minHeight: 50,
-        borderRadius: 12,
-        alignItems: "center",
-        justifyContent: "center",
-        marginTop: 4,
-    },
-        confirmText: {
-        fontWeight: "700",
-        fontSize: 14,
     },
     } as const;
 }

@@ -23,6 +23,10 @@ const MemoizedSelectedDayAgendaPanel = React.memo(SelectedDayAgendaPanel);
 const MemoizedMonthAgendaList = React.memo(MonthAgendaList);
 
 type UseScheduleIndexBottomBarParams = {
+  agendaReturnHighlight?: React.ComponentProps<typeof MonthAgendaList>['returnHighlight'];
+  savedAgendaTarget?: { day: string; itemId: string; categoryId?: string };
+  saveReturnVisible: boolean;
+  reduceMotionEnabled: boolean;
   activeCalendarScope: CalendarScope;
   bottomInset: number;
   calendarScopeSelectorVisible: boolean;
@@ -53,6 +57,10 @@ type UseScheduleIndexBottomBarParams = {
  * 화면별 버튼 정의나 패널 JSX를 직접 소유하지 않도록 한다.
  */
 export function useScheduleIndexBottomBar({
+  agendaReturnHighlight,
+  savedAgendaTarget,
+  saveReturnVisible,
+  reduceMotionEnabled,
   activeCalendarScope,
   bottomInset,
   calendarScopeSelectorVisible,
@@ -90,6 +98,10 @@ export function useScheduleIndexBottomBar({
   );
   const monthAgendaLoading =
     !hasMonthAgendaCache && (scheduleLoading || scheduleError === null);
+  const agendaEntryDate = savedAgendaTarget?.day === monthDisplaySelectedDay &&
+    monthDisplaySelectedDay.slice(0, 7) === monthDisplayFocusedMonth.slice(0, 7)
+    ? monthDisplaySelectedDay
+    : undefined;
 
   /** 공유 초대와 수신 일정이 모인 공유함의 전체 탭으로 이동한다. */
   const openInvitesShortcut = useCallback(() => {
@@ -123,6 +135,7 @@ export function useScheduleIndexBottomBar({
     () => [
       {
         key: 'calendar-scope-selector',
+        label: '캘린더',
         icon: SCHEDULE_ICONS.calendar,
         accessibilityLabel: `현재 ${activeCalendarPresentation.title}, 캘린더 선택`,
         accessibilityState: { expanded: calendarScopeSelectorVisible },
@@ -130,6 +143,7 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'notification-inbox-shortcut',
+        label: '알림',
         icon: SCHEDULE_ICONS.notifications,
         badgeCount: notificationUnreadCount,
         emphasized: notificationUnreadCount > 0,
@@ -141,6 +155,7 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'share-inbox-shortcut',
+        label: '공유함',
         icon: SCHEDULE_ICONS.inbox,
         badgeCount: shareBadgeCount,
         emphasized: shareBadgeCount > 0,
@@ -152,6 +167,7 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'account-settings-shortcut',
+        label: '프로필',
         icon: SCHEDULE_ICONS.account,
         accessibilityLabel: '내 정보 및 설정',
         onPress: openAccountSettings,
@@ -178,12 +194,16 @@ export function useScheduleIndexBottomBar({
       panelKind === 'detail' ? (
         <MemoizedSelectedDayAgendaPanel
           selectedDay={monthDisplaySelectedDay}
+          savedItemId={agendaEntryDate ? savedAgendaTarget?.itemId : undefined}
+          saveReturnVisible={saveReturnVisible}
+          reduceEntryMotion={reduceMotionEnabled}
           items={itemsArray}
           loading={monthAgendaLoading}
           error={sanitizeCalendarTransitionError(scheduleError)}
           bottomInset={bottomInset}
           onPressRetry={loadSchedules}
           onOpenSchedule={handleOpenScheduleFromDayDisplay}
+          returnHighlight={agendaReturnHighlight}
           getScheduleSwipeActions={getScheduleSwipeActions}
           onRequestScheduleActions={onRequestScheduleActions}
           routeSetupRequiredCount={routeSetupRequiredCount}
@@ -193,12 +213,17 @@ export function useScheduleIndexBottomBar({
       ) : (
         <MemoizedMonthAgendaList
           visibleMonth={monthDisplayFocusedMonth}
+          entryDate={agendaEntryDate}
+          savedEntry={agendaEntryDate ? savedAgendaTarget : undefined}
+          saveReturnVisible={saveReturnVisible}
+          reduceEntryMotion={reduceMotionEnabled}
           items={itemsArray}
           loading={monthAgendaLoading}
           error={sanitizeCalendarTransitionError(scheduleError)}
           bottomInset={bottomInset}
           onPressRetry={loadSchedules}
           onOpenSchedule={handleOpenScheduleFromDayDisplay}
+          returnHighlight={agendaReturnHighlight}
           getScheduleSwipeActions={getScheduleSwipeActions}
           onRequestScheduleActions={onRequestScheduleActions}
           routeSetupRequiredCount={routeSetupRequiredCount}
@@ -207,6 +232,8 @@ export function useScheduleIndexBottomBar({
         />
       ),
     [
+      agendaEntryDate,
+      agendaReturnHighlight,
       bottomInset,
       handleCalendarViewModeChange,
       handleOpenScheduleFromDayDisplay,
@@ -217,7 +244,10 @@ export function useScheduleIndexBottomBar({
       monthAgendaLoading,
       monthDisplayFocusedMonth,
       monthDisplaySelectedDay,
+      reduceMotionEnabled,
       openRouteSetupTarget,
+      savedAgendaTarget,
+      saveReturnVisible,
       routeSetupRequiredCount,
       scheduleError,
     ],

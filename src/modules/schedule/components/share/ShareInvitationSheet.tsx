@@ -14,25 +14,11 @@ export { createShareInviteUrl } from "./shareInvitationModel";
 
 /** 일정·카테고리·캘린더의 직접 공유와 링크 초대 UI를 표시합니다. */
 export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
-    const { visible, title, subtitle, onClose, resourceType } = props;
+    const { visible, title, subtitle, onClose, resourceType, embedded = false } = props;
     const { insets, colors, highlight, isDark, resourceLabel, shareMode, permission, setPermission, contentMode, setContentMode, targetQuery, setTargetQuery, lastDirectShareLabel, setLastDirectShareLabel, ttlHours, setTtlHours, maxAcceptCount, setMaxAcceptCount, loading, generatedLink, directError, setDirectError, linkError, revokingInvitationId, latestInvitation, loadInvitations, shareGeneratedLink, createInvitation, createDirectShare, revokeInvitation, submitting, submitDisabled, modeIndicatorWidth, modeIndicatorTranslateX, modeContentAnimatedStyle, handleModeSegmentLayout, switchShareMode } = useShareInvitationSheet(props);
     const permissionOptions = getPermissionOptions(resourceType);
 
-    return (
-        <Modal
-            visible={visible}
-            animationType="slide"
-            transparent
-            onRequestClose={onClose}
-            accessibilityViewIsModal
-        >
-            <View style={styles.backdrop}>
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="공유 닫기"
-                    style={StyleSheet.absoluteFill}
-                    onPress={onClose}
-                />
+    const panel = (
                 <KeyboardAvoidingView
                     behavior={Platform.OS === "ios" ? "padding" : undefined}
                     pointerEvents="box-none"
@@ -83,7 +69,7 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                                 { backgroundColor: colors.surface2, opacity: pressed ? 0.65 : 1 },
                             ]}
                         >
-                            <Ionicons name="close" size={21} color={colors.textPrimary} />
+                            <Ionicons name={embedded ? "chevron-back-outline" : "close-outline"} size={21} color={colors.textPrimary} />
                         </Pressable>
                     </View>
 
@@ -462,6 +448,21 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                     </Pressable>
                     </Reanimated.View>
                 </KeyboardAvoidingView>
+    );
+
+    if (embedded) return panel;
+
+    return (
+        <Modal
+            visible={visible}
+            animationType="slide"
+            transparent
+            onRequestClose={onClose}
+            accessibilityViewIsModal
+        >
+            <View style={styles.backdrop}>
+                <Pressable accessible={false} style={StyleSheet.absoluteFill} onPress={onClose} />
+                {panel}
             </View>
         </Modal>
     );

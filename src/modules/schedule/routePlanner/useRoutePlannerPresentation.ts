@@ -12,13 +12,10 @@ import {
 } from '../../map/routingService';
 import type { TmapPathOverlay } from '../../map/TmapMapView';
 import {
-  buildTransitLegPreview,
   buildTransitRouteTimeMeta,
-  getAlternativeMetricTags,
   getTransitModeLabels,
-  getTransitServiceNotice,
   getTransitRouteCategory,
-  getTransitRouteTransferCount,
+  shouldShowTransitDurationOnly,
 } from './presentation';
 import {
   buildQaCameraPreset,
@@ -44,7 +41,7 @@ import {
   formatRouteDuration as formatRouteInfoDuration,
   type RouteInfo,
 } from '../routeInfo';
-import { buildTransitRouteProgressSegments } from '../transitRouteProgress';
+import { buildTransitRouteProgressSegments, formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from '../transitRouteProgress';
 import { getRoutePlannerInitial } from '../routePlannerSession';
 import { resolveSelectedRouteTiming } from '../scheduleRouteTiming';
 import { TRAVEL_MODE_META } from '../travelMode';
@@ -81,6 +78,7 @@ type Options = {
   hasRouteReady: boolean;
   initial: ReturnType<typeof getRoutePlannerInitial>;
   initialRouteDepartureAt: Date;
+  hasExplicitDeparture: boolean;
   isTransitMode: boolean;
   isBottomSheetHidden: boolean;
   mapZoom: number;
@@ -121,6 +119,7 @@ export function useRoutePlannerPresentation({
   hasRouteReady,
   initial,
   initialRouteDepartureAt,
+  hasExplicitDeparture,
   isBottomSheetHidden,
   isTransitMode,
   mapZoom,
@@ -286,19 +285,8 @@ export function useRoutePlannerPresentation({
     hasRouteReady &&
     transitLegendKinds.length > 0 &&
     mapZoom < TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
-  const selectedAlternativeMetricTags = useMemo(
-    () =>
-      selectedAlternative ? getAlternativeMetricTags(selectedAlternative) : [],
-    [selectedAlternative],
-  );
   const selectedAlternativeTransitModeLabels = useMemo(
     () => getTransitModeLabels(selectedAlternative?.transitLegs),
-    [selectedAlternative],
-  );
-  const selectedAlternativeStepPreview = useMemo(
-    () =>
-      buildTransitLegPreview(selectedAlternative?.transitLegs) ??
-      selectedAlternative?.stepSummary,
     [selectedAlternative],
   );
   const selectedAlternativeQualityNotice = useMemo(
@@ -321,16 +309,6 @@ export function useRoutePlannerPresentation({
         : undefined,
     [selectedAlternative, selectedRouteDepartureAt],
   );
-  const selectedTransitTimeRange = useMemo(
-    () => selectedTransitMeta?.combinedText ?? '',
-    [selectedTransitMeta],
-  );
-  const selectedTransitStatusLabel =
-    getTransitServiceNotice(selectedAlternative) ??
-    (selectedAlternative?.transitDepartureTimeSource ===
-        'next_service_search'
-      ? '다음 운행'
-      : '최적');
   const selectedTransitProgressSegments = useMemo(() => {
     const segmentBasedProgress = buildTransitProgressSegmentsFromRoute(
       selectedNormalizedRoute,
@@ -378,7 +356,7 @@ export function useRoutePlannerPresentation({
         )
       : baseRouteInfo;
     const selectedTiming = resolveSelectedRouteTiming({
-      targetArrivalAt: initial?.targetArrivalAt,
+      targetArrivalAt: hasExplicitDeparture ? undefined : initial?.targetArrivalAt,
       routeInfo: candidateRouteInfo,
       fallbackDepartureAt: selectedRouteDepartureAt,
     });
@@ -395,6 +373,7 @@ export function useRoutePlannerPresentation({
     hasDestinationCoords,
     hasOriginCoords,
     initial?.targetArrivalAt,
+    hasExplicitDeparture,
     isTransitMode,
     originAddress,
     originDisplay,
@@ -410,13 +389,21 @@ export function useRoutePlannerPresentation({
   const selectedCollapsedRouteSummary = useMemo(() => {
     if (!selectedRouteInfo) return undefined;
     const arrivalText = formatRouteClock(selectedRouteInfo.arrivalTime);
+    const legs = selectedAlternative?.transitLegs;
+    const hasTransitLegs = selectedAlternative?.mode === 'TRANSIT' && Boolean(legs?.length);
+    const walkingSummary = hasTransitLegs && legs
+      ? formatTransitWalkingSummary(getTransitRouteWalkingMinutes(legs))
+      : undefined;
     const metrics = buildRouteSummaryMetrics(selectedRouteInfo)
       .filter(
-        ({ key }) => key === 'fare' || key === 'transfer' || key === 'walk',
+        ({ key }) => key === 'fare' || key === 'transfer' || (key === 'walk' && !hasTransitLegs),
       )
       .map(({ label }) => label);
+    if (walkingSummary) metrics.push(walkingSummary);
     return {
-      arrivalText: getTransitServiceNotice(selectedAlternative) ?? (arrivalText
+      arrivalText: shouldShowTransitDurationOnly(selectedAlternative) || selectedAlternative?.transitServiceState === 'not_operating'
+        ? undefined
+        : (arrivalText
         ? `${arrivalText} ${selectedRouteInfo.timeBasis === 'provider_schedule' ? '도착' : '예상 도착'}`
         : undefined),
       metricsText: metrics.join(' · '),
@@ -427,7 +414,7 @@ export function useRoutePlannerPresentation({
       selectedAlternative?.transitLegs?.find(leg => isRideLegKind(leg.kind)),
     [selectedAlternative],
   );
-  const selectedTransitHeaderDuration = selectedAlternative
+  const selectedRouteDuration = selectedAlternative
     ? selectedAlternative.transitServiceState === 'not_operating'
       ? '운행 종료'
       : formatRouteInfoDuration(
@@ -435,27 +422,9 @@ export function useRoutePlannerPresentation({
             selectedAlternative.minutes,
         )
     : TRAVEL_MODE_META[travelMode].label;
-  const selectedTransitHeaderTransferText = selectedAlternative
-    ? (() => {
-        const transferCount = getTransitRouteTransferCount(selectedAlternative);
-        return transferCount > 0 ? ` + 환승 ${transferCount}회` : '';
-      })()
-    : '';
-  const selectedTransitHeaderIcon =
-    selectedTransitPrimaryRideLeg?.kind === 'BUS' ? 'bus' : 'train';
   const selectedTransitHeaderLineColor = selectedTransitPrimaryRideLeg
     ? getTransitLegVisualColor(selectedTransitPrimaryRideLeg)
     : '#22C55E';
-  const selectedTransitHeaderTitle = `${primaryTransitLineLabel}${selectedTransitHeaderTransferText} | ${selectedTransitHeaderDuration}`;
-  const selectedDetailHeaderIcon: React.ComponentProps<
-    typeof ExpoIonicons
-  >['name'] = isTransitMode
-    ? selectedTransitHeaderIcon
-    : travelMode === 'CAR' || travelMode === 'ETC'
-    ? 'car'
-    : travelMode === 'WALK'
-    ? 'walk'
-    : 'bicycle';
   const selectedDetailHeaderColor = isTransitMode
     ? selectedTransitHeaderLineColor
     : travelMode === 'BIKE'
@@ -463,9 +432,6 @@ export function useRoutePlannerPresentation({
     : travelMode === 'WALK'
     ? '#64748B'
     : '#2979FF';
-  const selectedDetailHeaderTitle = isTransitMode
-    ? selectedTransitHeaderTitle
-    : `${TRAVEL_MODE_META[travelMode].label} | ${selectedTransitHeaderDuration}`;
   const nextHeaderAlternativeIndex =
     visibleAlternatives.length > 1
       ? ((selectedVisibleAlternativeIndex >= 0
@@ -482,7 +448,7 @@ export function useRoutePlannerPresentation({
     isRideLegKind(leg.kind),
   );
   const nextHeaderIcon: React.ComponentProps<typeof ExpoIonicons>['name'] =
-    nextHeaderRideLeg?.kind === 'BUS' ? 'bus' : 'train';
+    nextHeaderRideLeg?.kind === 'BUS' ? 'bus-outline' : 'train-outline';
   const nextHeaderColor = nextHeaderRideLeg
     ? getTransitLegVisualColor(nextHeaderRideLeg)
     : selectedDetailHeaderColor;
@@ -545,21 +511,15 @@ export function useRoutePlannerPresentation({
     routeStrokeStyle,
     selectedAlternative,
     selectedAlternativeIndex,
-    selectedAlternativeMetricTags,
     selectedAlternativeQualityNotice,
-    selectedAlternativeStepPreview,
     selectedAlternativeTransitModeLabels,
     selectedCollapsedRouteSummary,
-    selectedDetailHeaderIcon,
-    selectedDetailHeaderTitle,
     selectedRouteDepartureAt,
     selectedRouteInfo,
     selectedNormalizedRoute,
     selectedTransitMeta,
     selectedTransitProgressSegments,
-    selectedTransitStatusLabel,
-    selectedTransitTimeRange,
-    selectedTransitHeaderDuration,
+    selectedRouteDuration,
     shouldShowTransitLegend,
     shouldShowTransitLegendHint,
     shouldShowZoomControls,

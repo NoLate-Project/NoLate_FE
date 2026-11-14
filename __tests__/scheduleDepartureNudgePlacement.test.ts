@@ -25,30 +25,18 @@ describe('schedule departure nudge placement', () => {
     expect(inboxSource).not.toContain('에게 출발 알림 보내기');
   });
 
-  test('waiting participant profile owns the nudge interaction with a compact bell badge', () => {
-    const start = detailSource.indexOf('const renderDepartureParticipantChips');
-    const end = detailSource.indexOf('const renderTravelPlanRows', start);
-    const participantProfiles = detailSource.slice(start, end);
-    const compactParticipantProfiles = participantProfiles.replace(/\s+/g, '');
-
+  test('the companion row keeps route selection and nudge confirmation separate', () => {
+    const start = detailSource.indexOf('const renderRouteCompanions');
+    const end = detailSource.indexOf('return (', start + 1);
     expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    expect(compactParticipantProfiles).toContain(
-      'onPress={()=>confirmDepartureNudge(participant.memberId,participant.label)}',
-    );
-    expect(participantProfiles).toContain('name="notifications"');
-    expect(participantProfiles).toContain(
-      '프로필을 누르면 해당 참가자의 기기로 출발 확인 푸시를 보냅니다.',
-    );
+    const participantProfiles = detailSource.slice(start, detailSource.indexOf('renderRouteCompanions={', end));
+    expect(participantProfiles).toContain('onPress={() => confirmDepartureNudge(memberId, label)}');
+    expect(participantProfiles).toContain('name="notifications-outline"');
   });
 
-  test('shared people line uses the compact schedule mockup wording', () => {
-    expect(detailSource).toContain(
-      '함께하는 사람 {departureParticipants.length}',
-    );
-    expect(detailSource).toContain('{departureCountLabel} 출발');
-    expect(detailSource).not.toContain(
-      '{departureOverview.movingLabel} · {departureCountLabel} 출발',
-    );
+  test('the expandable companion summary shows the people count and departures', () => {
+    expect(detailSource).toContain('함께하는 사람 {companionCount}명');
+    expect(detailSource).toContain('${departureOverview.departedCount}명 출발');
+    expect(detailSource).toContain('accessibilityState={{ expanded: participantsExpanded }}');
   });
 });

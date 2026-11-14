@@ -20,24 +20,29 @@ const localFlag = (name) => localEnv
   .replace(/^(["'])(.*)\1$/, "$2");
 const journeyCandidate = process.argv.includes("--journey-candidate");
 const flagEnabled = (name) => ["true", "1"].includes(process.env[name] ?? localFlag(name));
-// The public release remains closed until a separately verified product journey
-// has passed its UI, provider, APNs and lifecycle E2E. This flag validates an
-// isolated candidate; it never turns a normal public release into that candidate.
-if (journeyCandidate) {
+const journeyProductFlags = [
+  "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED",
+  "EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED",
+  "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
+  "NOLATE_JOURNEY_PRODUCT_BUILD",
+];
+// Xcode sources ios/.xcode.env when bundling an ordinary iOS Release archive.
+// The explicit candidate wrapper remains useful for non-Xcode invocations.
+if (journeyCandidate || (releasePlatform === "ios" && process.env.CONFIGURATION === "Release")) {
   assert.equal(releasePlatform, "ios", "Journey guidance candidate is iOS-only");
-  for (const name of [
-    "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED",
-    "EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED",
-    "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
-    "NOLATE_JOURNEY_PRODUCT_BUILD",
-  ]) assert.ok(flagEnabled(name), `${name} is required for the journey candidate`);
+  for (const name of journeyProductFlags) {
+    assert.ok(flagEnabled(name), `${name} is required for the iOS journey Release`);
+  }
+} else if (releasePlatform === "ios") {
+  const xcodeEnvironment = read("ios/.xcode.env");
+  for (const name of journeyProductFlags) {
+    assert.match(xcodeEnvironment, new RegExp(`export ${name}=(?:true|1)\\b`),
+      `${name} must be exported by ordinary Xcode Release archives`);
+  }
 } else {
-  for (const name of [
-    "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED",
-    "EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED",
-    "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
-    "NOLATE_JOURNEY_PRODUCT_BUILD",
-  ]) assert.ok(!flagEnabled(name), `${name} must remain off in the public Release configuration`);
+  for (const name of journeyProductFlags) {
+    assert.ok(!flagEnabled(name), `${name} must remain off outside the iOS journey Release`);
+  }
 }
 for (const name of [
   "EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED",

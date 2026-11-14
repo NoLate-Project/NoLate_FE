@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
+import React, { useRef } from "react";
 import {
+    AccessibilityInfo,
     Modal,
     Pressable,
     ScrollView,
@@ -8,27 +9,28 @@ import {
     Text,
     View,
 } from "react-native";
+import Animated, { Easing as ReanimatedEasing, FadeInDown, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import type { ScheduleCalendar } from "../../src/api/scheduleCalendars";
+import type { ScheduleCalendar } from "../../api/scheduleCalendars";
 import type {
     ScheduleCategoryItem,
     ScheduleCategoryMovePreview,
-} from "../../src/api/scheduleCategories";
-import {
-    CATEGORY_MOVE_CALENDAR_AUDIENCE_NOTICE,
-    CATEGORY_MOVE_SAME_NAME_NOTICE,
-    CATEGORY_MOVE_TRAVEL_VISIBILITY_NOTICE,
-    CATEGORY_MOVE_VISIBILITY_NOTICE,
-    getCategoryMoveAccessImpactLines,
-    getCategoryMoveSummary,
-} from "../../src/modules/schedule/categoryMove";
-import { useTheme } from "../../src/modules/theme/ThemeContext";
-import BrandedLoader from "../../src/ui/BrandedLoader";
+} from "../../api/scheduleCategories";
+import { CATEGORY_MOVE_CALENDAR_AUDIENCE_NOTICE, CATEGORY_MOVE_SAME_NAME_NOTICE } from "../../modules/schedule/categoryMove";
+import { contentModeLabel } from "../share/shareInboxModel";
+import { useTheme } from "../../modules/theme/ThemeContext";
+import BrandedLoader from "../../ui/BrandedLoader";
+import { useSystemReduceMotion } from "../../modules/performance/useSystemReduceMotion";
+
+const confirmationIn = FadeInDown.duration(160).easing(ReanimatedEasing.out(ReanimatedEasing.cubic)).withInitialValues({
+    opacity: 0.62, transform: [{ translateY: 4 }],
+}).reduceMotion(ReduceMotion.System);
 
 type Props = {
     visible: boolean;
     category: ScheduleCategoryItem | null;
+    sourceTitle: string;
     calendars: ScheduleCalendar[];
     selectedDestinationId: CategoryMoveDestinationId | null;
     preview: ScheduleCategoryMovePreview | null;
@@ -37,6 +39,8 @@ type Props = {
     loadingPreview: boolean;
     previewError: string | null;
     moving: boolean;
+    moveError: string | null;
+    onDismiss: () => void;
     onClose: () => void;
     onSelectDestination: (destinationId: CategoryMoveDestinationId) => void;
     onRetryCalendars: () => void;
@@ -50,6 +54,7 @@ export type CategoryMoveDestinationId = number;
 export default function CategoryMoveSheet({
     visible,
     category,
+    sourceTitle,
     calendars,
     selectedDestinationId,
     preview,
@@ -58,6 +63,8 @@ export default function CategoryMoveSheet({
     loadingPreview,
     previewError,
     moving,
+    moveError,
+    onDismiss,
     onClose,
     onSelectDestination,
     onRetryCalendars,
@@ -65,47 +72,43 @@ export default function CategoryMoveSheet({
     onConfirm,
     onManageCalendars,
 }: Props) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
-    const accent = colors.selectedDayBg;
-    const selectedCalendar = calendars.find((calendar) => calendar.id === selectedDestinationId);
-    const hasDestination = Boolean(selectedCalendar);
-    const sameNameCategory = preview?.sameNameCategory;
+    const reduceMotion = useSystemReduceMotion();
+    const titleRef = useRef<Text>(null);
+    const isDark = mode === "dark";
+    const accent = isDark ? "#8CB7FF" : "#2463DB";
+    const neutral = isDark ? colors.surface2 : "#F1F5FA";
+    const selectedCalendar = calendars.find(calendar => calendar.id === selectedDestinationId);
     const busy = loadingPreview || moving;
-    const canConfirm = Boolean(
-        category
-        && hasDestination
-        && preview
-        && !previewError
-        && !busy
-    );
-    const summary = category && hasDestination && preview
-        ? getCategoryMoveSummary({
-            categoryTitle: category.title,
-            calendarTitle: selectedCalendar?.title ?? "캘린더",
-            scheduleCount: preview.scheduleCount,
-        })
-        : null;
-    const travelVisibilityNotice = selectedCalendar?.defaultContentMode === "SCHEDULE_AND_TRAVEL"
-        ? CATEGORY_MOVE_TRAVEL_VISIBILITY_NOTICE
-        : null;
-    const hasExactAudienceDelta = preview?.gainedAccessMemberCount !== undefined
-        && preview.lostAccessMemberCount !== undefined;
-    const hasRawAudienceTotals = preview?.sourceCalendarMemberCount !== undefined
-        || preview?.destinationCalendarMemberCount !== undefined;
-    const calendarAudienceNotice = !hasExactAudienceDelta && hasRawAudienceTotals
-        ? CATEGORY_MOVE_CALENDAR_AUDIENCE_NOTICE
-        : null;
-    const accessImpactLines = preview
-        ? getCategoryMoveAccessImpactLines(preview)
-        : [];
+    const canConfirm = !!category && !!selectedCalendar && !!preview && !previewError && !busy;
+    const confirmationLabel = category && selectedCalendar ? `${category.title} 카테고리 이동` : "이 캘린더로 이동";
+    const destinationMemberCount = preview?.destinationCalendarMemberCount ?? selectedCalendar?.memberCount;
+    const {
+        retainedDirectShareCount, retainedDirectScheduleShareCount, sourceCalendarMemberCount,
+        gainedAccessMemberCount, lostAccessMemberCount,
+    } = preview ?? {};
+    const audienceTotals = [
+        category?.calendarId != null && sourceCalendarMemberCount !== undefined && `현재 ${sourceCalendarMemberCount}명`,
+        destinationMemberCount !== undefined && `대상 캘린더 멤버 ${destinationMemberCount}명`,
+    ].filter(Boolean).join(" · ");
+    const accessDelta = [
+        gainedAccessMemberCount ? `새로 보는 사람 ${gainedAccessMemberCount}명` : null,
+        lostAccessMemberCount ? `접근이 끝나는 사람 ${lostAccessMemberCount}명` : null,
+    ].filter(Boolean).join(" · ");
+    const exactDeltaAvailable = gainedAccessMemberCount !== undefined && lostAccessMemberCount !== undefined;
+    const showAudienceNotice = !exactDeltaAvailable && sourceCalendarMemberCount !== undefined && destinationMemberCount !== undefined;
 
     return (
         <Modal
             visible={visible}
             transparent
-            animationType="slide"
+            animationType={reduceMotion ? "none" : "slide"}
             presentationStyle="overFullScreen"
+            onDismiss={onDismiss}
+            onShow={() => {
+                if (titleRef.current) AccessibilityInfo.sendAccessibilityEvent?.(titleRef.current, "focus");
+            }}
             onRequestClose={() => {
                 if (!moving) onClose();
             }}
@@ -119,6 +122,7 @@ export default function CategoryMoveSheet({
                 />
                 <View
                     accessibilityViewIsModal
+                    onAccessibilityEscape={onClose}
                     style={[
                         sheetStyles.sheet,
                         {
@@ -129,12 +133,9 @@ export default function CategoryMoveSheet({
                 >
                     <View style={sheetStyles.handle} />
                     <View style={sheetStyles.header}>
-                        <View style={sheetStyles.headerCopy}>
-                            <Text style={[sheetStyles.title, { color: colors.textPrimary }]}>다른 캘린더로 이동</Text>
-                            <Text style={[sheetStyles.subtitle, { color: colors.textSecondary }]} numberOfLines={2}>
-                                {category ? `“${category.title}” 카테고리의 이동 위치를 선택해 주세요.` : "이동 위치를 선택해 주세요."}
-                            </Text>
-                        </View>
+                        <Text ref={titleRef} accessible accessibilityRole="header" style={[sheetStyles.title, { color: colors.textPrimary }]}>
+                            카테고리 이동
+                        </Text>
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel="카테고리 이동 닫기"
@@ -146,15 +147,28 @@ export default function CategoryMoveSheet({
                                 { backgroundColor: colors.surface2, opacity: moving ? 0.35 : pressed ? 0.6 : 1 },
                             ]}
                         >
-                            <Ionicons accessible={false} name="close" size={22} color={colors.textPrimary} />
+                            <Ionicons accessible={false} name="close-outline" size={22} color={colors.textPrimary} />
                         </Pressable>
                     </View>
 
                     <ScrollView
+                        style={sheetStyles.scroll}
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={sheetStyles.content}
                     >
-                        <Text style={[sheetStyles.sectionLabel, { color: colors.textSecondary }]}>이동할 캘린더</Text>
+                        {category && (
+                            <View style={[sheetStyles.source, { borderColor: colors.border }]}>
+                                <Text style={[sheetStyles.sectionLabel, { color: colors.textSecondary }]}>이동할 카테고리</Text>
+                                <View style={sheetStyles.sourceRow}>
+                                    <View style={[sheetStyles.calendarDot, { backgroundColor: category.color }]} />
+                                    <Text style={[sheetStyles.sourceTitle, { color: colors.textPrimary }]}>{category.title}</Text>
+                                    <Text style={[sheetStyles.calendarMeta, { color: colors.textSecondary }]}>{sourceTitle}</Text>
+                                </View>
+                            </View>
+                        )}
+                        {(loadingCalendars || calendarError || calendars.length > 0) && (
+                            <Text style={[sheetStyles.sectionLabel, { color: colors.textSecondary }]}>이동할 캘린더</Text>
+                        )}
                         {loadingCalendars ? (
                             <View style={[sheetStyles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                                 <BrandedLoader
@@ -182,13 +196,13 @@ export default function CategoryMoveSheet({
                         ) : calendars.length === 0 ? (
                             <View style={[sheetStyles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                                 <Ionicons accessible={false} name="people-outline" size={25} color={colors.textSecondary} />
-                                <Text style={[sheetStyles.stateTitle, { color: colors.textPrimary }]}>이동할 수 있는 공유 캘린더가 없어요</Text>
-                                <Text style={[sheetStyles.stateText, { color: colors.textSecondary }]}>소유자 또는 편집자로 참여한 다른 공유 캘린더가 필요합니다.</Text>
+                                <Text style={[sheetStyles.stateTitle, { color: colors.textPrimary }]}>이동할 수 있는 캘린더가 없어요</Text>
+                                <Text style={[sheetStyles.stateText, { color: colors.textSecondary }]}>다른 공유 캘린더의 소유자이거나 편집 권한이 있어야 해요.</Text>
                                 <Pressable
                                     accessibilityRole="button"
                                     accessibilityLabel="공유 캘린더 관리로 이동"
                                     onPress={onManageCalendars}
-                                    style={[sheetStyles.manageButton, { borderColor: colors.border }]}
+                                    style={[sheetStyles.manageButton, { backgroundColor: neutral, borderColor: colors.border }]}
                                 >
                                     <Text style={[sheetStyles.manageButtonText, { color: colors.textPrimary }]}>공유 캘린더 관리</Text>
                                 </Pressable>
@@ -197,33 +211,34 @@ export default function CategoryMoveSheet({
                             <View style={sheetStyles.optionList}>
                                 {calendars.map((calendar) => {
                                     const selected = calendar.id === selectedDestinationId;
+                                    const role = calendar.myRole === "OWNER" ? "내가 소유한 캘린더" : "편집 가능한 캘린더";
                                     return (
                                         <Pressable
                                             key={calendar.id}
                                             accessibilityRole="radio"
-                                            accessibilityLabel={`${calendar.title} 공유 캘린더 선택`}
-                                            accessibilityState={{ selected, disabled: busy }}
-                                            disabled={busy}
+                                            accessibilityLabel={`${calendar.title}, ${role}`}
+                                            accessibilityState={{ checked: selected, disabled: moving }}
+                                            disabled={moving}
                                             onPress={() => onSelectDestination(calendar.id)}
                                             style={({ pressed }) => [
                                                 sheetStyles.calendarOption,
                                                 {
                                                     backgroundColor: selected ? `${accent}14` : colors.surface,
                                                     borderColor: selected ? accent : colors.border,
-                                                    opacity: busy ? 0.5 : pressed ? 0.7 : 1,
+                                                    opacity: pressed || moving ? 0.65 : 1,
                                                 },
                                             ]}
                                         >
                                             <View style={[sheetStyles.calendarDot, { backgroundColor: calendar.color }]} />
                                             <View style={sheetStyles.calendarCopy}>
-                                                <Text style={[sheetStyles.calendarTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                                                <Text style={[sheetStyles.calendarTitle, { color: colors.textPrimary }]}>
                                                     {calendar.title}
                                                 </Text>
                                                 <Text style={[sheetStyles.calendarMeta, { color: colors.textSecondary }]}>
-                                                    {calendar.myRole === "OWNER" ? "내가 소유한 캘린더" : "편집 가능한 캘린더"}
+                                                    {role}
                                                 </Text>
                                             </View>
-                                            {selected ? <Ionicons accessible={false} name="checkmark-circle" size={22} color={accent} /> : null}
+                                            {selected ? <Ionicons accessible={false} name="checkmark-circle-outline" size={22} color={accent} /> : null}
                                         </Pressable>
                                     );
                                 })}
@@ -232,7 +247,6 @@ export default function CategoryMoveSheet({
 
                         {selectedCalendar ? (
                             <View style={sheetStyles.previewSection}>
-                                <Text style={[sheetStyles.sectionLabel, { color: colors.textSecondary }]}>이동 내용</Text>
                                 {loadingPreview ? (
                                     <View style={[sheetStyles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                                         <BrandedLoader
@@ -257,87 +271,57 @@ export default function CategoryMoveSheet({
                                             <Text style={[sheetStyles.inlineButtonText, { color: accent }]}>다시 시도</Text>
                                         </Pressable>
                                     </View>
-                                ) : preview && summary ? (
-                                    <View
-                                        accessibilityLabel={`${summary} ${CATEGORY_MOVE_VISIBILITY_NOTICE} ${accessImpactLines.join(" ")}${calendarAudienceNotice ? ` ${calendarAudienceNotice}` : ""}${travelVisibilityNotice ? ` ${travelVisibilityNotice}` : ""}`}
-                                        style={[sheetStyles.confirmCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                                ) : preview ? (
+                                    <Animated.View entering={confirmationIn} key={selectedDestinationId}
+                                        style={[sheetStyles.confirmCard, { backgroundColor: neutral, borderColor: colors.border }]}
                                     >
-                                        <View style={sheetStyles.confirmTitleRow}>
-                                            <Ionicons accessible={false} name="calendar-outline" size={21} color={accent} />
-                                            <Text style={[sheetStyles.confirmTitle, { color: colors.textPrimary }]}>이동 내용을 확인해 주세요</Text>
-                                        </View>
-                                        <Text style={[sheetStyles.confirmText, { color: colors.textPrimary }]}>{summary}</Text>
-                                        <View style={[sheetStyles.visibilityNotice, { backgroundColor: `${accent}10` }]}>
-                                            <Ionicons accessible={false} name="people-outline" size={18} color={accent} />
-                                            <Text style={[sheetStyles.visibilityText, { color: colors.textSecondary }]}>
-                                                {CATEGORY_MOVE_VISIBILITY_NOTICE}
-                                            </Text>
-                                        </View>
-                                        {accessImpactLines.length > 0 ? (
-                                            <View style={[sheetStyles.impactList, { borderColor: colors.border }]}>
-                                                {accessImpactLines.map((line) => (
-                                                    <View key={line} style={sheetStyles.impactRow}>
-                                                        <View style={[sheetStyles.impactDot, { backgroundColor: accent }]} />
-                                                        <Text style={[sheetStyles.visibilityText, { color: colors.textSecondary }]}>
-                                                            {line}
-                                                        </Text>
-                                                    </View>
-                                                ))}
-                                            </View>
-                                        ) : null}
-                                        {calendarAudienceNotice ? (
-                                            <View style={[sheetStyles.visibilityNotice, { backgroundColor: `${accent}10` }]}>
-                                                <Ionicons accessible={false} name="information-circle-outline" size={18} color={accent} />
-                                                <Text style={[sheetStyles.visibilityText, { color: colors.textSecondary }]}>
-                                                    {calendarAudienceNotice}
-                                                </Text>
-                                            </View>
-                                        ) : null}
-                                        {travelVisibilityNotice ? (
-                                            <View style={[sheetStyles.visibilityNotice, { backgroundColor: `${accent}10` }]}>
-                                                <Ionicons accessible={false} name="navigate-outline" size={18} color={accent} />
-                                                <Text style={[sheetStyles.visibilityText, { color: colors.textSecondary }]}>
-                                                    {travelVisibilityNotice}
-                                                </Text>
-                                            </View>
-                                        ) : null}
-
-                                        {sameNameCategory ? (
-                                            <View style={sheetStyles.sameNameNotice}>
-                                                <Text style={[sheetStyles.mergeHeading, { color: colors.textPrimary }]}>같은 이름의 카테고리가 있어요</Text>
-                                                <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>
-                                                    {CATEGORY_MOVE_SAME_NAME_NOTICE}
-                                                </Text>
-                                            </View>
-                                        ) : null}
-                                    </View>
+                                        <Text accessibilityRole="header" style={[sheetStyles.confirmTitle, { color: colors.textPrimary }]}>이동 전 확인</Text>
+                                        <ImpactRow label="함께 이동할 일정" value={`${preview.scheduleCount}개`} />
+                                        <ImpactRow label="이동 후 공유 범위" value={contentModeLabel(selectedCalendar.defaultContentMode)}
+                                            detail={[audienceTotals, accessDelta].filter(Boolean).join("\n")} />
+                                        <ImpactRow label="기존 직접 공유"
+                                            value={retainedDirectScheduleShareCount
+                                                ? `일정 직접 공유 ${retainedDirectScheduleShareCount}건 유지`
+                                                : "기존 보기·편집 권한 유지"}
+                                            detail={retainedDirectShareCount === undefined ? undefined : `카테고리 직접 공유 ${retainedDirectShareCount}명`} />
+                                        {showAudienceNotice && (
+                                            <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>{CATEGORY_MOVE_CALENDAR_AUDIENCE_NOTICE}</Text>
+                                        )}
+                                        {preview.sameNameCategory && (
+                                            <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>{CATEGORY_MOVE_SAME_NAME_NOTICE}</Text>
+                                        )}
+                                    </Animated.View>
                                 ) : null}
                             </View>
                         ) : null}
                     </ScrollView>
 
-                    {calendars.length > 0 ? (
+                    {!loadingCalendars && !calendarError && calendars.length > 0 ? (
                         <View
                             style={[
                                 sheetStyles.footer,
                                 {
                                     borderColor: colors.border,
                                     backgroundColor: colors.background,
-                                    paddingBottom: Math.max(insets.bottom, 22),
+                                    paddingBottom: Math.max(insets.bottom - 16, 4),
                                 },
                             ]}
                         >
+                            {moveError && (
+                                <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+                                    style={[sheetStyles.actionError, { color: isDark ? "#FF9C96" : "#B42318" }]}>{moveError}</Text>
+                            )}
                             <Pressable
                                 accessibilityRole="button"
-                                accessibilityLabel="카테고리를 다른 캘린더로 이동"
+                                accessibilityLabel={confirmationLabel}
                                 accessibilityState={{ disabled: !canConfirm, busy: moving }}
                                 disabled={!canConfirm}
                                 onPress={onConfirm}
                                 style={({ pressed }) => [
                                     sheetStyles.confirmButton,
                                     {
-                                        backgroundColor: accent,
-                                        opacity: !canConfirm ? 0.38 : pressed ? 0.76 : 1,
+                                        backgroundColor: canConfirm || moving ? "#2463DB" : neutral,
+                                        opacity: pressed ? 0.76 : 1,
                                     },
                                 ]}
                             >
@@ -349,8 +333,10 @@ export default function CategoryMoveSheet({
                                     />
                                 ) : (
                                     <>
-                                        <Text style={[sheetStyles.confirmButtonText, { color: colors.selectedDayText }]}>이 캘린더로 이동</Text>
-                                        <Ionicons accessible={false} name="arrow-forward" size={19} color={colors.selectedDayText} />
+                                        <Text style={[sheetStyles.confirmButtonText, { color: canConfirm ? "#FFF" : colors.textSecondary }]}>
+                                            {confirmationLabel}
+                                        </Text>
+                                        {canConfirm && <Ionicons accessible={false} name="arrow-forward-outline" size={18} color="#FFF" />}
                                     </>
                                 )}
                             </Pressable>
@@ -362,15 +348,28 @@ export default function CategoryMoveSheet({
     );
 }
 
+function ImpactRow({ label, value, detail }: { label: string; value: string; detail?: string }) {
+    const { colors } = useTheme();
+    return (
+        <View style={[sheetStyles.impactRow, { borderColor: colors.border }]}>
+            <Text style={[sheetStyles.impactLabel, { color: colors.textSecondary }]}>{label}</Text>
+            <View style={sheetStyles.impactValueColumn}>
+                <Text style={[sheetStyles.impactValue, { color: colors.textPrimary }]}>{value}</Text>
+                {!!detail && <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>{detail}</Text>}
+            </View>
+        </View>
+    );
+}
+
 const sheetStyles = StyleSheet.create({
     overlay: {
         flex: 1,
         justifyContent: "flex-end",
-        backgroundColor: "rgba(0,0,0,0.48)",
+        backgroundColor: "rgba(15,23,42,0.38)",
     },
     sheet: {
-        maxHeight: "88%",
-        minHeight: 430,
+        maxHeight: "90%",
+        paddingBottom: 16,
         borderTopLeftRadius: 26,
         borderTopRightRadius: 26,
         borderWidth: 1,
@@ -389,29 +388,22 @@ const sheetStyles = StyleSheet.create({
         paddingTop: 13,
         paddingBottom: 12,
         flexDirection: "row",
-        alignItems: "flex-start",
+        alignItems: "center",
         gap: 14,
     },
-    headerCopy: {
-        flex: 1,
-        gap: 5,
-    },
     title: {
+        flex: 1,
         fontSize: 21,
         fontWeight: "800",
     },
-    subtitle: {
-        fontSize: 13,
-        lineHeight: 19,
-        fontWeight: "600",
-    },
     closeButton: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: "center",
         justifyContent: "center",
     },
+    scroll: { flexGrow: 0, flexShrink: 1 },
     content: {
         paddingHorizontal: 20,
         paddingBottom: 20,
@@ -422,6 +414,9 @@ const sheetStyles = StyleSheet.create({
         fontWeight: "800",
         marginTop: 2,
     },
+    source: { paddingBottom: 12, gap: 8, borderBottomWidth: StyleSheet.hairlineWidth },
+    sourceRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+    sourceTitle: { flexGrow: 1, flexShrink: 1, fontSize: 16, fontWeight: "800" },
     optionList: {
         gap: 8,
     },
@@ -430,6 +425,7 @@ const sheetStyles = StyleSheet.create({
         borderWidth: 1,
         borderRadius: 14,
         paddingHorizontal: 14,
+        paddingVertical: 9,
         flexDirection: "row",
         alignItems: "center",
         gap: 11,
@@ -476,7 +472,7 @@ const sheetStyles = StyleSheet.create({
         textAlign: "center",
     },
     inlineButton: {
-        minHeight: 34,
+        minHeight: 44,
         paddingHorizontal: 12,
         alignItems: "center",
         justifyContent: "center",
@@ -486,7 +482,7 @@ const sheetStyles = StyleSheet.create({
         fontWeight: "800",
     },
     manageButton: {
-        minHeight: 40,
+        minHeight: 44,
         paddingHorizontal: 14,
         borderWidth: 1,
         borderRadius: 11,
@@ -497,70 +493,17 @@ const sheetStyles = StyleSheet.create({
         fontSize: 13,
         fontWeight: "800",
     },
-    confirmCard: {
-        borderWidth: 1,
-        borderRadius: 16,
-        padding: 15,
-        gap: 12,
-    },
-    confirmTitleRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
-    confirmTitle: {
-        flex: 1,
-        fontSize: 15,
-        fontWeight: "800",
-    },
-    confirmText: {
-        fontSize: 14,
-        lineHeight: 21,
-        fontWeight: "700",
-    },
-    visibilityNotice: {
-        borderRadius: 11,
-        padding: 11,
-        flexDirection: "row",
-        alignItems: "flex-start",
-        gap: 8,
-    },
-    visibilityText: {
-        flex: 1,
-        fontSize: 12,
-        lineHeight: 18,
-        fontWeight: "700",
-    },
-    sameNameNotice: {
-        gap: 7,
-    },
-    mergeHeading: {
-        fontSize: 13,
-        fontWeight: "800",
-        marginBottom: 2,
-    },
-    mergeCaption: {
-        fontSize: 11,
-        lineHeight: 16,
-        fontWeight: "600",
-    },
-    impactList: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        paddingVertical: 10,
-        gap: 8,
-    },
+    confirmCard: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 },
+    confirmTitle: { fontSize: 15, fontWeight: "800", marginBottom: 5 },
     impactRow: {
-        flexDirection: "row",
-        alignItems: "flex-start",
-        gap: 8,
+        flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 5,
+        borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 7,
     },
-    impactDot: {
-        width: 5,
-        height: 5,
-        borderRadius: 3,
-        marginTop: 7,
-    },
+    impactLabel: { flexBasis: "40%", flexGrow: 1, fontSize: 13, fontWeight: "700" },
+    impactValueColumn: { flexBasis: "53%", flexGrow: 1, gap: 3 },
+    impactValue: { fontSize: 13, fontWeight: "800" },
+    mergeCaption: { fontSize: 12, fontWeight: "500" },
+    actionError: { fontSize: 13, marginBottom: 8 },
     footer: {
         borderTopWidth: StyleSheet.hairlineWidth,
         paddingHorizontal: 20,
@@ -568,7 +511,9 @@ const sheetStyles = StyleSheet.create({
         paddingBottom: 22,
     },
     confirmButton: {
-        height: 50,
+        minHeight: 50,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
         borderRadius: 14,
         flexDirection: "row",
         alignItems: "center",
@@ -576,6 +521,8 @@ const sheetStyles = StyleSheet.create({
         gap: 8,
     },
     confirmButtonText: {
+        flexShrink: 1,
+        textAlign: "center",
         fontSize: 15,
         fontWeight: "800",
     },

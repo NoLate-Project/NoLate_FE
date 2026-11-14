@@ -1,4 +1,7 @@
 import type { RouteAlternativeOption } from "../src/modules/map/routingService";
+import { routeSegmentModeToProgressKind } from "../src/modules/schedule/routePlanner/routePlannerRouteInfo";
+import { getTransitStopCameraCenter } from "../src/modules/schedule/routePlanner/routeMapCamera";
+import { estimateMetersPerPixel } from "../src/modules/schedule/routePlanner/routeMapCoordinate";
 import {
     getBottomSheetSnapFromGesture,
     getBottomSheetSnapTarget,
@@ -20,8 +23,10 @@ import {
     formatAlternativeInfo,
     formatDistance,
     formatDuration,
+    getMapRouteChoiceLabels,
+    getRoutePlannerQualityNotice,
     getTransitModeLabels,
-    getTransitServiceNotice,
+    shouldShowTransitDurationOnly,
     sortRouteAlternativesForPlanner,
 } from "../src/modules/schedule/routePlanner/presentation";
 
@@ -39,6 +44,10 @@ function routeOption(
         ...overrides,
     };
 }
+
+it("preserves the transfer kind for the route overview accessibility label", () => {
+    expect(routeSegmentModeToProgressKind("TRANSFER")).toBe("TRANSFER");
+});
 
 describe("route planner query params", () => {
     it("반복 query는 첫 값을 사용하고 숫자·이동 수단을 엄격하게 해석한다", () => {
@@ -76,6 +85,67 @@ describe("route planner query params", () => {
 });
 
 describe("route planner presentation", () => {
+    it("uses the differing bus line to distinguish two 43-minute mixed routes", () => {
+        const mixed = (bus: string) => routeOption(bus, 43, {
+            mode: "TRANSIT",
+            transitLegs: [
+                { kind: "SUBWAY", label: "4호선" },
+                { kind: "WALK", label: "환승 도보" },
+                { kind: "BUS", label: bus },
+            ],
+        });
+        expect(getMapRouteChoiceLabels([
+            mixed("간선 740"),
+            { ...mixed("401"), minutes: 46 },
+            mixed("간선 140"),
+        ])).toEqual(["추천 · 740 · 43분", "버스+지하철 · 46분", "140 · 43분"]);
+    });
+    it("adjusts stop framing for the map SDK scale at the previous zoom", () => {
+        const stop = { lat: 37.55, lng: 126.97 };
+        const center = getTransitStopCameraCenter(stop, 17, 840, 122, 330, {
+            latitude: stop.lat, zoom: 16, metersPerPixel: estimateMetersPerPixel(stop.lat, 16) * 0.6,
+        });
+        const markerY = 420 + (center.lat - stop.lat) * 111_320 / (estimateMetersPerPixel(stop.lat, 17) * 0.6);
+        expect(markerY).toBeCloseTo(226, 4);
+    });
+    it.each([330, 540, 690])("places a selected stop above a sheet starting at %ipx at either focus zoom", (sheetTop) => {
+        const stop = { lat: 37.55, lng: 126.97 };
+        for (const zoom of [17, 18]) {
+            const center = getTransitStopCameraCenter(stop, zoom, 840, 122, sheetTop);
+            const markerY = 420 + (center.lat - stop.lat) * 111_320 / estimateMetersPerPixel(stop.lat, zoom);
+            expect(markerY).toBeCloseTo((122 + sheetTop) / 2, 4);
+            expect(center.lng).toBe(stop.lng);
+        }
+    });
+
+    it("uses duration and fare for a saved transit itinerary without a verified departure", () => {
+        const saved = routeOption("saved-mixed", 41, {
+            mode: "TRANSIT",
+            source: "fallback",
+            fareWon: 1500,
+            transitLegs: [{ kind: "SUBWAY", label: "4호선", durationMinutes: 20 }],
+        });
+        const estimated = new Date("2026-11-15T13:19:00+09:00");
+        expect(shouldShowTransitDurationOnly(saved)).toBe(true);
+        expect(buildTransitRouteTimeMeta(saved, estimated)).toEqual({
+            departureText: "예상 소요 시간",
+            fareText: "1,500원",
+            combinedText: "예상 소요 시간 · 1,500원",
+        });
+        expect(getRoutePlannerQualityNotice(saved, "일반 경로 안내", true)).toBeUndefined();
+        expect(getRoutePlannerQualityNotice(
+            { ...saved, routePlausibility: "geometry_suspected" }, undefined, true,
+        )).toBe("지도에 표시된 경로가 실제 도로와 다를 수 있어요.");
+        expect(getRoutePlannerQualityNotice(
+            { ...saved, fallbackKind: "straight" }, "직선 추정 안내", true,
+        )).toBe("직선 추정 안내");
+        expect(getRoutePlannerQualityNotice(
+            { ...saved, transitServiceState: "not_operating" }, "운행 종료 안내", true,
+        )).toBe("운행 종료 안내");
+        expect(shouldShowTransitDurationOnly({ ...saved, providerTimeBasis: "timetable" })).toBe(false);
+        expect(shouldShowTransitDurationOnly({ ...saved, transitServiceState: "operating" })).toBe(false);
+    });
+
     it("거리와 소요 시간을 화면용 단위로 변환한다", () => {
         expect(formatDistance(840)).toBe("840m");
         expect(formatDistance(1_240)).toBe("1.2km");
@@ -129,7 +199,7 @@ describe("route planner presentation", () => {
         expect(meta.combinedText).toContain("1,500원");
     });
 
-    it("운행 미확인 경로는 지도 상세에서도 출발·도착 시각 대신 확인 안내를 표시한다", () => {
+    it("운행 시각을 알 수 없는 지도 상세는 예상 소요 시간과 요금을 표시한다", () => {
         const option = routeOption("unknown-night", 65, {
             mode: "TRANSIT",
             provider: "odsay",
@@ -141,21 +211,21 @@ describe("route planner presentation", () => {
         });
         const meta = buildTransitRouteTimeMeta(option, new Date("2026-10-04T02:31:00+09:00"));
 
-        expect(getTransitServiceNotice(option)).toBe("운행 시간 확인 필요");
         expect(meta).toEqual({
-            departureText: "운행 시간 확인 필요",
+            departureText: "예상 소요 시간",
             fareText: "2,000원",
-            combinedText: "운행 시간 확인 필요 | 2,000원",
+            combinedText: "예상 소요 시간 · 2,000원",
         });
         expect(meta.arrivalText).toBeUndefined();
         expect(meta.timeRangeText).toBeUndefined();
     });
 
     it("운행 종료와 다른 이동수단은 운행 미확인 안내와 구분한다", () => {
-        expect(getTransitServiceNotice(routeOption("ended", 65, {
+        const departureAt = new Date("2026-10-04T02:31:00+09:00");
+        expect(buildTransitRouteTimeMeta(routeOption("ended", 65, {
             mode: "TRANSIT", transitServiceState: "not_operating",
-        }))).toBe("운행 종료");
-        expect(getTransitServiceNotice(routeOption("car", 65))).toBeUndefined();
+        }), departureAt).departureText).toBe("운행 종료");
+        expect(shouldShowTransitDurationOnly(routeOption("car", 65))).toBe(false);
     });
 
     it("명시적으로 검증된 시간표는 공통 검색 시각 대신 후보의 실제 시각을 표시한다", () => {
@@ -222,5 +292,29 @@ describe("route planner bottom sheet layout", () => {
             bottomSheetMiddleOffset: 220,
             bottomSheetDragMaxOffset: 420,
         })).toBe("collapsed");
+    });
+
+    it("큰 글씨의 버튼이 높아져도 중간 시트에 경로를 읽을 공간을 확보한다", () => {
+        const input = {
+            bottomPanelHeight: 480,
+            transitActionBarHeight: 176,
+            hasBottomSheetMeasured: true,
+            bottomSheetAnimatedOffset: 0,
+            bottomSheetSnap: "middle" as const,
+            isBottomSheetHidden: false,
+            isRouteDetailMode: true,
+            windowHeight: 844,
+            safeAreaTop: 47,
+            safeAreaBottom: 34,
+            largeRouteText: true,
+        };
+        const layout = getRoutePlannerBottomSheetLayout(input);
+        const settled = getRoutePlannerBottomSheetLayout({
+            ...input, bottomSheetAnimatedOffset: layout.bottomSheetMiddleOffset,
+        });
+        expect(settled.bottomPanelScrollViewportHeight).toBe(260);
+        expect(settled.bottomSheetMiddleOffset).toBeLessThan(getRoutePlannerBottomSheetLayout({
+            ...input, largeRouteText: false,
+        }).bottomSheetMiddleOffset);
     });
 });

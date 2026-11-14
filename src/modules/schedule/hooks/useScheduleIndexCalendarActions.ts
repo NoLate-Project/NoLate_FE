@@ -2,8 +2,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
+  useState,
   type Dispatch,
-  type MutableRefObject,
   type SetStateAction,
 } from 'react';
 import { Platform } from 'react-native';
@@ -18,16 +19,13 @@ import type { ScheduleItem } from '../types';
 import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
 
 type UseScheduleIndexCalendarActionsParams = {
-  calendarShareFallbackTimeoutRef: MutableRefObject<ReturnType<
-    typeof setTimeout
-  > | null>;
+  isFocused: boolean;
+  calendarScopeSelectorVisible: boolean;
   calendarShareTarget: ScheduleCalendar | null;
   closeToolbarMenu: (onClosed?: () => void) => void;
   firstDayStorageKey: string;
-  pendingCalendarShareTargetRef: MutableRefObject<ScheduleCalendar | null>;
   routeSetupItems: ScheduleItem[];
   setCalendarScopeSelectorVisible: Dispatch<SetStateAction<boolean>>;
-  setCalendarSettingsVisible: Dispatch<SetStateAction<boolean>>;
   setCalendarShareTarget: Dispatch<SetStateAction<ScheduleCalendar | null>>;
   setFirstDay: Dispatch<SetStateAction<0 | 1>>;
   setScheduleCalendars: Dispatch<SetStateAction<ScheduleCalendar[]>>;
@@ -39,14 +37,13 @@ type UseScheduleIndexCalendarActionsParams = {
  * 플랫폼별 타이밍을 직접 다루지 않도록 한다.
  */
 export function useScheduleIndexCalendarActions({
-  calendarShareFallbackTimeoutRef,
+  isFocused,
+  calendarScopeSelectorVisible,
   calendarShareTarget,
   closeToolbarMenu,
   firstDayStorageKey,
-  pendingCalendarShareTargetRef,
   routeSetupItems,
   setCalendarScopeSelectorVisible,
-  setCalendarSettingsVisible,
   setCalendarShareTarget,
   setFirstDay,
   setScheduleCalendars,
@@ -71,58 +68,38 @@ export function useScheduleIndexCalendarActions({
     closeToolbarMenu(() => setCalendarScopeSelectorVisible(true));
   }, [closeToolbarMenu, setCalendarScopeSelectorVisible]);
 
-  /** 선택기 닫힘 애니메이션 다음 프레임에 캘린더 설정 화면을 표시한다. */
-  const openCalendarSettingsFromSelector = useCallback(() => {
-    requestAnimationFrame(() => setCalendarSettingsVisible(true));
-  }, [setCalendarSettingsVisible]);
+  const managePending = useRef(false);
+  const managerOpened = useRef(false);
+  const [returningFromManager, setReturningFromManager] = useState(false);
 
-  /**
-   * 선택기에서 보류한 공유 대상 캘린더를 실제 공유 모달 상태로 확정한다.
-   * Android 폴백 타이머가 남아 있으면 먼저 해제해 모달이 중복 표시되지 않게 한다.
-   */
-  const flushPendingCalendarShare = useCallback(() => {
-    if (calendarShareFallbackTimeoutRef.current) {
-      clearTimeout(calendarShareFallbackTimeoutRef.current);
-      calendarShareFallbackTimeoutRef.current = null;
+  const openCalendarManagerAfterDismiss = useCallback(() => {
+    if (!managePending.current) return;
+    managePending.current = false;
+    router.push({ pathname: '/schedule/calendars', params: { from: 'calendar-scope' } });
+  }, [router]);
+
+  const openCalendarManagerFromSelector = useCallback(() => {
+    managePending.current = true;
+    setReturningFromManager(true);
+    setCalendarScopeSelectorVisible(false);
+  }, [setCalendarScopeSelectorVisible]);
+
+  useEffect(() => {
+    if (Platform.OS === 'ios' || calendarScopeSelectorVisible || !returningFromManager) return;
+    const task = setTimeout(openCalendarManagerAfterDismiss, 360);
+    return () => clearTimeout(task);
+  }, [calendarScopeSelectorVisible, openCalendarManagerAfterDismiss, returningFromManager]);
+
+  useEffect(() => {
+    if (!returningFromManager) return;
+    if (!isFocused) {
+      managerOpened.current = true;
+    } else if (managerOpened.current) {
+      managerOpened.current = false;
+      setCalendarScopeSelectorVisible(true);
+      setReturningFromManager(false);
     }
-    const pendingCalendar = pendingCalendarShareTargetRef.current;
-    pendingCalendarShareTargetRef.current = null;
-    if (pendingCalendar) setCalendarShareTarget(pendingCalendar);
-  }, [
-    calendarShareFallbackTimeoutRef,
-    pendingCalendarShareTargetRef,
-    setCalendarShareTarget,
-  ]);
-
-  /**
-   * 선택기에서 공유 버튼을 누른 캘린더를 보류한다.
-   * Android는 선택기 닫힘 콜백이 누락되는 상황에 대비해 짧은 폴백 타이머를 둔다.
-   */
-  const openCalendarShareFromSelector = useCallback(
-    (calendar: ScheduleCalendar) => {
-      pendingCalendarShareTargetRef.current = calendar;
-      if (Platform.OS !== 'ios') {
-        calendarShareFallbackTimeoutRef.current = setTimeout(
-          flushPendingCalendarShare,
-          360,
-        );
-      }
-    },
-    [
-      calendarShareFallbackTimeoutRef,
-      flushPendingCalendarShare,
-      pendingCalendarShareTargetRef,
-    ],
-  );
-
-  useEffect(
-    () => () => {
-      if (calendarShareFallbackTimeoutRef.current) {
-        clearTimeout(calendarShareFallbackTimeoutRef.current);
-      }
-    },
-    [calendarShareFallbackTimeoutRef],
-  );
+  }, [isFocused, returningFromManager, setCalendarScopeSelectorVisible]);
 
   /** 공유 캘린더의 기본 공개 범위를 서버와 로컬 목록에 동시에 반영한다. */
   const updateSharedCalendarContentMode = useCallback(
@@ -136,18 +113,10 @@ export function useScheduleIndexCalendarActions({
           calendar.id === updated.id ? updated : calendar,
         ),
       );
-      setCalendarShareTarget(updated);
+      setCalendarShareTarget(current => current?.id === updated.id ? updated : current);
     },
     [calendarShareTarget, setCalendarShareTarget, setScheduleCalendars],
   );
-
-  /** 선택기가 닫힌 다음 공유 캘린더 관리 화면으로 이동한다. */
-  const openSharedCalendarManagerFromSelector = useCallback(() => {
-    requestAnimationFrame(() => runWithTransitionShell(
-      { route: '/schedule/calendars', title: '공유 캘린더' },
-      () => router.push('/schedule/calendars'),
-    ));
-  }, [router, runWithTransitionShell]);
 
   const routeSetupTarget = useMemo(() => {
     const now = Date.now();
@@ -179,14 +148,13 @@ export function useScheduleIndexCalendarActions({
   );
 
   return {
-    flushPendingCalendarShare,
+    openCalendarManagerAfterDismiss,
+    openCalendarManagerFromSelector,
+    returningFromManager,
     handleFirstDayChange,
     openAccountSettings,
     openCalendarScopeSelector,
-    openCalendarSettingsFromSelector,
-    openCalendarShareFromSelector,
     openRouteSetupTarget,
-    openSharedCalendarManagerFromSelector,
     updateSharedCalendarContentMode,
   };
 }

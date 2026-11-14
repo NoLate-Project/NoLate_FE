@@ -31,7 +31,7 @@ export default function CalendarScopeContextLabel({ title, color, style }: Props
                 accessibilityLabel={`현재 캘린더, ${title}`}
                 style={styles.content}
             >
-                <Text accessible={false} style={[styles.prefix, { color: colors.textSecondary }]}>캘린더</Text>
+                <Text accessible={false} maxFontSizeMultiplier={1.35} style={[styles.prefix, { color: colors.textSecondary }]}>캘린더</Text>
                 <View
                     testID="calendar-scope-context-color"
                     accessible={false}
@@ -43,6 +43,7 @@ export default function CalendarScopeContextLabel({ title, color, style }: Props
                 <Text
                     testID="calendar-scope-context-label"
                     accessible={false}
+                    maxFontSizeMultiplier={1.35}
                     numberOfLines={1}
                     ellipsizeMode="tail"
                     style={[styles.title, { color: colors.textPrimary }]}

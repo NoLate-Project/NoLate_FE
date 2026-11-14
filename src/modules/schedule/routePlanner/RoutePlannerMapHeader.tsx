@@ -1,10 +1,9 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useLayoutEffect, useRef } from 'react';
+import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { Ionicons as ExpoIonicons } from '@expo/vector-icons';
 import BrandedLoader from '../../../ui/BrandedLoader';
 import styles from './styles';
-import { formatDistance, getTransitLegKindMeta } from './presentation';
-import CalendarGlassSurface from '../components/calendar/CalendarGlassSurface';
+import { formatDistance, getMapRouteChoiceLabels, getTransitLegKindMeta } from './presentation';
 import type { RoutePlannerController } from './useRoutePlannerController';
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -21,6 +20,8 @@ type Props = { controller: RoutePlannerController };
 
 /** 선택한 경로의 요약 헤더와 구간 상세 오버레이를 렌더링합니다. */
 export function RoutePlannerMapHeader({ controller }: Props) {
+  const { fontScale } = useWindowDimensions();
+  const largeRouteText = fontScale > 1.35;
   const {
     insets,
     colors,
@@ -40,6 +41,8 @@ export function RoutePlannerMapHeader({ controller }: Props) {
     shouldRenderTransitDetailDark,
     transitRouteChipBg,
     transitRouteChipText,
+    transitDetailPrimaryActionBg,
+    transitDetailPrimaryActionText,
     isRoutePointLocked,
     hasActiveTarget,
     originDisplay,
@@ -47,12 +50,14 @@ export function RoutePlannerMapHeader({ controller }: Props) {
     transitLegendKinds,
     shouldShowTransitLegend,
     shouldShowTransitLegendHint,
-    selectedDetailHeaderIcon,
-    selectedDetailHeaderTitle,
     nextHeaderAlternativeIndex,
     nextHeaderIcon,
     nextHeaderColor,
     nextHeaderLabel,
+    visibleAlternatives,
+    selectedAlternativeId,
+    etaLoading,
+    reduceMotion,
     selectAlternativeByIndex,
     saveCurrentOriginAsFavorite,
     applyPlace,
@@ -63,28 +68,82 @@ export function RoutePlannerMapHeader({ controller }: Props) {
     openRoutePointEditorFromHeader,
     goToScheduleList,
     goBack,
+    backLabel,
     openTransitDeparturePicker,
   } = controller;
+  const endpoints = `${originDisplay} → ${destinationDisplay}`;
+  const showsRouteChoices = isTransitMode && (visibleAlternatives?.length ?? 0) > 1 && !etaLoading;
+  const choiceLabels = showsRouteChoices ? getMapRouteChoiceLabels(visibleAlternatives) : [];
+  const activeChoiceId = showsRouteChoices ? selectedAlternativeId : undefined;
+  const previousChoiceId = useRef(activeChoiceId);
+  const choiceProgress = useRef(new Animated.Value(1)).current;
+  useLayoutEffect(() => {
+    const previous = previousChoiceId.current;
+    previousChoiceId.current = activeChoiceId;
+    if (reduceMotion || !previous || !activeChoiceId || previous === activeChoiceId) {
+      choiceProgress.setValue(1);
+      return;
+    }
+    choiceProgress.setValue(0);
+    const settle = Animated.timing(choiceProgress, {
+      toValue: 1,
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    settle.start();
+    return () => settle.stop();
+  }, [activeChoiceId, choiceProgress, reduceMotion]);
+  const nextRouteAction = !isTransitMode && typeof nextHeaderAlternativeIndex === 'number' && !!nextHeaderLabel && (
+    <Pressable
+      onPress={() => selectAlternativeByIndex(nextHeaderAlternativeIndex, false)}
+      accessibilityRole="button"
+      accessibilityLabel={`다음 경로 ${nextHeaderLabel}`}
+      style={[
+        styles.transitMapRouteNextChip,
+        largeRouteText && styles.transitMapRouteNextExpanded,
+        { backgroundColor: largeRouteText ? colors.surface : transitRouteChipBg },
+      ]}
+    >
+      <Ionicons name={nextHeaderIcon} size={15} color={nextHeaderColor} />
+      <Text
+        numberOfLines={largeRouteText ? undefined : 1}
+        adjustsFontSizeToFit={!largeRouteText}
+        minimumFontScale={0.68}
+        lineBreakStrategyIOS="hangul-word"
+        style={[
+          styles.transitMapRouteNextText,
+          { color: shouldRenderTransitDetailDark ? '#FFFFFF' : transitRouteChipText },
+        ]}
+      >
+        {nextHeaderLabel}
+      </Text>
+    </Pressable>
+  );
   return (
     <>
       {isRouteDetailMode ? (
         <View
           style={[
             styles.transitMapRouteHeader,
+            showsRouteChoices && styles.transitMapRouteHeaderWithChoices,
+            largeRouteText && styles.transitMapRouteHeaderExpanded,
             { paddingTop: Math.max(insets.top - 2, 8) },
           ]}
         >
           <Pressable
             onPress={goBack}
             accessibilityRole="button"
-            accessibilityLabel="뒤로가기"
+            accessibilityLabel={backLabel}
+            hitSlop={2}
             style={[
               styles.transitMapHeaderIconButton,
-              { backgroundColor: transitRouteChipBg },
+              largeRouteText && styles.transitMapRouteExpandedIcon,
+              { backgroundColor: largeRouteText ? colors.surface : transitRouteChipBg },
             ]}
           >
             <Ionicons
-              name="chevron-back"
+              name="chevron-back-outline"
               size={24}
               color={shouldRenderTransitDetailDark ? '#FFFFFF' : '#111827'}
             />
@@ -93,57 +152,31 @@ export function RoutePlannerMapHeader({ controller }: Props) {
             onPress={() => openRoutePointEditorFromHeader('origin')}
             accessibilityRole="button"
             accessibilityLabel="출발지와 도착지 수정"
-            style={styles.transitMapRouteSummaryPill}
+            accessibilityValue={{ text: endpoints }}
+            style={({ pressed }) => [
+              styles.transitMapRouteSummaryPill,
+              showsRouteChoices && { backgroundColor: overlayBoxBg },
+              largeRouteText && styles.transitMapRouteSummaryExpanded,
+              pressed && styles.transitMapRouteSummaryPressed,
+            ]}
           >
-            <Ionicons
-              name={selectedDetailHeaderIcon}
-              size={16}
-              color="#111317"
-            />
+            <View style={styles.transitMapRouteSummaryIcon}>
+              <Ionicons
+                name="pencil-outline"
+                size={14}
+                color="#FFFFFF"
+              />
+            </View>
             <Text
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.76}
-              style={styles.transitMapRouteSummaryText}
+              numberOfLines={largeRouteText ? undefined : 1}
+              maxFontSizeMultiplier={2}
+              lineBreakStrategyIOS="hangul-word"
+              style={[styles.transitMapRouteSummaryText, showsRouteChoices && { color: colors.textPrimary }]}
             >
-              {selectedDetailHeaderTitle}
+              {endpoints}
             </Text>
           </Pressable>
-          {typeof nextHeaderAlternativeIndex === 'number' &&
-            !!nextHeaderLabel && (
-              <Pressable
-                onPress={() =>
-                  selectAlternativeByIndex(nextHeaderAlternativeIndex, false)
-                }
-                accessibilityRole="button"
-                accessibilityLabel={`다음 경로 ${nextHeaderLabel}`}
-                style={[
-                  styles.transitMapRouteNextChip,
-                  { backgroundColor: transitRouteChipBg },
-                ]}
-              >
-                <Ionicons
-                  name={nextHeaderIcon}
-                  size={15}
-                  color={nextHeaderColor}
-                />
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.68}
-                  style={[
-                    styles.transitMapRouteNextText,
-                    {
-                      color: shouldRenderTransitDetailDark
-                        ? '#FFFFFF'
-                        : transitRouteChipText,
-                    },
-                  ]}
-                >
-                  {nextHeaderLabel}
-                </Text>
-              </Pressable>
-            )}
+          {!largeRouteText && nextRouteAction}
           <Pressable
             onPress={
               isTransitMode ? openTransitDeparturePicker : goToScheduleList
@@ -154,7 +187,8 @@ export function RoutePlannerMapHeader({ controller }: Props) {
             }
             style={[
               styles.transitMapScheduleButton,
-              { backgroundColor: transitRouteChipBg },
+              largeRouteText && styles.transitMapRouteExpandedIcon,
+              { backgroundColor: largeRouteText ? colors.surface : transitRouteChipBg },
             ]}
           >
             <Ionicons
@@ -163,6 +197,60 @@ export function RoutePlannerMapHeader({ controller }: Props) {
               color={shouldRenderTransitDetailDark ? '#FFFFFF' : '#111827'}
             />
           </Pressable>
+          {largeRouteText && nextRouteAction}
+          {showsRouteChoices && (
+            <ScrollView
+              horizontal={!largeRouteText}
+              showsHorizontalScrollIndicator={false}
+              style={styles.transitMapChoices}
+              contentContainerStyle={largeRouteText ? styles.transitMapChoicesWrapped : styles.transitMapChoicesRow}
+            >
+              {visibleAlternatives.map((option, index) => {
+                const selected = option.id === selectedAlternativeId;
+                const label = choiceLabels[index];
+                return (
+                  <Pressable
+                    key={option.id}
+                    testID={`route-planner-map-choice-${option.id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    accessibilityState={{ selected }}
+                    onPress={() => { if (!selected) selectAlternativeByIndex(index); }}
+                    style={({ pressed }) => [
+                      styles.transitMapChoice,
+                      {
+                        backgroundColor: overlayBoxBg,
+                        opacity: pressed ? 0.76 : 1,
+                      },
+                    ]}
+                  >
+                    {selected && (
+                      <Animated.View
+                        testID="route-planner-map-choice-highlight"
+                        pointerEvents="none"
+                        style={[
+                          StyleSheet.absoluteFillObject,
+                          styles.transitMapChoiceHighlight,
+                          {
+                            backgroundColor: transitDetailPrimaryActionBg,
+                            opacity: reduceMotion ? 1 : choiceProgress.interpolate({
+                              inputRange: [0, 1], outputRange: [0.88, 1],
+                            }),
+                            transform: [{ scale: reduceMotion ? 1 : choiceProgress.interpolate({
+                              inputRange: [0, 1], outputRange: [0.96, 1],
+                            }) }],
+                          },
+                        ]}
+                      />
+                    )}
+                    <Text style={[styles.transitMapChoiceText, { color: selected ? transitDetailPrimaryActionText : colors.textPrimary }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
         </View>
       ) : (
         <View style={[styles.topOverlay, { paddingTop: insets.top + 4 }]}>
@@ -170,21 +258,14 @@ export function RoutePlannerMapHeader({ controller }: Props) {
             <Pressable
               onPress={goBack}
               accessibilityRole="button"
-              accessibilityLabel="뒤로가기"
+              accessibilityLabel={backLabel}
               style={[
                 styles.inlineCloseBtn,
                 styles.overlaySurface,
                 { borderColor: colors.border, backgroundColor: overlayBoxBg },
               ]}
             >
-              <Text
-                style={[
-                  styles.inlineCloseBtnText,
-                  { color: colors.textPrimary },
-                ]}
-              >
-                ‹
-              </Text>
+              <Ionicons name="chevron-back-outline" size={24} color={colors.textPrimary} />
             </Pressable>
 
             <Pressable
@@ -343,13 +424,11 @@ export function RoutePlannerMapHeader({ controller }: Props) {
             !searching &&
             completedSearchQuery === searchQuery.trim() &&
             (searchError || searchResults.length === 0) && (
-              <CalendarGlassSurface
-                prominent
-                variant="mapCard"
+              <View
                 style={[
                   styles.searchResultWrap,
                   styles.overlaySurface,
-                  { borderColor: colors.border },
+                  { backgroundColor: overlayPanelBg, borderColor: colors.border },
                 ]}
               >
                 <View
@@ -387,17 +466,15 @@ export function RoutePlannerMapHeader({ controller }: Props) {
                     </Pressable>
                   )}
                 </View>
-              </CalendarGlassSurface>
+              </View>
             )}
 
           {!!searchResults.length && !isRoutePointLocked && hasActiveTarget && (
-            <CalendarGlassSurface
-              prominent
-              variant="mapCard"
+            <View
               style={[
                 styles.searchResultWrap,
                 styles.overlaySurface,
-                { borderColor: colors.border },
+                { backgroundColor: overlayPanelBg, borderColor: colors.border },
               ]}
             >
               {searchResults.slice(0, 6).map((item, index) => (
@@ -439,7 +516,7 @@ export function RoutePlannerMapHeader({ controller }: Props) {
                   ) && (
                     <Text
                       numberOfLines={1}
-                      style={{ color: '#1B9B50', fontSize: 11, marginTop: 1 }}
+                      style={{ color: colors.textSecondary, fontSize: 11, marginTop: 1 }}
                     >
                       {[
                         item.category,
@@ -463,15 +540,14 @@ export function RoutePlannerMapHeader({ controller }: Props) {
                   </Text>
                 </Pressable>
               ))}
-            </CalendarGlassSurface>
+            </View>
           )}
 
-          <CalendarGlassSurface
-            variant="mapCard"
+          <View
             style={[
               styles.routePreviewCard,
               styles.overlaySurface,
-              { borderColor: colors.border },
+              { backgroundColor: overlayPanelBg, borderColor: colors.border },
             ]}
           >
             <Text
@@ -563,7 +639,7 @@ export function RoutePlannerMapHeader({ controller }: Props) {
                 )}
               </View>
             )}
-          </CalendarGlassSurface>
+          </View>
         </View>
       )}
     </>

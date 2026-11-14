@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { type Dispatch, type SetStateAction } from "react";
-import { Animated, Pressable, ScrollView, Text, View } from "react-native";
+import React, { type Dispatch, type SetStateAction, useRef } from "react";
+import { Animated, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
+import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
 import type { ScheduleCategory } from "../../types";
 import {
@@ -11,6 +12,7 @@ import {
   type QuickSchedulePreviewField as PreviewField,
 } from "../../quickScheduleDraft";
 import CategoryPickerRow from "./CategorySelectBox";
+import { ScheduleRouteDraftNotice, type ScheduleRouteDraftChange } from "./ScheduleRouteDraftNotice";
 import { createQuickScheduleModalStyles } from "./QuickScheduleModal.styles";
 import {
   BLUE,
@@ -29,20 +31,27 @@ type PreviewColors = {
 };
 
 type QuickSchedulePreviewStepProps = {
+  animateDestinationNotice: boolean;
   colors: PreviewColors;
   getPreviewValue: (draft: PreviewDraft, field: PreviewField) => string;
+  initialScrollY: number;
   mode: string;
   onOpenEditField: (field: PreviewField) => void;
+  onOpenRoutePlanner: () => void;
   onSave: () => void;
+  onScrollPositionChange: (y: number) => void;
+  onToggleSource: () => void;
   previewCategoryChevronRotation: Animated.AnimatedInterpolation<string>;
   previewCategoryPickerMarginBottom: Animated.AnimatedInterpolation<number>;
   previewCategoryPickerOpen: boolean;
   previewCategoryPickerPaddingTop: Animated.AnimatedInterpolation<number>;
-  previewChevronColor: string;
   previewDividerColor: string;
   previewDraft: PreviewDraft;
+  destinationChanged?: { hadAlert: boolean };
+  routeDraftChange?: ScheduleRouteDraftChange;
   previewIconBackground: string;
   previewLabelColor: string;
+  previewSourceExpanded: boolean;
   previewSourceText: string;
   selectedCategory?: ScheduleCategory;
   selectedCategoryId: string;
@@ -56,22 +65,31 @@ type QuickSchedulePreviewStepProps = {
   writableCategories: ScheduleCategory[];
 };
 
+const previewDetailEntry = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+
 /** 분석된 일정의 핵심 필드, 카테고리와 저장 전 검토 상태를 한 화면에 표시한다. */
 export function QuickSchedulePreviewStep({
+  animateDestinationNotice,
   colors,
   getPreviewValue,
+  initialScrollY,
   mode,
   onOpenEditField,
+  onOpenRoutePlanner,
   onSave,
+  onScrollPositionChange,
+  onToggleSource,
   previewCategoryChevronRotation,
   previewCategoryPickerMarginBottom,
   previewCategoryPickerOpen,
   previewCategoryPickerPaddingTop,
-  previewChevronColor,
   previewDividerColor,
   previewDraft,
+  destinationChanged,
+  routeDraftChange,
   previewIconBackground,
   previewLabelColor,
+  previewSourceExpanded,
   previewSourceText,
   selectedCategory,
   selectedCategoryId,
@@ -84,7 +102,10 @@ export function QuickSchedulePreviewStep({
   warningTextColor,
   writableCategories,
 }: QuickSchedulePreviewStepProps) {
+  const initialContentOffset = useRef({ x: 0, y: initialScrollY }).current;
+  const animateSourceReveal = useRef(false);
   const blockingReviewField = getQuickScheduleBlockingReviewField(previewDraft);
+  const editIcon = <Ionicons accessible={false} name="pencil-outline" size={14} color={colors.textSecondary} />;
 
   /** 전체 검토 확인을 초안에 기록해 다음 저장 시 경고가 다시 막지 않도록 한다. */
   const confirmGlobalReview = () => {
@@ -96,7 +117,7 @@ export function QuickSchedulePreviewStep({
   /** 알림 경로가 없을 때는 분석 배지보다 경로 설정 안내를 우선 표시한다. */
   const getPreviewBadge = (field: PreviewField) =>
     field === "notification" && !canUseRouteNotification(previewDraft)
-      ? "경로 설정 필요"
+      ? destinationChanged ? undefined : "경로 설정 필요"
       : previewDraft.badges[field];
 
   /** 보조기기가 읽을 필드 값과 검토 배지를 하나의 문장으로 결합한다. */
@@ -132,22 +153,26 @@ export function QuickSchedulePreviewStep({
     setFlowStep("input");
   };
 
+  const largeText = useWindowDimensions().fontScale > 1.35;
+
   return (
     <View style={styles.previewStep}>
-      <ScrollView style={styles.previewScroll} contentContainerStyle={styles.previewScrollContent} showsVerticalScrollIndicator={false}>
-        <View testID="quick-schedule-preview-source-summary" style={[styles.previewSourceStrip, { borderBottomColor: previewDividerColor }]}>
-          <View style={styles.previewSourceCopy}>
-            <Text style={[styles.previewSourceLabel, { color: previewLabelColor }]}>입력한 내용</Text>
-            <Text numberOfLines={1} style={[styles.previewSourceValue, { color: colors.textSecondary }]}>{displayedSourceText}</Text>
-          </View>
-        </View>
-
+      <ScrollView
+        testID="quick-preview-scroll"
+        style={styles.previewScroll}
+        contentContainerStyle={styles.previewScrollContent}
+        contentOffset={initialContentOffset}
+        onScroll={({ nativeEvent }) => onScrollPositionChange(Math.max(0, nativeEvent.contentOffset.y))}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.previewTitleRow}>
-          <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.previewTitleMetaRow}>
-            <Text style={[styles.previewLabel, styles.previewTitleMetaLabel, { color: previewLabelColor }]}>제목</Text>
-            {renderPreviewBadge("title")}
-          </View>
-          <View testID="quick-schedule-preview-title-category-line" style={styles.previewTitleControlRow}>
+          {getPreviewBadge("title") && (
+            <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.previewTitleMetaRow}>
+              {renderPreviewBadge("title")}
+            </View>
+          )}
+          <View testID="quick-schedule-preview-title-category-line" style={[styles.previewTitleControlRow, largeText && styles.previewTitleControlRowLarge]}>
             <Pressable
               onPress={() => onOpenEditField("title")}
               disabled={submitting}
@@ -155,10 +180,11 @@ export function QuickSchedulePreviewStep({
               accessibilityLabel="제목 수정"
               accessibilityValue={{ text: getPreviewAccessibilityValue("title") }}
               accessibilityState={{ disabled: submitting }}
-              style={({ pressed }) => [styles.previewTitleAction, { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 }]}
+              style={({ pressed }) => [styles.previewTitleAction, largeText && styles.previewTitleActionLarge, { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 }]}
             >
               <View style={styles.previewTitleValueRow}>
-                <Text numberOfLines={1} style={[styles.previewTitleValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "title")}</Text>
+                <Text numberOfLines={largeText ? undefined : 2} lineBreakStrategyIOS="hangul-word" style={[styles.previewTitleValue, largeText && styles.previewTitleValueLarge, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "title")}</Text>
+                {editIcon}
               </View>
             </Pressable>
             <Pressable
@@ -169,12 +195,12 @@ export function QuickSchedulePreviewStep({
               disabled={submitting || writableCategories.length === 0}
               hitSlop={{ top: 5, right: 4, bottom: 5, left: 4 }}
               onPress={() => setPreviewCategoryPickerOpen(current => !current)}
-              style={({ pressed }) => [styles.previewCategoryInlineChip, { borderColor: previewCategoryPickerOpen ? mode === "dark" ? "#4B9DFF" : "#2979FF" : previewDividerColor, backgroundColor: colors.surface2, opacity: pressed ? 0.68 : submitting ? 0.42 : 1 }]}
+              style={({ pressed }) => [styles.previewCategoryInlineChip, largeText && styles.previewCategoryInlineChipLarge, { borderColor: previewCategoryPickerOpen ? mode === "dark" ? "#4B9DFF" : "#2979FF" : previewDividerColor, backgroundColor: colors.surface2, opacity: pressed ? 0.68 : submitting ? 0.42 : 1 }]}
             >
               <View accessible={false} style={[styles.previewCategoryInlineDot, { backgroundColor: selectedCategory?.color ?? colors.textDisabled }]} />
-              <Text numberOfLines={1} style={[styles.previewCategoryInlineText, { color: colors.textPrimary }]}>{selectedCategory?.title ?? "카테고리"}</Text>
+              <Text numberOfLines={largeText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.previewCategoryInlineText, largeText && styles.previewCategoryInlineTextLarge, { color: colors.textPrimary }]}>{largeText && selectedCategory ? `카테고리 · ${selectedCategory.title}` : selectedCategory?.title ?? "카테고리"}</Text>
               <Animated.View testID="quick-schedule-preview-category-chevron" style={[styles.previewCategoryInlineChevron, { transform: [{ rotate: previewCategoryChevronRotation }] }]}>
-                <Ionicons accessible={false} name="chevron-down" size={13} color={previewCategoryPickerOpen ? mode === "dark" ? "#4B9DFF" : "#2979FF" : colors.textSecondary} />
+                <Ionicons accessible={false} name="chevron-down-outline" size={13} color={previewCategoryPickerOpen ? mode === "dark" ? "#4B9DFF" : "#2979FF" : colors.textSecondary} />
               </Animated.View>
             </Pressable>
           </View>
@@ -197,7 +223,7 @@ export function QuickSchedulePreviewStep({
           <View style={[styles.previewInfoIcon, { backgroundColor: previewIconBackground }]}><Ionicons accessible={false} name="calendar-outline" size={16} color={BLUE} /></View>
           <View style={styles.previewInfoCopy}>
             <Text style={[styles.previewLabel, { color: previewLabelColor }]}>일시</Text>
-            <View testID="quick-schedule-preview-date-time" style={[styles.previewDateTimeValue, previewDraft.hasExplicitEndTime && styles.previewDateTimeValueStacked]}>
+            <View testID="quick-schedule-preview-date-time" style={[styles.previewDateTimeValue, (largeText || previewDraft.hasExplicitEndTime) && styles.previewDateTimeValueStacked]}>
               <Pressable
                 onPress={() => onOpenEditField("date")}
                 disabled={submitting}
@@ -206,9 +232,12 @@ export function QuickSchedulePreviewStep({
                 accessibilityLabel="날짜 수정"
                 accessibilityValue={{ text: getPreviewAccessibilityValue("date") }}
                 accessibilityState={{ disabled: submitting }}
-                style={({ pressed }) => [styles.previewInlineField, previewDraft.hasExplicitEndTime && styles.previewInlineFieldStacked, { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 }]}
+                style={({ pressed }) => [styles.previewInlineField, (largeText || previewDraft.hasExplicitEndTime) && styles.previewInlineFieldStacked, { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 }]}
               >
-                <View style={styles.previewInlineContent}><Text style={[styles.previewInlineValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "date")}</Text>{renderPreviewBadge("date")}</View>
+                <View style={styles.previewInlineControl}>
+                  <View style={styles.previewInlineContent}><Text style={[styles.previewInlineValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "date")}</Text>{renderPreviewBadge("date")}</View>
+                  {editIcon}
+                </View>
               </Pressable>
               {!previewDraft.hasExplicitEndTime && <Text accessible={false} style={[styles.previewDateTimeSeparator, { color: previewLabelColor }]}>·</Text>}
               <Pressable
@@ -219,9 +248,12 @@ export function QuickSchedulePreviewStep({
                 accessibilityLabel="시간 수정"
                 accessibilityValue={{ text: getPreviewAccessibilityValue("time") }}
                 accessibilityState={{ disabled: submitting }}
-                style={({ pressed }) => [styles.previewInlineField, previewDraft.hasExplicitEndTime && styles.previewInlineFieldStacked, { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 }]}
+                style={({ pressed }) => [styles.previewInlineField, (largeText || previewDraft.hasExplicitEndTime) && styles.previewInlineFieldStacked, { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 }]}
               >
-                <View style={styles.previewInlineContent}><Text style={[styles.previewInlineValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "time")}</Text>{renderPreviewBadge("time")}</View>
+                <View style={styles.previewInlineControl}>
+                  <View style={styles.previewInlineContent}><Text style={[styles.previewInlineValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "time")}</Text>{renderPreviewBadge("time")}</View>
+                  {editIcon}
+                </View>
               </Pressable>
             </View>
           </View>
@@ -239,11 +271,33 @@ export function QuickSchedulePreviewStep({
           <View style={[styles.previewInfoIcon, { backgroundColor: previewIconBackground }]}><Ionicons accessible={false} name="location-outline" size={16} color={BLUE} /></View>
           <View style={styles.previewInfoCopy}>
             <Text style={[styles.previewLabel, { color: previewLabelColor }]}>장소</Text>
-            <View style={styles.previewInfoValueRow}><Text numberOfLines={1} style={[styles.previewInfoValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "location")}</Text>{renderPreviewBadge("location")}</View>
+            <View style={styles.previewInfoValueRow}><Text numberOfLines={largeText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.previewInfoValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, "location")}</Text>{renderPreviewBadge("location")}</View>
           </View>
-          <Ionicons accessible={false} name="chevron-forward" size={15} color={previewChevronColor} />
+          {editIcon}
         </Pressable>
 
+        {destinationChanged && (
+          <Reanimated.View entering={animateDestinationNotice ? previewDetailEntry : undefined} style={[styles.previewRouteReset, { backgroundColor: colors.surface2 }]}>
+            <Text accessibilityLiveRegion="polite" lineBreakStrategyIOS="hangul-word" style={[styles.previewRouteResetText, { color: colors.textSecondary }]}>
+              {destinationChanged.hadAlert
+                ? "장소가 바뀌어 이전 경로와 출발 알림을 해제했어요."
+                : "장소가 바뀌어 이전 경로를 해제했어요."}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="새 경로 설정"
+              disabled={submitting}
+              onPress={onOpenRoutePlanner}
+              style={({ pressed }) => [styles.previewRouteResetAction, { opacity: pressed ? 0.65 : 1 }]}
+            >
+              <Text style={[styles.previewRouteResetActionText, { color: colors.textPrimary }]}>새 경로 설정</Text>
+              <Ionicons accessible={false} name="chevron-forward-outline" size={15} color={colors.textSecondary} />
+            </Pressable>
+          </Reanimated.View>
+        )}
+        {canUseRouteNotification(previewDraft) && (
+          <ScheduleRouteDraftNotice change={routeDraftChange} color={colors.textSecondary} />
+        )}
         <View style={[styles.previewOptional, { borderTopColor: previewDividerColor }]}>
           {(["notification", "memo"] as const).map((field, index) => (
             <React.Fragment key={field}>
@@ -261,13 +315,47 @@ export function QuickSchedulePreviewStep({
                   <Text style={[styles.previewLabel, { color: previewLabelColor }]}>{FIELD_LABEL[field]}</Text>
                   <View style={styles.previewOptionalValueRow}><Text numberOfLines={field === "memo" ? 2 : 1} style={[styles.previewOptionalValue, { color: colors.textPrimary }]}>{getPreviewValue(previewDraft, field)}</Text>{renderPreviewBadge(field)}</View>
                 </View>
-                <Ionicons accessible={false} name="chevron-forward" size={14} color={previewChevronColor} />
+                {editIcon}
               </Pressable>
             </React.Fragment>
           ))}
         </View>
+        {!!previewSourceText.trim() && (
+          <View style={[styles.previewSourceSection, { borderTopColor: previewDividerColor }]}>
+            <Pressable
+              testID="quick-schedule-preview-source-summary"
+              onPress={() => {
+                animateSourceReveal.current = !previewSourceExpanded;
+                onToggleSource();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="입력한 내용"
+              accessibilityState={{ expanded: previewSourceExpanded }}
+              style={({ pressed }) => [styles.previewSourceToggle, { opacity: pressed ? 0.7 : 1 }]}
+            >
+              <Text style={[styles.previewSourceLabel, { color: colors.textSecondary }]}>입력한 내용</Text>
+              <Ionicons
+                accessible={false}
+                name={previewSourceExpanded ? "chevron-up-outline" : "chevron-down-outline"}
+                size={16}
+                color={colors.textSecondary}
+              />
+            </Pressable>
+            {previewSourceExpanded && (
+              <Reanimated.View entering={animateSourceReveal.current ? previewDetailEntry : undefined} style={[styles.previewSourceBody, { backgroundColor: colors.surface2 }]}>
+                <Text
+                  testID="quick-schedule-preview-source-text"
+                  lineBreakStrategyIOS="hangul-word"
+                  style={[styles.previewSourceValue, { color: colors.textSecondary }]}
+                >
+                  {previewSourceText}
+                </Text>
+              </Reanimated.View>
+            )}
+          </View>
+        )}
       </ScrollView>
-      <View testID="quick-schedule-preview-actions" style={styles.previewButtons}>
+      <View testID="quick-schedule-preview-actions" style={[styles.previewButtons, largeText && styles.previewButtonsLarge]}>
         <Pressable
           testID="quick-schedule-preview-edit-button"
           onPress={editSourceText}
@@ -277,9 +365,9 @@ export function QuickSchedulePreviewStep({
           accessibilityValue={{ text: displayedSourceText }}
           accessibilityHint="처음 입력한 문장을 다시 수정합니다"
           accessibilityState={{ disabled: submitting }}
-          style={({ pressed }) => [styles.secondaryButton, styles.previewSecondaryButton, { backgroundColor: "transparent", borderColor: previewDividerColor, opacity: pressed ? 0.72 : submitting ? 0.42 : 1 }]}
+          style={({ pressed }) => [styles.secondaryButton, styles.previewSecondaryButton, largeText && styles.previewButtonLarge, { backgroundColor: "transparent", borderColor: previewDividerColor, opacity: pressed ? 0.72 : submitting ? 0.42 : 1 }]}
         >
-          <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>수정</Text>
+          <Text maxFontSizeMultiplier={largeText ? 2.35 : undefined} style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>입력 수정</Text>
         </Pressable>
         <Pressable
           testID="quick-schedule-preview-primary-button"
@@ -288,9 +376,9 @@ export function QuickSchedulePreviewStep({
           accessibilityLabel={primaryActionLabel}
           accessibilityState={{ disabled: submitting, busy: submitting }}
           disabled={submitting}
-          style={({ pressed }) => [styles.primaryButton, styles.previewPrimaryButton, { opacity: pressed ? 0.78 : 1 }]}
+          style={({ pressed }) => [styles.primaryButton, styles.previewPrimaryButton, largeText && styles.previewButtonLarge, { opacity: pressed ? 0.78 : 1 }]}
         >
-          <Text style={[styles.primaryButtonText, styles.previewPrimaryButtonText]}>{primaryActionLabel}</Text>
+          <Text maxFontSizeMultiplier={largeText ? 2.35 : undefined} style={[styles.primaryButtonText, styles.previewPrimaryButtonText]}>{primaryActionLabel}</Text>
         </Pressable>
       </View>
     </View>

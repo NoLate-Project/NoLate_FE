@@ -15,7 +15,8 @@ import {
   Easing,
   Keyboard,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
+import { usePreMountedSceneActivity } from "../../modules/performance/preMountedSceneActivity";
 
 import {
   createFavoritePlaceCategoryToApi,
@@ -23,6 +24,7 @@ import {
   getFavoritePlaceCategoriesFromApi,
   getFavoritePlacesFromApi,
   saveFavoritePlaceToApi,
+  updateFavoritePlaceToApi,
   type FavoritePlace,
   type FavoritePlaceCategory,
 } from "../../api/favoritePlaces";
@@ -108,6 +110,13 @@ export function useRouteSelectFavoriteController({
   const [defaultOriginSavingKey, setDefaultOriginSavingKey] =
     useState<string>();
   const [favoriteSheetPlace, setFavoriteSheetPlace] = useState<Place>();
+  const [favoriteSheetExisting, setFavoriteSheetExisting] = useState<FavoritePlace>();
+  const [favoriteSheetLabel, setFavoriteSheetLabel] = useState("");
+  const favoriteReturnFocus = useRef<(() => void) | undefined>(undefined);
+  const favoriteSaveAnnouncement = useRef<string | undefined>(undefined);
+  const [favoriteSaveError, setFavoriteSaveError] = useState<string>();
+  const [favoriteSaveNotice, setFavoriteSaveNotice] = useState<{ message: string }>();
+  const favoriteSaveInFlight = useRef(false);
   const [saveFavoriteAsDefaultOrigin, setSaveFavoriteAsDefaultOrigin] =
     useState(false);
   const [favoriteCategories, setFavoriteCategories] = useState<
@@ -115,6 +124,7 @@ export function useRouteSelectFavoriteController({
   >([]);
   const [favoriteCategoryLoading, setFavoriteCategoryLoading] = useState(false);
   const [favoriteCategoryError, setFavoriteCategoryError] = useState<string>();
+  const categoryRequestIdRef = useRef(0);
   const [selectedFavoriteCategoryId, setSelectedFavoriteCategoryId] =
     useState<string>();
   const [showNewCategoryForm, setShowNewCategoryForm] = useState(false);
@@ -152,69 +162,81 @@ export function useRouteSelectFavoriteController({
   }, []);
 
   // 화면이 다시 활성화될 때 서버 목록을 갱신하되 진행 중인 로컬 변경은 병합해 보존한다.
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      const favoriteLoadRequest = {
-        id: favoritePlaceLoadSerialRef.current + 1,
-        reloadVersion: favoriteReloadVersion,
-      };
-      favoritePlaceLoadSerialRef.current = favoriteLoadRequest.id;
-      favoritePlaceLoadRequestRef.current = favoriteLoadRequest;
-      const favoriteRevision = favoriteMutationRevisionRef.current;
-      const categoryRevision = favoriteCategoryMutationRevisionRef.current;
+  const navigationFocused = useIsFocused();
+  const sceneActive = usePreMountedSceneActivity();
+  const favoritesFocused = sceneActive ?? navigationFocused;
+  useEffect(() => {
+    if (!favoriteSaveNotice) return;
+    const timer = setTimeout(() => setFavoriteSaveNotice(undefined), 3200);
+    return () => clearTimeout(timer);
+  }, [favoriteSaveNotice]);
+  const loadFavoriteCategories = useCallback(async () => {
+    const requestId = ++categoryRequestIdRef.current;
+    const revision = favoriteCategoryMutationRevisionRef.current;
+    setFavoriteCategoryLoading(true);
+    try {
+      const categories = await getFavoritePlaceCategoriesFromApi();
+      if (requestId === categoryRequestIdRef.current) {
+        setFavoriteCategoryError(undefined);
+        if (revision === favoriteCategoryMutationRevisionRef.current) {
+          setFavoriteCategories(categories);
+        }
+      }
+    } catch {
+      if (requestId === categoryRequestIdRef.current) {
+        setFavoriteCategoryError("카테고리를 불러오지 못했어요");
+      }
+    } finally {
+      if (requestId === categoryRequestIdRef.current) {
+        setFavoriteCategoryLoading(false);
+      }
+    }
+  }, []);
 
-      setFavoritePlacesError(undefined);
-      getFavoritePlacesFromApi()
-        .then(favorites => {
-          if (
-            !cancelled &&
-            favoritePlaceLoadRequestRef.current === favoriteLoadRequest
-          ) {
-            setFavoritePlaces(current =>
-              favoriteMutationRevisionRef.current === favoriteRevision
-                ? favorites
-                : mergeLoadedFavoritePlaces(current, favorites),
-            );
-            setFavoritePlacesLoaded(true);
-          }
-        })
-        .catch(() => {
-          if (
-            cancelled ||
-            favoritePlaceLoadRequestRef.current !== favoriteLoadRequest
-          ) {
-            return;
-          }
-          setFavoritePlacesError("즐겨찾기를 불러오지 못했습니다.");
+  useEffect(() => {
+    if (!favoritesFocused) return;
+    let cancelled = false;
+    const favoriteLoadRequest = {
+      id: favoritePlaceLoadSerialRef.current + 1,
+      reloadVersion: favoriteReloadVersion,
+    };
+    favoritePlaceLoadSerialRef.current = favoriteLoadRequest.id;
+    favoritePlaceLoadRequestRef.current = favoriteLoadRequest;
+    const favoriteRevision = favoriteMutationRevisionRef.current;
+
+    setFavoritePlacesError(undefined);
+    getFavoritePlacesFromApi()
+      .then(favorites => {
+        if (
+          !cancelled &&
+          favoritePlaceLoadRequestRef.current === favoriteLoadRequest
+        ) {
+          setFavoritePlaces(current =>
+            favoriteMutationRevisionRef.current === favoriteRevision
+              ? favorites
+              : mergeLoadedFavoritePlaces(current, favorites),
+          );
           setFavoritePlacesLoaded(true);
-        });
+        }
+      })
+      .catch(() => {
+        if (
+          cancelled ||
+          favoritePlaceLoadRequestRef.current !== favoriteLoadRequest
+        ) {
+          return;
+        }
+        setFavoritePlacesError("즐겨찾기를 불러오지 못했습니다.");
+        setFavoritePlacesLoaded(true);
+      });
 
-      setFavoriteCategoryLoading(true);
-      setFavoriteCategoryError(undefined);
-      getFavoritePlaceCategoriesFromApi()
-        .then(categories => {
-          if (
-            !cancelled &&
-            favoriteCategoryMutationRevisionRef.current === categoryRevision
-          ) {
-            setFavoriteCategories(categories);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setFavoriteCategoryError("카테고리를 불러오지 못했습니다.");
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setFavoriteCategoryLoading(false);
-        });
+    void loadFavoriteCategories();
 
-      return () => {
-        cancelled = true;
-      };
-    }, [favoriteReloadVersion]),
-  );
+    return () => {
+      cancelled = true;
+      categoryRequestIdRef.current += 1;
+    };
+  }, [favoriteReloadVersion, favoritesFocused, loadFavoriteCategories]);
 
   const favoritePlaceTabs = useMemo(
     () => buildFavoritePlaceTabs(favoritePlaces, favoriteCategories),
@@ -345,23 +367,9 @@ export function useRouteSelectFavoriteController({
     setOriginUsesDefault,
   ]);
 
-  /** 즐겨찾기 저장 시트에서 사용할 최신 카테고리 목록을 다시 읽는다. */
-  const loadFavoriteCategories = useCallback(async () => {
-    setFavoriteCategoryLoading(true);
-    setFavoriteCategoryError(undefined);
-    try {
-      const categories = await getFavoritePlaceCategoriesFromApi();
-      setFavoriteCategories(categories);
-    } catch {
-      setFavoriteCategoryError("카테고리를 불러오지 못했습니다.");
-    } finally {
-      setFavoriteCategoryLoading(false);
-    }
-  }, []);
-
   /** 좌표가 있는 장소를 즐겨찾기 저장 시트에 전달하고 이전 입력 상태를 초기화한다. */
   const openFavoriteSaveSheet = useCallback(
-    (place: Place) => {
+    (place: Place, existing?: FavoritePlace, restoreFocus?: () => void) => {
       if (!placeHasCoords(place)) {
         Alert.alert(
           "즐겨찾기 저장",
@@ -371,21 +379,30 @@ export function useRouteSelectFavoriteController({
       }
 
       Keyboard.dismiss();
+      favoriteReturnFocus.current = restoreFocus;
+      favoriteSaveAnnouncement.current = undefined;
+      setFavoriteSheetExisting(existing);
+      setFavoriteSheetLabel(getPlaceDisplayText(existing ?? place));
+      setFavoriteSaveNotice(undefined);
+      setFavoriteSaveError(undefined);
       setFavoriteSheetPlace(place);
       setSaveFavoriteAsDefaultOrigin(false);
-      setSelectedFavoriteCategoryId(undefined);
+      setSelectedFavoriteCategoryId(existing?.categoryId);
       setShowNewCategoryForm(false);
       setNewCategoryName("");
       setNewCategoryColor(FAVORITE_CATEGORY_COLORS[0]);
-      loadFavoriteCategories().catch(() => undefined);
+      void loadFavoriteCategories();
     },
     [loadFavoriteCategories],
   );
 
   /** 저장 작업이 진행 중이 아닐 때 즐겨찾기 시트를 닫고 임시 입력을 비운다. */
   const closeFavoriteSaveSheet = useCallback(() => {
-    if (favoriteSavingKey || creatingFavoriteCategory) return;
+    if (favoriteSaveInFlight.current || favoriteSavingKey || creatingFavoriteCategory) return;
+    categoryRequestIdRef.current += 1;
+    setFavoriteCategoryLoading(false);
     setFavoriteSheetPlace(undefined);
+    setFavoriteSaveError(undefined);
     setSaveFavoriteAsDefaultOrigin(false);
     setFavoriteCategoryError(undefined);
     setShowNewCategoryForm(false);
@@ -439,7 +456,8 @@ export function useRouteSelectFavoriteController({
 
   /** 장소를 선택 카테고리에 저장하고 필요하면 같은 장소를 기본 출발지로 지정한다. */
   const savePlaceAsFavorite = useCallback(
-    async (place: Place, categoryId?: string) => {
+    async (place: Place, label: string, categoryId?: string, existing?: FavoritePlace) => {
+      if (favoriteSaveInFlight.current) return;
       if (!placeHasCoords(place)) {
         Alert.alert(
           "즐겨찾기 저장",
@@ -449,56 +467,52 @@ export function useRouteSelectFavoriteController({
       }
 
       const savingKey = getPlaceActionKey(place);
+      favoriteSaveInFlight.current = true;
+      setFavoriteSaveError(undefined);
       setFavoriteSavingKey(savingKey);
       try {
-        const saved = await saveFavoritePlaceToApi(place, { categoryId });
-        favoriteMutationRevisionRef.current += 1;
-        setFavoritePlaces(current => upsertFavoritePlace(current, saved));
-
         if (saveFavoriteAsDefaultOrigin) {
-          try {
-            const defaultOrigin = saved.id
-              ? await saveFavoriteDepartureFavorite(saved)
-              : await saveFavoriteDeparturePlace(saved);
-            if (defaultOrigin) {
-              favoriteMutationRevisionRef.current += 1;
-              if (activeTarget !== "origin") {
-                originTouchedRef.current = true;
-                setOriginUsesDefault(false);
-              }
-              setFavoritePlaces(current =>
-                upsertFavoritePlace(
-                  current.map(item => ({ ...item, defaultOrigin: false })),
-                  { ...defaultOrigin, defaultOrigin: true },
-                ),
-              );
-              if (activeTarget === "origin") {
-                applyPlaceToTarget("origin", defaultOrigin);
-                setOriginUsesDefault(true);
-              }
-            }
-          } catch {
-            setFavoriteSheetPlace(undefined);
-            setSaveFavoriteAsDefaultOrigin(false);
-            Alert.alert(
-              "기본 주소 저장 실패",
-              "즐겨찾기는 저장했지만 기본 주소는 설정하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-            );
-            return;
+          const defaultOrigin = existing?.id
+            ? await updateFavoritePlaceToApi(existing.id, { label, defaultOrigin: true })
+            : await saveFavoriteDeparturePlace({ ...place, name: label }, { cacheBeforeSave: false });
+          if (!defaultOrigin) throw new Error("기본 주소를 저장하지 못했어요.");
+          favoriteMutationRevisionRef.current += 1;
+          if (activeTarget !== "origin") {
+            // Keep the currently entered origin when choosing a destination.
+            originTouchedRef.current = true;
+            setOriginUsesDefault(false);
           }
+          setFavoritePlaces(current =>
+            upsertFavoritePlace(
+              current.map(item => ({ ...item, defaultOrigin: false })),
+              { ...defaultOrigin, defaultOrigin: true },
+            ),
+          );
+          if (activeTarget === "origin") {
+            applyPlaceToTarget("origin", defaultOrigin);
+            setOriginUsesDefault(true);
+          }
+        } else {
+          const saved = existing?.id
+            ? await updateFavoritePlaceToApi(existing.id, { label, categoryId: categoryId ?? null })
+            : await saveFavoritePlaceToApi(place, { categoryId, label });
+          favoriteMutationRevisionRef.current += 1;
+          setFavoritePlaces(current => upsertFavoritePlace(current, saved));
         }
 
         setFavoriteSheetPlace(undefined);
         setSaveFavoriteAsDefaultOrigin(false);
-        Alert.alert(
-          "즐겨찾기 저장",
-          saveFavoriteAsDefaultOrigin
-            ? `${getPlaceDisplayText(place)} 장소를 즐겨찾기와 기본 주소로 저장했습니다.`
-            : `${getPlaceDisplayText(place)} 장소를 저장했습니다.`,
-        );
+        const message = saveFavoriteAsDefaultOrigin
+          ? "기본 주소로 저장했어요"
+          : existing ? "즐겨찾기를 수정했어요" : "즐겨찾기에 저장했어요";
+        favoriteSaveAnnouncement.current = message;
+        setFavoriteSaveNotice({ message });
       } catch {
-        Alert.alert("즐겨찾기 저장 실패", "잠시 후 다시 시도해 주세요.");
+        setFavoriteSaveError(saveFavoriteAsDefaultOrigin
+          ? "기본 주소를 저장하지 못했어요. 다시 시도해 주세요."
+          : "저장하지 못했어요. 다시 시도해 주세요.");
       } finally {
+        favoriteSaveInFlight.current = false;
         setFavoriteSavingKey(current =>
           current === savingKey ? undefined : current,
         );
@@ -515,11 +529,21 @@ export function useRouteSelectFavoriteController({
 
   /** 저장 시트에 담긴 장소를 현재 선택 카테고리로 저장한다. */
   const saveFavoriteSheetPlace = useCallback(() => {
-    if (!favoriteSheetPlace) return;
-    savePlaceAsFavorite(favoriteSheetPlace, selectedFavoriteCategoryId).catch(
-      () => undefined,
-    );
-  }, [favoriteSheetPlace, savePlaceAsFavorite, selectedFavoriteCategoryId]);
+    const label = favoriteSheetLabel.trim();
+    if (!favoriteSheetPlace || !label) return;
+    void savePlaceAsFavorite(favoriteSheetPlace, label, selectedFavoriteCategoryId, favoriteSheetExisting);
+  }, [favoriteSheetExisting, favoriteSheetLabel, favoriteSheetPlace, savePlaceAsFavorite, selectedFavoriteCategoryId]);
+
+  const announceFavoriteSave = useCallback(() => {
+    const restoreFocus = favoriteReturnFocus.current;
+    const message = favoriteSaveAnnouncement.current;
+    favoriteReturnFocus.current = undefined;
+    favoriteSaveAnnouncement.current = undefined;
+    if (restoreFocus || message) requestAnimationFrame(() => {
+      restoreFocus?.();
+      if (message) AccessibilityInfo.announceForAccessibility(message);
+    });
+  }, []);
 
   /** 중복 항목까지 함께 삭제하고 기본 출발지였다면 관련 로컬 캐시도 정리한다. */
   const removePlaceFromFavorites = useCallback(
@@ -676,6 +700,7 @@ export function useRouteSelectFavoriteController({
     : false;
 
   return {
+    announceFavoriteSave,
     closeFavoriteSaveSheet,
     createFavoriteCategory,
     creatingFavoriteCategory,
@@ -688,10 +713,16 @@ export function useRouteSelectFavoriteController({
     favoritePlaces,
     favoritePlacesError,
     favoritePlacesLoaded,
+    favoriteSaveError,
+    favoriteSaveNotice,
     favoriteSavingKey,
     favoriteSheetPlace,
+    favoriteSheetExisting,
+    favoriteSheetLabel,
+    setFavoriteSheetLabel,
     favoriteSheetSaving,
     hasConfiguredDefaultOrigin,
+    loadFavoriteCategories,
     newCategoryColor,
     newCategoryName,
     openFavoriteSaveSheet,

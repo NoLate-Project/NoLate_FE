@@ -2437,121 +2437,121 @@ PODS:
   - Yoga (0.0.0)
 
 DEPENDENCIES:
-  - EXApplication (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-application/ios`)
-  - EXAV (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-av/ios`)
-  - EXConstants (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-constants/ios`)
-  - EXImageLoader (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-image-loader/ios`)
-  - EXJSONUtils (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-json-utils/ios`)
-  - EXManifests (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-manifests/ios`)
-  - EXNotifications (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-notifications/ios`)
-  - Expo (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo`)
-  - expo-dev-client (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-client/ios`)
-  - expo-dev-launcher (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-launcher`)
-  - expo-dev-menu (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-menu`)
-  - expo-dev-menu-interface (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-menu-interface/ios`)
-  - ExpoAppleAuthentication (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-apple-authentication/ios`)
-  - ExpoAsset (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-asset/ios`)
-  - ExpoCalendar (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-calendar/ios`)
-  - ExpoCrypto (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-crypto/ios`)
-  - ExpoDevice (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-device/ios`)
-  - ExpoFileSystem (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-file-system/ios`)
-  - ExpoFont (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-font/ios`)
-  - ExpoGlassEffect (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-glass-effect/ios`)
-  - ExpoHead (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-router/ios`)
-  - ExpoImagePicker (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-image-picker/ios`)
-  - ExpoKeepAwake (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-keep-awake/ios`)
-  - ExpoLinking (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-linking/ios`)
-  - ExpoLocation (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-location/ios`)
-  - ExpoModulesCore (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-modules-core`)
-  - ExpoSecureStore (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-secure-store/ios`)
-  - ExpoSplashScreen (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-splash-screen/ios`)
-  - ExpoTrackingTransparency (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-tracking-transparency/ios`)
-  - ExpoWebBrowser (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-web-browser/ios`)
-  - EXUpdatesInterface (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-updates-interface/ios`)
-  - FBLazyVector (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/FBLazyVector`)
-  - hermes-engine (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
-  - "kakao-login (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-seoul/kakao-login`)"
+  - EXApplication (from `../node_modules/expo-application/ios`)
+  - EXAV (from `../node_modules/expo-av/ios`)
+  - EXConstants (from `../node_modules/expo-constants/ios`)
+  - EXImageLoader (from `../node_modules/expo-image-loader/ios`)
+  - EXJSONUtils (from `../node_modules/expo-json-utils/ios`)
+  - EXManifests (from `../node_modules/expo-manifests/ios`)
+  - EXNotifications (from `../node_modules/expo-notifications/ios`)
+  - Expo (from `../node_modules/expo`)
+  - expo-dev-client (from `../node_modules/expo-dev-client/ios`)
+  - expo-dev-launcher (from `../node_modules/expo-dev-launcher`)
+  - expo-dev-menu (from `../node_modules/expo-dev-menu`)
+  - expo-dev-menu-interface (from `../node_modules/expo-dev-menu-interface/ios`)
+  - ExpoAppleAuthentication (from `../node_modules/expo-apple-authentication/ios`)
+  - ExpoAsset (from `../node_modules/expo-asset/ios`)
+  - ExpoCalendar (from `../node_modules/expo-calendar/ios`)
+  - ExpoCrypto (from `../node_modules/expo-crypto/ios`)
+  - ExpoDevice (from `../node_modules/expo-device/ios`)
+  - ExpoFileSystem (from `../node_modules/expo-file-system/ios`)
+  - ExpoFont (from `../node_modules/expo-font/ios`)
+  - ExpoGlassEffect (from `../node_modules/expo-glass-effect/ios`)
+  - ExpoHead (from `../node_modules/expo-router/ios`)
+  - ExpoImagePicker (from `../node_modules/expo-image-picker/ios`)
+  - ExpoKeepAwake (from `../node_modules/expo-keep-awake/ios`)
+  - ExpoLinking (from `../node_modules/expo-linking/ios`)
+  - ExpoLocation (from `../node_modules/expo-location/ios`)
+  - ExpoModulesCore (from `../node_modules/expo-modules-core`)
+  - ExpoSecureStore (from `../node_modules/expo-secure-store/ios`)
+  - ExpoSplashScreen (from `../node_modules/expo-splash-screen/ios`)
+  - ExpoTrackingTransparency (from `../node_modules/expo-tracking-transparency/ios`)
+  - ExpoWebBrowser (from `../node_modules/expo-web-browser/ios`)
+  - EXUpdatesInterface (from `../node_modules/expo-updates-interface/ios`)
+  - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
+  - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
+  - "kakao-login (from `../node_modules/@react-native-seoul/kakao-login`)"
   - NoLateAlarm (from `../modules/nolate-alarm/ios`)
   - NoLateLiveActivity (from `../modules/nolate-live-activity/ios`)
   - NoLateTMap (from `../modules/nolate-tmap/ios`)
-  - RCTDeprecation (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
-  - RCTRequired (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Required`)
-  - RCTTypeSafety (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/TypeSafety`)
-  - React (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/`)
-  - React-callinvoker (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/callinvoker`)
-  - React-Core (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/`)
-  - React-Core-prebuilt (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React-Core-prebuilt.podspec`)
-  - React-Core/RCTWebSocket (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/`)
-  - React-CoreModules (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React/CoreModules`)
-  - React-cxxreact (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/cxxreact`)
-  - React-debug (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/debug`)
-  - React-defaultsnativemodule (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/defaults`)
-  - React-domnativemodule (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/dom`)
-  - React-Fabric (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon`)
-  - React-FabricComponents (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon`)
-  - React-FabricImage (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon`)
-  - React-featureflags (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/featureflags`)
-  - React-featureflagsnativemodule (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/featureflags`)
-  - React-graphics (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/graphics`)
-  - React-hermes (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/hermes`)
-  - React-idlecallbacksnativemodule (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/idlecallbacks`)
-  - React-ImageManager (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/imagemanager/platform/ios`)
-  - React-jserrorhandler (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jserrorhandler`)
-  - React-jsi (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsi`)
-  - React-jsiexecutor (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsiexecutor`)
-  - React-jsinspector (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern`)
-  - React-jsinspectorcdp (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern/cdp`)
-  - React-jsinspectornetwork (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern/network`)
-  - React-jsinspectortracing (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern/tracing`)
-  - React-jsitooling (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsitooling`)
-  - React-jsitracing (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/hermes/executor/`)
-  - React-logger (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/logger`)
-  - React-Mapbuffer (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon`)
-  - React-microtasksnativemodule (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/microtasks`)
-  - react-native-safe-area-context (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-safe-area-context`)
-  - react-native-webview (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-webview`)
-  - React-NativeModulesApple (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios`)
-  - React-oscompat (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/oscompat`)
-  - React-perflogger (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/reactperflogger`)
-  - React-performancetimeline (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/performance/timeline`)
-  - React-RCTActionSheet (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/ActionSheetIOS`)
-  - React-RCTAnimation (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/NativeAnimation`)
-  - React-RCTAppDelegate (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/AppDelegate`)
-  - React-RCTBlob (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Blob`)
-  - React-RCTFabric (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React`)
-  - React-RCTFBReactNativeSpec (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React`)
-  - React-RCTImage (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Image`)
-  - React-RCTLinking (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/LinkingIOS`)
-  - React-RCTNetwork (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Network`)
-  - React-RCTRuntime (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React/Runtime`)
-  - React-RCTSettings (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Settings`)
-  - React-RCTText (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Text`)
-  - React-RCTVibration (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Vibration`)
-  - React-rendererconsistency (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/consistency`)
-  - React-renderercss (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/css`)
-  - React-rendererdebug (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/debug`)
-  - React-RuntimeApple (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/runtime/platform/ios`)
-  - React-RuntimeCore (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/runtime`)
-  - React-runtimeexecutor (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/runtimeexecutor`)
-  - React-RuntimeHermes (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/runtime`)
-  - React-runtimescheduler (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/runtimescheduler`)
-  - React-timing (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/timing`)
-  - React-utils (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/utils`)
+  - RCTDeprecation (from `../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
+  - RCTRequired (from `../node_modules/react-native/Libraries/Required`)
+  - RCTTypeSafety (from `../node_modules/react-native/Libraries/TypeSafety`)
+  - React (from `../node_modules/react-native/`)
+  - React-callinvoker (from `../node_modules/react-native/ReactCommon/callinvoker`)
+  - React-Core (from `../node_modules/react-native/`)
+  - React-Core-prebuilt (from `../node_modules/react-native/React-Core-prebuilt.podspec`)
+  - React-Core/RCTWebSocket (from `../node_modules/react-native/`)
+  - React-CoreModules (from `../node_modules/react-native/React/CoreModules`)
+  - React-cxxreact (from `../node_modules/react-native/ReactCommon/cxxreact`)
+  - React-debug (from `../node_modules/react-native/ReactCommon/react/debug`)
+  - React-defaultsnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/defaults`)
+  - React-domnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/dom`)
+  - React-Fabric (from `../node_modules/react-native/ReactCommon`)
+  - React-FabricComponents (from `../node_modules/react-native/ReactCommon`)
+  - React-FabricImage (from `../node_modules/react-native/ReactCommon`)
+  - React-featureflags (from `../node_modules/react-native/ReactCommon/react/featureflags`)
+  - React-featureflagsnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/featureflags`)
+  - React-graphics (from `../node_modules/react-native/ReactCommon/react/renderer/graphics`)
+  - React-hermes (from `../node_modules/react-native/ReactCommon/hermes`)
+  - React-idlecallbacksnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/idlecallbacks`)
+  - React-ImageManager (from `../node_modules/react-native/ReactCommon/react/renderer/imagemanager/platform/ios`)
+  - React-jserrorhandler (from `../node_modules/react-native/ReactCommon/jserrorhandler`)
+  - React-jsi (from `../node_modules/react-native/ReactCommon/jsi`)
+  - React-jsiexecutor (from `../node_modules/react-native/ReactCommon/jsiexecutor`)
+  - React-jsinspector (from `../node_modules/react-native/ReactCommon/jsinspector-modern`)
+  - React-jsinspectorcdp (from `../node_modules/react-native/ReactCommon/jsinspector-modern/cdp`)
+  - React-jsinspectornetwork (from `../node_modules/react-native/ReactCommon/jsinspector-modern/network`)
+  - React-jsinspectortracing (from `../node_modules/react-native/ReactCommon/jsinspector-modern/tracing`)
+  - React-jsitooling (from `../node_modules/react-native/ReactCommon/jsitooling`)
+  - React-jsitracing (from `../node_modules/react-native/ReactCommon/hermes/executor/`)
+  - React-logger (from `../node_modules/react-native/ReactCommon/logger`)
+  - React-Mapbuffer (from `../node_modules/react-native/ReactCommon`)
+  - React-microtasksnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/microtasks`)
+  - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
+  - react-native-webview (from `../node_modules/react-native-webview`)
+  - React-NativeModulesApple (from `../node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios`)
+  - React-oscompat (from `../node_modules/react-native/ReactCommon/oscompat`)
+  - React-perflogger (from `../node_modules/react-native/ReactCommon/reactperflogger`)
+  - React-performancetimeline (from `../node_modules/react-native/ReactCommon/react/performance/timeline`)
+  - React-RCTActionSheet (from `../node_modules/react-native/Libraries/ActionSheetIOS`)
+  - React-RCTAnimation (from `../node_modules/react-native/Libraries/NativeAnimation`)
+  - React-RCTAppDelegate (from `../node_modules/react-native/Libraries/AppDelegate`)
+  - React-RCTBlob (from `../node_modules/react-native/Libraries/Blob`)
+  - React-RCTFabric (from `../node_modules/react-native/React`)
+  - React-RCTFBReactNativeSpec (from `../node_modules/react-native/React`)
+  - React-RCTImage (from `../node_modules/react-native/Libraries/Image`)
+  - React-RCTLinking (from `../node_modules/react-native/Libraries/LinkingIOS`)
+  - React-RCTNetwork (from `../node_modules/react-native/Libraries/Network`)
+  - React-RCTRuntime (from `../node_modules/react-native/React/Runtime`)
+  - React-RCTSettings (from `../node_modules/react-native/Libraries/Settings`)
+  - React-RCTText (from `../node_modules/react-native/Libraries/Text`)
+  - React-RCTVibration (from `../node_modules/react-native/Libraries/Vibration`)
+  - React-rendererconsistency (from `../node_modules/react-native/ReactCommon/react/renderer/consistency`)
+  - React-renderercss (from `../node_modules/react-native/ReactCommon/react/renderer/css`)
+  - React-rendererdebug (from `../node_modules/react-native/ReactCommon/react/renderer/debug`)
+  - React-RuntimeApple (from `../node_modules/react-native/ReactCommon/react/runtime/platform/ios`)
+  - React-RuntimeCore (from `../node_modules/react-native/ReactCommon/react/runtime`)
+  - React-runtimeexecutor (from `../node_modules/react-native/ReactCommon/runtimeexecutor`)
+  - React-RuntimeHermes (from `../node_modules/react-native/ReactCommon/react/runtime`)
+  - React-runtimescheduler (from `../node_modules/react-native/ReactCommon/react/renderer/runtimescheduler`)
+  - React-timing (from `../node_modules/react-native/ReactCommon/react/timing`)
+  - React-utils (from `../node_modules/react-native/ReactCommon/react/utils`)
   - ReactAppDependencyProvider (from `build/generated/ios`)
   - ReactCodegen (from `build/generated/ios`)
-  - ReactCommon/turbomodule/core (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon`)
-  - ReactNativeDependencies (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
-  - "RNCAsyncStorage (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-async-storage/async-storage`)"
-  - "RNDateTimePicker (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-community/datetimepicker`)"
-  - "RNFBApp (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-firebase/app`)"
-  - "RNFBMessaging (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-firebase/messaging`)"
-  - RNGestureHandler (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-gesture-handler`)
-  - RNGoogleMobileAds (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-google-mobile-ads`)
-  - "RNNaverLogin (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-seoul/naver-login`)"
-  - RNReanimated (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-reanimated`)
-  - RNScreens (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-screens`)
-  - RNWorklets (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-worklets`)
-  - Yoga (from `../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/yoga`)
+  - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
+  - ReactNativeDependencies (from `../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
+  - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
+  - "RNDateTimePicker (from `../node_modules/@react-native-community/datetimepicker`)"
+  - "RNFBApp (from `../node_modules/@react-native-firebase/app`)"
+  - "RNFBMessaging (from `../node_modules/@react-native-firebase/messaging`)"
+  - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
+  - RNGoogleMobileAds (from `../node_modules/react-native-google-mobile-ads`)
+  - "RNNaverLogin (from `../node_modules/@react-native-seoul/naver-login`)"
+  - RNReanimated (from `../node_modules/react-native-reanimated`)
+  - RNScreens (from `../node_modules/react-native-screens`)
+  - RNWorklets (from `../node_modules/react-native-worklets`)
+  - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
 SPEC REPOS:
   trunk:
@@ -2575,74 +2575,74 @@ SPEC REPOS:
 
 EXTERNAL SOURCES:
   EXApplication:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-application/ios"
+    :path: "../node_modules/expo-application/ios"
   EXAV:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-av/ios"
+    :path: "../node_modules/expo-av/ios"
   EXConstants:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-constants/ios"
+    :path: "../node_modules/expo-constants/ios"
   EXImageLoader:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-image-loader/ios"
+    :path: "../node_modules/expo-image-loader/ios"
   EXJSONUtils:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-json-utils/ios"
+    :path: "../node_modules/expo-json-utils/ios"
   EXManifests:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-manifests/ios"
+    :path: "../node_modules/expo-manifests/ios"
   EXNotifications:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-notifications/ios"
+    :path: "../node_modules/expo-notifications/ios"
   Expo:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo"
+    :path: "../node_modules/expo"
   expo-dev-client:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-client/ios"
+    :path: "../node_modules/expo-dev-client/ios"
   expo-dev-launcher:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-launcher"
+    :path: "../node_modules/expo-dev-launcher"
   expo-dev-menu:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-menu"
+    :path: "../node_modules/expo-dev-menu"
   expo-dev-menu-interface:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-dev-menu-interface/ios"
+    :path: "../node_modules/expo-dev-menu-interface/ios"
   ExpoAppleAuthentication:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-apple-authentication/ios"
+    :path: "../node_modules/expo-apple-authentication/ios"
   ExpoAsset:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-asset/ios"
+    :path: "../node_modules/expo-asset/ios"
   ExpoCalendar:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-calendar/ios"
+    :path: "../node_modules/expo-calendar/ios"
   ExpoCrypto:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-crypto/ios"
+    :path: "../node_modules/expo-crypto/ios"
   ExpoDevice:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-device/ios"
+    :path: "../node_modules/expo-device/ios"
   ExpoFileSystem:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-file-system/ios"
+    :path: "../node_modules/expo-file-system/ios"
   ExpoFont:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-font/ios"
+    :path: "../node_modules/expo-font/ios"
   ExpoGlassEffect:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-glass-effect/ios"
+    :path: "../node_modules/expo-glass-effect/ios"
   ExpoHead:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-router/ios"
+    :path: "../node_modules/expo-router/ios"
   ExpoImagePicker:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-image-picker/ios"
+    :path: "../node_modules/expo-image-picker/ios"
   ExpoKeepAwake:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-keep-awake/ios"
+    :path: "../node_modules/expo-keep-awake/ios"
   ExpoLinking:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-linking/ios"
+    :path: "../node_modules/expo-linking/ios"
   ExpoLocation:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-location/ios"
+    :path: "../node_modules/expo-location/ios"
   ExpoModulesCore:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-modules-core"
+    :path: "../node_modules/expo-modules-core"
   ExpoSecureStore:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-secure-store/ios"
+    :path: "../node_modules/expo-secure-store/ios"
   ExpoSplashScreen:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-splash-screen/ios"
+    :path: "../node_modules/expo-splash-screen/ios"
   ExpoTrackingTransparency:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-tracking-transparency/ios"
+    :path: "../node_modules/expo-tracking-transparency/ios"
   ExpoWebBrowser:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-web-browser/ios"
+    :path: "../node_modules/expo-web-browser/ios"
   EXUpdatesInterface:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/expo-updates-interface/ios"
+    :path: "../node_modules/expo-updates-interface/ios"
   FBLazyVector:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/FBLazyVector"
+    :path: "../node_modules/react-native/Libraries/FBLazyVector"
   hermes-engine:
-    :podspec: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec"
+    :podspec: "../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec"
     :tag: hermes-2025-07-07-RNv0.81.0-e0fc67142ec0763c6b6153ca2bf96df815539782
   kakao-login:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-seoul/kakao-login"
+    :path: "../node_modules/@react-native-seoul/kakao-login"
   NoLateAlarm:
     :path: "../modules/nolate-alarm/ios"
   NoLateLiveActivity:
@@ -2650,159 +2650,159 @@ EXTERNAL SOURCES:
   NoLateTMap:
     :path: "../modules/nolate-tmap/ios"
   RCTDeprecation:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation"
+    :path: "../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation"
   RCTRequired:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Required"
+    :path: "../node_modules/react-native/Libraries/Required"
   RCTTypeSafety:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/TypeSafety"
+    :path: "../node_modules/react-native/Libraries/TypeSafety"
   React:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/"
+    :path: "../node_modules/react-native/"
   React-callinvoker:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/callinvoker"
+    :path: "../node_modules/react-native/ReactCommon/callinvoker"
   React-Core:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/"
+    :path: "../node_modules/react-native/"
   React-Core-prebuilt:
-    :podspec: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React-Core-prebuilt.podspec"
+    :podspec: "../node_modules/react-native/React-Core-prebuilt.podspec"
   React-CoreModules:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React/CoreModules"
+    :path: "../node_modules/react-native/React/CoreModules"
   React-cxxreact:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/cxxreact"
+    :path: "../node_modules/react-native/ReactCommon/cxxreact"
   React-debug:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/debug"
+    :path: "../node_modules/react-native/ReactCommon/react/debug"
   React-defaultsnativemodule:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/defaults"
+    :path: "../node_modules/react-native/ReactCommon/react/nativemodule/defaults"
   React-domnativemodule:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/dom"
+    :path: "../node_modules/react-native/ReactCommon/react/nativemodule/dom"
   React-Fabric:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon"
+    :path: "../node_modules/react-native/ReactCommon"
   React-FabricComponents:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon"
+    :path: "../node_modules/react-native/ReactCommon"
   React-FabricImage:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon"
+    :path: "../node_modules/react-native/ReactCommon"
   React-featureflags:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/featureflags"
+    :path: "../node_modules/react-native/ReactCommon/react/featureflags"
   React-featureflagsnativemodule:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/featureflags"
+    :path: "../node_modules/react-native/ReactCommon/react/nativemodule/featureflags"
   React-graphics:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/graphics"
+    :path: "../node_modules/react-native/ReactCommon/react/renderer/graphics"
   React-hermes:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/hermes"
+    :path: "../node_modules/react-native/ReactCommon/hermes"
   React-idlecallbacksnativemodule:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/idlecallbacks"
+    :path: "../node_modules/react-native/ReactCommon/react/nativemodule/idlecallbacks"
   React-ImageManager:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/imagemanager/platform/ios"
+    :path: "../node_modules/react-native/ReactCommon/react/renderer/imagemanager/platform/ios"
   React-jserrorhandler:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jserrorhandler"
+    :path: "../node_modules/react-native/ReactCommon/jserrorhandler"
   React-jsi:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsi"
+    :path: "../node_modules/react-native/ReactCommon/jsi"
   React-jsiexecutor:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsiexecutor"
+    :path: "../node_modules/react-native/ReactCommon/jsiexecutor"
   React-jsinspector:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern"
+    :path: "../node_modules/react-native/ReactCommon/jsinspector-modern"
   React-jsinspectorcdp:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern/cdp"
+    :path: "../node_modules/react-native/ReactCommon/jsinspector-modern/cdp"
   React-jsinspectornetwork:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern/network"
+    :path: "../node_modules/react-native/ReactCommon/jsinspector-modern/network"
   React-jsinspectortracing:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsinspector-modern/tracing"
+    :path: "../node_modules/react-native/ReactCommon/jsinspector-modern/tracing"
   React-jsitooling:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/jsitooling"
+    :path: "../node_modules/react-native/ReactCommon/jsitooling"
   React-jsitracing:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/hermes/executor/"
+    :path: "../node_modules/react-native/ReactCommon/hermes/executor/"
   React-logger:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/logger"
+    :path: "../node_modules/react-native/ReactCommon/logger"
   React-Mapbuffer:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon"
+    :path: "../node_modules/react-native/ReactCommon"
   React-microtasksnativemodule:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/microtasks"
+    :path: "../node_modules/react-native/ReactCommon/react/nativemodule/microtasks"
   react-native-safe-area-context:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-safe-area-context"
+    :path: "../node_modules/react-native-safe-area-context"
   react-native-webview:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-webview"
+    :path: "../node_modules/react-native-webview"
   React-NativeModulesApple:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios"
+    :path: "../node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios"
   React-oscompat:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/oscompat"
+    :path: "../node_modules/react-native/ReactCommon/oscompat"
   React-perflogger:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/reactperflogger"
+    :path: "../node_modules/react-native/ReactCommon/reactperflogger"
   React-performancetimeline:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/performance/timeline"
+    :path: "../node_modules/react-native/ReactCommon/react/performance/timeline"
   React-RCTActionSheet:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/ActionSheetIOS"
+    :path: "../node_modules/react-native/Libraries/ActionSheetIOS"
   React-RCTAnimation:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/NativeAnimation"
+    :path: "../node_modules/react-native/Libraries/NativeAnimation"
   React-RCTAppDelegate:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/AppDelegate"
+    :path: "../node_modules/react-native/Libraries/AppDelegate"
   React-RCTBlob:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Blob"
+    :path: "../node_modules/react-native/Libraries/Blob"
   React-RCTFabric:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React"
+    :path: "../node_modules/react-native/React"
   React-RCTFBReactNativeSpec:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React"
+    :path: "../node_modules/react-native/React"
   React-RCTImage:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Image"
+    :path: "../node_modules/react-native/Libraries/Image"
   React-RCTLinking:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/LinkingIOS"
+    :path: "../node_modules/react-native/Libraries/LinkingIOS"
   React-RCTNetwork:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Network"
+    :path: "../node_modules/react-native/Libraries/Network"
   React-RCTRuntime:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/React/Runtime"
+    :path: "../node_modules/react-native/React/Runtime"
   React-RCTSettings:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Settings"
+    :path: "../node_modules/react-native/Libraries/Settings"
   React-RCTText:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Text"
+    :path: "../node_modules/react-native/Libraries/Text"
   React-RCTVibration:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/Libraries/Vibration"
+    :path: "../node_modules/react-native/Libraries/Vibration"
   React-rendererconsistency:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/consistency"
+    :path: "../node_modules/react-native/ReactCommon/react/renderer/consistency"
   React-renderercss:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/css"
+    :path: "../node_modules/react-native/ReactCommon/react/renderer/css"
   React-rendererdebug:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/debug"
+    :path: "../node_modules/react-native/ReactCommon/react/renderer/debug"
   React-RuntimeApple:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/runtime/platform/ios"
+    :path: "../node_modules/react-native/ReactCommon/react/runtime/platform/ios"
   React-RuntimeCore:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/runtime"
+    :path: "../node_modules/react-native/ReactCommon/react/runtime"
   React-runtimeexecutor:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/runtimeexecutor"
+    :path: "../node_modules/react-native/ReactCommon/runtimeexecutor"
   React-RuntimeHermes:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/runtime"
+    :path: "../node_modules/react-native/ReactCommon/react/runtime"
   React-runtimescheduler:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/renderer/runtimescheduler"
+    :path: "../node_modules/react-native/ReactCommon/react/renderer/runtimescheduler"
   React-timing:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/timing"
+    :path: "../node_modules/react-native/ReactCommon/react/timing"
   React-utils:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/react/utils"
+    :path: "../node_modules/react-native/ReactCommon/react/utils"
   ReactAppDependencyProvider:
     :path: build/generated/ios
   ReactCodegen:
     :path: build/generated/ios
   ReactCommon:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon"
+    :path: "../node_modules/react-native/ReactCommon"
   ReactNativeDependencies:
-    :podspec: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
+    :podspec: "../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
   RNCAsyncStorage:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-async-storage/async-storage"
+    :path: "../node_modules/@react-native-async-storage/async-storage"
   RNDateTimePicker:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-community/datetimepicker"
+    :path: "../node_modules/@react-native-community/datetimepicker"
   RNFBApp:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-firebase/app"
+    :path: "../node_modules/@react-native-firebase/app"
   RNFBMessaging:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-firebase/messaging"
+    :path: "../node_modules/@react-native-firebase/messaging"
   RNGestureHandler:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-gesture-handler"
+    :path: "../node_modules/react-native-gesture-handler"
   RNGoogleMobileAds:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-google-mobile-ads"
+    :path: "../node_modules/react-native-google-mobile-ads"
   RNNaverLogin:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/@react-native-seoul/naver-login"
+    :path: "../node_modules/@react-native-seoul/naver-login"
   RNReanimated:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-reanimated"
+    :path: "../node_modules/react-native-reanimated"
   RNScreens:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-screens"
+    :path: "../node_modules/react-native-screens"
   RNWorklets:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native-worklets"
+    :path: "../node_modules/react-native-worklets"
   Yoga:
-    :path: "../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native/ReactCommon/yoga"
+    :path: "../node_modules/react-native/ReactCommon/yoga"
 
 SPEC CHECKSUMS:
   Alamofire: f36a35757af4587d8e4f4bfa223ad10be2422b8c
@@ -2922,7 +2922,7 @@ SPEC CHECKSUMS:
   React-timing: 6fa9883de2e41791e5dc4ec404e5e37f3f50e801
   React-utils: 6e2035b53d087927768649a11a26c4e092448e34
   ReactAppDependencyProvider: 1bcd3527ac0390a1c898c114f81ff954be35ed79
-  ReactCodegen: 0d14969a48effd28296894fa089bf1128c013d37
+  ReactCodegen: 7d4593f7591f002d137fe40cef3f6c11f13c88cc
   ReactCommon: 08810150b1206cc44aecf5f6ae19af32f29151a8
   ReactNativeDependencies: 71ce9c28beb282aa720ea7b46980fff9669f428a
   RNCAsyncStorage: 3a4f5e2777dae1688b781a487923a08569e27fe4
@@ -2932,9 +2932,9 @@ SPEC CHECKSUMS:
   RNGestureHandler: 2914750df066d89bf9d8f48a10ad5f0051108ac3
   RNGoogleMobileAds: 7cbcc4e127540900df5ebeb9650ffb63811b4bbf
   RNNaverLogin: 361415f209c05753fdffa12a4a42cec942f313ff
-  RNReanimated: 5857811aae6174f3ae359482fb4ef832db1a64e2
+  RNReanimated: e5c702a3e24cc1c68b2de67671713f35461678f4
   RNScreens: d8d6f1792f6e7ac12b0190d33d8d390efc0c1845
-  RNWorklets: 1fa98a273aa431605d4d403a18fc0bb538427fd8
+  RNWorklets: 76fce72926e28e304afb44f0da23b2d24f2c1fa0
   Yoga: 5934998fbeaef7845dbf698f698518695ab4cd1a
 
 PODFILE CHECKSUM: 8df25a0a62d0b873636d93ebe4cdf13f4c35b975

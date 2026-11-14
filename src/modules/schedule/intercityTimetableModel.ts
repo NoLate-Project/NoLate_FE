@@ -9,6 +9,9 @@ export function isServiceDate(value: string): boolean {
 }
 /** API times carry a Korea offset; use their explicit wall time, independent of device timezone. */
 export function serviceTime(value: string): string { return value.slice(11, 16); }
+export function isIntercityBufferMinutes(value: number, minimum: 0 | 5): boolean {
+    return Number.isInteger(value) && value >= minimum && value <= 120;
+}
 export function timetableStatusMessage(status: TimetableStatus, message?: string | null): string {
     if (message) return message;
     switch (status) {

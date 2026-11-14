@@ -3,7 +3,6 @@ import * as WebBrowser from 'expo-web-browser';
 import {
   ActivityIndicator,
   Animated,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -40,13 +39,13 @@ import {
 import {
   BRAND_BLUE,
   CANDIDATE_PAGE_SIZE,
-  CURATION_APP_LOGO,
   TRAVEL_MINUTES,
   TRAVEL_MODES,
 } from '../../src/routeSupport/onboarding/calendarImportModel';
 
 WebBrowser.maybeCompleteAuthSession();
 
+import CalendarImportStatusMark from '../../src/routeSupport/onboarding/CalendarImportStatusMark';
 import CalendarImportEarlySteps from '../../src/routeSupport/onboarding/CalendarImportEarlySteps';
 import { useCalendarImportController } from '../../src/routeSupport/onboarding/useCalendarImportController';
 
@@ -83,7 +82,6 @@ export default function CalendarImportOnboarding() {
     failedImportCount,
     favoriteDeparturePlaces,
     finishCuration,
-    footerMotionStyle,
     goBackStep,
     goToStep,
     handleCategoryCreated,
@@ -93,6 +91,8 @@ export default function CalendarImportOnboarding() {
     importing,
     individualSchedulesExpanded,
     insets,
+      isManagementEntry,
+    trackScroll,
     lastImportPreparedRoutes,
     loadCategories,
     notificationReadyCount,
@@ -176,13 +176,15 @@ export default function CalendarImportOnboarding() {
             pressed && canGoBack && styles.pressed,
           ]}
         >
-          <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+          <Ionicons accessible={false} importantForAccessibility="no" name="chevron-back-outline" size={22} color={colors.textPrimary} />
         </Pressable>
         <CurationProgress step={step} />
       </View>
 
       <ScrollView
         ref={scrollViewRef}
+        onScroll={event => trackScroll(event.nativeEvent.contentOffset.y)}
+        scrollEventThrottle={16}
         style={styles.scroll}
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
@@ -212,10 +214,7 @@ export default function CalendarImportOnboarding() {
 
           {step === 'select' && (
             <View style={styles.stepWrap}>
-              <Text pointerEvents="none" style={styles.eyebrow}>
-                {candidates.length}개 중 {selectedIds.size}개 선택
-              </Text>
-              <Text pointerEvents="none" style={styles.title}>
+              <Text pointerEvents="none" accessibilityRole="header" style={styles.title}>
                 가져올 일정을{'\n'}확인해 주세요
               </Text>
               <Text pointerEvents="none" style={styles.subtitle}>
@@ -228,7 +227,7 @@ export default function CalendarImportOnboarding() {
                   accessibilityLiveRegion="polite"
                   style={styles.inlineNotice}
                 >
-                  <Ionicons
+                  <Ionicons accessible={false} importantForAccessibility="no"
                     name="information-circle-outline"
                     size={18}
                     color={colors.textSecondary}
@@ -239,7 +238,7 @@ export default function CalendarImportOnboarding() {
 
               {candidates.length === 0 ? (
                 <View style={styles.emptyBox}>
-                  <Ionicons
+                  <Ionicons accessible={false} importantForAccessibility="no"
                     name="calendar-clear-outline"
                     size={34}
                     color={colors.textDisabled}
@@ -320,20 +319,15 @@ export default function CalendarImportOnboarding() {
 
           {step === 'enrich' && (
             <View style={styles.stepWrap}>
-              <Text style={styles.eyebrow}>마지막 설정</Text>
-              <Text style={styles.title}>
-                일정을 저장할 곳을{'\n'}확인해 주세요
+              <Text accessibilityRole="header" style={styles.title}>
+                기본 카테고리를{'\n'}선택해 주세요
               </Text>
               <Text style={styles.subtitle}>
                 {routeCandidateCount > 0
-                  ? '카테고리를 정하고, 원하면 출발 알림도 함께 준비할 수 있어요.'
+                  ? '필요하면 출발 알림도 함께 준비할 수 있어요.'
                   : `${selectedCandidates.length}개 일정을 저장할 카테고리를 정해 주세요.`}
               </Text>
 
-              <SectionTitle label="저장 카테고리" />
-              <Text style={styles.sectionDescription}>
-                선택한 기본값을 모든 일정에 적용해요.
-              </Text>
               {categoryLoading && categories.length === 0 ? (
                 <View
                   accessibilityLiveRegion="polite"
@@ -354,14 +348,14 @@ export default function CalendarImportOnboarding() {
                       기본 카테고리
                     </Text>
                     <Text style={styles.categoryDefaultHint}>
-                      {selectedCandidates.length}개 일정에 먼저 적용
+                      {selectedCandidates.length}개 일정에 적용
                     </Text>
                   </View>
                   <View style={styles.categoryGroupList}>
                     {categoryGroups.map(group => (
                       <View key={group.key} style={styles.categoryGroup}>
                         <View style={styles.categoryGroupHeader}>
-                          <Ionicons
+                          <Ionicons accessible={false} importantForAccessibility="no"
                             name={group.calendarId === null ? 'person-outline' : 'people-outline'}
                             size={15}
                             color={colors.textSecondary}
@@ -457,7 +451,7 @@ export default function CalendarImportOnboarding() {
                           styles.pressed,
                       ]}
                     >
-                      <Ionicons
+                      <Ionicons accessible={false} importantForAccessibility="no"
                         name="refresh-outline"
                         size={17}
                         color={colors.textSecondary}
@@ -485,7 +479,7 @@ export default function CalendarImportOnboarding() {
                       styles.pressed,
                   ]}
                 >
-                  <Ionicons
+                  <Ionicons accessible={false} importantForAccessibility="no"
                     name="alert-circle-outline"
                     size={18}
                     color={colors.textSecondary}
@@ -563,8 +557,8 @@ export default function CalendarImportOnboarding() {
                       />
 
                       <View style={styles.routePreparationNotice}>
-                        <Ionicons
-                          name="sparkles-outline"
+                        <Ionicons accessible={false} importantForAccessibility="no"
+                          name="information-circle-outline"
                           size={17}
                           color={BRAND_BLUE}
                         />
@@ -607,22 +601,21 @@ export default function CalendarImportOnboarding() {
 
           {step === 'complete' && (
             <View style={styles.stepWrap}>
-              <Image
-                accessible
-                accessibilityLabel="NoLate"
-                accessibilityRole="image"
-                source={CURATION_APP_LOGO}
-                resizeMode="cover"
-                style={styles.completeLogo}
-              />
-              <Text style={styles.title}>
-                {importedCount > 0
-                  ? `${importedCount}개 일정을\nNoLate로 가져왔어요`
-                  : '선택한 일정은\n이미 NoLate에 있어요'}
+              <View style={styles.centeredStatusHeader}>
+                <CalendarImportStatusMark partial={failedImportCount > 0} />
+              </View>
+              <Text accessibilityRole="header" style={styles.title}>
+                {failedImportCount > 0
+                  ? '일부 일정을 가져오지 못했어요'
+                  : importedCount > 0
+                  ? `${importedCount}개 일정을 가져왔어요`
+                  : '선택한 일정은 이미 NoLate에 있어요'}
               </Text>
               <Text style={styles.subtitle}>
-                {importedCount === 0
-                  ? '중복으로 저장하지 않고 기존 일정을 그대로 유지했어요.'
+                {failedImportCount > 0
+                  ? '원래 캘린더의 일정은 그대로 있어요.'
+                  : importedCount === 0
+                  ? '중복 없이 기존 일정을 유지했어요.'
                   : lastImportPreparedRoutes
                   ? '가져온 일정과 준비된 출발 알림을 확인해 보세요.'
                   : '가져온 일정은 내 일정에서 바로 확인할 수 있어요.'}
@@ -634,12 +627,22 @@ export default function CalendarImportOnboarding() {
                 notificationReadyCount={notificationReadyCount}
                 failedImportCount={failedImportCount}
               />
+              {failedImportCount > 0 && (
+                <View style={styles.inlineNotice}>
+                  <Ionicons accessible={false} importantForAccessibility="no"
+                    name="information-circle-outline"
+                    size={18}
+                    color={colors.textSecondary}
+                  />
+                  <Text style={styles.inlineNoticeText}>가져오지 못한 일정은 원본 캘린더에 남아 있어요.</Text>
+                </View>
+              )}
             </View>
           )}
         </Animated.View>
       </ScrollView>
 
-      <Animated.View
+      <View
         style={[
           styles.footer,
           // KeyboardAvoidingView의 iOS padding이 루트 paddingBottom을 덮어쓰므로
@@ -648,7 +651,6 @@ export default function CalendarImportOnboarding() {
             paddingBottom:
               Math.max(insets.bottom, 18) + (step === 'complete' ? 8 : 0),
           },
-          footerMotionStyle,
         ]}
       >
         {step === 'intro' && (
@@ -728,7 +730,7 @@ export default function CalendarImportOnboarding() {
           <>
             {routePreparationEnabled && !routesReadyForImport && !importing ? (
               <View style={styles.footerNotice}>
-                <Ionicons
+                <Ionicons accessible={false} importantForAccessibility="no"
                   name="information-circle-outline"
                   size={15}
                   color={colors.textSecondary}
@@ -763,12 +765,12 @@ export default function CalendarImportOnboarding() {
         )}
         {step === 'complete' && (
           <PrimaryButton
-            label={completingCuration ? '완료 상태 저장 중' : 'NoLate 사용법 보기'}
+            label={completingCuration ? '완료 상태 저장 중' : isManagementEntry ? '캘린더에서 보기' : 'NoLate 사용법 보기'}
             disabled={completingCuration}
             onPress={finishCuration}
           />
         )}
-      </Animated.View>
+      </View>
 
       {importing ? (
         <View

@@ -537,7 +537,8 @@ export function buildRouteMarkers(
     legs: TransitLegDetail[],
     originPlace: Place | undefined,
     destinationPlace: Place | undefined,
-    mapZoom: number
+    mapZoom: number,
+    selectedTransitStop?: { legIndex: number; stopIndex: number },
 ): TmapMarker[] {
     const origin = placeCoord(originPlace);
     const destination = placeCoord(destinationPlace);
@@ -574,7 +575,33 @@ export function buildRouteMarkers(
     }
 
     if (route?.mode === "TRANSIT" && legs.length) {
-        markers.push(...buildTransitPassStopMarkers(route.id, legs, mapZoom));
+        const stopMarkers = buildTransitPassStopMarkers(route.id, legs, mapZoom);
+        const leg = selectedTransitStop && legs[selectedTransitStop.legIndex];
+        const stop = selectedTransitStop && leg?.passStops?.[selectedTransitStop.stopIndex];
+        const rawCoord = toRouteCoord(stop?.coord);
+        const label = compactStopLabel(stop?.name, 24);
+        if (selectedTransitStop && leg && rawCoord && label) {
+            const { legIndex, stopIndex } = selectedTransitStop;
+            const interactionId = buildTransitStopInteractionId(legIndex, stopIndex);
+            const coord = nearestPathCoordinate(rawCoord, routeCoords(leg.pathCoords));
+            const id = `saved-transit-stop-${route.id}-${legIndex}-${stopIndex}`;
+            const selectedMarker: Omit<TmapMarker, "id"> = {
+                interactionId,
+                latitude: coord.lat,
+                longitude: coord.lng,
+                tintColor: getLegLineColor(leg),
+                markerStyle: getTransitModeMarkerStyle(leg.kind),
+                caption: stop?.name,
+                badgeSide: stopIndex % 2 === 0 ? "left" : "right",
+            };
+            markers.push(
+                ...stopMarkers.filter(marker => marker.interactionId !== interactionId),
+                { ...selectedMarker, id, displayType: "station", stationVariant: "compact", dotSize: 18, zIndex: 3980 },
+                { ...selectedMarker, id: `${id}-label`, displayType: "routeLabel", badgeVariant: "stop", badgeLabel: label, zIndex: 3981 },
+            );
+        } else {
+            markers.push(...stopMarkers);
+        }
         markers.push(...buildTransitRouteIdentityMarkers(route.id, legs, mapZoom));
         markers.push(...buildTransitEventMarkers(route.id, legs, mapZoom, origin, destination));
     }

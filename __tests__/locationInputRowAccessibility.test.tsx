@@ -58,7 +58,7 @@ describe("LocationInputRow accessibility", () => {
         });
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onClear).toHaveBeenCalledTimes(1);
-        expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(14);
+        expect(renderer!.root.findByProps({ name: "close-outline" }).props.size).toBe(14);
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "location-input-clear-surface" }).props.style,
         )).toMatchObject({
@@ -119,7 +119,7 @@ describe("LocationInputRow accessibility", () => {
         expect(pressableStyle).toMatchObject({ minHeight: 58, paddingVertical: 10 });
         expect(pressedStyle).toMatchObject({ backgroundColor: "#fff" });
         expect(labelStyle).toMatchObject({ marginBottom: 6, fontSize: 12, fontWeight: "600" });
-        const chevron = renderer!.root.findByProps({ name: "chevron-forward" });
+        const chevron = renderer!.root.findByProps({ name: "chevron-forward-outline" });
         expect(chevron.props).toMatchObject({ size: 16, color: "#6e6e73" });
         expect(StyleSheet.flatten(chevron.parent?.props.style)).toMatchObject({ opacity: 0.7 });
     });

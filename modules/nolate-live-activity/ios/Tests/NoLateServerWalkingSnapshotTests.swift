@@ -16,6 +16,54 @@ final class NoLateServerWalkingSnapshotTests:XCTestCase {
     XCTAssertTrue(summary.legs[0].geometryUsable)
     XCTAssertFalse(try NoLateJourneyRouteNormalizer.summaryJSON(json:json).isEmpty)
   }
+  func testRoadSnappedWalkingGeometryKeepsTheSavedTupleAndDoesNotStartDeparture() throws {
+    for offset in [35.8, 74.9] {
+      var p=try payload(), snapshot=p["walkingSnapshot"] as! [String:Any]
+      let before=try JSONSerialization.data(withJSONObject:p["legs"]!,options:[.sortedKeys])
+      var walks=snapshot["walks"] as! [[String:Any]]
+      for i in walks.indices {
+        var points=walks[i]["points"] as! [[String:Double]]
+        let stationPoint=(walks[i]["legIndex"] as! Int)==0 ? points.count-1 : 0
+        points[stationPoint]["lat"]! += offset/6_371_000*180/Double.pi
+        walks[i]["points"]=points
+      }
+      snapshot["walks"]=walks;p["walkingSnapshot"]=snapshot
+      let input=try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:Data(try encode(p).utf8))
+      XCTAssertNoThrow(try input.walkingSnapshot!.validate(input:input))
+      let prepared=try session(p)
+      XCTAssertEqual(prepared.core.snapshot.status,.armed)
+      XCTAssertNil(prepared.pendingDeparture)
+      XCTAssertEqual(try JSONSerialization.data(withJSONObject:p["legs"]!,options:[.sortedKeys]),before)
+      XCTAssertEqual(input.walkingSnapshot!.walks[0].points[0].lat,
+                     (walks[0]["points"] as! [[String:Double]])[0]["lat"]!)
+    }
+  }
+  func testRoadSnappingBeyondTheStaticGeometryBoundIsRejected() throws {
+    var p=try payload(), snapshot=p["walkingSnapshot"] as! [String:Any]
+    var walks=snapshot["walks"] as! [[String:Any]]
+    for i in walks.indices {
+      var points=walks[i]["points"] as! [[String:Double]]
+      let stationPoint=(walks[i]["legIndex"] as! Int)==0 ? points.count-1 : 0
+      points[stationPoint]["lat"]! += 75.1/6_371_000*180/Double.pi
+      walks[i]["points"]=points
+    }
+    snapshot["walks"]=walks;p["walkingSnapshot"]=snapshot
+    let input=try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:Data(try encode(p).utf8))
+    XCTAssertThrowsError(try input.walkingSnapshot!.validate(input:input))
+  }
+  func testUserSelectedOriginAndDestinationKeepTheStricterThirtyMeterBound() throws {
+    for origin in [true,false] {
+      var p=try payload(), snapshot=p["walkingSnapshot"] as! [String:Any]
+      var walks=snapshot["walks"] as! [[String:Any]]
+      let i=origin ? 0 : walks.count-1
+      var points=walks[i]["points"] as! [[String:Double]]
+      let j=origin ? 0 : points.count-1
+      points[j]["lat"]! += 35.8/6_371_000*180/Double.pi
+      walks[i]["points"]=points;snapshot["walks"]=walks;p["walkingSnapshot"]=snapshot
+      let input=try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:Data(try encode(p).utf8))
+      XCTAssertThrowsError(try input.walkingSnapshot!.validate(input:input))
+    }
+  }
   func testODsayCentimetreRoundingIsNotAConnector() throws {
     var p=try payload(),legs=p["legs"] as! [[String:Any]]
     var first=legs[0],start=first["start"] as! [String:Double],end=first["end"] as! [String:Double]

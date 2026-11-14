@@ -15,12 +15,12 @@ export function createCalendarImportStylesPart3(
       color: colors.textSecondary,
       fontSize: 11,
       lineHeight: 15,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     categoryAssignmentDisclosureCount: {
       color: BRAND_BLUE,
       fontSize: 10,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     categoryAssignmentList: {
       overflow: 'hidden',
@@ -58,13 +58,13 @@ export function createCalendarImportStylesPart3(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     categoryAssignmentSourceCount: {
       color: colors.textSecondary,
       fontSize: 10,
       lineHeight: 14,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     categoryAssignmentSourceCountCustom: {
       color: BRAND_BLUE,
@@ -89,7 +89,7 @@ export function createCalendarImportStylesPart3(
       flexShrink: 1,
       color: colors.textPrimary,
       fontSize: 11,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     categoryAssignmentOptions: {
       paddingHorizontal: 12,
@@ -122,14 +122,14 @@ export function createCalendarImportStylesPart3(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     categoryStatusText: {
       flexShrink: 1,
       color: colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     categoryGroupList: {
       gap: 14,
@@ -147,12 +147,12 @@ export function createCalendarImportStylesPart3(
       flexShrink: 1,
       color: colors.textPrimary,
       fontSize: 12,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     categoryGroupScope: {
       color: colors.textSecondary,
       fontSize: 10,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     defaultOriginWrap: {
       gap: 10,
@@ -179,7 +179,7 @@ export function createCalendarImportStylesPart3(
       paddingVertical: 0,
       color: colors.textPrimary,
       fontSize: 14,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     originSearchButton: {
       width: 38,
@@ -208,7 +208,7 @@ export function createCalendarImportStylesPart3(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     selectedOriginAddress: {
       color: colors.textSecondary,
@@ -244,7 +244,7 @@ export function createCalendarImportStylesPart3(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     originResultAddress: {
       color: colors.textSecondary,
@@ -256,7 +256,7 @@ export function createCalendarImportStylesPart3(
       color: colors.textSecondary,
       fontSize: 11,
       lineHeight: 16,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     routePreparationNotice: {
       minHeight: 52,
@@ -272,9 +272,9 @@ export function createCalendarImportStylesPart3(
       flex: 1,
       minWidth: 0,
       color: colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
-      fontWeight: '800',
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '400',
     },
     chipRow: {
       flexDirection: 'row',
@@ -299,7 +299,7 @@ export function createCalendarImportStylesPart3(
     optionChipText: {
       color: colors.textPrimary,
       fontSize: 13,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     optionChipTextActive: {
       color: '#FFFFFF',
@@ -340,13 +340,13 @@ export function createCalendarImportStylesPart3(
     switchTitle: {
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     switchHint: {
       marginTop: 4,
       color: colors.textSecondary,
       fontSize: 12,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     footer: {
       marginHorizontal: -22,
@@ -370,7 +370,7 @@ export function createCalendarImportStylesPart3(
       color: colors.textSecondary,
       fontSize: 11,
       lineHeight: 16,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     importLoadingOverlay: {
       ...StyleSheet.absoluteFillObject,
@@ -398,14 +398,14 @@ export function createCalendarImportStylesPart3(
       marginTop: 18,
       color: colors.textPrimary,
       fontSize: 17,
-      fontWeight: '900',
+      fontWeight: "700",
     },
     importLoadingText: {
       marginTop: 7,
       color: colors.textSecondary,
       fontSize: 12,
       lineHeight: 18,
-      fontWeight: '800',
+      fontWeight: "600",
       textAlign: 'center',
     },
     ghostButton: {
@@ -425,7 +425,7 @@ export function createCalendarImportStylesPart3(
     primaryButtonText: {
       color: '#FFFFFF',
       fontSize: 15,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     primaryButtonDisabled: {
       backgroundColor: isDark ? '#272A31' : '#E4E7EC',
@@ -438,7 +438,7 @@ export function createCalendarImportStylesPart3(
       textAlign: 'center',
       fontSize: 14,
       lineHeight: 22,
-      fontWeight: '900',
+      fontWeight: "600",
       paddingVertical: 4,
     },
     disabled: {

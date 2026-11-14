@@ -5,12 +5,15 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
 import time
+import traceback
 import urllib.request
-from eta_pinned_app import DEVICE, reset_private_navigation, restore_private_endpoint, open_private_test_endpoint
+from eta_pinned_app import DEVICE, restore_private_endpoint, open_private_client_with_xcuitest
+from eta_metro_preparation import prepare_private_metro_bundle
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
@@ -19,6 +22,45 @@ BASE, TITLE = 'http://127.0.0.1:5523', 'ETA E2E isolated fixture'
 
 def instant(value):
     return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+
+def calendar_smoke_title(text):
+    titles = re.findall(r'^SYNTHETIC_SCHEDULE_EDITED_TITLE (XCUITest [0-9]+ edited)$', text, re.MULTILINE)
+    assert len(titles) == 1, 'Require exactly one UI-created synthetic title'
+    return titles[0]
+
+
+def verify_calendar_smoke_record(records):
+    assert isinstance(records, list)
+    created = [row for row in records if row['title'].startswith('XCUITest ') and row['title'].endswith(' edited')]
+    assert len(created) == 1
+    row = created[0]
+    assert isinstance(row['id'], int) and row['id'] > 0 and row['id'] != 363
+    assert row['ownerMemberId'] == 296 and row['allDay'] is True
+    assert row.get('notificationEnabled') is not True
+    return {key: row[key] for key in ('id', 'ownerMemberId', 'title', 'startAt', 'allDay')}
+
+
+def verify_planned_postdeparture(worker, public):
+    assert worker['classification'] == 'SYNTHETIC_POST_DEPARTURE_WORKER'
+    assert worker['database'] == 'H2_MEMORY_ONLY' and worker['providersMocked'] is True
+    assert worker['physicalTransitHttpCalls'] == 0 and worker['productionDatabaseModified'] is False
+    assert worker['processed'] == 1 and worker['historyCount'] == 2
+    prediction = public['plannedJourneyArrivalPrediction']
+    assert prediction['basis'] == 'MATCHED_TRAIN_REALTIME'
+    assert prediction['routeIdentity'] == worker['inProgressPlanIdentity']
+    assert instant(prediction['predictedArrivalAt']) == instant(worker['provisionalPrediction']['predictedArrivalAt'])
+    assert instant(public['recommendedDepartureAt']) == instant(worker['beforeRecommendedDepartureAt'])
+    assert public['stale'] is True
+    for key in ('travelMinutes', 'source', 'liveFetchedAt', 'failureReason', 'predictedArrivalAt',
+                'effectiveTransitRoute', 'firstBoardingObservation', 'futureTimetablePrediction'):
+        assert public.get(key) is None, 'New-origin replan leaked into planned journey: ' + key
+    diagnostic = public['originReplanDiagnostic']
+    for key in ('travelMinutes', 'source', 'stale', 'failureReason'):
+        assert diagnostic[key] == worker[key]
+    return {'result': 'PASSED', 'sameTrainProvisionalOnly': True,
+            'departureAlarmUnchanged': True, 'originReplanSeparated': True,
+            'actualTripAccuracyVerified': False}
 
 
 def verify_prediction(worker, public, phase='early-transfer'):
@@ -46,7 +88,9 @@ def verify_prediction(worker, public, phase='early-transfer'):
                 'departureAlarmNotPromoted': True, 'actualTripAccuracyVerified': False}
     assert worker['source'] == public['source'] == 'LIVE_PROVIDER'
     assert worker['stale'] is public['stale'] is False
-    assert public['confidence'] == ('MEDIUM' if phase == 'transfer-observed' else 'HIGH')
+    # Even a directly observed first train cannot make future timetable legs
+    # a whole-journey realtime guarantee (ScheduleDepartureEtaService contract).
+    assert public['confidence'] == 'MEDIUM'
     assert worker['failureCode'] is public['failureReason'] is None
     epoch = instant(worker['epoch'])
     at = lambda seconds: epoch + dt.timedelta(seconds=seconds)
@@ -81,6 +125,8 @@ def verify_prediction(worker, public, phase='early-transfer'):
                 'notificationPayloadMatchesUpdatedEta': True,
                 'actualTripAccuracyVerified': False}
     assert instant(worker['predictedArrivalAt']) == instant(public['predictedArrivalAt']) == at(2452)
+    assert worker['effectiveSnapshot']['transitTimingBasis'] == public['transitTimingBasis'] == (
+        'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE')
     route = public['effectiveTransitRoute']
     assert route == worker['effectiveSnapshot']['effectiveTransitRoute']
     assert route['totalMinutes'] == public['travelMinutes'] == 41
@@ -114,14 +160,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', required=True)
     parser.add_argument('--phase', choices=('early-transfer', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture'), default='early-transfer')
+    parser.add_argument('--calendar-smoke', action='store_true', help='Also create/edit/relaunch a synthetic all-day schedule after early-transfer verification')
     args = parser.parse_args()
     phase = args.phase
+    if args.calendar_smoke and phase != 'early-transfer':
+        parser.error('Calendar smoke requires the future, alarm-free early-transfer fixture')
     root = Path(tempfile.mkdtemp(prefix='nolate-eta-mock-e2e.', dir='/private/tmp')).resolve()
     server = metro = None
     report = {'classification': 'SYNTHETIC_' + phase.upper().replace('-', '_') + '_SIMULATOR_E2E', 'result': 'PARTIAL',
               'providersMocked': True, 'database': 'H2_MEMORY_ONLY', 'physicalTransitHttpCalls': 0,
               'productionDatabaseModified': False, 'actualTripAccuracyVerified': False,
               'mapAccuracyWithinTwoMinutesVerified': False, 'nativeAlarmDeliveryVerified': False}
+    report['calendarSmokeRequested'] = args.calendar_smoke
 
     def emit(**value):
         print(json.dumps(value), flush=True)
@@ -175,6 +225,41 @@ def main():
         (root / (name + '-summary.json')).write_text(json.dumps(summary, indent=2))
         emit(state='ui_passed', case=name)
 
+    def calendar_ui(method, name, expected_title=None):
+        assert method in ('testCalendarCreateAndEdit', 'testSavedCalendarScheduleAfterProcessRestart')
+        command = ['python3', 'e2e/ios/run.py', '--device', DEVICE, '--output', str(root / name),
+                   '--derived-data', '/private/tmp/nolate-eta-xcuitest-20261003',
+                   '--credentials', str(root / 'credentials.json'), '--only', method]
+        env = dict(os.environ)
+        if expected_title is not None:
+            env['TEST_RUNNER_E2E_EXPECTED_SCHEDULE_TITLE'] = expected_title
+        emit(state='ui_start', case=name)
+        with log(name + '-launcher.log') as output:
+            child = subprocess.Popen(command, cwd=FE, env=env, stdout=output, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+            try:
+                if child.wait(timeout=360):
+                    raise RuntimeError('Pinned calendar UI test failed')
+            finally:
+                stop(child)
+        summary = json.loads(subprocess.check_output(['xcrun', 'xcresulttool', 'get', 'test-results',
+            'summary', '--path', str(root / name / 'result.xcresult')], timeout=30))
+        assert summary['result'] == 'Passed' and summary['passedTests'] == summary['totalTestCount'] == 1
+        assert summary['failedTests'] == summary['skippedTests'] == 0 and summary['devicesAndConfigurations']
+        assert all(v['device']['deviceId'] == DEVICE for v in summary['devicesAndConfigurations'])
+        (root / (name + '-summary.json')).write_text(json.dumps(summary, indent=2))
+        emit(state='ui_passed', case=name)
+
+    def fixture_api(path, payload=None, token=None):
+        headers = {'Content-Type': 'application/json'}
+        if token:
+            headers['Authorization'] = 'Bearer ' + token
+        request = urllib.request.Request(BASE + path, headers=headers,
+            data=None if payload is None else json.dumps(payload).encode())
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert response.headers.get('X-NoLate-Eta-Fixture') == 'h2-memory-only'
+            return json.loads(response.read())['data']
+
     try:
         emit(state='starting', evidenceRoot=str(root))
         free(5523)
@@ -216,17 +301,20 @@ def main():
         else:
             assert worker['effectiveSnapshot']['accepted'] is (phase != 'transfer-first-unobserved')
         target = instant(worker['targetArrivalAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).isoformat()
-        env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=BASE, EXPO_PUBLIC_TRANSIT_PROVIDER='tmap',
+        env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=BASE, EXPO_NO_DOTENV='1',
+                   EXPO_PUBLIC_ODSAY_IOS_API_KEY='', EXPO_PUBLIC_ODSAY_ANDROID_API_KEY='',
+                   EXPO_PUBLIC_ODSAY_ISOLATED_SIMULATOR_FIXTURE='1',
                    REACT_NATIVE_PACKAGER_HOSTNAME='127.0.0.1', CI='1')
         with log('metro.log') as output:
-            metro = subprocess.Popen(['npx', 'expo', 'start', '--dev-client', '--localhost', '--port', '8086'],
+            metro = subprocess.Popen(['npx', 'expo', 'start', '--dev-client', '--localhost', '--port', '8086', '--max-workers', '2'],
                 cwd=FE, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         def metro_ready():
             with urllib.request.urlopen('http://127.0.0.1:8086/status', timeout=2) as response:
                 return response.read() == b'packager-status:running'
         wait(metro_ready, metro)
-        reset_private_navigation(DEVICE)
-        open_private_test_endpoint(DEVICE)
+        report['metroPreparation'] = prepare_private_metro_bundle()
+        emit(state='reset_and_open_pinned_via_xcuitest')
+        report['startupTransport'] = open_private_client_with_xcuitest(DEVICE, root / 'ui-private-lifecycle')
         ui('testLoginDedicatedEtaAccount', 'ui-login', target, ['--credentials', str(root / 'credentials.json')])
         if phase == 'planned-postdeparture':
             # The private Worker advanced its logical clock to a future due time. Wait until
@@ -240,16 +328,32 @@ def main():
             '--fixture-evidence', str(root / (phase + '.json'))])
         public = json.loads((root / (phase + '-status.json')).read_text())
         if phase == 'planned-postdeparture':
-            assert public['plannedJourneyArrivalPrediction']['basis'] == 'MATCHED_TRAIN_REALTIME'
-            assert instant(public['plannedJourneyArrivalPrediction']['predictedArrivalAt']) == instant(worker['provisionalPrediction']['predictedArrivalAt'])
-            assert instant(public['recommendedDepartureAt']) == instant(worker['beforeRecommendedDepartureAt'])
-            report['predictionAudit'] = {'result': 'PASSED', 'sameTrainProvisionalOnly': True,
-                                          'departureAlarmUnchanged': True, 'actualTripAccuracyVerified': False}
+            report['predictionAudit'] = verify_planned_postdeparture(worker, public)
         else:
             report['predictionAudit'] = verify_prediction(worker, public, phase)
+        if args.calendar_smoke:
+            # These normal UI mutations are confined to the same empty H2 member.
+            # Run after ETA assertions so CRUD latency cannot invalidate their observation.
+            calendar_ui('testCalendarCreateAndEdit', 'ui-calendar-create-edit')
+            title = calendar_smoke_title((root / 'ui-calendar-create-edit' / 'run.log').read_text())
+            # A second API login revokes the installed app's session. Prove restart
+            # and authentication restoration first, without silently logging in again.
+            calendar_ui('testSavedCalendarScheduleAfterProcessRestart', 'ui-calendar-relaunch', title)
+            credentials = json.loads((root / 'credentials.json').read_text())
+            member = fixture_api('/api/member/auth/login',
+                                 {key: credentials[key] for key in ('email', 'password')})
+            assert member['id'] == 296
+            saved = verify_calendar_smoke_record(fixture_api('/api/schedules', token=member['accessToken']))
+            assert saved['title'] == title
+            report['calendarSmokeAudit'] = dict(result='PASSED', saved=saved,
+                realUiCreateAndEdit=True, reloadedAfterProcessRestart=True, database='H2_MEMORY_ONLY')
         report['result'] = 'PASSED'
     except Exception as error:
         report['failureKind'] = type(error).__name__
+        frame = traceback.extract_tb(error.__traceback__)[-1]
+        # Do not serialize the exception message or locals: they can contain credentials.
+        report['failureLocation'] = {'file': Path(frame.filename).name,
+                                     'function': frame.name, 'line': frame.lineno}
     finally:
         if metro is not None:
             report.update(restore_private_endpoint(DEVICE))

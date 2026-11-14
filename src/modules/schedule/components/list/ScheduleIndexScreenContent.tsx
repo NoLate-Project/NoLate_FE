@@ -4,7 +4,6 @@ import { Animated, StatusBar, View } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import CalendarWrapper from '../calendar/CalendarWrapper';
 import CalendarYearOverviewModal from '../calendar/CalendarYearOverviewModal';
-import CalendarSettingsModal from '../calendar/CalendarSettingsModal';
 import CalendarScopeSheet from '../calendar/CalendarScopeSheet';
 import ScheduleRouteFocusBoundary from '../ScheduleRouteFocusBoundary';
 import { type CalendarViewModePreference } from '../calendar/viewMode';
@@ -145,16 +144,15 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     firstDay,
     calendarScopeSelectorVisible,
     setCalendarScopeSelectorVisible,
-    calendarSettingsVisible,
-    setCalendarSettingsVisible,
     calendarScrollRequest,
+    savedAgendaTarget,
+    handleSavedStackPositionReady,
     dayTodayRequest,
     yearTodayRequest,
     yearOverviewPresentationRequest,
     reduceMotionEnabled,
     transitionMonthKey,
     dayModeTransitionFrom,
-    isDayTransitionActive,
     isMonthViewTransitionActive,
     todayFocusTarget,
     retainedMonthAgendaPanelKind,
@@ -169,7 +167,6 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     todayKey,
     calendarDaysByDate,
     scheduleError,
-    registerDayDisplayPrepare,
     handleDayPageNavigationActiveChange,
     overviewYear,
     monthDisplaySelectedDay,
@@ -211,16 +208,16 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     loadYearOverviewSchedules,
     yearOverviewItems,
     writableCategories,
-    addItem,
     openCategoryManager,
     handleQuickAnalyze,
     handleVisibleMonthChange,
     handleSelectDay,
-    addQuickItem,
+    addAndRevealItem,
     handleSelectDayFromDayDisplay,
     handleShiftDay,
     handleNavigateTodayFromDayDisplay,
     handleOpenScheduleFromDayDisplay,
+    agendaReturnHighlight,
     getScheduleSwipeActions,
     requestScheduleQuickActions,
     handleOpenDay,
@@ -228,11 +225,10 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     registerDetailMonthMotionCancel,
     handleDetailMonthMotionActiveChange,
     selectOverviewMonth,
-    openCalendarSettingsFromSelector,
-    flushPendingCalendarShare,
-    openCalendarShareFromSelector,
+    openCalendarManagerAfterDismiss,
+    openCalendarManagerFromSelector,
+    returningFromManager,
     updateSharedCalendarContentMode,
-    openSharedCalendarManagerFromSelector,
     handleFirstDayChange,
     bottomLeftActions,
     bottomRightActions,
@@ -337,6 +333,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
               styles.monthDisplayLayer,
               {
                 backgroundColor: colors.calendarBackground,
+                opacity: savedAgendaTarget?.stackPending ? 0 : 1,
                 transform: [{ translateX: monthDuringDayTranslateX }],
               },
             ]}
@@ -369,6 +366,8 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
                     viewMode={calendarViewMode}
                     firstDay={firstDay}
                     scrollRequest={calendarScrollRequest}
+                    savedDateTarget={savedAgendaTarget}
+                    onSavedStackPositionReady={handleSavedStackPositionReady}
                     onVisibleMonthChange={handleVisibleMonthChange}
                     headerOffset={calendarHeaderOffset}
                     transitionMonthKey={transitionMonthKey ?? undefined}
@@ -483,10 +482,8 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
                 bottomInset={insets.bottom}
                 modeTransitionProgress={dayModeTransition}
                 modeTransitionFrom={dayModeTransitionFrom}
-                transitionActive={isDayTransitionActive}
                 todayRequest={dayTodayRequest}
                 reduceMotionEnabled={reduceMotionEnabled}
-                onPrepareDayReady={registerDayDisplayPrepare}
                 onPageNavigationActiveChange={
                   handleDayPageNavigationActiveChange
                 }
@@ -495,6 +492,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
                 onShiftDay={handleShiftDay}
                 onPressRetry={loadSchedules}
                 onOpenSchedule={handleOpenScheduleFromDayDisplay}
+                returnHighlight={agendaReturnHighlight}
                 getScheduleSwipeActions={getScheduleSwipeActions}
                 onRequestScheduleActions={requestScheduleQuickActions}
               />
@@ -535,51 +533,43 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         />
       </Animated.View>
 
-      {!bottomBarHidden && (
-        <GlobalFloatingActionBar
-          leftActions={bottomLeftActions}
-          rightActions={bottomRightActions}
-          bottomInset={insets.bottom}
-          disabled={
-            isAnyDepthTransitionActive || calendarOverlayOwnsAccessibility
-          }
-        />
-      )}
+      <GlobalFloatingActionBar
+        leftActions={bottomLeftActions}
+        rightActions={bottomRightActions}
+        bottomInset={insets.bottom}
+        hidden={bottomBarHidden}
+        reduceMotionEnabled={reduceMotionEnabled}
+        disabled={isAnyDepthTransitionActive || calendarOverlayOwnsAccessibility}
+      />
 
       <CalendarScopeSheet
         visible={calendarScopeSelectorVisible}
+        reduceMotionEnabled={reduceMotionEnabled}
         calendars={scheduleCalendars}
         value={activeCalendarScope}
         onChange={setActiveCalendarScope}
-        onShareCalendar={openCalendarShareFromSelector}
-        onManage={openSharedCalendarManagerFromSelector}
-        onOpenSettings={openCalendarSettingsFromSelector}
-        onClose={() => setCalendarScopeSelectorVisible(false)}
-        onDismiss={flushPendingCalendarShare}
-      />
-
-      <ShareInvitationSheet
-        visible={calendarShareTarget !== null}
-        resourceType="calendar"
-        resourceId={calendarShareTarget?.id.toString()}
-        title={calendarShareTarget?.title ?? '공유 캘린더'}
-        subtitle={
-          calendarShareTarget
-            ? calendarShareTarget.defaultContentMode === 'SCHEDULE_AND_TRAVEL'
-              ? '일정 + 각자 경로'
-              : '일정만'
-            : undefined
-        }
-        initialContentMode={calendarShareTarget?.defaultContentMode}
-        onCalendarContentModeChange={updateSharedCalendarContentMode}
-        onClose={() => setCalendarShareTarget(null)}
-      />
-
-      <CalendarSettingsModal
-        visible={calendarSettingsVisible}
+        onShareCalendar={setCalendarShareTarget}
+        onCloseShare={() => setCalendarShareTarget(null)}
+        onManageCalendars={openCalendarManagerFromSelector}
+        preserveSelectionPosition={returningFromManager}
         firstDay={firstDay}
         onChangeFirstDay={handleFirstDayChange}
-        onClose={() => setCalendarSettingsVisible(false)}
+        onClose={() => setCalendarScopeSelectorVisible(false)}
+        onDismiss={openCalendarManagerAfterDismiss}
+        shareContent={calendarShareTarget ? (
+          <ShareInvitationSheet
+            embedded
+            visible
+            resourceType="calendar"
+            resourceId={calendarShareTarget.id.toString()}
+            title={calendarShareTarget.title}
+            subtitle={calendarShareTarget.defaultContentMode === 'SCHEDULE_AND_TRAVEL'
+              ? '일정 + 각자 경로' : '일정만'}
+            initialContentMode={calendarShareTarget.defaultContentMode}
+            onCalendarContentModeChange={updateSharedCalendarContentMode}
+            onClose={() => setCalendarShareTarget(null)}
+          />
+        ) : undefined}
       />
 
       <MemoizedQuickScheduleModal
@@ -589,7 +579,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         onClose={handleQuickModalClosed}
         onCloseStart={handleQuickModalCloseStart}
         onAnalyze={handleQuickAnalyze}
-        onSave={addQuickItem}
+        onSave={addAndRevealItem}
         onFeedback={async feedback => {
           await recordQuickScheduleReliabilityFeedbackDurably(feedback);
         }}
@@ -617,7 +607,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         morphPresenterRef={manualMorphPresenterRef}
         onClose={handleScheduleModalClosed}
         onCloseStart={handleQuickModalCloseStart}
-        onSubmit={addItem}
+        onSubmit={addAndRevealItem}
         categories={writableCategories}
         categoryError={categoryError}
         categoryLoading={categoryLoading}

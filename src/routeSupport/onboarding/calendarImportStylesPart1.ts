@@ -38,7 +38,7 @@ export function createCalendarImportStylesPart1(
     },
     curationProgress: {
       flex: 1,
-      height: 12,
+      minHeight: 16,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
@@ -53,6 +53,12 @@ export function createCalendarImportStylesPart1(
     },
     curationProgressSegmentActive: {
       backgroundColor: BRAND_BLUE,
+    },
+    curationProgressCount: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      fontWeight: '600',
+      fontVariant: ['tabular-nums'],
     },
     content: {
       flexGrow: 1,
@@ -82,13 +88,7 @@ export function createCalendarImportStylesPart1(
       width: '100%',
       height: '100%',
     },
-    completeLogo: {
-      width: 68,
-      height: 68,
-      borderRadius: 20,
-      backgroundColor: BRAND_BLUE,
-      marginBottom: 10,
-    },
+    centeredStatusHeader: { alignItems: 'center', gap: 8 },
     importResultSummary: {
       marginTop: 10,
       overflow: 'hidden',
@@ -122,12 +122,12 @@ export function createCalendarImportStylesPart1(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     importResultValue: {
       color: colors.textPrimary,
       fontSize: 13,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     stepIcon: {
       width: 60,
@@ -142,13 +142,13 @@ export function createCalendarImportStylesPart1(
       color: colors.textSecondary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     title: {
       color: colors.textPrimary,
       fontSize: 30,
       lineHeight: 38,
-      fontWeight: '900',
+      fontWeight: "700",
       letterSpacing: 0,
     },
     subtitle: {
@@ -156,7 +156,7 @@ export function createCalendarImportStylesPart1(
       color: colors.textSecondary,
       fontSize: 15,
       lineHeight: 23,
-      fontWeight: '700',
+      fontWeight: '400',
     },
     introPointList: {
       gap: 10,
@@ -172,7 +172,7 @@ export function createCalendarImportStylesPart1(
       color: colors.textSecondary,
       fontSize: 14,
       lineHeight: 20,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     providerList: {
       gap: 10,
@@ -220,13 +220,13 @@ export function createCalendarImportStylesPart1(
       flexShrink: 1,
       color: colors.textPrimary,
       fontSize: 14,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     providerDescription: {
       color: colors.textSecondary,
       fontSize: 12,
       lineHeight: 16,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     providerBadge: {
       borderRadius: 9,
@@ -237,7 +237,7 @@ export function createCalendarImportStylesPart1(
     providerBadgeText: {
       color: colors.textSecondary,
       fontSize: 10,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     providerCheck: {
       width: 25,
@@ -268,7 +268,7 @@ export function createCalendarImportStylesPart1(
       color: colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
-      fontWeight: '800',
+      fontWeight: "600",
     },
     consentCard: {
       borderRadius: 18,
@@ -319,7 +319,7 @@ export function createCalendarImportStylesPart1(
       color: colors.textPrimary,
       fontSize: 15,
       lineHeight: 20,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     consentItemList: {
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -355,13 +355,13 @@ export function createCalendarImportStylesPart1(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     consentRequired: {
       color: colors.textSecondary,
       fontSize: 11,
       lineHeight: 15,
-      fontWeight: '900',
+      fontWeight: "600",
     },
   });
 }

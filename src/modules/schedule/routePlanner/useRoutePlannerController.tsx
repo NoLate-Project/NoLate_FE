@@ -1,6 +1,5 @@
 import { useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../theme/ThemeContext';
@@ -20,20 +19,19 @@ import { useRoutePlannerState } from './useRoutePlannerState';
 import { useRoutePlannerSubmissionActions } from './useRoutePlannerSubmissionActions';
 export function useRoutePlannerController() {
   const router = useRouter();
-  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight, fontScale } = useWindowDimensions();
   const { colors, mode } = useTheme();
   const isDark = mode === 'dark';
   const overlayBoxBg = isDark
-    ? 'rgba(8, 12, 20, 0.58)'
-    : 'rgba(255, 255, 255, 0.72)';
+    ? '#080C14'
+    : '#FFFFFF';
   const overlayPanelBg = isDark
-    ? 'rgba(7, 11, 18, 0.70)'
-    : 'rgba(248, 250, 255, 0.78)';
+    ? '#070B12'
+    : '#F8FAFF';
   const overlayCardBg = isDark
-    ? 'rgba(18, 24, 34, 0.68)'
-    : 'rgba(255, 255, 255, 0.82)';
+    ? '#121822'
+    : '#FFFFFF';
   const {
     activeTarget,
     alternativesError,
@@ -60,7 +58,9 @@ export function useRoutePlannerController() {
     forcedRouteId,
     forcedRouteIndex,
     forcedSheetState,
+    startsWithRouteOverview,
     handoffRoute,
+    handoffAlternatives,
     hasBottomSheetMeasured,
     initial,
     initializedOriginRef,
@@ -70,7 +70,6 @@ export function useRoutePlannerController() {
     isMapInitialized,
     isRoutePointEditMode,
     isRouteQaBaseOnly,
-    isRouteSelectionScreen,
     isTransitDeparturePickerOpen,
     lastAppliedInitialKeyRef,
     lastCameraActionKeyRef,
@@ -159,6 +158,7 @@ export function useRoutePlannerController() {
     setTransitWalkDetailOverlays,
     setTravelMode,
     shouldReturnToScheduleDetail,
+    returnToScheduleDraft,
     transitActionBarHeight,
     transitConnectorCacheRef,
     transitConnectorOverlays,
@@ -189,7 +189,6 @@ export function useRoutePlannerController() {
     hasRouteReady,
     isRouteDetailMode,
     isRoutePointLocked,
-    isRouteSelectionStage,
     isTransitDetailMode,
     isTransitMode,
     originDisplay,
@@ -224,9 +223,8 @@ export function useRoutePlannerController() {
     isBottomSheetHidden,
     isDark,
     isRoutePointEditMode,
-    isRouteSelectionScreen,
+    largeRouteText: fontScale > 1.35,
     lastCameraActionKeyRef,
-    navigation,
     originAddress,
     originLat,
     originLng,
@@ -256,7 +254,9 @@ export function useRoutePlannerController() {
     hasOriginCoords,
     hasRouteReady,
     initial,
-    initialRouteDepartureAt,
+    initialRouteDepartureAt: requestedTransitDepartureAt,
+    hasExplicitDeparture: Boolean(initial?.requestedDepartureAt)
+      || requestedTransitDepartureAt.getTime() !== initialRouteDepartureAt.getTime(),
     isBottomSheetHidden,
     isTransitMode,
     mapZoom,
@@ -285,7 +285,6 @@ export function useRoutePlannerController() {
     selectedNormalizedRoute,
     selectedRouteInfo,
     selectedTransitProgressSegments,
-    selectedVisibleAlternativeIndex,
     transitFilterCounts,
     visibleAlternatives,
   } = routePresentation;
@@ -294,8 +293,11 @@ export function useRoutePlannerController() {
     animateBottomSheetTo,
     bottomHandlePanResponder,
     getBottomSheetSnapTarget,
+    reduceMotion,
     snapBottomSheetTo,
+    toggleBottomSheetFromHandle,
   } = useRoutePlannerBottomSheetController({
+    bottomSheetSnap,
     bottomSheetAnimatedOffsetRef,
     bottomSheetCollapsedOffset,
     bottomSheetDragMaxOffset,
@@ -337,8 +339,10 @@ export function useRoutePlannerController() {
     forcedRouteId,
     forcedRouteIndex,
     forcedSheetState,
+    startsWithRouteOverview,
     getBottomSheetSnapTarget,
     handoffRoute,
+    handoffAlternatives,
     hasBottomSheetMeasured,
     hasRouteReady,
     initial,
@@ -508,6 +512,7 @@ export function useRoutePlannerController() {
     qaCameraPreset,
     requestedTransitDepartureAt,
     routeRefreshTick,
+    reduceMotion,
     runCameraActionAfterDirectionPrewarm,
     selectedAlternative,
     selectedAlternativeId,
@@ -575,8 +580,10 @@ export function useRoutePlannerController() {
     goBack,
     goToScheduleList,
     openRoutePointEditorFromHeader,
+    placeEditor,
+    closePlaceEditor,
+    confirmRoutePoints,
     openTransitDeparturePicker,
-    persistCurrentRoutePlannerInitial,
     submit,
   } = useRoutePlannerSubmissionActions({
     bottomSheetSnap,
@@ -594,6 +601,9 @@ export function useRoutePlannerController() {
     hasOriginCoords,
     hasRouteReady,
     initialTargetArrivalAt: initial?.targetArrivalAt,
+    initialRequestedDepartureAt: initial?.requestedDepartureAt,
+    returnToScheduleDraft,
+    appliesToExistingSchedule: initial?.appliesToExistingSchedule,
     isBottomSheetHidden,
     isRouteDetailMode,
     locationPromptTarget,
@@ -605,6 +615,8 @@ export function useRoutePlannerController() {
     requestedTransitDepartureAt,
     routePathCoords,
     routePlannerBackAction,
+    routeAlternatives,
+    departureTimeEdited: requestedTransitDepartureAt.getTime() !== initialRouteDepartureAt.getTime(),
     routeSubmitPendingRef,
     routeSubmitResetTimerRef,
     router,
@@ -621,10 +633,9 @@ export function useRoutePlannerController() {
     travelMode,
   });
   const {
-    canEnterRouteDetail,
     focusMapOnTransitLeg,
+    focusTransitMapStop,
     focusRouteInfoStep,
-    onEnterRouteDetailView,
     onMapCameraChanged,
     onMapLayoutReport,
     onMapMarkerPress,
@@ -639,13 +650,10 @@ export function useRoutePlannerController() {
     bottomSheetMiddleOffset,
     bottomSheetSnap,
     cameraQaStateRef,
-    etaLoading,
     focusedRouteStepId,
     focusedTransitLegIndex,
-    hasRouteReady,
     insetsTop: insets.top,
     isBottomSheetHidden,
-    isRouteSelectionStage,
     isTransitMode,
     lastCameraActionKeyRef,
     lastCameraQaLogSignatureRef,
@@ -653,13 +661,10 @@ export function useRoutePlannerController() {
     mapMarkers,
     mapRef,
     mapZoom,
-    persistCurrentRoutePlannerInitial,
-    router,
+    reduceMotion,
     runCameraActionAfterDirectionPrewarm,
     selectedAlternative,
     selectedNormalizedRoute,
-    selectedVisibleAlternativeIndex,
-    sessionId,
     setBottomSheetSnap,
     setFocusedRouteStepId,
     setFocusedTransitLegIndex,
@@ -677,6 +682,9 @@ export function useRoutePlannerController() {
 
   return {
     insets,
+    returnToScheduleDraft,
+    appliesToExistingSchedule: initial?.appliesToExistingSchedule,
+    shouldReturnToScheduleDetail,
     windowHeight,
     colors,
     mode,
@@ -705,6 +713,8 @@ export function useRoutePlannerController() {
     setTransitRouteFilter,
     selectedAlternativeId,
     draftTransitDepartureAt,
+    requestedTransitDepartureAt,
+    departureTimeEdited: requestedTransitDepartureAt.getTime() !== initialRouteDepartureAt.getTime(),
     setDraftTransitDepartureAt,
     isTransitDeparturePickerOpen,
     setIsTransitDeparturePickerOpen,
@@ -712,6 +722,9 @@ export function useRoutePlannerController() {
     setTransitActionBarHeight,
     setHasBottomSheetMeasured,
     bottomSheetSnap,
+    snapBottomSheetTo,
+    toggleBottomSheetFromHandle,
+    reduceMotion,
     setBottomSheetSnap,
     setIsBottomSheetCollapsed,
     isBottomSheetHidden,
@@ -745,7 +758,6 @@ export function useRoutePlannerController() {
     transitDetailPrimaryActionText,
     transitDetailControlText,
     isRoutePointLocked,
-    isRouteSelectionStage,
     hasActiveTarget,
     originDisplay,
     destinationDisplay,
@@ -771,8 +783,14 @@ export function useRoutePlannerController() {
     clearPlaceSearch,
     handleSearchChange,
     openRoutePointEditorFromHeader,
+    placeEditor,
+    closePlaceEditor,
+    confirmRoutePoints,
     goToScheduleList,
     goBack,
+    backLabel: routePlannerBackAction === 'return-to-selection'
+      ? '경로 후보로 돌아가기'
+      : shouldReturnToScheduleDetail ? '일정 상세로 돌아가기' : '뒤로가기',
     openTransitDeparturePicker,
     applyTransitDepartureTime,
     submit,
@@ -782,11 +800,10 @@ export function useRoutePlannerController() {
     onMapZoomChanged,
     onMapCameraChanged,
     focusMapOnTransitLeg,
+    focusTransitMapStop,
     onMapMarkerPress,
     selectedRouteStepId,
     focusRouteInfoStep,
-    canEnterRouteDetail,
-    onEnterRouteDetailView,
   };
 }
 

@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -14,7 +13,6 @@ import {
 } from '../transitDetailPresentation';
 import {
   resolveRoutePlannerBackAction,
-  shouldEnableRoutePlannerGesture,
 } from '../routePlannerNavigation';
 import type { TravelMode } from '../types';
 import type { RoutePointTarget } from './params';
@@ -38,9 +36,7 @@ type Options = {
   isBottomSheetHidden: boolean;
   isDark: boolean;
   isRoutePointEditMode: boolean;
-  isRouteSelectionScreen: boolean;
   lastCameraActionKeyRef: MutableRefObject<string>;
-  navigation: { setOptions: (options: { gestureEnabled: boolean }) => void };
   originAddress: string;
   originLat?: number;
   originLng?: number;
@@ -52,6 +48,7 @@ type Options = {
   transitActionBarHeight: number;
   travelMode: TravelMode;
   windowHeight: number;
+  largeRouteText?: boolean;
 };
 
 /**
@@ -74,9 +71,7 @@ export function useRoutePlannerCoreController({
   isBottomSheetHidden,
   isDark,
   isRoutePointEditMode,
-  isRouteSelectionScreen,
   lastCameraActionKeyRef,
-  navigation,
   originAddress,
   originLat,
   originLng,
@@ -88,6 +83,7 @@ export function useRoutePlannerCoreController({
   transitActionBarHeight,
   travelMode,
   windowHeight,
+  largeRouteText,
 }: Options) {
   const insets = { top: insetsTop, bottom: insetsBottom };
   const prewarmMapCameraState = useCallback(
@@ -139,7 +135,7 @@ export function useRoutePlannerCoreController({
   const hasDestinationCoords =
     typeof destinationLat === 'number' && typeof destinationLng === 'number';
   const hasRouteReady = hasOriginCoords && hasDestinationCoords;
-  const isRouteDetailMode = hasRouteReady && !isRouteSelectionScreen;
+  const isRouteDetailMode = hasRouteReady;
   const isTransitDetailMode = isTransitMode && isRouteDetailMode;
   const shouldRenderTransitDetailDark = isDark;
   const detailPanelBg = isRouteDetailMode
@@ -165,8 +161,8 @@ export function useRoutePlannerCoreController({
     transitDetailSummaryPalette.borderColor,
   );
   const transitRouteChipBg = shouldRenderTransitDetailDark
-    ? 'rgba(18,18,18,0.94)'
-    : 'rgba(248,250,252,0.985)';
+    ? '#121212'
+    : '#F8FAFC';
   const transitRouteChipText = shouldRenderTransitDetailDark
     ? '#D7D7DA'
     : '#334155';
@@ -182,19 +178,9 @@ export function useRoutePlannerCoreController({
     ? '#F3F4F6'
     : '#111827';
   const isRoutePointLocked = hasRouteReady && !isRoutePointEditMode;
-  const isRouteSelectionStage = isRouteSelectionScreen;
   const routePlannerBackAction = resolveRoutePlannerBackAction({
-    isRouteSelectionStage,
     shouldReturnToScheduleDetail,
   });
-  useEffect(() => {
-    navigation.setOptions({
-      gestureEnabled: shouldEnableRoutePlannerGesture({
-        isRouteSelectionStage,
-        shouldReturnToScheduleDetail,
-      }),
-    });
-  }, [isRouteSelectionStage, navigation, shouldReturnToScheduleDetail]);
   const hasActiveTarget =
     activeTarget === 'origin' || activeTarget === 'destination';
   const originDisplay =
@@ -224,6 +210,7 @@ export function useRoutePlannerCoreController({
     isBottomSheetHidden,
     isRouteDetailMode,
     windowHeight,
+    largeRouteText,
     safeAreaTop: insets.top,
     safeAreaBottom: insets.bottom,
   });
@@ -251,7 +238,6 @@ export function useRoutePlannerCoreController({
     hasRouteReady,
     isRouteDetailMode,
     isRoutePointLocked,
-    isRouteSelectionStage,
     isTransitDetailMode,
     isTransitMode,
     originDisplay,

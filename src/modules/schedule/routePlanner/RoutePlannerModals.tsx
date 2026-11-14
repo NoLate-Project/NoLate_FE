@@ -4,7 +4,6 @@ import { Ionicons as ExpoIonicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import BrandedLoader from '../../../ui/BrandedLoader';
 import styles, { ORIGIN_COLOR } from './styles';
-import CalendarGlassSurface from '../components/calendar/CalendarGlassSurface';
 import type { RoutePlannerController } from './useRoutePlannerController';
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -24,6 +23,7 @@ export function RoutePlannerModals({ controller }: Props) {
   const {
     colors,
     isDark,
+    reduceMotion,
     locationPromptTarget,
     locationPromptLoading,
     draftTransitDepartureAt,
@@ -38,21 +38,24 @@ export function RoutePlannerModals({ controller }: Props) {
     confirmLocationPrompt,
     applyTransitDepartureTime,
   } = controller;
+  const modalAnimation = reduceMotion ? 'none' : 'fade';
+  const locationTarget = locationPromptTarget === 'origin' ? '출발지' : '도착지';
   return (
     <>
       {Platform.OS === 'ios' ? (
         <Modal
           visible={isTransitDeparturePickerOpen}
           transparent
-          animationType="fade"
+          animationType={modalAnimation}
           statusBarTranslucent
           onRequestClose={() => setIsTransitDeparturePickerOpen(false)}
           accessibilityViewIsModal
         >
           <View style={styles.transitDeparturePickerModal}>
             <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="출발 시각 선택 닫기"
+              accessible={false}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
               style={styles.transitDeparturePickerBackdrop}
               onPress={() => setIsTransitDeparturePickerOpen(false)}
             />
@@ -128,7 +131,7 @@ export function RoutePlannerModals({ controller }: Props) {
                   { borderColor: detailBorderColor },
                 ]}
               >
-                <Ionicons name="refresh" size={16} color={detailPrimaryText} />
+                <Ionicons name="refresh-outline" size={16} color={detailPrimaryText} />
                 <Text
                   style={[
                     styles.transitDepartureNowText,
@@ -146,7 +149,7 @@ export function RoutePlannerModals({ controller }: Props) {
         <Modal
           visible
           transparent
-          animationType="fade"
+          animationType={modalAnimation}
           statusBarTranslucent
           onRequestClose={closeLocationPrompt}
         >
@@ -156,18 +159,15 @@ export function RoutePlannerModals({ controller }: Props) {
             pointerEvents="box-none"
           >
             <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="위치 권한 안내 닫기"
-              accessibilityState={{ disabled: locationPromptLoading }}
+              accessible={false}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
               disabled={locationPromptLoading}
               style={styles.permissionBackdrop}
               onPress={closeLocationPrompt}
             />
-            <CalendarGlassSurface
-              variant="mapCard"
-              prominent
-              glow
-              style={[styles.permissionPrompt, { borderColor: colors.border }]}
+            <View
+              style={[styles.permissionPrompt, { backgroundColor: colors.surface, borderColor: colors.border }]}
             >
               <View style={styles.permissionIconWrap}>
                 <Ionicons
@@ -177,22 +177,20 @@ export function RoutePlannerModals({ controller }: Props) {
                 />
               </View>
               <Text
+                accessibilityRole="header"
                 style={[styles.permissionTitle, { color: colors.textPrimary }]}
               >
-                현재 위치를{' '}
-                {locationPromptTarget === 'origin' ? '출발지' : '도착지'}로
-                사용할까요?
+                현재 위치를 {locationTarget}로 사용할까요?
               </Text>
               <Text
                 style={[styles.permissionBody, { color: colors.textSecondary }]}
               >
-                NoLate가 위치를 빠르게 채우고 ETA와 지각 위험도를 계산할 수
-                있도록 현재 위치 권한이 필요합니다.
+                위치 접근을 허용하면 {locationTarget}에 현재 위치를 채워요.
               </Text>
               <View style={styles.permissionActions}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="위치 권한 안내 닫기"
+                  accessibilityLabel="나중에"
                   onPress={closeLocationPrompt}
                   disabled={locationPromptLoading}
                   accessibilityState={{ disabled: locationPromptLoading }}
@@ -215,7 +213,8 @@ export function RoutePlannerModals({ controller }: Props) {
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="위치 권한 요청 계속"
+                  accessibilityLabel="계속"
+                  accessibilityHint="기기의 위치 권한 안내를 엽니다"
                   onPress={confirmLocationPrompt}
                   disabled={locationPromptLoading}
                   accessibilityState={{
@@ -238,11 +237,13 @@ export function RoutePlannerModals({ controller }: Props) {
                       accessibilityLabel="위치 권한을 확인하고 있어요"
                     />
                   ) : (
-                    <Text style={styles.permissionPrimaryText}>계속</Text>
+                    <Text style={[styles.permissionPrimaryText, { color: isDark ? '#7DE2A6' : '#176534' }]}>
+                      계속
+                    </Text>
                   )}
                 </Pressable>
               </View>
-            </CalendarGlassSurface>
+            </View>
           </View>
         </Modal>
       )}

@@ -1,9 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import ScheduleIcon from '../shared/ScheduleIcon';
-import { INPUT_DESIGN_ACCENT, inputDesignPreviewStyles, useScheduleInputDesignPreview } from './ScheduleInputDesignPreviewContext';
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Animated,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -11,8 +10,9 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
-import Reanimated from 'react-native-reanimated';
+import Reanimated, { useReducedMotion } from 'react-native-reanimated';
 import styles from './ScheduleAddModal.styles';
 
 import { startOfLocalScheduleDay } from '../../scheduleFormDate';
@@ -20,6 +20,7 @@ import CategoryLoadErrorBanner from './CategoryLoadErrorBanner';
 import CategoryPickerRow from './CategorySelectBox';
 import LocationInputRow from './LocationInputRow';
 import NotificationSettingsCard from './NotificationSettingsCard';
+import { ScheduleRouteDraftNotice } from './ScheduleRouteDraftNotice';
 import ScheduleAddDateTimeSection from './ScheduleAddDateTimeSection';
 
 import {
@@ -61,7 +62,14 @@ export default function ScheduleNewModal({
   onMorphReady,
   morphPresenterRef,
 }: Props) {
-  const isTossPreview = useScheduleInputDesignPreview();
+  const largeText = useWindowDimensions().fontScale > 1.35;
+  const reduceMotion = useReducedMotion();
+  const formScrollRef = useRef<ScrollView>(null);
+  const categoryTriggerRef = useRef<View>(null);
+  const formOffsetRef = useRef(0);
+  const formContentHeightRef = useRef(0);
+  const headerHeightRef = useRef(0);
+  const saveFooterHeightRef = useRef(0);
   const controller = useScheduleAddModalController({
     visible,
     prewarm,
@@ -84,6 +92,25 @@ export default function ScheduleNewModal({
     onMorphReady,
     morphPresenterRef,
   });
+  const { memoInputRef } = controller;
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !visible) return;
+    const subscription = Keyboard.addListener('keyboardDidShow', ({ endCoordinates }) => {
+      const memo = memoInputRef.current;
+      if (!memo?.isFocused()) return;
+      memo.measureInWindow((_x, y, _width, height) => {
+        if (!memo.isFocused()) return;
+        const overlap = y + height + 12 - endCoordinates.screenY;
+        if (overlap > 0) {
+          formScrollRef.current?.scrollTo({
+            y: Math.max(0, formOffsetRef.current) + overlap,
+            animated: !reduceMotion,
+          });
+        }
+      });
+    });
+    return () => subscription.remove();
+  }, [memoInputRef, reduceMotion, visible]);
   if (!controller.shouldRender) return null;
   const {
     SheetContentView,
@@ -106,7 +133,6 @@ export default function ScheduleNewModal({
     isPrewarmOnly,
     markFormDirty,
     memoExpanded,
-    memoInputRef,
     mode,
     morphContentMounted,
     morphContentRevealCurtainStyle,
@@ -127,6 +153,7 @@ export default function ScheduleNewModal({
     requestClose,
     routeInfo,
     routeReady,
+    routeDraftChange,
     saveBackgroundColor,
     saveDisabled,
     saveTextColor,
@@ -157,6 +184,100 @@ export default function ScheduleNewModal({
     travelMode,
     writableCategories,
   } = controller;
+  const reportFormHeight = (width: number, height: number) => {
+    if (height <= 0) return;
+    const fixedHeight = headerHeightRef.current + (largeText ? saveFooterHeightRef.current : 0);
+    handleMorphContentSizeChange(width, height + fixedHeight);
+  };
+  const toggleCategory = () => {
+    setCategoryPickerOpen(current => !current);
+    if (!largeText || categoryPickerOpen) return;
+    formScrollRef.current?.getNativeScrollRef()?.measureInWindow((_x, top, _width, viewportHeight) => {
+      categoryTriggerRef.current?.measureInWindow((_left, y, _w, triggerHeight) => {
+        const roomForChoices = Math.min(225, Math.round(viewportHeight * 0.38));
+        const shift = y + triggerHeight + roomForChoices - (top + viewportHeight);
+        if (shift > 0) {
+          formScrollRef.current?.scrollTo({ y: formOffsetRef.current + shift, animated: !reduceMotion });
+        }
+      });
+    });
+  };
+  const saveButton = (
+    <Pressable
+      testID="schedule-add-save"
+      accessibilityRole="button"
+      accessibilityLabel="일정 저장"
+      accessibilityState={{ disabled: saveDisabled, busy: submitting }}
+      disabled={saveDisabled}
+      onPress={submit}
+      style={({ pressed }) => [
+        styles.saveBtn,
+        largeText && styles.saveBtnLarge,
+        {
+          backgroundColor: saveBackgroundColor,
+          borderColor: saveBackgroundColor,
+          opacity: pressed && !saveDisabled ? 0.82 : 1,
+        },
+      ]}
+    >
+      <Text
+        maxFontSizeMultiplier={largeText ? 2.4 : undefined}
+        style={[styles.saveBtnText, { color: saveTextColor }]}
+      >
+        {submitting ? '저장 중…' : '일정 저장'}
+      </Text>
+    </Pressable>
+  );
+
+  const header = (
+    <View style={styles.headerRow}>
+      <View style={styles.headerTitleGroup}>
+        <Ionicons
+          accessible={false}
+          name="pencil-outline"
+          size={20}
+          color={colors.textPrimary}
+        />
+        <Text
+          accessibilityRole="header"
+          maxFontSizeMultiplier={largeText ? 2.45 : undefined}
+          style={[
+            styles.headerTitle,
+            { color: colors.textPrimary },
+          ]}
+        >
+          새 일정
+        </Text>
+      </View>
+      <View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="새 일정 닫기"
+          accessibilityHint="작성 중인 내용이 있으면 확인합니다"
+          hitSlop={6}
+          onPress={() => requestClose()}
+          style={({ pressed }) => [
+            styles.closeBtn,
+            largeText && styles.closeBtnLarge,
+            {
+              backgroundColor: pressed
+                ? pressedFieldColor
+                : 'transparent',
+              borderColor: 'transparent',
+              opacity: pressed ? 0.78 : 1,
+            },
+          ]}
+        >
+          <Ionicons
+            accessible={false}
+            name="close-outline"
+            size={20}
+            color={colors.textSecondary}
+          />
+        </Pressable>
+      </View>
+    </View>
+  );
 
   return (
     <Reanimated.View
@@ -253,67 +374,35 @@ export default function ScheduleNewModal({
                   </View>
                 ) : null}
 
+                <View
+                  style={[
+                    styles.fixedHeader,
+                    isMorphPresentation && styles.morphHeader,
+                    largeText && styles.fixedHeaderLarge,
+                  ]}
+                  onLayout={({ nativeEvent: { layout } }) => {
+                    headerHeightRef.current = layout.height;
+                    reportFormHeight(layout.width, formContentHeightRef.current);
+                  }}
+                >
+                  {header}
+                </View>
                 <ScrollView
+                  ref={formScrollRef}
                   testID="schedule-add-scroll"
                   style={styles.scrollView}
                   keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : undefined}
+                  automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
                   showsVerticalScrollIndicator={false}
-                  contentContainerStyle={[
-                    styles.scrollContent,
-                    isMorphPresentation && styles.morphScrollContent,
-                  ]}
-                  onContentSizeChange={handleMorphContentSizeChange}
+                  contentContainerStyle={styles.scrollContent}
+                  onScroll={({ nativeEvent }) => { formOffsetRef.current = nativeEvent.contentOffset.y; }}
+                  scrollEventThrottle={16}
+                  onContentSizeChange={(width, height) => {
+                    formContentHeightRef.current = height;
+                    reportFormHeight(width, height);
+                  }}
                 >
-                  <View style={styles.headerRow}>
-                    <View style={styles.headerTitleGroup}>
-                      {isTossPreview ? (
-                        <View style={[inputDesignPreviewStyles.iconTile, { backgroundColor: mode === 'dark' ? 'rgba(36,107,254,0.18)' : '#E8F3FF' }]}>
-                          <ScheduleIcon name="edit" role="formControl" color={mode === 'dark' ? '#72ADFF' : INPUT_DESIGN_ACCENT} />
-                        </View>
-                      ) : <Ionicons
-                        accessible={false}
-                        name="create-outline"
-                        size={20}
-                        color={colors.textPrimary}
-                      />}
-                      <Text
-                        style={[
-                          styles.headerTitle,
-                          isTossPreview && inputDesignPreviewStyles.headerTitle,
-                          { color: colors.textPrimary },
-                        ]}
-                      >
-                        새 일정
-                      </Text>
-                    </View>
-                    <View>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="새 일정 닫기"
-                        accessibilityHint="작성 중인 내용이 있으면 확인합니다"
-                        hitSlop={6}
-                        onPress={() => requestClose()}
-                        style={({ pressed }) => [
-                          styles.closeBtn,
-                          {
-                            backgroundColor: pressed
-                              ? pressedFieldColor
-                              : 'transparent',
-                            borderColor: 'transparent',
-                            opacity: pressed ? 0.78 : 1,
-                          },
-                        ]}
-                      >
-                        <Ionicons
-                          accessible={false}
-                          name="close"
-                          size={20}
-                          color={colors.textSecondary}
-                        />
-                      </Pressable>
-                    </View>
-                  </View>
-
                   {categoryError && onRetryCategories ? (
                     <CategoryLoadErrorBanner
                       compact
@@ -336,15 +425,17 @@ export default function ScheduleNewModal({
                       testID="schedule-add-title-field"
                       style={[
                         styles.titleInputWrap,
-                        (titleFocused || titleError) &&
+                        largeText && styles.titleInputWrapLarge,
+                        !largeText && (titleFocused || titleError) &&
                           styles.titleInputWrapEmphasized,
                         {
-                          borderColor: titleBorderColor,
-                          backgroundColor: colors.surface2,
+                          borderColor: largeText ? 'transparent' : titleBorderColor,
+                          backgroundColor: largeText ? 'transparent' : colors.surface2,
                         },
                       ]}
                     >
                       <TextInput
+                        testID="schedule-add-title-input"
                         value={title}
                         onChangeText={value => {
                           markFormDirty();
@@ -353,16 +444,26 @@ export default function ScheduleNewModal({
                         }}
                         accessibilityLabel="일정 제목"
                         maxLength={120}
+                        multiline={largeText}
+                        submitBehavior="blurAndSubmit"
+                        lineBreakStrategyIOS="hangul-word"
                         placeholder="일정 제목"
                         placeholderTextColor={formPlaceholderColor}
                         onFocus={() => setTitleFocused(true)}
                         onBlur={() => setTitleFocused(false)}
                         style={[
                           styles.titleInput,
+                          largeText && styles.titleInputLarge,
+                          largeText && {
+                            borderWidth: titleFocused || titleError ? 1 : StyleSheet.hairlineWidth,
+                            borderColor: titleBorderColor,
+                            backgroundColor: colors.surface2,
+                          },
                           { color: colors.textPrimary },
                         ]}
                       />
                       <Pressable
+                        ref={categoryTriggerRef}
                         accessibilityRole="button"
                         accessibilityLabel={`카테고리 선택, 현재 ${
                           category?.title ?? '없음'
@@ -371,13 +472,12 @@ export default function ScheduleNewModal({
                           expanded: categoryPickerOpen,
                           disabled: writableCategories.length === 0,
                         }}
-                        onPress={() =>
-                          setCategoryPickerOpen(current => !current)
-                        }
+                        onPress={toggleCategory}
                         disabled={writableCategories.length === 0}
                         hitSlop={{ top: 7, right: 4, bottom: 7, left: 4 }}
                         style={({ pressed }) => [
                           styles.categoryInlineChip,
+                          largeText && styles.categoryInlineChipLarge,
                           {
                             borderColor: categoryPickerOpen
                               ? FORM_ACCENT
@@ -397,13 +497,15 @@ export default function ScheduleNewModal({
                           ]}
                         />
                         <Text
-                          numberOfLines={1}
+                          numberOfLines={largeText ? undefined : 1}
+                          lineBreakStrategyIOS="hangul-word"
                           style={[
                             styles.categoryInlineText,
+                            largeText && styles.categoryInlineTextLarge,
                             { color: colors.textPrimary },
                           ]}
                         >
-                          {category?.title ?? '카테고리'}
+                          {largeText && category ? `카테고리 · ${category.title}` : category?.title ?? '카테고리'}
                         </Text>
                         <Animated.View
                           testID="schedule-add-category-chevron"
@@ -416,7 +518,7 @@ export default function ScheduleNewModal({
                         >
                           <Ionicons
                             accessible={false}
-                            name="chevron-down"
+                            name="chevron-down-outline"
                             size={13}
                             color={
                               categoryPickerOpen
@@ -459,7 +561,7 @@ export default function ScheduleNewModal({
                       />
                     </Animated.View>
 
-                    <ScheduleAddDateTimeSection controller={controller} />
+                    <ScheduleAddDateTimeSection controller={controller} largeText={largeText} />
 
                     <LocationInputRow
                       originValue={originText}
@@ -469,6 +571,8 @@ export default function ScheduleNewModal({
                       routeInfo={routeInfo}
                       onPress={openRoutePlanner}
                       onClear={routeInfo ? clearRoute : undefined}
+                      wrapTitle={largeText}
+                      footer={<ScheduleRouteDraftNotice change={routeDraftChange} color={colors.textSecondary} />}
                     />
 
                     {!!routeInfo && (
@@ -522,6 +626,7 @@ export default function ScheduleNewModal({
                       >
                         <TextInput
                           ref={memoInputRef}
+                          testID="schedule-add-memo-input"
                           value={notes}
                           onChangeText={value => {
                             markFormDirty();
@@ -566,40 +671,27 @@ export default function ScheduleNewModal({
                         </Text>
                         <Ionicons
                           accessible={false}
-                          name="chevron-forward"
+                          name="pencil-outline"
                           size={16}
                           color={formPlaceholderColor}
                         />
                       </Pressable>
                     )}
 
-                    <Pressable
-                      testID="schedule-add-save"
-                      accessibilityRole="button"
-                      accessibilityLabel="일정 저장"
-                      accessibilityState={{
-                        disabled: saveDisabled,
-                        busy: submitting,
-                      }}
-                      disabled={saveDisabled}
-                      onPress={submit}
-                      style={({ pressed }) => [
-                        styles.saveBtn,
-                        {
-                          backgroundColor: saveBackgroundColor,
-                          borderColor: saveBackgroundColor,
-                          opacity: pressed && !saveDisabled ? 0.82 : 1,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[styles.saveBtnText, isTossPreview && inputDesignPreviewStyles.actionText, { color: saveTextColor }]}
-                      >
-                        {submitting ? '저장 중…' : isTossPreview ? '일정 만들기' : '일정 저장'}
-                      </Text>
-                    </Pressable>
+                    {!largeText && saveButton}
                   </View>
                 </ScrollView>
+                {largeText && (
+                  <View
+                    style={[styles.saveFooter, { borderTopColor: colors.border, backgroundColor: colors.surface }]}
+                    onLayout={({ nativeEvent: { layout } }) => {
+                      saveFooterHeightRef.current = layout.height;
+                      reportFormHeight(layout.width, formContentHeightRef.current);
+                    }}
+                  >
+                    {saveButton}
+                  </View>
+                )}
               </SheetContentView>
             )}
           </Reanimated.View>

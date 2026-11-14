@@ -71,6 +71,22 @@ const styles = StyleSheet.create({
         lineHeight: 20,
         fontWeight: "700",
     },
+    navigationSaveButtonLarge: {
+        width: "auto",
+        height: "auto",
+        minWidth: 68,
+        maxWidth: "36%",
+        minHeight: 44,
+        paddingHorizontal: 8,
+        paddingVertical: 5,
+    },
+    navigationTitleLarge: {
+        lineHeight: undefined,
+    },
+    navigationSaveTextLarge: {
+        lineHeight: undefined,
+        textAlign: "right",
+    },
     label:        { marginBottom: 6, fontSize: 12, lineHeight: 17, fontWeight: "600" },
     dateTimeCard: {
         borderWidth: StyleSheet.hairlineWidth,
@@ -94,6 +110,12 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 6,
     },
+    dateTimeValueRowLarge: {
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: 0,
+        paddingBottom: 6,
+    },
     dateTimeDateAction: {
         flex: 1,
         minWidth: 0,
@@ -102,6 +124,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 9,
         paddingVertical: 8,
         justifyContent: "center",
+    },
+    dateTimeDateActionLarge: {
+        flex: 0,
     },
     dateTimeRowTitle: {
         fontSize: 14,
@@ -129,6 +154,10 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         fontVariant: ["tabular-nums"],
     },
+    dateTimeClockActionLarge: {
+        justifyContent: "flex-start",
+        paddingHorizontal: 9,
+    },
     dateTimeEndClockAction: {
         paddingHorizontal: 4,
     },
@@ -136,6 +165,9 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
+    },
+    dateTimeEndControlsLarge: {
+        justifyContent: "space-between",
     },
     dateTimeDivider: {
         height: StyleSheet.hairlineWidth,
@@ -174,6 +206,19 @@ const styles = StyleSheet.create({
         lineHeight: 22,
         fontWeight: "600",
     },
+    titleInputWrapLarge: {
+        paddingHorizontal: 0,
+        flexDirection: "column",
+        alignItems: "stretch",
+    },
+    titleInputLarge: {
+        flex: 0,
+        minHeight: 52,
+        maxHeight: 212,
+        paddingHorizontal: 12,
+        borderRadius: 14,
+        textAlignVertical: "top",
+    },
     categoryInlineChip: {
         maxWidth: 128,
         minHeight: 34,
@@ -189,6 +234,13 @@ const styles = StyleSheet.create({
         width: 8,
         height: 8,
         borderRadius: 4,
+    },
+    categoryInlineChipLarge: {
+        alignSelf: "flex-start",
+        minHeight: 44,
+        maxWidth: "100%",
+        paddingHorizontal: 12,
+        paddingVertical: 7,
     },
     categoryInlineText: {
         flexShrink: 1,

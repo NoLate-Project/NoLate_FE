@@ -25,10 +25,15 @@ const styles = StyleSheet.create({
         height: 44,
     },
     headerTitle: {
+        flex: 1,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 18,
         fontWeight: "800",
         letterSpacing: 0,
     },
+    calendarContext: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
+    calendarName: { flex: 1, minWidth: 0, fontSize: 19, fontWeight: "800" },
     content: {
         paddingHorizontal: 20,
         gap: 16,
@@ -45,7 +50,8 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     input: {
-        height: 46,
+        minHeight: 46,
+        paddingVertical: 8,
         borderWidth: 1,
         borderRadius: 12,
         paddingHorizontal: 13,
@@ -76,7 +82,8 @@ const styles = StyleSheet.create({
         opacity: 0.4,
     },
     primaryButton: {
-        height: 46,
+        minHeight: 46,
+        paddingVertical: 8,
         borderRadius: 12,
         alignItems: "center",
         justifyContent: "center",
@@ -121,6 +128,8 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         letterSpacing: 0,
     },
+    categoryTitleLarge: { flex: 0 },
+    categoryRowLarge: { paddingVertical: 8 },
     categoryTitleWrap: {
         flex: 1,
         minWidth: 0,
@@ -131,13 +140,15 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 8,
     },
+    categoryTitleRowLarge: { flexDirection: "column", alignItems: "flex-start", gap: 4 },
     categoryAssist: {
         fontSize: 12,
         fontWeight: "600",
         letterSpacing: 0,
     },
     sharedBadge: {
-        height: 24,
+        minHeight: 24,
+        paddingVertical: 3,
         borderWidth: 1,
         borderRadius: 12,
         paddingHorizontal: 8,
@@ -172,7 +183,8 @@ const styles = StyleSheet.create({
     },
     secondaryButton: {
         flex: 1,
-        height: 42,
+        minHeight: 44,
+        paddingVertical: 6,
         borderWidth: 1,
         borderRadius: 12,
         alignItems: "center",
@@ -185,7 +197,8 @@ const styles = StyleSheet.create({
     },
     editSaveButton: {
         flex: 1,
-        height: 42,
+        minHeight: 44,
+        paddingVertical: 6,
         borderRadius: 12,
         alignItems: "center",
         justifyContent: "center",

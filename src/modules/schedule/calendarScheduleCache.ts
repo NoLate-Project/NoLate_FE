@@ -10,7 +10,9 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
 const MAX_CACHED_MONTHS = 18;
 const MAX_RANGE_MONTHS = 120;
 const MAX_REVISION_REFRESH_RETRIES = 1;
-const PERSISTED_CACHE_VERSION = 1;
+// v1 could stamp old rows with a newly confirmed revision. Keep its summaries
+// as an offline fallback, but remove their freshness/revision proof on migration.
+const PERSISTED_CACHE_VERSION = 2;
 const PERSISTED_CACHE_KEY_PREFIX = "nolate_calendar_schedule_cache_v1:";
 const MAX_PERSISTED_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_PERSISTED_ITEMS_PER_MONTH = 500;
@@ -138,9 +140,11 @@ function parsePersistedCache(
     if (!raw) return null;
 
     try {
-        const parsed = JSON.parse(raw) as Partial<PersistedCalendarScheduleCache>;
+        const parsed = JSON.parse(raw) as Omit<Partial<PersistedCalendarScheduleCache>, "version"> & {
+            version?: number;
+        };
         if (
-            parsed.version !== PERSISTED_CACHE_VERSION ||
+            (parsed.version !== PERSISTED_CACHE_VERSION && parsed.version !== 1) ||
             parsed.memberId !== memberId ||
             typeof parsed.savedAt !== "number" ||
             !Number.isFinite(parsed.savedAt) ||
@@ -172,12 +176,13 @@ function parsePersistedCache(
         );
         if (months.length !== parsed.months.length) return null;
 
+        const legacy = parsed.version === 1;
         return {
             version: PERSISTED_CACHE_VERSION,
             memberId,
             savedAt: parsed.savedAt,
-            serverRevision: parsed.serverRevision ?? null,
-            months,
+            serverRevision: legacy ? null : parsed.serverRevision ?? null,
+            months: legacy ? months.map(month => ({ ...month, fetchedAt: 0 })) : months,
         };
     } catch {
         return null;
@@ -486,6 +491,11 @@ export function getActiveCalendarScheduleCacheMemberId(): number | null {
 
 export function getCalendarScheduleCacheServerRevision(): number | null {
     return serverRevision;
+}
+
+/** Restored months without a server revision cannot prove that external writes are included. */
+export function hasUnverifiedCalendarScheduleCache(): boolean {
+    return serverRevision === null && monthCache.size > 0;
 }
 
 export function setCalendarScheduleCacheServerRevision(revision: number): void {

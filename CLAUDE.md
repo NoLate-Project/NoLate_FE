@@ -54,10 +54,9 @@ Initial state (3 sample events, 3 categories) is created by `createScheduleIniti
 ```
 app/schedule/components/
 ├── calendar/    # ScheduleCalendar, CustomDay, MultiDayEventBar, CalendarWrapper
-├── list/        # ScheduleList, ScheduleItemList (FlatList), ScheduleItemCard
+├── list/        # ScheduleAgendaViews, ScheduleAgendaCard, CalendarSearchResults
 ├── form/        # ScheduleAddModal, CategorySelectBox, LocationInputRow
-└── shared/      # FloatingButton, TimePickerRow
-common/component/ # Card, CardPress (shared UI primitives)
+└── shared/      # ScheduleIcon, GlobalFloatingActionBar
 ```
 
 ### API Layer

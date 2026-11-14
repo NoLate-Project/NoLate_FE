@@ -11,6 +11,9 @@ let mockPathname = "/schedule";
 const mockRouterPush = jest.fn();
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
+jest.mock("react-native/Libraries/Utilities/useWindowDimensions", () => ({
+    default: () => ({ ...require("react-native").Dimensions.get("window"), fontScale: 1 }),
+}));
 jest.mock("expo-router", () => ({
     usePathname: () => mockPathname,
     useRouter: () => ({ push: mockRouterPush }),
@@ -193,7 +196,7 @@ describe("ScheduleAddModal close flow", () => {
             borderColor: "transparent",
         });
         expect(closeButton.props.hitSlop).toBe(6);
-        expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(20);
+        expect(closeButton.findByProps({ name: "close-outline" }).props.size).toBe(20);
         expect(backdropStyle.backgroundColor).toBe("rgba(0,0,0,0.30)");
     });
 
@@ -219,7 +222,7 @@ describe("ScheduleAddModal close flow", () => {
         const categoryChevron = renderer!.root.findByProps({
             testID: "schedule-add-category-chevron",
         });
-        expect(categoryChevron.findByProps({ name: "chevron-down" }).props).toMatchObject({
+        expect(categoryChevron.findByProps({ name: "chevron-down-outline" }).props).toMatchObject({
             size: 13,
             color: "#6e6e73",
         });
@@ -229,7 +232,7 @@ describe("ScheduleAddModal close flow", () => {
         expect(picker.findAllByProps({
             accessibilityLabel: "카테고리 선택, 현재 업무",
         })).toHaveLength(0);
-        expect(categoryChevron.findByProps({ name: "chevron-down" }).props.color).toBe("#246BFE");
+        expect(categoryChevron.findByProps({ name: "chevron-down-outline" }).props.color).toBe("#246BFE");
 
         await act(async () => categoryChip.props.onPress());
 

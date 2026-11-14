@@ -1,4 +1,5 @@
 import type { RouteAlternativeOption } from "../map/routingService";
+import { validTotalDurationSeconds } from "../map/routeDuration";
 import type { Place } from "./types";
 import {
     buildRouteInfoFromAlternative,
@@ -94,12 +95,16 @@ function validDate(value?: Date | string): Date | undefined {
 
 function applyDepartureTime(routeInfo: RouteInfo, departureAt: Date): RouteInfo {
     if (!validDate(routeInfo.departureTime) || !validDate(routeInfo.arrivalTime)) return routeInfo;
+    if (routeInfo.intercityJourney || validDate(routeInfo.departureTime)?.getTime() === departureAt.getTime()) return routeInfo;
+    const departureMs = departureAt.getTime();
+    const durationSeconds = validTotalDurationSeconds(routeInfo.totalDurationSeconds, departureMs)
+        ?? Math.max(0, routeInfo.totalDurationMinutes) * 60;
     return {
         ...routeInfo,
+        timeBasis: "estimated",
+        providerTimeBasis: undefined,
         departureTime: departureAt.toISOString(),
-        arrivalTime: new Date(
-            departureAt.getTime() + (Math.max(0, routeInfo.totalDurationMinutes) * 60 * 1000)
-        ).toISOString(),
+        arrivalTime: new Date(departureMs + durationSeconds * 1000).toISOString(),
     };
 }
 
@@ -108,6 +113,16 @@ function mergeStep(generated: RouteStep, stored?: RouteStep): RouteStep {
     return {
         ...generated,
         ...stored,
+        // Older timelines use TRANSFER for a walk between rides. When the
+        // saved leg identifies it as WALK, use its walking title and metrics.
+        ...(generated.type === "WALK" && stored.type === "TRANSFER" ? {
+            type: generated.type,
+            title: generated.title,
+            description: generated.description,
+            durationMinutes: generated.durationMinutes ?? stored.durationMinutes,
+            durationSeconds: generated.durationSeconds ?? stored.durationSeconds,
+            distanceMeters: generated.distanceMeters ?? stored.distanceMeters,
+        } : {}),
         coordinates: hasItems(stored.coordinates) ? stored.coordinates : generated.coordinates,
         passStops: hasItems(stored.passStops) ? stored.passStops : generated.passStops,
     };
@@ -159,25 +174,21 @@ export function buildSavedRouteDetailInfo({
         destination,
         effectiveDepartureAt
     );
-    if (!stored) return generated;
+    if (!stored) return requestedDepartureAt ? applyDepartureTime(generated, requestedDepartureAt) : generated;
 
     const totalDurationMinutes = Number.isFinite(stored.totalDurationMinutes)
         ? stored.totalDurationMinutes
         : generated.totalDurationMinutes;
-    const arrivalAt = new Date(
-        effectiveDepartureAt.getTime() + (Math.max(0, totalDurationMinutes) * 60 * 1000)
-    );
-    const timingKnown = (!!validDate(stored.departureTime) && !!validDate(stored.arrivalTime))
-        || (!!validDate(generated.departureTime) && !!validDate(generated.arrivalTime));
-
-    return {
+    const clocks = validDate(stored.departureTime) && validDate(stored.arrivalTime) ? stored : generated;
+    const merged: RouteInfo = {
         ...generated,
         ...stored,
         originName: generated.originName,
         destinationName: generated.destinationName,
         totalDurationMinutes,
-        departureTime: timingKnown ? effectiveDepartureAt.toISOString() : "",
-        arrivalTime: timingKnown ? arrivalAt.toISOString() : "",
+        departureTime: clocks.departureTime,
+        arrivalTime: clocks.arrivalTime,
         steps: mergeStoredSteps(generated.steps, stored.steps),
     };
+    return requestedDepartureAt ? applyDepartureTime(merged, requestedDepartureAt) : merged;
 }

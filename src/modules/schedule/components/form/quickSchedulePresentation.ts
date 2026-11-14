@@ -1,5 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
-
 import { getScheduleAlertModeLabel } from "../../scheduleAlertMode";
 import {
   isQuickScheduleRouteReady as canUseRouteNotification,
@@ -32,7 +30,6 @@ type QuickSchedulePresentationOptions = {
   isVoiceFinalizing: boolean;
   isVoiceRecording: boolean;
   photoRecognitionConfidence?: number;
-  photoRecognitionError: string;
   photoTranscript: string;
   selectedPhoto?: { uri?: string; width?: number; height?: number } | null;
   submitting: boolean;
@@ -55,7 +52,6 @@ export function buildQuickSchedulePresentation({
   isVoiceFinalizing,
   isVoiceRecording,
   photoRecognitionConfidence,
-  photoRecognitionError,
   photoTranscript,
   selectedPhoto,
   submitting,
@@ -102,49 +98,6 @@ export function buildQuickSchedulePresentation({
       photoPreviewContentWidth / photoPreviewAspectRatio,
     ),
   };
-  const photoRecognitionState = isPhotoRecognizing
-    ? "scanning"
-    : photoRecognitionError
-      ? "error"
-      : photoTranscript.trim()
-        ? "ready"
-        : "selected";
-  const photoStatusColor =
-    photoRecognitionState === "scanning"
-      ? "#7BE7FF"
-      : photoRecognitionState === "ready"
-        ? "#72E5A6"
-        : photoRecognitionState === "error"
-          ? "#FFD166"
-          : "#FFFFFF";
-  const photoStatusBackground =
-    photoRecognitionState === "scanning"
-      ? "rgba(10, 52, 78, 0.86)"
-      : photoRecognitionState === "ready"
-        ? "rgba(9, 62, 43, 0.84)"
-        : photoRecognitionState === "error"
-          ? "rgba(76, 50, 8, 0.86)"
-          : "rgba(8, 13, 22, 0.78)";
-  const photoStatusText =
-    photoRecognitionState === "scanning"
-      ? "일정 정보 읽는 중"
-      : photoRecognitionState === "ready"
-        ? "읽기 완료"
-        : photoRecognitionState === "error"
-          ? "내용 확인 필요"
-          : "선택한 사진";
-  const photoStatusAccessibilityLabel =
-    photoRecognitionState === "ready"
-      ? "사진 읽기 완료"
-      : photoRecognitionState === "error"
-        ? "일정 내용을 찾지 못했어요"
-        : photoStatusText;
-  const photoStatusIcon: keyof typeof Ionicons.glyphMap =
-    photoRecognitionState === "ready"
-      ? "checkmark-circle"
-      : photoRecognitionState === "error"
-        ? "alert-circle"
-        : "image-outline";
   const photoNeedsReview =
     !isPhotoRecognizing &&
     photoRecognitionConfidence !== undefined &&
@@ -162,21 +115,17 @@ export function buildQuickSchedulePresentation({
   const flowTitle =
     flowStep === "input"
       ? "빠른 일정"
-      : flowStep === "analyzing"
-        ? "일정 미리보기"
-        : flowStep === "saving"
-          ? "일정 저장 중"
-          : flowStep === "analysisError"
-            ? "일정 만들기 실패"
-            : flowStep === "saved"
-              ? "일정 저장 완료"
-              : flowStep === "edit" && editingField
-                ? editingField === "location"
-                  ? "장소 수정"
-                  : editingField === "notification"
-                    ? "출발 알림"
-                    : `${FIELD_LABEL[editingField]} 수정`
-                : "일정 미리보기";
+      : flowStep === "saving"
+        ? "일정 저장 중"
+        : flowStep === "saved"
+          ? "일정 저장 완료"
+          : flowStep === "edit" && editingField
+            ? editingField === "location"
+              ? "장소 수정"
+              : editingField === "notification"
+                ? "출발 알림"
+                : `${FIELD_LABEL[editingField]} 수정`
+            : "일정 미리보기";
   const inputModeDescription =
     inputMode === "photo"
       ? "사진을 고르면 날짜와 장소를 자동으로 읽습니다."
@@ -197,13 +146,7 @@ export function buildQuickSchedulePresentation({
     photoErrorTextColor: isDark ? "#FFB2AD" : "#9F3A36",
     photoErrorTitleColor: isDark ? "#FF8A84" : "#B42318",
     photoNeedsReview,
-    photoRecognitionState,
     photoScanFrameStyle,
-    photoStatusAccessibilityLabel,
-    photoStatusBackground,
-    photoStatusColor,
-    photoStatusIcon,
-    photoStatusText,
     previewChevronColor: isDark ? "#AEAEB2" : "#8E8E93",
     previewDividerColor: isDark
       ? "rgba(84,84,88,0.65)"

@@ -34,6 +34,11 @@ export function createEditStyles(options: QuickScheduleModalStylesOptions) {
         justifyContent: "flex-start",
         paddingTop: 2,
     },
+        locationEditHint: {
+        marginTop: 8,
+        fontSize: 12,
+        fontWeight: "500",
+    },
         routeEditNotice: {
         borderWidth: 1,
         borderRadius: 14,

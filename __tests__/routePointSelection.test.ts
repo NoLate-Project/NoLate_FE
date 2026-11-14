@@ -1,5 +1,6 @@
 import {
     createMapPickerSessionState,
+    getMapPickerAddressLabel,
     getMapPickedPlaceFallbackName,
     resolveMapPickerCommit,
     resolveMapPickerPostCommitTransition,
@@ -11,6 +12,15 @@ import {
 } from "../src/modules/schedule/routePointSelection";
 
 describe("route point selection priority", () => {
+    test("같은 지역의 도로명 주소를 대표로 쓰고 다른 형식은 유지한다", () => {
+        expect(getMapPickerAddressLabel("서울특별시 중구 명동,서울특별시 중구 태평로1가 29-1,서울특별시 중구 세종대로22길 16"))
+            .toBe("서울특별시 중구 세종대로22길 16");
+        expect(getMapPickerAddressLabel("세종대로22길 16, 명동, 중구, 서울"))
+            .toBe("세종대로22길 16, 명동, 중구, 서울");
+        expect(getMapPickerAddressLabel("서울특별시 중구 태평로1가 29-1, 서울특별시 종로구 종로 55"))
+            .toBe("서울특별시 중구 태평로1가 29-1, 서울특별시 종로구 종로 55");
+        expect(getMapPickerAddressLabel()).toBeUndefined();
+    });
     test("지도에서 새 좌표를 고르면 이전 장소명 대신 대상별 임시 이름을 쓴다", () => {
         expect(getMapPickedPlaceFallbackName("origin")).toBe("지도에서 선택한 출발지");
         expect(getMapPickedPlaceFallbackName("destination")).toBe("지도에서 선택한 도착지");

@@ -6,8 +6,12 @@ from pathlib import Path
 import sys
 import urllib.request
 import urllib.error
+from eta_fixture_scope import require_memory_fixture_api
 
-BASE = "http://127.0.0.1:5522"
+BASE = "http://127.0.0.1:5523"
+# Never use the shared 5522 server. Verify the private H2 marker before even
+# reading credentials; this helper belongs before the app's fixture login.
+require_memory_fixture_api(BASE)
 credentials = json.loads(Path(sys.argv[1]).read_text())
 if not credentials["email"].endswith("@example.test"):
     raise SystemExit("Only synthetic members are allowed")

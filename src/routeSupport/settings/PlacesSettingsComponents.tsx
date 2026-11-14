@@ -92,10 +92,11 @@ export function CategoryTab({
         )}
       </View>
       <Text
-        numberOfLines={1}
+        numberOfLines={2}
+        maxFontSizeMultiplier={1.65}
         style={[
           styles.categoryTabLabel,
-          { color: selected ? color : colors.textPrimary },
+          { color: colors.textPrimary },
         ]}
       >
         {label}
@@ -107,6 +108,7 @@ export function CategoryTab({
         ]}
       >
         <Text
+          maxFontSizeMultiplier={1.4}
           style={[
             styles.categoryTabCountText,
             { color: selected ? color : colors.textSecondary },
@@ -143,6 +145,7 @@ export function IconAction({
   icon,
   disabled,
   destructive = false,
+  visibleLabel,
   colors,
   onPress,
 }: {
@@ -150,6 +153,7 @@ export function IconAction({
   icon: React.ComponentProps<typeof Ionicons>['name'];
   disabled?: boolean;
   destructive?: boolean;
+  visibleLabel?: string;
   colors: ReturnType<typeof useTheme>['colors'];
   onPress: () => void;
 }) {
@@ -162,18 +166,22 @@ export function IconAction({
       hitSlop={6}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.iconAction,
+        visibleLabel ? styles.namedPlaceAction : styles.iconAction,
         {
-          backgroundColor: colors.surface2,
+          backgroundColor: visibleLabel ? "transparent" : colors.surface2,
           opacity: disabled ? 0.3 : pressed ? 0.55 : 1,
         },
       ]}
     >
       <Ionicons
+        accessible={false}
         name={icon}
         size={18}
         color={destructive ? '#EF4444' : colors.textSecondary}
       />
+      {!!visibleLabel && <Text style={[styles.namedPlaceActionLabel, { color: destructive ? '#EF4444' : colors.textPrimary }]}>
+        {visibleLabel}
+      </Text>}
     </Pressable>
   );
 }
@@ -195,10 +203,10 @@ export function SheetHeader({
   return (
     <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
       <View style={styles.flexText}>
-        <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>
+        <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.sheetTitle, { color: colors.textPrimary }]}>
           {title}
         </Text>
-        <Text style={[styles.sheetCaption, { color: colors.textSecondary }]}>
+        <Text maxFontSizeMultiplier={1.8} lineBreakStrategyIOS="hangul-word" style={[styles.sheetCaption, { color: colors.textSecondary }]}>
           {caption}
         </Text>
       </View>
@@ -491,11 +499,12 @@ export function PlaceEditor({
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.editorContent}
       >
-        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+        <Text maxFontSizeMultiplier={1.8} style={[styles.inputLabel, { color: colors.textSecondary }]}>
           표시할 이름
         </Text>
         <TextInput
           accessibilityLabel="즐겨찾기 장소 이름"
+          maxFontSizeMultiplier={2}
           value={sheet.label}
           editable={!disabled}
           onChangeText={label => onChange({ label })}
@@ -511,7 +520,7 @@ export function PlaceEditor({
           ]}
         />
 
-        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+        <Text maxFontSizeMultiplier={1.8} style={[styles.inputLabel, { color: colors.textSecondary }]}>
           즐겨찾기 카테고리
         </Text>
         <View style={styles.choiceWrap}>
@@ -536,7 +545,7 @@ export function PlaceEditor({
           ))}
         </View>
         {categories.length === 0 ? (
-          <Text style={[styles.helperText, { color: colors.textSecondary }]}>
+          <Text maxFontSizeMultiplier={1.8} style={[styles.helperText, { color: colors.textSecondary }]}>
             카테고리는 내 장소 화면 상단에서 만들 수 있습니다.
           </Text>
         ) : null}
@@ -555,9 +564,9 @@ export function PlaceEditor({
           {disabled ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
-            <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+            <Ionicons name="checkmark-outline" size={20} color="#FFFFFF" />
           )}
-          <Text style={styles.editorSaveText}>저장</Text>
+          <Text maxFontSizeMultiplier={1.8} style={styles.editorSaveText}>저장</Text>
         </Pressable>
       </ScrollView>
     </>

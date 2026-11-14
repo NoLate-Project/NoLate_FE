@@ -1,29 +1,30 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import {
+    AccessibilityInfo,
+    Animated,
     Pressable,
     StyleSheet,
     Text,
+    useWindowDimensions,
     View,
     type DimensionValue,
 } from "react-native";
 
 import { useTheme } from "../../../theme/ThemeContext";
 import {
-    DAY_TIMELINE_MIN_TRAVEL_EVENT_HEIGHT,
     DAY_TIMELINE_CARD_VERTICAL_PADDING,
-    DAY_TIMELINE_META_LINE_HEIGHT,
-    DAY_TIMELINE_TITLE_LINE_HEIGHT,
-    DAY_TIMELINE_TRAVEL_LINE_HEIGHT,
-    formatDayTimelineClock,
+    DAY_TIMELINE_EVENT_MAX_FONT_SCALE,
     formatDayTimelineDeparture,
     formatDayTimelineTimeRange,
     getDayTimelineEventMetadata,
+    getDayTimelineEventRows,
 } from "../../dayTimelineLayout";
 import type { ScheduleItem, TravelMode } from "../../types";
 import ScheduleSwipeActions, {
     type ScheduleSwipeActionCallbacks,
 } from "../ScheduleSwipeActions";
+import DayEventReturnHighlight from "./DayEventReturnHighlight";
 
 type Props = {
     item: ScheduleItem;
@@ -32,7 +33,8 @@ type Props = {
     left: DimensionValue;
     width: DimensionValue;
     laneCount: number;
-    onPress: () => void;
+    returnHighlightOpacity?: Animated.Value;
+    onPress: (restoreFocus: () => void) => void;
     onLongPress?: () => void;
     swipeActions?: ScheduleSwipeActionCallbacks;
 };
@@ -52,24 +54,28 @@ export default function DayTimelineEventCard({
     left,
     width,
     laneCount,
+    returnHighlightOpacity,
     onPress,
     onLongPress,
     swipeActions,
 }: Props) {
     const { colors, mode } = useTheme();
+    const cardRef = useRef<React.ElementRef<typeof Pressable>>(null);
+    const { fontScale } = useWindowDimensions();
+    const rows = getDayTimelineEventRows(height, fontScale);
     const categoryColor = item.category?.color ?? "#8e8e93";
     const metadata = useMemo(() => getDayTimelineEventMetadata(item), [item]);
     const fullTimeText = useMemo(() => formatDayTimelineTimeRange(item), [item]);
-    const timeText = laneCount >= 3 ? formatDayTimelineClock(item.startAt) : fullTimeText;
+    const startTime = formatDayTimelineDeparture(item.startAt);
+    const timeText = laneCount >= 3 ? startTime : fullTimeText;
     const departureText = formatDayTimelineDeparture(metadata.departureAt);
     const travelText = [
         departureText ? `${departureText} 출발` : "",
         metadata.travelMinutes ? `${metadata.travelMinutes}분` : "",
     ].filter(Boolean).join(" · ");
-    const showsTravelRow = metadata.isTravel
-        && height >= DAY_TIMELINE_MIN_TRAVEL_EVENT_HEIGHT
-        && laneCount < 3;
+    const showsTravelRow = metadata.isTravel && Boolean(travelText) && rows.fitsTravel && laneCount < 3;
     const showsLocation = Boolean(metadata.location) && laneCount < 3;
+    const accessibilityLabel = [item.title, fullTimeText, metadata.location, travelText].filter(Boolean).join(", ");
     const availableSwipeActionText = [
         swipeActions?.onEdit ? "수정" : "",
         swipeActions?.onDelete ? "삭제" : "",
@@ -95,9 +101,10 @@ export default function DayTimelineEventCard({
             childrenContainerStyle={styles.swipeChildren}
         >
           <Pressable
+            ref={cardRef}
             testID="day-timeline-event-card"
             accessibilityRole="button"
-            accessibilityLabel={`${item.title}, ${fullTimeText}`}
+            accessibilityLabel={accessibilityLabel}
             accessibilityHint={accessibilityHint}
             accessibilityActions={[
                 ...(swipeActions?.onEdit ? [{ name: "edit", label: "수정" }] : []),
@@ -107,7 +114,9 @@ export default function DayTimelineEventCard({
                 if (nativeEvent.actionName === "edit") swipeActions?.onEdit?.();
                 if (nativeEvent.actionName === "delete") swipeActions?.onDelete?.();
             }}
-            onPress={onPress}
+            onPress={() => onPress(() => {
+                if (cardRef.current) AccessibilityInfo.sendAccessibilityEvent?.(cardRef.current, "focus");
+            })}
             onLongPress={onLongPress}
             delayLongPress={420}
             style={({ pressed }) => [
@@ -121,9 +130,12 @@ export default function DayTimelineEventCard({
                 },
             ]}
         >
+            {returnHighlightOpacity && (
+                <DayEventReturnHighlight opacity={returnHighlightOpacity} color={colors.textPrimary} />
+            )}
             <View style={[styles.accent, { backgroundColor: categoryColor }]} />
             <View style={[styles.content, showsTravelRow && styles.contentWithChevron]}>
-                <View style={styles.titleRow}>
+                <View style={[styles.titleRow, { height: rows.titleHeight }]}>
                     {metadata.isTravel ? (
                         <Ionicons
                             accessible={false}
@@ -134,17 +146,22 @@ export default function DayTimelineEventCard({
                         />
                     ) : null}
                     <Text
-                        maxFontSizeMultiplier={1.5}
+                        maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE}
                         numberOfLines={1}
                         style={[styles.title, { color: colors.textPrimary }]}
                     >
                         {item.title}
                     </Text>
+                    {!rows.fitsMetadata && laneCount === 1 && (
+                        <Text maxFontSizeMultiplier={1.35} numberOfLines={1} style={[styles.inlineTime, { color: colors.textSecondary }]}>
+                            {startTime}
+                        </Text>
+                    )}
                 </View>
 
-                <View style={styles.metaRow}>
+                {rows.fitsMetadata && <View style={[styles.metaRow, { height: rows.metaHeight }]}>
                     <Text
-                        maxFontSizeMultiplier={1.5}
+                        maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE}
                         numberOfLines={1}
                         style={[styles.time, { color: colors.textSecondary }]}
                     >
@@ -152,17 +169,17 @@ export default function DayTimelineEventCard({
                     </Text>
                     {showsLocation ? (
                         <Text
-                            maxFontSizeMultiplier={1.5}
+                            maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE}
                             numberOfLines={1}
                             style={[styles.location, { color: colors.textSecondary }]}
                         >
                             {metadata.location}
                         </Text>
                     ) : null}
-                </View>
+                </View>}
 
-                {showsTravelRow && travelText ? (
-                    <View style={styles.travelRow}>
+                {showsTravelRow ? (
+                    <View style={[styles.travelRow, { height: rows.travelHeight }]}>
                         <Ionicons
                             accessible={false}
                             name={travelIconName(metadata.travelMode)}
@@ -170,7 +187,7 @@ export default function DayTimelineEventCard({
                             color={categoryColor}
                         />
                         <Text
-                            maxFontSizeMultiplier={1.5}
+                            maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE}
                             numberOfLines={1}
                             style={[styles.travelText, { color: categoryColor }]}
                         >
@@ -238,7 +255,6 @@ const styles = StyleSheet.create({
     },
     titleRow: {
         minWidth: 0,
-        height: DAY_TIMELINE_TITLE_LINE_HEIGHT,
         flexDirection: "row",
         alignItems: "center",
         gap: 5,
@@ -250,13 +266,11 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         fontSize: 13.5,
-        lineHeight: DAY_TIMELINE_TITLE_LINE_HEIGHT,
         fontWeight: "800",
         letterSpacing: 0,
     },
     metaRow: {
         minWidth: 0,
-        height: DAY_TIMELINE_META_LINE_HEIGHT,
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
@@ -265,21 +279,24 @@ const styles = StyleSheet.create({
         minWidth: 0,
         flexShrink: 1,
         fontSize: 11.5,
-        lineHeight: DAY_TIMELINE_META_LINE_HEIGHT,
         fontWeight: "700",
         letterSpacing: 0,
+    },
+    inlineTime: {
+        flexShrink: 0,
+        fontSize: 11.5,
+        fontWeight: "700",
+        fontVariant: ["tabular-nums"],
     },
     location: {
         flex: 1,
         minWidth: 0,
         fontSize: 11.5,
-        lineHeight: DAY_TIMELINE_META_LINE_HEIGHT,
         fontWeight: "600",
         letterSpacing: 0,
     },
     travelRow: {
         minWidth: 0,
-        height: DAY_TIMELINE_TRAVEL_LINE_HEIGHT,
         flexDirection: "row",
         alignItems: "center",
         gap: 4,
@@ -288,7 +305,6 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         fontSize: 11.5,
-        lineHeight: DAY_TIMELINE_TRAVEL_LINE_HEIGHT,
         fontWeight: "800",
         letterSpacing: 0,
     },

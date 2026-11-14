@@ -109,6 +109,8 @@ export function useScheduleAddModalController({
     setDepartAt,
     route,
     setRoute,
+    routeDraftChange,
+    setRouteDraftChange,
     allDay,
     hasEndTime,
     setHasEndTime,
@@ -277,6 +279,7 @@ export function useScheduleAddModalController({
     setTravelMinutes(result.travelMinutes);
     setDepartAt(result.departureAt);
     setRoute(result.route);
+    setRouteDraftChange(previous => ({ kind: 'applied', revision: (previous?.revision ?? 0) + 1 }));
     routeTimingTargetArrivalRef.current =
       selectedTargetArrivalAt ?? result.targetArrivalAt;
     markFormDirty();
@@ -316,6 +319,7 @@ export function useScheduleAddModalController({
     setOriginText,
     setRendered,
     setRoute,
+    setRouteDraftChange,
     setRoutePlannerHidden,
     setRoutePlannerSessionId,
     setTravelMinutes,
@@ -358,7 +362,7 @@ export function useScheduleAddModalController({
     pendingRouteTimingTargetArrivalRef.current = targetArrivalAt.toISOString();
     setRoutePlannerInitial(
       sessionId,
-      buildScheduleRoutePlannerInitial({
+      { ...buildScheduleRoutePlannerInitial({
         origin: nextOrigin,
         destination: nextDestination,
         travelMode,
@@ -370,7 +374,7 @@ export function useScheduleAddModalController({
             ? `${nextOrigin.name} → ${nextDestination.name}`
             : nextDestination?.name ?? nextOrigin?.name,
         targetArrivalAt,
-      }),
+      }), returnToScheduleDraft: true },
     );
 
     setPicker(null);
@@ -421,6 +425,7 @@ export function useScheduleAddModalController({
     setTravelMinutes(undefined);
     setDepartAt(undefined);
     setRoute(undefined);
+    setRouteDraftChange(undefined);
     routeTimingTargetArrivalRef.current = undefined;
     pendingRouteTimingTargetArrivalRef.current = undefined;
     setNotificationEnabled(false);
@@ -440,6 +445,7 @@ export function useScheduleAddModalController({
     setOriginLng,
     setOriginText,
     setRoute,
+    setRouteDraftChange,
     setTravelMinutes,
   ]);
 
@@ -722,6 +728,7 @@ export function useScheduleAddModalController({
     categoryPickerMarginBottom,
     categoryPickerOpen,
     clearRoute,
+    routeDraftChange,
     colors,
     contentFade,
     destinationText,

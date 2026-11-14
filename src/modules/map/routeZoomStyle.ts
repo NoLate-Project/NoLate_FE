@@ -53,6 +53,7 @@ type PaddedBoundsCameraOptions = {
     maxZoom?: number;
     minimumSpanMeters?: number;
     boundsPaddingFactor?: number;
+    wholeZoomLevels?: boolean;
 };
 
 type InitialRouteCameraReadiness = {
@@ -198,9 +199,9 @@ export function getPaddedBoundsCamera(
     const zoomY = worldHeight > 0
         ? Math.log2(usableHeight / (WEB_MERCATOR_TILE_SIZE * worldHeight))
         : maxZoom;
-    // native fitBounds 호출 전 화면 축척을 준비할 때 쓰는 연속 추정값이다.
-    // 항상 내림하면 SDK가 선택할 수 있는 가장 가까운 레벨까지 미리 축소된다.
-    const zoom = clamp(Math.min(zoomX, zoomY), minZoom, maxZoom);
+    // SDK의 정수 확대 단계로 직접 이동할 때는 경로가 잘리지 않도록 내린다.
+    const fitZoom = Math.min(zoomX, zoomY);
+    const zoom = clamp(options.wholeZoomLevels ? Math.floor(fitZoom) : fitZoom, minZoom, maxZoom);
     const worldSize = WEB_MERCATOR_TILE_SIZE * (2 ** zoom);
     const boundsCenterWorldX = (westWorldX + eastWorldX) / 2;
     const boundsCenterWorldY = (northWorldY + southWorldY) / 2;

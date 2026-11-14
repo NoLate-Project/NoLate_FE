@@ -1,6 +1,6 @@
 import React from "react";
 import { Image, StyleSheet } from "react-native";
-import { useReducedMotion, withRepeat, withTiming } from "react-native-reanimated";
+import { useReducedMotion, withDelay, withRepeat, withTiming } from "react-native-reanimated";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import QuickScheduleLogoLoader, {
@@ -21,10 +21,14 @@ jest.mock("react-native-reanimated", () => ({
     Easing: {
         linear: (value: number) => value,
         bezier: () => (value: number) => value,
+        out: (easing: (value: number) => number) => easing,
+        cubic: (value: number) => value ** 3,
     },
+    ReduceMotion: { System: "system" },
     useAnimatedStyle: (factory: () => Record<string, unknown>) => factory(),
     useReducedMotion: jest.fn(() => false),
     useSharedValue: (value: number) => ({ value }),
+    withDelay: jest.fn((_delay: number, value: number) => value),
     withRepeat: jest.fn((value: number) => value),
     withTiming: jest.fn((value: number) => value),
 }));
@@ -279,6 +283,31 @@ describe("quick schedule logo loader", () => {
         const content = renderer!.root.findByProps({ testID: "branded-loading-state-content" });
         expect(content.props.accessibilityElementsHidden).toBe(true);
         expect(content.props.importantForAccessibility).toBe("no-hide-descendants");
+    });
+
+    test.each([false, true])("앱 시작 로고는 시스템 동작 줄이기를 따른다 (%s)", async (reduceMotion) => {
+        jest.mocked(useReducedMotion).mockReturnValue(reduceMotion);
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <BrandedLoadingState
+                        accessibilityLabel="NoLate를 준비하고 있어요"
+                        settleOnly
+                        settleDelayMs={150}
+                    />
+                </ThemeProvider>,
+            );
+        });
+
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-app-logo" })).toBeDefined();
+        expect(withRepeat).not.toHaveBeenCalled();
+        if (reduceMotion) {
+            expect(withDelay).not.toHaveBeenCalled();
+            expect(withTiming).not.toHaveBeenCalled();
+        } else {
+            expect(withDelay).toHaveBeenCalledTimes(1);
+            expect(withDelay).toHaveBeenCalledWith(150, 1);
+        }
     });
 
     async function renderLoader(variant: LogoLoaderVariant = "schedule") {

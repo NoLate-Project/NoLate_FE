@@ -8,3 +8,15 @@ export function routeColorInk(color: string): '#000000' | '#FFFFFF' {
     const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
     return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? '#000000' : '#FFFFFF';
 }
+
+/** Darken bright route colors just enough to keep white transit symbols readable. */
+export function routeColorForWhiteIcon(color: string): string {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) return '#44556A';
+    if (routeColorInk(color) === '#FFFFFF') return color;
+    const rgb = [1, 3, 5].map(start => parseInt(color.slice(start, start + 2), 16));
+    for (const factor of [0.82, 0.72, 0.62, 0.46]) {
+        const shade = '#' + rgb.map(value => Math.floor(value * factor).toString(16).padStart(2, '0')).join('');
+        if (routeColorInk(shade) === '#FFFFFF') return shade;
+    }
+    return '#44556A';
+}

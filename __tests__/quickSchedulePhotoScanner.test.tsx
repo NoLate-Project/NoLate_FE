@@ -324,7 +324,7 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findAll((node) => (
-                node.props.children === "일부 내용을 정확히 읽지 못했어요. 날짜·시간·장소를 확인해 주세요."
+                node.props.children === "날짜·시간·장소를 확인해 주세요."
             )).length
         ).toBeGreaterThan(0);
 
@@ -390,6 +390,23 @@ describe("QuickScheduleModal photo OCR", () => {
                 .findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
                 .props.onChangeText("7월 24일 오후 네 시 서울역 회의");
         });
+        const retry = createDeferred<{ text: string; recognitionConfidence: number }>();
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => retry.promise);
+        const findRetry = () => renderer!.root.findByProps({ accessibilityLabel: "사진 내용 다시 읽기" });
+        await act(async () => {
+            const { onPress } = findRetry().props;
+            onPress();
+            onPress();
+        });
+        expect(mockRecognizeQuickSchedulePhoto).toHaveBeenCalledTimes(2);
+        expect(findRetry().props.disabled).toBe(true);
+        const transcript = () => renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" });
+        expect(transcript().props.value).toBe("7월 24일 오후 네 시 서울역 회의");
+        await act(async () => {
+            retry.resolve({ text: "7월 24일 오후 두 시 서울역 회의", recognitionConfidence: 0.99 });
+            await retry.promise;
+        });
+        expect(transcript().props.value).toBe("7월 24일 오후 네 시 서울역 회의");
         await act(async () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })

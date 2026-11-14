@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { isAutomaticJourneyDevelopment } from './automaticJourney';
 import { getAutomaticJourneyTrialBinding, subscribeAutomaticJourneySync } from './automaticJourneyTrial';
 import type { JourneyRouteInput } from './journeyRouteInput';
 
 /** Update an already mounted detail before its first GPS event. No session mutation. */
 export function useSavedJourneyBinding(input: JourneyRouteInput | null, scheduleId: string) {
     const [, redraw] = useState(0);
-    const enabled = __DEV__ && Platform.OS === 'ios' && !!input;
+    const enabled = !!input && isAutomaticJourneyDevelopment();
     useEffect(() => {
         if (!enabled) return;
         return subscribeAutomaticJourneySync(() => redraw(value => value + 1));

@@ -118,7 +118,8 @@ private struct NoLateEndRecord: Record {
 public final class NoLateLiveActivityModule: Module {
   private let journeyEventOwner = UUID()
 
-  public func definition() -> ModuleDefinition {
+  public
+    func definition() -> ModuleDefinition {
     Name("NoLateLiveActivity")
 
     Events("onLiveActivityPushToken", "onLiveActivityStateChange", "onJourneyEngineStateChange", "onAutomaticJourneyStateChange")

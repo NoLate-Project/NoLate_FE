@@ -143,16 +143,15 @@ export type ScheduleDayDisplayProps = {
   bottomInset: number;
   modeTransitionProgress: Animated.Value;
   modeTransitionFrom: DayViewMode | null;
-  transitionActive: boolean;
   todayRequest: number;
   reduceMotionEnabled: boolean;
-  onPrepareDayReady: (prepare: ((day: string) => void) | null) => void;
   onPageNavigationActiveChange: (active: boolean) => void;
   onSelectDay: (day: string) => void;
   onNavigateToday: (day: string) => void;
   onShiftDay: (offset: number) => void;
   onPressRetry: () => void;
-  onOpenSchedule: (id: string) => void;
+  onOpenSchedule: (id: string, restoreFocus?: () => void) => void;
+  returnHighlight?: { id: string; opacity: Animated.Value };
   getScheduleSwipeActions?: ScheduleSwipeActionResolver;
   onRequestScheduleActions?: (item: ScheduleItem) => void;
 };
@@ -167,10 +166,8 @@ export function useScheduleDayDisplayController({
   error,
   modeTransitionProgress,
   modeTransitionFrom,
-  transitionActive,
   todayRequest,
   reduceMotionEnabled,
-  onPrepareDayReady,
   onPageNavigationActiveChange,
   onSelectDay,
   onNavigateToday,
@@ -208,15 +205,7 @@ export function useScheduleDayDisplayController({
   const currentTimeTargetYRef = useRef(initialCurrentTimeY);
   const daySwipeSettlingRef = useRef(false);
   const handledTodayRequestRef = useRef(todayRequest);
-  const [preparedDay, setPreparedDay] = useState<string | null>(null);
-  const selectedDay =
-    dayNavigation?.targetDay ??
-    (transitionActive ? preparedDay ?? selectedDayProp : selectedDayProp);
-
-  useEffect(() => {
-    onPrepareDayReady(setPreparedDay);
-    return () => onPrepareDayReady(null);
-  }, [onPrepareDayReady]);
+  const selectedDay = dayNavigation?.targetDay ?? selectedDayProp;
 
   useEffect(() => {
     dayNavigationUnmountingRef.current = false;
@@ -267,12 +256,6 @@ export function useScheduleDayDisplayController({
       appStateSubscription.remove();
     };
   }, []);
-
-  useEffect(() => {
-    if (preparedDay && preparedDay === selectedDayProp) {
-      setPreparedDay(null);
-    }
-  }, [preparedDay, selectedDayProp]);
 
   const weekStart = useMemo(
     () => getCalendarWeekStart(selectedDay, firstDay),

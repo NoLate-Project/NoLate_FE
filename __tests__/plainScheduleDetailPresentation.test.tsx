@@ -6,10 +6,20 @@ jest.mock("@expo/vector-icons", () => ({
     Ionicons: () => null,
 }));
 
+jest.mock("react-native/Libraries/Utilities/useWindowDimensions", () => ({
+    default: () => ({ ...require("react-native").Dimensions.get("window"), fontScale: 1 }),
+}));
+
+jest.mock("../src/modules/map/TmapMapView", () => () => null);
+jest.mock("../src/modules/journey/SavedJourneyRoutePreview", () => ({ SavedJourneyRoutePreview: () => null }));
+jest.mock("../src/modules/schedule/components/detail/ScheduleArrivalObservationAction", () => () => null);
+
 import PlainScheduleDetailView from "../src/modules/schedule/components/detail/PlainScheduleDetailView";
 import { buildPlainScheduleDetailPresentation } from "../src/modules/schedule/plainScheduleDetailPresentation";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 import type { ScheduleItem } from "../src/modules/schedule/types";
+import { ScheduleDetailBackground } from "../src/routeSupport/schedule/ScheduleDetailBackground";
+import type { ScheduleDetailPresentation } from "../src/routeSupport/schedule/scheduleDetailPresentationModel";
 
 function makeSchedule(overrides: Partial<ScheduleItem> = {}): ScheduleItem {
     return {
@@ -136,7 +146,7 @@ describe("PlainScheduleDetailView", () => {
         expect(renderer!.root.findByProps({ testID: "imported-ticket-summary" })).toBeTruthy();
     });
 
-    test("카테고리와 제목 뒤에 일시·장소·알림을 한 그룹으로 보여 준다", async () => {
+    test("제목 아래에 일시를 강조하고 입력된 장소와 메모를 표시한다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -156,23 +166,20 @@ describe("PlainScheduleDetailView", () => {
             .filter((value) => typeof value === "string")
             .join(" ");
 
-        expect(text).toContain("일정 정보");
+        expect(text).not.toContain("일정 정보");
         expect(text).toContain("QA0713A 일반 일정");
         expect(text).toContain("개인");
-        expect(text).toContain("일시");
         expect(text).toContain("2026년 7월 14일 (화)");
         expect(text).toContain("오전 10:00 – 11:30");
         expect(text).toContain("1시간 30분");
         expect(text).toContain("장소");
         expect(text).toContain("회의실 A");
-        expect(text).toContain("알림");
-        expect(text).toContain("없음");
         expect(text).toContain("메모");
         expect(text).toContain("자료를 미리 준비하기");
         expect(renderer!.root.findByProps({ testID: "plain-schedule-detail-info-group" })).toBeTruthy();
-        expect(renderer!.root.findByProps({
-            accessibilityLabel: "알림 없음",
-        })).toBeTruthy();
+        expect(renderer!.root.findAllByProps({
+            testID: "plain-schedule-detail-notification",
+        })).toHaveLength(0);
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "plain-schedule-detail-info-group" }).props.style,
         )).toMatchObject({
@@ -184,8 +191,8 @@ describe("PlainScheduleDetailView", () => {
                 accessibilityLabel: "일시 2026년 7월 14일 (화) 오전 10:00 – 11:30 1시간 30분",
             }).props.style,
         )).toMatchObject({
-            minHeight: 64,
-            paddingVertical: 10,
+            minHeight: 70,
+            paddingVertical: 13,
             gap: 10,
         });
         expect(StyleSheet.flatten(
@@ -196,13 +203,9 @@ describe("PlainScheduleDetailView", () => {
             borderRadius: 9,
             backgroundColor: "rgba(41,121,255,0.08)",
         });
-        expect(StyleSheet.flatten(
-            renderer!.root.findByProps({ testID: "plain-schedule-detail-time-divider" }).props.style,
-        )).toMatchObject({
-            left: 54,
-            right: 0,
-            height: StyleSheet.hairlineWidth,
-        });
+        expect(renderer!.root.findAllByProps({
+            testID: "plain-schedule-detail-time-divider",
+        })).toHaveLength(0);
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ accessibilityLabel: "카테고리 개인" }).props.style,
         )).toMatchObject({
@@ -224,8 +227,8 @@ describe("PlainScheduleDetailView", () => {
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ children: "오전 10:00 – 11:30" }).props.style,
         )).toMatchObject({
-            fontSize: 17,
-            lineHeight: 22,
+            fontSize: 19,
+            lineHeight: 25,
             fontWeight: "700",
         });
         expect(StyleSheet.flatten(
@@ -239,7 +242,7 @@ describe("PlainScheduleDetailView", () => {
         expect(renderer!.root.findAllByType(Switch)).toHaveLength(0);
     });
 
-    test("장소와 메모가 없어도 빈 입력창 대신 명확한 읽기 전용 값을 표시한다", async () => {
+    test("장소와 알림, 메모가 비어 있으면 일시만 표시한다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -252,11 +255,13 @@ describe("PlainScheduleDetailView", () => {
             );
         });
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "장소 없음" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "메모 없음" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일시 2026년 7월 14일 (화) 오전 10:00 – 11:30 1시간 30분" })).toBeTruthy();
+        for (const row of ["location", "notification", "memo"]) {
+            expect(renderer!.root.findAllByProps({ testID: `plain-schedule-detail-${row}` })).toHaveLength(0);
+        }
     });
 
-    test("켜진 알림은 상세 정보 그룹에 실제 시점과 방식을 함께 표시한다", async () => {
+    test("켜진 알림은 실제 시점과 방식을 함께 표시한다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -312,5 +317,35 @@ describe("PlainScheduleDetailView", () => {
         expect(text).toContain("경로 미설정");
         expect(text).toContain("참여자 이동 계획 3명");
         expect(onPress).toHaveBeenCalledTimes(1);
+    });
+
+    test("지도 없는 일정도 개인 경로가 적용됐다는 상태를 표시한다", async () => {
+        const render = (routeSavePending: boolean, routeSaveConfirmed: boolean) => (
+            <ThemeProvider>
+                <ScheduleDetailBackground
+                    presentation={{
+                        isPlainSchedule: true,
+                        item: makeSchedule({ travelPlanStatus: "READY", routeSetupRequired: false }),
+                        colors: {},
+                        insets: { bottom: 0 },
+                        travelPlanParticipants: [],
+                        plainHeaderHeight: 96,
+                        routeSavePending,
+                        routeSaveConfirmed,
+                    } as unknown as ScheduleDetailPresentation}
+                    renderTravelPlanRows={() => null}
+                    mapReady={false}
+                    mapRevision={0}
+                    onMapLoadStateChange={jest.fn()}
+                />
+            </ThemeProvider>
+        );
+        await act(async () => { renderer = TestRenderer.create(render(true, false)); });
+        const message = () => renderer!.root.findAllByType(Text).find(node => node.props.accessibilityLiveRegion === "polite");
+        expect(message()?.props.children).toBe("경로를 적용하고 있어요");
+        await act(async () => renderer!.update(render(false, true)));
+        expect(message()?.props.children).toBe("경로를 적용했어요");
+        await act(async () => renderer!.update(render(false, false)));
+        expect(message()).toBeUndefined();
     });
 });

@@ -1,5 +1,7 @@
 /* global jest */
 
+jest.mock('expo/virtual/env', () => ({ env: process.env }));
+
 jest.mock('@react-native-async-storage/async-storage', () => (
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 ));
@@ -192,9 +194,30 @@ jest.mock('react-native-reanimated', () => {
 
   return {
     __esModule: true,
-    default: { View, createAnimatedComponent },
+    default: { View, Text: require('react-native').Text, createAnimatedComponent },
     createAnimatedComponent,
     cancelAnimation: jest.fn(),
+    FadeIn: {
+      duration: (duration) => ({ reduceMotion: (reduceMotion) => ({ duration, reduceMotion }) }),
+    },
+    FadeOut: {
+      duration: (duration) => ({ reduceMotion: (reduceMotion) => ({ duration, reduceMotion }) }),
+    },
+    Keyframe: class Keyframe {
+      constructor(frames) { this.frames = frames; }
+      duration(duration) {
+        return { reduceMotion: (reduceMotion) => ({ frames: this.frames, duration, reduceMotion }) };
+      }
+    },
+    FadeInDown: {
+      duration: (duration) => ({
+        easing: (easing) => ({
+          withInitialValues: (initialValues) => ({
+            reduceMotion: (reduceMotion) => ({ duration, easing, initialValues, reduceMotion }),
+          }),
+        }),
+      }),
+    },
     Easing: {
       bezier: () => easingIdentity,
       cubic: easingIdentity,

@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { useSavedJourneyBinding } from './useSavedJourneyBinding';
 import type { JourneyRouteInput } from "./journeyRouteInput";
 import { SavedJourneyRouteBar } from "./SavedJourneyRouteBar";
@@ -10,8 +10,7 @@ export function SavedJourneyGuidanceCard({ input, scheduleId, compact = false, i
     input: JourneyRouteInput | null; scheduleId: string; compact?: boolean; isDark?: boolean;
 }) {
     const binding = useSavedJourneyBinding(input, scheduleId);
-    if (!__DEV__ || Platform.OS !== "ios" || !input) return null;
-    if (!binding?.savedRouteValidated || !binding.guidanceEnabled || binding.scheduleId !== scheduleId) return null;
+    if (!input || !binding) return null;
     return <GuidanceContent input={input} scheduleId={scheduleId} compact={compact} isDark={isDark} />;
 }
 function GuidanceContent({ input, scheduleId, compact, isDark }: { input: JourneyRouteInput; scheduleId: string; compact: boolean; isDark: boolean }) {

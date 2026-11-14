@@ -122,6 +122,7 @@ export function buildSavedRouteMapPresentation({
   mapZoom,
   isDark,
   focusedLegIndex,
+  selectedTransitStop,
   guidanceWalkingPaths,
 }: SavedRouteMapPresentationInput): SavedRouteMapPresentation {
   const storedRouteOption = getSavedRouteAlternative(route);
@@ -282,6 +283,7 @@ export function buildSavedRouteMapPresentation({
     origin,
     destination,
     mapZoom,
+    selectedTransitStop,
   );
   const fitCoords = getSavedRouteFitCoords(route, origin, destination, guidanceWalkingPaths);
 

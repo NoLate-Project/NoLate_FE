@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
+    AccessibilityInfo,
     ActivityIndicator,
+    findNodeHandle,
     Alert,
     BackHandler,
     Linking,
@@ -11,6 +13,7 @@ import {
     StyleProp,
     StyleSheet,
     Text,
+    TextInput,
     View,
     ViewStyle,
 } from "react-native";
@@ -35,6 +38,7 @@ import {
     saveAuthMember,
     saveAuthTokens,
 } from "../../src/modules/auth/authStorage";
+import { useAuthFormDrafts } from "../../src/modules/auth/AuthFormDrafts";
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import {
@@ -82,9 +86,13 @@ export default function Login() {
     const { syncAuthentication } = useAuth();
     const { colors, mode } = useTheme();
     const styles = createStyles(colors, mode);
-    const [id, setId] = useState("");
-    const [pwd, setPwd] = useState("");
+    const { login: { email: id, password: pwd }, setLogin, clear: clearDrafts } = useAuthFormDrafts();
+    const [passwordHelpOpen, setPasswordHelpOpen] = useState(false);
+    const emailInput = useRef<TextInput>(null);
+    const passwordInput = useRef<TextInput>(null);
+    const errorMessageRef = useRef<Text>(null);
     const [submitting, setSubmitting] = useState(false);
+    const [loginError, setLoginError] = useState<{ title: string; message: string }>();
     const [restoringSession, setRestoringSession] = useState(true);
     const [socialSubmittingProvider, setSocialSubmittingProvider] = useState<SocialProvider | null>(null);
     const [pendingSocialProfile, setPendingSocialProfile] = useState<SocialSdkLoginResult | null>(null);
@@ -103,6 +111,7 @@ export default function Login() {
         registerPushAfterLogin(authenticatedMember.id).catch((error) => {
             console.warn("[push] token registration failed", error);
         });
+        clearDrafts();
         if (pendingShareToken) {
             router.replace({
                 pathname: "/share/[token]",
@@ -115,7 +124,7 @@ export default function Login() {
         // login-response flag, otherwise existing users can be sent to onboarding.
         const syncedMember = await getAuthMember();
         router.replace(getPostAuthRoute(syncedMember?.curationCompleted === true));
-    }, [pendingShareToken, router, syncAuthentication]);
+    }, [clearDrafts, pendingShareToken, router, syncAuthentication]);
 
     useEffect(() => {
         if (!shouldHandleSignupAgreementHardwareBack({
@@ -167,16 +176,19 @@ export default function Login() {
     const onLogin = async () => {
         if (submitting || restoringSession || socialSubmittingProvider) return;
 
+        setLoginError(undefined);
         const email = normalizeSignupEmail(id);
         const password = pwd;
 
         if (!email || !password) {
-            Alert.alert("로그인", "이메일과 비밀번호를 입력해 주세요.");
+            setLoginError({ title: "입력 확인", message: "이메일과 비밀번호를 입력해 주세요." });
+            (email ? passwordInput : emailInput).current?.focus();
             return;
         }
 
         if (!isValidSignupEmail(email)) {
-            Alert.alert("로그인", "올바른 이메일 주소를 입력해 주세요.");
+            setLoginError({ title: "이메일 확인", message: "올바른 이메일 주소를 입력해 주세요." });
+            emailInput.current?.focus();
             return;
         }
 
@@ -188,7 +200,11 @@ export default function Login() {
             const presentation = getAuthErrorPresentation(error, "login");
             await clearAuthTokens();
             await syncAuthentication();
-            Alert.alert(presentation.title, presentation.message);
+            setLoginError(presentation);
+            requestAnimationFrame(() => {
+                const target = findNodeHandle(errorMessageRef.current);
+                if (target != null) AccessibilityInfo.setAccessibilityFocus(target);
+            });
         } finally {
             setSubmitting(false);
         }
@@ -320,7 +336,8 @@ export default function Login() {
                 label="이메일"
                 icon="mail-outline"
                 value={id}
-                onChangeText={setId}
+                inputRef={emailInput}
+                onChangeText={value => { setLogin(current => ({ ...current, email: value })); setLoginError(undefined); }}
                 maxLength={MAX_EMAIL_LENGTH}
                 editable={!restoringSession && !submitting && !socialSubmittingProvider}
                 placeholder="you@example.com"
@@ -333,7 +350,8 @@ export default function Login() {
                 label="비밀번호"
                 icon="lock-closed-outline"
                 value={pwd}
-                onChangeText={setPwd}
+                inputRef={passwordInput}
+                onChangeText={value => { setLogin(current => ({ ...current, password: value })); setLoginError(undefined); }}
                 editable={!restoringSession && !submitting && !socialSubmittingProvider}
                 placeholder="비밀번호"
                 secureTextEntry
@@ -342,14 +360,28 @@ export default function Login() {
             />
 
             <Pressable
-                accessibilityRole="link"
-                accessibilityLabel="비밀번호 로그인 문의 메일 보내기"
-                onPress={openPasswordHelp}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: passwordHelpOpen }}
+                onPress={() => setPasswordHelpOpen(open => !open)}
                 style={({ pressed }) => [styles.passwordHelp, { opacity: pressed ? 0.58 : 1 }]}
             >
                 <Text style={styles.passwordHelpText}>비밀번호를 잊으셨나요?</Text>
             </Pressable>
 
+            {passwordHelpOpen && (
+                <View style={styles.passwordHelpPanel}>
+                    <Text style={styles.passwordHelpCopy}>비밀번호 로그인에 도움이 필요하면 문의해 주세요.</Text>
+                    <Pressable accessibilityRole="link" onPress={openPasswordHelp} style={styles.supportLink}>
+                        <Text style={styles.passwordHelpText}>{ACCOUNT_SUPPORT_EMAIL}</Text>
+                    </Pressable>
+                </View>
+            )}
+            {loginError && (
+                <View style={{ gap: 4, paddingVertical: 4 }}>
+                    <Text style={{ color: mode === "dark" ? "#FF9C96" : "#B42318", fontWeight: "700" }}>{loginError.title}</Text>
+                    <Text ref={errorMessageRef} accessibilityRole="alert" style={{ color: colors.textSecondary }}>{loginError.message}</Text>
+                </View>
+            )}
             <AuthPrimaryButton
                 disabled={submitting || restoringSession || Boolean(socialSubmittingProvider)}
                 loading={submitting || restoringSession}
@@ -505,6 +537,13 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             alignSelf: "flex-end",
             justifyContent: "center",
         },
+        passwordHelpPanel: {
+            padding: 12,
+            borderRadius: 12,
+            backgroundColor: colors.surface2,
+        },
+        passwordHelpCopy: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+        supportLink: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start" },
         passwordHelpText: {
             color: colors.textSecondary,
             fontSize: 12,

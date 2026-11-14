@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Alert, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 // Observed in Korail's official web bundle (2026-10-12), including its spelling.
@@ -52,7 +53,8 @@ export function OfficialBookingAction({ dark = false, appURL, webURL, name, labe
             accessibilityState={{ busy: pending, disabled: pending }} disabled={pending}
             onPress={open}
             style={[styles.button, buttonStyle]}>
-            <Text style={[styles.label, labelStyle]}>{label} ↗</Text>
+            <Text style={[styles.label, labelStyle]}>{label}</Text>
+            <Ionicons name="open-outline" size={18} color={labelStyle.color} />
         </Pressable>
         <Text style={[styles.note, noteStyle]}>{note}</Text>
     </View>;
@@ -60,8 +62,8 @@ export function OfficialBookingAction({ dark = false, appURL, webURL, name, labe
 
 const styles = StyleSheet.create({
     container: { gap: 6 },
-    button: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13 },
-    label: { fontSize: 15, fontWeight: '600' },
+    button: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13 },
+    label: { flexShrink: 1, fontSize: 15, lineHeight: 22, fontWeight: '600' },
     note: { fontSize: 12, lineHeight: 18 },
 });
 

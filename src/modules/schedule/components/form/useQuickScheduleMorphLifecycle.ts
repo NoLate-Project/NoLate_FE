@@ -3,6 +3,7 @@ import { Alert, Keyboard, type LayoutChangeEvent } from "react-native";
 import {
   cancelAnimation,
   Easing as ReanimatedEasing,
+  ReduceMotion,
   runOnJS,
   withDelay,
   withTiming,
@@ -140,19 +141,29 @@ export function useQuickScheduleMorphLifecycle({
   }, [closingRef, invalidatePhotoSource, invalidateVoiceOperations, onClose, presentationOpacity, prewarm, resetDraftFlow, resetPhotoRecognition, resetVoiceInput, setCardRasterized, setContentMounted, setInputMode, setPreviewCategoryPickerOpen, setRendered, setSelectedCategoryId, setSubmitting, setText]);
 
   /** 현재 모프 진행률에 맞는 닫기 시간을 계산해 원본 버튼 위치로 되돌린다. */
-  const runCloseAnimation = useCallback((shouldNotifyClose = false) => {
+  const runCloseAnimation = useCallback((shouldNotifyClose = false, revealCalendar = false) => {
     Keyboard.dismiss(); invalidateVoiceOperations(); invalidatePhotoSource();
     if (hasActiveVoiceSession) stopActiveRecording().catch(() => undefined);
     if (openHandoffFrameRef.current !== null) { cancelAnimationFrame(openHandoffFrameRef.current); openHandoffFrameRef.current = null; }
     if (closeFinishTimerRef.current) { clearTimeout(closeFinishTimerRef.current); closeFinishTimerRef.current = null; }
-    closeFinishedRef.current = false; closingPhase.value = 1;
+    closeFinishedRef.current = false;
+    if (revealCalendar) {
+      const duration = 180;
+      cancelAnimation(presentationOpacity);
+      presentationOpacity.value = withTiming(0, { duration, reduceMotion: ReduceMotion.System }, finished => {
+        if (finished) runOnJS(finishClose)(shouldNotifyClose);
+      });
+      closeFinishTimerRef.current = setTimeout(() => finishClose(shouldNotifyClose), duration + 48);
+      return;
+    }
+    closingPhase.value = 1;
     const duration = resolveAddHandoffCloseDuration(progress.value);
     cancelAnimation(progress);
     progress.value = withDelay(CLOSE_SURFACE_DELAY_MS, withTiming(0, { duration, easing: CLOSE_EASING }, finished => {
       if (finished) runOnJS(finishClose)(shouldNotifyClose);
     }));
     closeFinishTimerRef.current = setTimeout(() => finishClose(shouldNotifyClose), CLOSE_SURFACE_DELAY_MS + duration + 48);
-  }, [closingPhase, finishClose, hasActiveVoiceSession, invalidatePhotoSource, invalidateVoiceOperations, progress, stopActiveRecording]);
+  }, [closingPhase, finishClose, hasActiveVoiceSession, invalidatePhotoSource, invalidateVoiceOperations, presentationOpacity, progress, stopActiveRecording]);
 
   /** 분석 취소 피드백을 기록하고 확인 없이 모달 닫기를 시작한다. */
   const closeQuickSchedule = useCallback(() => {
@@ -161,7 +172,7 @@ export function useQuickScheduleMorphLifecycle({
     const feedback = (flowStep === "preview" || flowStep === "edit") && previewDraft
       ? buildQuickScheduleReliabilityFeedback(previewDraft, "CANCELLED") : null;
     if (feedback) Promise.resolve(onFeedback?.(feedback)).catch(() => undefined);
-    closingRef.current = true; onCloseStart?.(); runCloseAnimation(true);
+    closingRef.current = true; onCloseStart?.(); runCloseAnimation(true, flowStep === "saved");
   }, [closingRef, flowStep, invalidatePendingAnalysis, onCloseStart, onFeedback, previewDraft, runCloseAnimation, setSubmitting, submitting]);
 
   /** 작성 내용이 있으면 폐기 확인을 거친 뒤 닫기 동작을 실행한다. */

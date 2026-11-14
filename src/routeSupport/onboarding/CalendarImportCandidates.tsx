@@ -45,7 +45,7 @@ export function ProviderOptionRow({
           !provider.available && styles.providerIconMuted,
         ]}
       >
-        <Ionicons
+        <Ionicons accessible={false} importantForAccessibility="no"
           name={provider.icon}
           size={22}
           color={provider.available ? colors.textPrimary : colors.textSecondary}
@@ -70,7 +70,7 @@ export function ProviderOptionRow({
         style={[styles.providerCheck, selected && styles.providerCheckSelected]}
       >
         {selected ? (
-          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Ionicons accessible={false} importantForAccessibility="no" name="checkmark-outline" size={14} color="#FFFFFF" />
         ) : null}
       </View>
     </Pressable>
@@ -114,10 +114,10 @@ export function CandidateSelectionSummaryRow({
         ]}
       >
         {allSelected ? (
-          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Ionicons accessible={false} importantForAccessibility="no" name="checkmark-outline" size={14} color="#FFFFFF" />
         ) : null}
         {partiallySelected ? (
-          <Ionicons name="remove" size={14} color="#FFFFFF" />
+          <Ionicons accessible={false} importantForAccessibility="no" name="remove-outline" size={14} color="#FFFFFF" />
         ) : null}
       </View>
       <View style={styles.selectionSummaryCopy}>
@@ -162,7 +162,7 @@ export function IndividualScheduleDisclosure({
       ]}
     >
       <View style={styles.individualScheduleDisclosureIcon}>
-        <Ionicons name="list-outline" size={18} color={BRAND_BLUE} />
+        <Ionicons accessible={false} importantForAccessibility="no" name="list-outline" size={18} color={BRAND_BLUE} />
       </View>
       <View style={styles.individualScheduleDisclosureCopy}>
         <Text style={styles.individualScheduleDisclosureTitle}>
@@ -175,8 +175,8 @@ export function IndividualScheduleDisclosure({
       <Text style={styles.individualScheduleDisclosureCount}>
         {selectedCount}개
       </Text>
-      <Ionicons
-        name={expanded ? 'chevron-up' : 'chevron-down'}
+      <Ionicons accessible={false} importantForAccessibility="no"
+        name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
         size={18}
         color={colors.textSecondary}
       />
@@ -218,10 +218,10 @@ export function CandidateSourceRow({
         ]}
       >
         {active ? (
-          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Ionicons accessible={false} importantForAccessibility="no" name="checkmark-outline" size={14} color="#FFFFFF" />
         ) : null}
         {partiallySelected ? (
-          <Ionicons name="remove" size={14} color="#FFFFFF" />
+          <Ionicons accessible={false} importantForAccessibility="no" name="remove-outline" size={14} color="#FFFFFF" />
         ) : null}
       </View>
       <View
@@ -273,7 +273,7 @@ export function CategoryAssignmentDisclosure({
       ]}
     >
       <View style={styles.categoryAssignmentDisclosureIcon}>
-        <Ionicons name="albums-outline" size={18} color={BRAND_BLUE} />
+        <Ionicons accessible={false} importantForAccessibility="no" name="albums-outline" size={18} color={BRAND_BLUE} />
       </View>
       <View style={styles.categoryAssignmentDisclosureCopy}>
         <Text style={styles.categoryAssignmentDisclosureTitle}>
@@ -291,8 +291,8 @@ export function CategoryAssignmentDisclosure({
           {overrideCount}개 변경
         </Text>
       ) : null}
-      <Ionicons
-        name={expanded ? 'chevron-up' : 'chevron-down'}
+      <Ionicons accessible={false} importantForAccessibility="no"
+        name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
         size={18}
         color={colors.textSecondary}
       />
@@ -374,8 +374,8 @@ export function CategoryAssignmentRow({
           <Text numberOfLines={1} style={styles.categoryAssignmentValueText}>
             {category?.title ?? '확인 필요'}
           </Text>
-          <Ionicons
-            name={expanded ? 'chevron-up' : 'chevron-down'}
+          <Ionicons accessible={false} importantForAccessibility="no"
+            name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
             size={16}
             color={colors.textSecondary}
           />
@@ -431,7 +431,7 @@ export function ImportResultSummary({
   }
   if (alreadyImportedCount > 0) {
     rows.push({
-      label: '중복 없이 유지한 일정',
+      label: '이미 있던 일정',
       value: `${alreadyImportedCount}개`,
       icon: 'shield-checkmark-outline',
       tone: 'neutral',
@@ -453,7 +453,7 @@ export function ImportResultSummary({
   }
   if (failedImportCount > 0) {
     rows.push({
-      label: '확인이 필요한 일정',
+      label: '가져오지 못한 일정',
       value: `${failedImportCount}개`,
       icon: 'alert-circle-outline',
       tone: 'failure',
@@ -463,7 +463,7 @@ export function ImportResultSummary({
   if (rows.length === 0) return null;
 
   return (
-    <View accessibilityLabel="가져오기 결과" style={styles.importResultSummary}>
+    <View style={styles.importResultSummary}>
       {rows.map((row, index) => {
         const iconColor =
           row.tone === 'failure'
@@ -475,13 +475,15 @@ export function ImportResultSummary({
         return (
           <View
             key={row.label}
+            accessible
+            accessibilityLabel={`${row.label}, ${row.value}`}
             style={[
               styles.importResultRow,
               index > 0 && styles.importResultRowDivider,
             ]}
           >
             <View style={styles.importResultIcon}>
-              <Ionicons name={row.icon} size={17} color={iconColor} />
+              <Ionicons accessible={false} importantForAccessibility="no" name={row.icon} size={17} color={iconColor} />
             </View>
             <Text style={styles.importResultLabel}>{row.label}</Text>
             <Text

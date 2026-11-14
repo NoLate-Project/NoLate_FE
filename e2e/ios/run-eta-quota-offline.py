@@ -11,7 +11,8 @@ import subprocess
 import tempfile
 import time
 import urllib.request
-from eta_pinned_app import reset_private_navigation, restore_private_endpoint, open_private_test_endpoint
+from eta_pinned_app import restore_private_endpoint, open_private_client_with_xcuitest
+from eta_fixture_snapshot import wait_for_phase_snapshot
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
@@ -98,6 +99,49 @@ def verify_ride_timing(value, public):
     assert all(segment.get('rideTiming') is None for segment in segments if segment['kind'] == 'WALK')
 
 
+def verify_fresh_missing_train_retention(value, baseline, previous):
+    """A missing row may retain its original, still-fresh observation, never renew it."""
+    assert value['scenario'] == 'quality-unobserved'
+    assert value['injectedFaults'] == ['arrival:UNOBSERVED']
+    assert value['classification'] == 'SYNTHETIC_PROVIDER_WORKER'
+    assert value['database'] == 'H2_MEMORY_ONLY' and value['providersMocked'] is True
+    assert value['physicalTransitHttpCalls'] == 0 and value['productionDatabaseModified'] is False
+    assert value['processed'] == 1 and value['jobStatus'] == 'ACTIVE'
+    assert value['historyCount'] == previous['historyCount'] + 1
+    assert instant(value['evaluatedAt']) == instant(previous['nextCheckAt'])
+    assert instant(value['nextCheckAt']) > instant(value['evaluatedAt'])
+    assert value['savedScheduleInput'] == value['savedScheduleAfterEvaluation'] == baseline['savedScheduleInput']
+    assert value['alarmStates'] == value['alarmBeforeEvaluation'] == previous['alarmStates']
+    assert value['source'] == 'LIVE_PROVIDER' and value['stale'] is False and value['failureCode'] is None
+    assert instant(value['recommendedDepartureAt']) == instant(baseline['recommendedDepartureAt'])
+    assert value['effectiveSnapshot']['accepted'] is True
+    observation = value['effectiveSnapshot']['firstBoardingObservation']
+    old = previous['effectiveSnapshot']['firstBoardingObservation']
+    for field in ('provider', 'stationName', 'lineName', 'trainNumber', 'sourceUpdatedAt', 'expectedBoardingAt'):
+        assert observation[field] == old[field]
+    age = (instant(value['evaluatedAt']) - instant(observation['sourceUpdatedAt'])).total_seconds()
+    assert 0 < age <= 120
+    assert instant(observation['evaluatedAt']) == instant(value['evaluatedAt'])
+    assert instant(value['predictedArrivalAt']) == instant(previous['predictedArrivalAt'])
+
+
+def verify_optimization_requests(value):
+    assert value['injectedFaults'] == ['route:OPTIMIZATION_TIMEOUT']
+    assert len(value['routeRequests']) == 2
+    first, second = value['routeRequests']
+    for field in ('startX', 'startY', 'endX', 'endY'):
+        assert first[field] == second[field]
+    # Tmap's wire input has minute precision, while its journey adapter projects
+    # the requested departure to seconds. A genuine safe-departure optimization
+    # may therefore send the same wire minute twice; it must still target the
+    # fixture's independent safe departure: first train +210s, access 111s,
+    # boarding margin 60s. The failed optimization keeps the initial accepted
+    # route, so its departure is not evidence of the attempted second request.
+    safe_departure = instant(value['epoch']) + dt.timedelta(seconds=210 - 111 - 60)
+    assert second['searchDttm'] == safe_departure.astimezone(SEOUL).strftime('%Y%m%d%H%M')
+    assert len(first['searchDttm']) == 12 and first['searchDttm'].isdigit()
+
+
 def verify_case(value, baseline, previous, public):
     # A reminder boundary can produce a due check <15s after the previous evaluation.
     # Consume real persisted due checks until the original cache expires; never clear it
@@ -116,6 +160,11 @@ def verify_case(value, baseline, previous, public):
         assert cached['failureCode'] == previous['failureCode'] and cached['source'] == previous['source']
         assert cached['stale'] == previous['stale']
         previous = cached
+    retained_checks = value.get('retainedObservationEvaluations', [])
+    assert len(cached_checks) + len(retained_checks) <= 3
+    for retained in retained_checks:
+        verify_fresh_missing_train_retention(retained, baseline, previous)
+        previous = retained
     assert value['classification'] == 'SYNTHETIC_PROVIDER_WORKER'
     assert value['database'] == 'H2_MEMORY_ONLY' and value['providersMocked'] is True
     assert value['productionDatabaseModified'] is False and value['physicalTransitHttpCalls'] == 0
@@ -146,9 +195,7 @@ def verify_case(value, baseline, previous, public):
                 assert preview is None
     else:
         if value['scenario'] == 'optimization-timeout':
-            assert value['injectedFaults'] == ['route:OPTIMIZATION_TIMEOUT']
-            assert len(value['routeRequests']) == 2
-            assert value['routeRequests'][0]['searchDttm'] != value['routeRequests'][1]['searchDttm']
+            verify_optimization_requests(value)
         else:
             assert value['scenario'] == 'quota-recovered' and not value['injectedFaults']
         assert value['source'] == 'LIVE_PROVIDER' and value['stale'] is False and value['failureCode'] is None
@@ -166,6 +213,7 @@ def verify_case(value, baseline, previous, public):
     assert instant(public['recommendedDepartureAt']) == instant(value['recommendedDepartureAt'])
     return {'scenario': value['scenario'], 'result': 'PASSED', 'failureCode': value['failureCode'],
             'validCacheChecks': len(cached_checks),
+            'freshRetainedObservationChecks': len(retained_checks),
             'historyCount': value['historyCount'], 'physicalTransitHttpCalls': 0}
 
 
@@ -244,6 +292,7 @@ def main():
     server = metro = None
     ui_authenticated = False
     cases = []
+    operation = 'preflight'
     report = {'classification': 'SYNTHETIC_QUOTA_REGRESSION', 'result': 'FAILED', 'providersMocked': True,
               'actualProviderAcceptance': 'NOT_TESTED', 'mapAccuracy': 'NOT_TESTED', 'actualFcm': 'NOT_TESTED',
               'productionDatabaseModified': False, 'simulatorRequested': args.simulator, 'cases': cases,
@@ -287,12 +336,13 @@ def main():
         old = path.stat().st_mtime_ns if path.exists() else -1
         server.stdin.write(command + '\n')
         server.stdin.flush()
-        wait(lambda: path.exists() and path.stat().st_mtime_ns != old and path.stat().st_size > 0, server, 60)
-        value = json.loads(path.read_text())
+        value = wait_for_phase_snapshot(path, old, server)
         (root / f'case-{index}.json').write_text(json.dumps(value, indent=2))
         return value
 
     def ui(method, target, name, extra=()):
+        nonlocal operation
+        operation = 'ui:' + name
         cmd = ['python3', 'e2e/ios/run-eta.py', '--device', DEVICE, '--output', str(root / name),
                '--only', method, '--title', 'ETA E2E isolated fixture', '--target-arrival', target,
                '--api-base', BASE] + list(extra)
@@ -328,33 +378,40 @@ def main():
         free(5523)
         if args.simulator:
             free(8086)
+        operation = 'compile_fixture'
         with log('compile.log') as output:
             subprocess.run(['./gradlew', '-I', 'e2e/eta-fixture.init.gradle', 'etaSimulatorFixtureClasspath',
                             '-PetaFixtureOutput=' + str(root), '--console=plain'], cwd=BE,
                            stdout=output, stderr=subprocess.STDOUT, check=True, timeout=300)
+        operation = 'start_fixture_server'
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.simulator-fixture=true',
                 '-Dnolate.eta.native-delivery-lead-seconds=600', '-classpath', (root / 'classpath.txt').read_text(),
                 'com.noLate.eta.simulator.EtaSimulatorFixtureServer', str(root)], cwd=BE,
                 stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        operation = 'wait_fixture_readiness'
         wait(lambda: request('/health/readiness')['status'] == 'UP', server)
+        operation = 'baseline_worker'
         baseline = previous = phase('success', 0)
         assert baseline['source'] == 'LIVE_PROVIDER' and baseline['stale'] is False
         assert baseline['physicalTransitHttpCalls'] == 0 and baseline['effectiveSnapshot']['accepted'] is True
         credentials = json.loads((root / 'credentials.json').read_text())
         token = None
         if args.simulator:
+            operation = 'start_private_metro'
             env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=BASE, EXPO_PUBLIC_TRANSIT_PROVIDER='tmap',
                        REACT_NATIVE_PACKAGER_HOSTNAME='127.0.0.1', CI='1')
             with log('metro.log') as output:
-                metro = subprocess.Popen(['npx', 'expo', 'start', '--dev-client', '--localhost', '--port', '8086'],
+                metro = subprocess.Popen(['npx', 'expo', 'start', '--dev-client', '--localhost', '--port', '8086', '--max-workers', '2'],
                     cwd=FE, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             def metro_ready():
                 with urllib.request.urlopen('http://127.0.0.1:8086/status', timeout=2) as response:
                     return response.read() == b'packager-status:running'
+            operation = 'wait_private_metro'
             wait(metro_ready, metro)
-            reset_private_navigation(DEVICE)
-            open_private_test_endpoint(DEVICE)
+            operation = 'reset_and_open_pinned_via_xcuitest'
+            emit(state=operation)
+            report['startupTransport'] = open_private_client_with_xcuitest(DEVICE, root / 'ui-private-lifecycle')
             ui('testLoginDedicatedEtaAccount', dt.datetime.fromisoformat(baseline['targetArrivalAt']).astimezone(SEOUL).isoformat(),
                'ui-login', ('--credentials', str(root / 'credentials.json')))
             ui_authenticated = True
@@ -362,16 +419,33 @@ def main():
             token = request('/api/member/auth/login', {key: credentials[key] for key in ('email', 'password')})['data']['accessToken']
         commands = suite_commands(args.arrival_quality, args.optimization_failure)
         for index, command in enumerate(commands, 1):
+            operation = 'worker:' + command
             value = phase(command, index)
             cached_checks = []
-            while (command in (FAULTS | QUALITY_FAULTS) or command == 'optimization-timeout') and not value['injectedFaults']:
-                if len(cached_checks) >= 3:
+            retained_checks = []
+            while command in (FAULTS | QUALITY_FAULTS) or command == 'optimization-timeout':
+                retained = (command == 'quality-unobserved' and value['injectedFaults'] == ['arrival:UNOBSERVED']
+                            and value['source'] == 'LIVE_PROVIDER' and value['stale'] is False)
+                if value['injectedFaults'] and not retained:
+                    break
+                if len(cached_checks) + len(retained_checks) >= 3:
                     raise RuntimeError('fault_not_reached_within_persisted_cache_checks')
-                cached_checks.append(value)
-                emit(state='valid_cache_reused', scenario=command, nextCheckAt=value['nextCheckAt'])
+                if retained:
+                    verify_fresh_missing_train_retention(value, baseline,
+                        (retained_checks or cached_checks or [previous])[-1])
+                    retained_checks.append(value)
+                    emit(state='fresh_missing_train_retained', scenario=command,
+                         sourceUpdatedAt=value['effectiveSnapshot']['firstBoardingObservation']['sourceUpdatedAt'],
+                         nextCheckAt=value['nextCheckAt'])
+                else:
+                    # A cache entry must not be reordered behind retained evaluations.
+                    assert not retained_checks
+                    cached_checks.append(value)
+                    emit(state='valid_cache_reused', scenario=command, nextCheckAt=value['nextCheckAt'])
                 value = phase(command, index)
-            if cached_checks:
+            if cached_checks or retained_checks:
                 value['cacheEvaluations'] = cached_checks
+                value['retainedObservationEvaluations'] = retained_checks
                 (root / f'case-{index}.json').write_text(json.dumps(value, indent=2))
             if args.simulator:
                 ui('testVerifyIsolatedQuotaEta', dt.datetime.fromisoformat(value['targetArrivalAt']).astimezone(SEOUL).isoformat(),
@@ -381,6 +455,7 @@ def main():
             else:
                 public = request('/api/schedules/363/departure-status', token=token)['data']
             (root / f'case-{index}-status.json').write_text(json.dumps(public, indent=2))
+            operation = 'verify:' + command
             result = verify_case(value, baseline, previous, public)
             if command in ('quota-recovered', 'optimization-timeout'):
                 walking_fixture.verify_walking_metadata(public, value['effectiveSnapshot'])
@@ -391,6 +466,7 @@ def main():
             emit(**result)
         report['result'] = 'PASSED'
         cleanup_index = len(commands) + 1
+        operation = 'cancel_fixture_alarm'
         cleanup = phase('quota-cleanup', cleanup_index)
         verify_cleanup(cleanup)
         report['backendCleanup'] = 'PASSED'
@@ -404,7 +480,10 @@ def main():
     except Exception as error:
         # Never print HTTP bodies, credentials, environment variables or raw server logs.
         report['failureKind'] = type(error).__name__
-        emit(state='failed', kind=type(error).__name__, evidenceRoot=str(root))
+        # Static operation labels locate startup/UI failures without exporting
+        # HTTP bodies, environment values, credentials or exception messages.
+        report['failedOperation'] = operation
+        emit(state='failed', kind=type(error).__name__, operation=operation, evidenceRoot=str(root))
     finally:
         if ui_authenticated and report.get('nativePendingCleanup') != 'PASSED' and server.poll() is None:
             # Failure evidence stays failed. Still cancel this run's synthetic alarm,

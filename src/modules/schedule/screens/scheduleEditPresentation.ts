@@ -5,7 +5,12 @@ export const TIME_H = 216;
 export const CATEGORY_PICKER_MARGIN = 12;
 export const SCHEDULE_EDIT_DARK_PAGE_BACKGROUND = "#101217";
 export type PickerType = "startDate" | "endDate" | "startTime" | "endTime";
-export type ScheduleEditScreenProps = { initialScrollToEnd?: boolean; initialCategoryPickerOpen?: boolean };
+export type ScheduleEditScreenProps = {
+    initialScrollToEnd?: boolean;
+    initialCategoryPickerOpen?: boolean;
+    onPreviewClose?: () => void;
+    previewCurrentMemberId?: number;
+};
 
 /** 숫자를 일정 시간 표시에 필요한 두 자리 문자열로 채웁니다. */
 export const pad2 = (value: number) => String(value).padStart(2, "0");

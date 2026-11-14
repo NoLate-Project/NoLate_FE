@@ -12,6 +12,31 @@ const origin = { name: "서울역", address: "서울 중구", lat: 37.5547, lng:
 const destination = { name: "홍대입구역", address: "서울 마포구", lat: 37.5572, lng: 126.9254 };
 
 describe("routeInfo", () => {
+    it("이름이 빠진 경유지를 생략해도 지도에서 사용하는 원래 인덱스를 유지한다", () => {
+        const route: RouteAlternativeOption = {
+            id: "unnamed-stop",
+            mode: "TRANSIT",
+            minutes: 18,
+            source: "api",
+            provider: "tmap",
+            transitLegs: [{
+                kind: "BUS",
+                label: "402",
+                passStops: [
+                    { name: "서울역" },
+                    { name: "" },
+                    { name: "남대문시장" },
+                    { name: "강남역" },
+                ],
+            }],
+        };
+        const stops = buildRouteInfoFromAlternative(route, origin, destination)
+            .steps.find(step => step.type === "BUS")?.passStops;
+        expect(stops?.map(stop => [stop.name, stop.sourceIndex])).toEqual([
+            ["서울역", 0], ["남대문시장", 2], ["강남역", 3],
+        ]);
+    });
+
     it("시간이 없는 부분 경로에 현재 시각을 출발·도착 시각으로 만들어 넣지 않는다", () => {
         const preview = { id: 'public-preview', mode: 'TRANSIT', transitLegs: [
             { kind: 'BUS', lineName: '7016', startName: '서울역', endName: '경복궁역' },

@@ -1,5 +1,6 @@
 import {
     formatAppNotificationTime,
+    getAppNotificationCopy,
     getAppNotificationNavigationTarget,
     getAppNotificationVisual,
 } from "../src/modules/notification/appNotificationPresentation";
@@ -51,6 +52,17 @@ describe("app notification presentation", () => {
             type: "ROUTE_SETUP_REMINDER",
             data: { type: "ROUTE_SETUP_REMINDER", scheduleId: "55" },
         }))).toEqual({ kind: "scheduleDetail", scheduleId: "55" });
+    });
+
+    test("promotes a shared resource name and preserves legacy messages without a matching template", () => {
+        expect(getAppNotificationCopy(notification({ body: "'팀의 '첫' 회의' 일정이 공유됐어요." })))
+            .toEqual({ title: "팀의 '첫' 회의", description: "공유 일정", shared: true });
+        expect(getAppNotificationCopy(notification({
+            type: "CALENDAR_SHARE_RECEIVED", data: { calendarTitle: "러닝 모임" },
+        }))).toEqual({ title: "러닝 모임", description: "공유 캘린더", shared: true });
+        expect(getAppNotificationCopy(notification())).toEqual({
+            title: "새 일정 공유", description: "팀 회의 일정이 공유됐어요.",
+        });
     });
 
     test("uses a restrained visual for each notification family", () => {

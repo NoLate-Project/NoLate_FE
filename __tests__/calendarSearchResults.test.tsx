@@ -1,18 +1,11 @@
 import React from 'react';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { Text } from 'react-native';
+import { ScrollView, Text } from 'react-native';
 import CalendarSearchResults from '../src/modules/schedule/components/list/CalendarSearchResults';
 import { ThemeProvider } from '../src/modules/theme/ThemeContext';
 import type { ScheduleItem } from '../src/modules/schedule/types';
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-jest.mock(
-  '../src/modules/schedule/components/calendar/CalendarGlassSurface',
-  () => ({
-    __esModule: true,
-    default: 'CalendarGlassSurface',
-  }),
-);
 const item: ScheduleItem = {
   id: 'search-meeting',
   title: '프로덕트 주간 회의',
@@ -70,8 +63,24 @@ describe('calendar search results', () => {
   });
   test('does not expose stale results while loading', async () => {
     const { labels } = await render({ searchLoading: true });
-    expect(labels()).toContain('전체 일정 검색 중');
+    expect(labels()).toContain('일정을 찾고 있어요');
     expect(labels()).not.toContain(item.title);
+  });
+  test('keeps the same result list on detail return and resets it for a different query', async () => {
+    const view = (searchQuery: string, isFocused: boolean) => (
+      <ThemeProvider>
+        <CalendarSearchResults searchResults={[item]} searchLoading={false} searchError={null}
+          searchKeywordLength={searchQuery.length} searchQuery={searchQuery} isFocused={isFocused}
+          onRetry={jest.fn()} onOpenSchedule={jest.fn()} />
+      </ThemeProvider>
+    );
+    await act(async () => { renderer = TestRenderer.create(view('회의', true)); });
+    const list = renderer!.root.findByType(ScrollView);
+    await act(async () => { renderer!.update(view('회의', false)); });
+    await act(async () => { renderer!.update(view('회의', true)); });
+    expect(renderer!.root.findByType(ScrollView)).toBe(list);
+    await act(async () => { renderer!.update(view('프로덕트', true)); });
+    expect(renderer!.root.findByType(ScrollView)).not.toBe(list);
   });
   test('retry replaces stale results and invokes the supplied retry action', async () => {
     const { root, labels, onRetry } = await render({ searchError: 'failed' });
@@ -89,7 +98,7 @@ describe('calendar search results', () => {
     expect(result.labels()).not.toContain(item.title);
     act(() => renderer?.unmount());
     result = await render({ searchResults: [] });
-    expect(result.labels()).toContain('검색 결과가 없어요');
+    expect(result.labels()).toContain('일치하는 일정이 없어요');
   });
   test('respects all-day and absent end-time semantics', async () => {
     const { labels } = await render({
@@ -100,5 +109,13 @@ describe('calendar search results', () => {
     });
     expect(labels()).toContain('종일');
     expect(labels()).not.toContain('오후 3:00');
+  });
+  test('explains a place match and leaves out unrelated location information', async () => {
+    const { labels, root } = await render({ searchQuery: ' 성수 ' });
+    expect(labels()).toContain('성수 오피스');
+    expect(root.findAll(node => node.props.accessibilityLabel?.includes('성수 오피스')).length).toBeGreaterThan(0);
+    await act(async () => renderer?.unmount());
+    const byTitle = await render({ searchQuery: '주간 회의' });
+    expect(byTitle.labels()).not.toContain('성수 오피스');
   });
 });

@@ -417,6 +417,7 @@ export function useScheduleCalendarPresentation({
             {weekdayLabels.map((label, index) => (
                 <Text
                     key={`${label}-${index}`}
+                    maxFontSizeMultiplier={1.35}
                     style={[styles.weekdayText, { color: colors.dayHeaderColor }]}
                 >
                     {label}

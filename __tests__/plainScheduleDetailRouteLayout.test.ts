@@ -62,9 +62,8 @@ describe('plain schedule detail route layout', () => {
     );
     expect(detailModuleSource).toContain('left: 88');
     expect(detailModuleSource).toContain('right: 88');
-    expect(compactSyntax(detailModuleSource)).toMatch(
-      /name=\{isPlainSchedule\?['"]pencil-outline['"]:['"]create-outline['"]\}/,
-    );
+    expect(detailSource).toContain('name="pencil-outline"');
+    expect(detailSource).not.toContain('name="create-outline"');
     expect(compactSyntax(detailModuleSource)).toContain(
       'color={isPlainSchedule?topCardAccentText:primaryText}',
     );

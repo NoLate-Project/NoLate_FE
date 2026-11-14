@@ -216,6 +216,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
                 ]}
               >
                 <Text
+                  maxFontSizeMultiplier={1.5}
                   style={[
                     styles.dayWeekdayLabel,
                     {
@@ -251,6 +252,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
                   ]}
                 >
                   <Text
+                    maxFontSizeMultiplier={1.35}
                     style={[
                       styles.dayWeekText,
                       {
@@ -313,6 +315,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
                   ]}
                 >
                   <Text
+                    maxFontSizeMultiplier={1.35}
                     style={[
                       styles.dayWeekText,
                       {
@@ -355,6 +358,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
                   ]}
                 >
                   <Text
+                    maxFontSizeMultiplier={1.35}
                     style={[
                       styles.dayWeekText,
                       {
@@ -396,6 +400,8 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
                 <Animated.View
                   key={`day-panel-${dayNavigation.fromDay}`}
                   pointerEvents="none"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
                   style={[
                     styles.dayPagerPanel,
                     { transform: [{ translateX: dayPagerOutgoingTranslateX }] },

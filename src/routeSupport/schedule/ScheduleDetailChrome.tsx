@@ -5,12 +5,7 @@ import {
   LayoutAnimation,
   Linking,
   Platform,
-  View,
 } from "react-native";
-
-import { getTransitRouteSummaryAccessibilityLabel } from "../../modules/schedule/components/route/TransitRouteSummaryRow";
-import type { TransitRouteProgressSegment } from "../../modules/schedule/transitRouteProgress";
-import { createScheduleDetailStyles } from "./schedule-detail.styles";
 
 /** 일정 상세의 장식 아이콘에 공통 접근성 제외 속성을 적용해 중복 낭독을 방지한다. */
 export function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -39,7 +34,7 @@ export const MINUTE_MS = 60 * 1000;
 export const SECOND_MS = 1000;
 export const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
 export const APP_ACCENT_BLUE = '#2979FF';
-export const SHEET_HANDLE_HEIGHT = 32;
+export const SHEET_HANDLE_HEIGHT = 44;
 export const IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT = 196;
 
 /** 참여자 목록이 펼쳐지거나 접힐 때 높이와 투명도 변경을 같은 레이아웃 애니메이션으로 묶는다. */
@@ -59,42 +54,6 @@ export function configureParticipantDisclosureAnimation(expanded: boolean) {
     },
   });
 }
-/** 저장된 대중교통 구간을 간결한 색상 막대로 표시하고 전체 경로를 설명하는 접근성 라벨을 제공한다. */
-export function CompactRouteProgressStrip({
-  segments,
-  isDark,
-}: {
-  segments: TransitRouteProgressSegment[];
-  isDark: boolean;
-}) {
-  if (segments.length === 0) return null;
-
-  const neutralColor = isDark ? '#7A8491' : '#A5AFBC';
-
-  return (
-    <View
-      accessible
-      accessibilityRole="text"
-      accessibilityLabel={getTransitRouteSummaryAccessibilityLabel(segments)}
-      style={styles.compactRouteStrip}
-    >
-      {segments.map((segment, index) => (
-        <View
-          key={`compact-strip-${segment.key}`}
-          style={[
-            styles.compactRouteStripSegment,
-            index > 0 && styles.compactRouteStripSpacing,
-            {
-              flex: segment.flex,
-              backgroundColor: segment.isRide ? segment.color : neutralColor,
-            },
-          ]}
-        />
-      ))}
-    </View>
-  );
-}
-
 /** 플랫폼에 맞는 앱 또는 위치 서비스 설정을 열고 실패하면 사용자가 직접 확인할 위치를 안내한다. */
 export async function openDeviceLocationSettings(preferServiceSettings = false) {
   try {
@@ -129,9 +88,3 @@ export function showLocationSettingsAlert(
     },
   ]);
 }
-
-const styles = createScheduleDetailStyles({
-  APP_ACCENT_BLUE,
-  IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT,
-  SHEET_HANDLE_HEIGHT,
-});

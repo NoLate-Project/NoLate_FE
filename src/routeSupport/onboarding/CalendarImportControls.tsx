@@ -39,7 +39,9 @@ export function CandidateRow({
       accessibilityRole="checkbox"
       accessibilityLabel={`${candidate.title}, ${formatCandidateDate(
         candidate,
-      )}${candidate.locationName ? `, ${candidate.locationName}` : ''}`}
+      )}${candidate.locationName ? `, ${candidate.locationName}` : ''}${
+        candidate.requiresTimeReview ? ', 시간 확인 필요' : ''
+      }`}
       accessibilityState={{ checked: selected }}
       onPress={onPress}
       style={({ pressed }) => [
@@ -53,7 +55,7 @@ export function CandidateRow({
         style={[styles.checkCircle, selected && styles.checkCircleSelected]}
       >
         {selected ? (
-          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Ionicons accessible={false} importantForAccessibility="no" name="checkmark-outline" size={14} color="#FFFFFF" />
         ) : null}
       </View>
       <View style={styles.candidateBody}>
@@ -134,7 +136,7 @@ export function DefaultOriginPicker({
           selected && styles.originSearchRowSelected,
         ]}
       >
-        <Ionicons name="search" size={18} color={colors.textSecondary} />
+        <Ionicons accessible={false} importantForAccessibility="no" name="search-outline" size={18} color={colors.textSecondary} />
         <TextInput
           value={query}
           onChangeText={onQueryChange}
@@ -161,14 +163,14 @@ export function DefaultOriginPicker({
           {searching ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
-            <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
+            <Ionicons accessible={false} importantForAccessibility="no" name="arrow-forward-outline" size={17} color="#FFFFFF" />
           )}
         </Pressable>
       </View>
 
       {selected && hasFavoriteDepartureCoords(selected) ? (
         <View style={styles.selectedOriginRow}>
-          <Ionicons name="checkmark-circle" size={17} color={BRAND_BLUE} />
+          <Ionicons accessible={false} importantForAccessibility="no" name="checkmark-circle" size={17} color={BRAND_BLUE} />
           <View style={styles.selectedOriginCopy}>
             <Text numberOfLines={1} style={styles.selectedOriginTitle}>
               {selected.name?.trim() || '선택한 출발지'}
@@ -200,7 +202,7 @@ export function DefaultOriginPicker({
                 pressed && styles.pressed,
               ]}
             >
-              <Ionicons
+              <Ionicons accessible={false} importantForAccessibility="no"
                 name="location-outline"
                 size={18}
                 color={colors.textSecondary}
@@ -253,7 +255,7 @@ export function OptionChip({
       ]}
     >
       {icon ? (
-        <Ionicons
+        <Ionicons accessible={false} importantForAccessibility="no"
           name={icon}
           size={16}
           color={active ? '#FFFFFF' : colors.textSecondary}
@@ -309,8 +311,8 @@ export function PrimaryButton({
       {loading ? (
         <ActivityIndicator size="small" color="#FFFFFF" />
       ) : (
-        <Ionicons
-          name="arrow-forward"
+        <Ionicons accessible={false} importantForAccessibility="no"
+          name="arrow-forward-outline"
           size={18}
           color={disabled ? colors.textDisabled : '#FFFFFF'}
         />

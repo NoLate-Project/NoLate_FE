@@ -45,6 +45,7 @@ const filtersStyles = {
     },
     transitFilterRow: {
         width: "100%",
+        flexDirection: "row",
         justifyContent: "space-between",
         gap: 0,
         paddingHorizontal: 0,
@@ -53,15 +54,23 @@ const filtersStyles = {
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: "rgba(255,255,255,0.12)",
     },
+    transitFilterRowWrapped: {
+        flexWrap: "wrap",
+    },
     transitFilterTab: {
         position: "relative",
-        minHeight: 39,
+        minHeight: 44,
         borderWidth: 0,
         borderRadius: 0,
-        minWidth: 76,
+        flex: 1,
         paddingHorizontal: 2,
         alignItems: "center",
         justifyContent: "center",
+    },
+    transitFilterTabWrapped: {
+        flexBasis: "50%",
+        flexGrow: 0,
+        paddingVertical: 5,
     },
     transitFilterIndicator: {
         position: "absolute",
@@ -75,6 +84,7 @@ const filtersStyles = {
         fontSize: 14,
         fontWeight: "800",
         letterSpacing: 0,
+        textAlign: "center",
     },
     routeSortRow: {
         minHeight: 46,
@@ -123,6 +133,15 @@ const filtersStyles = {
         lineHeight: 19,
         letterSpacing: 0,
     },
+    currentRouteNoticeExpanded: {
+        flexShrink: 1,
+    },
+    currentRouteEstimateText: {
+        paddingHorizontal: 8,
+        marginBottom: 8,
+        fontSize: 13,
+        lineHeight: 18,
+    },
     currentRouteNoticeTimeText: {
         fontSize: 14,
         fontWeight: "800",
@@ -149,6 +168,29 @@ const filtersStyles = {
     },
     routeCandidateItem: {
         gap: 0,
+    },
+    transitRecovery: {
+        paddingTop: 18,
+        paddingHorizontal: 4,
+        gap: 16,
+    },
+    transitRecoveryTitle: {
+        fontSize: 19,
+        fontWeight: "700",
+    },
+    transitRecoveryAction: {
+        minHeight: 48,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    transitRecoveryActionText: {
+        flex: 1,
+        fontSize: 15,
+        fontWeight: "700",
     },
     emptyCard: {
         minHeight: 84,

@@ -13,9 +13,9 @@ export function createCalendarImportStylesPart2(
   return StyleSheet.create({
     consentDescription: {
       color: colors.textSecondary,
-      fontSize: 11,
-      lineHeight: 16,
-      fontWeight: '800',
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: "500",
     },
     consentChevron: {
       width: 44,
@@ -37,17 +37,17 @@ export function createCalendarImportStylesPart2(
     consentDetailBullet: {
       width: 7,
       color: colors.textSecondary,
-      fontSize: 11,
-      lineHeight: 17,
-      fontWeight: '900',
+      fontSize: 12,
+      lineHeight: 19,
+      fontWeight: "500",
     },
     consentDetailText: {
       flex: 1,
       minWidth: 0,
       color: colors.textSecondary,
-      fontSize: 11,
-      lineHeight: 17,
-      fontWeight: '700',
+      fontSize: 12,
+      lineHeight: 19,
+      fontWeight: '500',
     },
     inlineNotice: {
       borderRadius: 16,
@@ -66,19 +66,13 @@ export function createCalendarImportStylesPart2(
       lineHeight: 19,
       fontWeight: '700',
     },
-    scanList: {
-      marginTop: 10,
-      gap: 12,
-    },
+    scanList: { marginTop: 10, gap: 8 },
     scanRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
+      flexDirection: 'row', alignItems: 'center', minHeight: 49, gap: 10,
+      paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
+      backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     },
-    scanText: {
-      fontSize: 14,
-      fontWeight: '800',
-    },
+    scanText: { flex: 1, fontSize: 14, fontWeight: '600' },
     emptyBox: {
       minHeight: 174,
       borderRadius: 18,
@@ -93,7 +87,7 @@ export function createCalendarImportStylesPart2(
     emptyTitle: {
       color: colors.textPrimary,
       fontSize: 16,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     emptyText: {
       color: colors.textSecondary,
@@ -125,20 +119,20 @@ export function createCalendarImportStylesPart2(
     selectionSummaryTitle: {
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     selectionSummaryDescription: {
       color: colors.textSecondary,
       fontSize: 12,
       lineHeight: 16,
-      fontWeight: '800',
+      fontWeight: '400',
     },
     selectionSummaryAction: {
       flexShrink: 0,
       color: BRAND_BLUE,
       fontSize: 11,
       lineHeight: 16,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     sourceGroupList: {
       gap: 8,
@@ -168,13 +162,13 @@ export function createCalendarImportStylesPart2(
     sourceGroupText: {
       color: colors.textPrimary,
       fontSize: 14,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     sourceGroupCount: {
       color: colors.textSecondary,
       fontSize: 12,
       lineHeight: 16,
-      fontWeight: '800',
+      fontWeight: '400',
     },
     individualScheduleDisclosure: {
       minHeight: 60,
@@ -205,19 +199,19 @@ export function createCalendarImportStylesPart2(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     individualScheduleDisclosureDescription: {
       color: colors.textSecondary,
-      fontSize: 10,
-      lineHeight: 14,
-      fontWeight: '800',
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '400',
     },
     individualScheduleDisclosureCount: {
       color: colors.textSecondary,
       fontSize: 11,
       lineHeight: 16,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     candidateList: {
       gap: 10,
@@ -272,13 +266,13 @@ export function createCalendarImportStylesPart2(
       minWidth: 0,
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     candidateMeta: {
       color: colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
-      fontWeight: '800',
+      fontWeight: '400',
     },
     calendarSourceRow: {
       flexDirection: 'row',
@@ -295,20 +289,21 @@ export function createCalendarImportStylesPart2(
       minWidth: 0,
       color: colors.textSecondary,
       fontSize: 11,
-      fontWeight: '800',
+      fontWeight: '400',
+      lineHeight: 16,
     },
     sectionTitle: {
       marginTop: 8,
       color: colors.textSecondary,
       fontSize: 12,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     sectionDescription: {
       marginTop: -8,
       color: colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
-      fontWeight: '700',
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '400',
     },
     categoryDefaultHeader: {
       marginTop: -2,
@@ -320,15 +315,15 @@ export function createCalendarImportStylesPart2(
     categoryDefaultTitle: {
       color: colors.textPrimary,
       fontSize: 13,
-      fontWeight: '900',
+      fontWeight: "600",
     },
     categoryDefaultHint: {
       flexShrink: 1,
       color: colors.textSecondary,
       textAlign: 'right',
-      fontSize: 10,
-      lineHeight: 14,
-      fontWeight: '800',
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '400',
     },
     categoryAssignmentSection: {
       gap: 8,
@@ -363,7 +358,7 @@ export function createCalendarImportStylesPart2(
       color: colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '900',
+      fontWeight: "600",
     },
   });
 }

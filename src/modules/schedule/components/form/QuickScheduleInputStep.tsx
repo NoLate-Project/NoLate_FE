@@ -1,7 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useState, type RefObject } from "react";
-import ScheduleIcon from "../shared/ScheduleIcon";
-import { INPUT_DESIGN_ACCENT, inputDesignPreviewStyles, useScheduleInputDesignPreview } from "./ScheduleInputDesignPreviewContext";
+import React, { useMemo, useRef, type RefObject } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -11,12 +9,13 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
 import type { ImagePickerAsset } from "expo-image-picker";
-import Reanimated from "react-native-reanimated";
+import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
 import BrandedLoader from "../../../../ui/BrandedLoader";
 import { createQuickScheduleModalStyles } from "./QuickScheduleModal.styles";
@@ -48,6 +47,8 @@ type QuickScheduleInputColors = {
   textSecondary: string;
 };
 
+const photoTextEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+
 type QuickScheduleInputStepProps = {
   canSubmit: boolean;
   cardBorderColor: string;
@@ -62,6 +63,7 @@ type QuickScheduleInputStepProps = {
   inputRef: RefObject<TextInput | null>;
   isPhotoRecognizing: boolean;
   isVoiceFinalizing: boolean;
+  keyboardVisible: boolean;
   mediaPanelBackground: string;
   mode: string;
   modeIndicatorAnimatedStyle: StyleProp<ViewStyle>;
@@ -79,19 +81,14 @@ type QuickScheduleInputStepProps = {
   photoErrorTitleColor: string;
   photoNeedsReview: boolean;
   photoRecognitionError: string;
-  photoRecognitionState: string;
   photoScanFrameStyle: StyleProp<ViewStyle>;
-  photoStatusAccessibilityLabel: string;
-  photoStatusBackground: string;
-  photoStatusColor: string;
-  photoStatusIcon: keyof typeof Ionicons.glyphMap;
-  photoStatusText: string;
   photoTranscript: string;
   photoTranscriptTruncated: boolean;
   segmentedBackground: string;
   selectedModeBackground: string;
   selectedPhoto: ImagePickerAsset | null;
   submitting: boolean;
+  showSubmitProgress?: boolean;
   text: string;
   setText: (value: string) => void;
   voiceControlMeta: string;
@@ -118,6 +115,7 @@ export function QuickScheduleInputStep({
   inputRef,
   isPhotoRecognizing,
   isVoiceFinalizing,
+  keyboardVisible,
   mediaPanelBackground,
   mode,
   modeIndicatorAnimatedStyle,
@@ -135,19 +133,14 @@ export function QuickScheduleInputStep({
   photoErrorTitleColor,
   photoNeedsReview,
   photoRecognitionError,
-  photoRecognitionState,
   photoScanFrameStyle,
-  photoStatusAccessibilityLabel,
-  photoStatusBackground,
-  photoStatusColor,
-  photoStatusIcon,
-  photoStatusText,
   photoTranscript,
   photoTranscriptTruncated,
   segmentedBackground,
   selectedModeBackground,
   selectedPhoto,
   submitting,
+  showSubmitProgress = true,
   text,
   setText,
   voiceControlMeta,
@@ -159,111 +152,144 @@ export function QuickScheduleInputStep({
   voiceUri,
   isVoiceRecording,
 }: QuickScheduleInputStepProps) {
-  const isTossPreview = useScheduleInputDesignPreview();
-  const [inputFocused, setInputFocused] = useState(false);
-  const previewAccent = mode === "dark" ? "#72ADFF" : INPUT_DESIGN_ACCENT;
+  const largeText = useWindowDimensions().fontScale > 1.35;
+  const modePanelEntry = useMemo(() => largeText ? FadeIn.duration(140).reduceMotion(ReduceMotion.System) : undefined, [largeText]);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollContentRef = useRef<View>(null!);
+  const scrollOffset = useRef(0);
+
+  const revealFocusedInput = ({ nativeEvent }: LayoutChangeEvent) => {
+    if (!keyboardVisible || nativeEvent.layout.height <= 0) return;
+    const focusedInput = TextInput.State.currentlyFocusedInput();
+    const content = scrollContentRef.current;
+    if (!focusedInput || !content) return;
+
+    const viewportHeight = nativeEvent.layout.height;
+    focusedInput.measureLayout(content, (_left, top, _width, height) => {
+      if (TextInput.State.currentlyFocusedInput() !== focusedInput) return;
+      const targetOffset = top + Math.min(height, viewportHeight - 8) + 8 - viewportHeight;
+      if (targetOffset > scrollOffset.current) {
+        scrollRef.current?.scrollTo({ y: targetOffset, animated: false });
+      }
+    });
+  };
+  const modeSelector = (
+    <View
+      style={[
+        styles.modeSelector,
+        largeText && styles.modeSelectorLarge,
+        {
+          backgroundColor: segmentedBackground,
+          borderColor: cardBorderColor,
+        },
+      ]}
+    >
+      <Reanimated.View
+        pointerEvents="none"
+        style={[
+          styles.modeSelectorIndicator,
+          {
+            backgroundColor: selectedModeBackground,
+            borderColor: cardBorderColor,
+          },
+          modeIndicatorAnimatedStyle,
+        ]}
+      />
+      {INPUT_MODES.map(item => {
+        const selected = item.key === inputMode;
+        return (
+          <Pressable
+            key={item.key}
+            onLayout={handleModeLayout(item.key)}
+            onPress={() => handleModePress(item.key)}
+            disabled={
+              submitting || isVoiceFinalizing || flowStep !== "input"
+            }
+            accessibilityRole="tab"
+            accessibilityLabel={item.accessibilityLabel}
+            accessibilityState={{
+              selected,
+              disabled:
+                submitting || isVoiceFinalizing || flowStep !== "input",
+            }}
+            style={({ pressed }) => [
+              styles.modeButton,
+              largeText && styles.modeButtonLarge,
+              selected && styles.modeButtonSelected,
+              { opacity: pressed ? 0.7 : submitting ? 0.48 : 1 },
+            ]}
+          >
+            <Ionicons
+              accessible={false}
+              name={item.icon}
+              size={17}
+              color={selected ? BLUE : colors.textSecondary}
+            />
+            <Text
+              numberOfLines={largeText ? 1 : undefined}
+              maxFontSizeMultiplier={largeText ? 2 : undefined}
+              style={[
+                styles.modeText,
+                {
+                  color: selected
+                    ? colors.textPrimary
+                    : colors.textSecondary,
+                },
+              ]}
+            >
+              {item.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
   return (
     <View style={styles.inputStep}>
+      {largeText && modeSelector}
       <ScrollView
+        ref={scrollRef}
+        innerViewRef={scrollContentRef}
+        onLayout={revealFocusedInput}
+        onScroll={({ nativeEvent }) => { scrollOffset.current = nativeEvent.contentOffset.y; }}
+        scrollEventThrottle={32}
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         style={styles.inputStepScroll}
         contentContainerStyle={styles.inputStepScrollContent}
       >
-        <View
-          style={[
-            styles.modeSelector,
-            {
-              backgroundColor: segmentedBackground,
-              borderColor: cardBorderColor,
-            },
-          ]}
-        >
-          <Reanimated.View
-            pointerEvents="none"
-            style={[
-              styles.modeSelectorIndicator,
-              {
-                backgroundColor: isTossPreview ? mode === "dark" ? "rgba(36,107,254,0.18)" : "#E8F3FF" : selectedModeBackground,
-                borderColor: isTossPreview ? "rgba(36,107,254,0.20)" : cardBorderColor,
-              },
-              modeIndicatorAnimatedStyle,
-            ]}
-          />
-          {INPUT_MODES.map(item => {
-            const selected = item.key === inputMode;
-            return (
-              <Pressable
-                key={item.key}
-                onLayout={handleModeLayout(item.key)}
-                onPress={() => handleModePress(item.key)}
-                disabled={
-                  submitting || isVoiceFinalizing || flowStep !== "input"
-                }
-                accessibilityRole="tab"
-                accessibilityLabel={item.accessibilityLabel}
-                accessibilityState={{
-                  selected,
-                  disabled:
-                    submitting || isVoiceFinalizing || flowStep !== "input",
-                }}
-                style={({ pressed }) => [
-                  styles.modeButton,
-                  selected && styles.modeButtonSelected,
-                  { opacity: pressed ? 0.7 : submitting ? 0.48 : 1 },
-                ]}
-              >
-                <Ionicons
-                  accessible={false}
-                  name={item.icon}
-                  size={17}
-                  color={selected ? BLUE : colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.modeText,
-                    {
-                      color: selected
-                        ? isTossPreview ? previewAccent : colors.textPrimary
-                        : colors.textSecondary,
-                    },
-                  ]}
-                >
-                  {item.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
+        {!largeText && modeSelector}
+        <Reanimated.View key={inputMode} entering={modePanelEntry}>
         {inputMode === "text" && (
           <View style={styles.textModeContent}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, isTossPreview && inputDesignPreviewStyles.sectionTitle, { color: colors.textPrimary }]}>{isTossPreview ? "어떤 일정인가요?" : "일정 내용"}</Text>
-              {!isTossPreview && <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>날짜, 시간, 장소를 자유롭게 적어 주세요.</Text>}
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>일정 내용</Text>
+              <Text lineBreakStrategyIOS="hangul-word" style={[styles.sectionDescription, { color: colors.textSecondary }]}>{largeText ? "문장을 붙여넣거나 적어 주세요." : "날짜, 시간, 장소를 자유롭게 적어 주세요."}</Text>
             </View>
-            <View style={[styles.inputWrap, { backgroundColor: inputBackground, borderColor: (isTossPreview ? inputFocused : text.length > 0) ? isTossPreview ? previewAccent : colors.inputBorderFocused : colors.inputBorder }]}>
+            <View style={[styles.inputWrap, largeText && styles.inputWrapLarge, { backgroundColor: inputBackground, borderColor: text.length > 0 ? colors.inputBorderFocused : colors.inputBorder }]}>
               <TextInput
                 ref={inputRef}
+                testID="quick-schedule-input-text"
+                lineBreakStrategyIOS="hangul-word"
                 accessibilityLabel="빠른 일정 문장"
                 editable={!submitting}
                 multiline
                 maxLength={QUICK_TEXT_LIMIT}
                 value={text}
                 onChangeText={setText}
-                onFocus={() => setInputFocused(true)}
-                onBlur={() => setInputFocused(false)}
                 onSubmitEditing={onSubmit}
                 placeholder={placeholderForMode(inputMode)}
-                placeholderTextColor={isTossPreview ? mode === "dark" ? "#A7AFBA" : "#6B7684" : colors.inputPlaceholder}
+                placeholderTextColor={colors.inputPlaceholder}
                 returnKeyType="done"
                 selectionColor={BLUE}
-                style={[styles.input, isTossPreview && inputDesignPreviewStyles.input, { color: colors.textPrimary }]}
+                style={[styles.input, largeText && styles.inputLarge, { color: colors.textPrimary }]}
               />
-              <View style={styles.counterPill}>
-                <Text style={[styles.counter, { color: colors.textSecondary }]}>{text.length}/{QUICK_TEXT_LIMIT}</Text>
-              </View>
+              {(!largeText || text.length >= QUICK_TEXT_LIMIT * 0.8) && (
+                <View style={[styles.counterPill, largeText && styles.counterPillLarge]}>
+                  <Text style={[styles.counter, { color: colors.textSecondary }]}>{text.length}/{QUICK_TEXT_LIMIT}</Text>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -271,55 +297,45 @@ export function QuickScheduleInputStep({
         {inputMode === "photo" && (
           <View style={styles.photoModeContent}>
             {selectedPhoto?.uri ? (
-              <View
-                testID="quick-schedule-photo-preview"
-                style={[styles.photoPreviewButton, { backgroundColor: mode === "dark" ? "#060A12" : "#0A1220", borderColor: isPhotoRecognizing ? "rgba(94,215,247,0.58)" : colors.border }]}
-              >
-                <Image accessible={false} source={{ uri: selectedPhoto.uri }} resizeMode="cover" style={styles.photoImageBackdrop} />
-                <View pointerEvents="none" style={styles.photoImageBackdropScrim} />
-                <View style={styles.photoImageStage}>
-                  <QuickSchedulePhotoScanEffect
-                    active={isPhotoRecognizing}
-                    accessibilityLabel={isPhotoRecognizing ? "사진에서 일정 내용 읽는 중" : undefined}
-                    borderRadius={14}
-                    style={[styles.photoScanFrame, photoScanFrameStyle]}
+              <>
+                <View testID="quick-schedule-photo-preview" style={[
+                  styles.photoPreviewButton,
+                  photoRecognitionError && styles.photoPreviewRecovery,
+                  { borderColor: colors.border },
+                ]}>
+                  <View style={styles.photoImageStage}>
+                    <QuickSchedulePhotoScanEffect
+                      active={isPhotoRecognizing}
+                      accessibilityLabel={isPhotoRecognizing ? "사진에서 일정 내용 읽는 중" : undefined}
+                      borderRadius={14}
+                      style={[styles.photoScanFrame, photoScanFrameStyle, photoRecognitionError && styles.photoScanFrameRecovery]}
+                    >
+                      <Image source={{ uri: selectedPhoto.uri }} resizeMode="contain" style={styles.photoImage} />
+                    </QuickSchedulePhotoScanEffect>
+                  </View>
+                </View>
+                <View style={styles.photoActionsRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="선택한 사진 변경"
+                    disabled={submitting || isVoiceFinalizing}
+                    onPress={onPhotoActionSheet}
+                    style={styles.photoChangeButton}
                   >
-                    <Image source={{ uri: selectedPhoto.uri }} resizeMode="contain" style={styles.photoImage} />
-                  </QuickSchedulePhotoScanEffect>
+                    <Ionicons accessible={false} name="images-outline" size={18} color={colors.textPrimary} />
+                    <Text style={[styles.photoChangeButtonText, { color: colors.textPrimary }]}>사진 바꾸기</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="선택한 사진 제거"
+                    disabled={submitting}
+                    onPress={onRemovePhoto}
+                    style={styles.photoRemoveButton}
+                  >
+                    <Ionicons accessible={false} name="trash-outline" size={19} color={colors.textSecondary} />
+                  </Pressable>
                 </View>
-                <View
-                  pointerEvents="none"
-                  testID="quick-schedule-photo-status"
-                  accessible={!isPhotoRecognizing}
-                  accessibilityLabel={!isPhotoRecognizing ? photoStatusAccessibilityLabel : undefined}
-                  accessibilityLiveRegion={photoRecognitionState === "ready" || photoRecognitionState === "error" ? "polite" : undefined}
-                  style={[styles.photoStatusPill, { backgroundColor: photoStatusBackground }]}
-                >
-                  {isPhotoRecognizing ? <ActivityIndicator color={photoStatusColor} size="small" /> : <Ionicons accessible={false} name={photoStatusIcon} size={15} color={photoStatusColor} />}
-                  <Text numberOfLines={1} style={[styles.photoStatusText, { color: photoStatusColor }]}>{photoStatusText}</Text>
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="선택한 사진 변경"
-                  accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
-                  disabled={submitting || isVoiceFinalizing}
-                  onPress={onPhotoActionSheet}
-                  hitSlop={4}
-                  style={({ pressed }) => [styles.photoChangeButton, { opacity: pressed ? 0.72 : 1 }]}
-                >
-                  <Ionicons accessible={false} name="images-outline" size={15} color="#FFFFFF" />
-                  <Text style={styles.photoChangeButtonText}>사진 바꾸기</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="선택한 사진 제거"
-                  onPress={onRemovePhoto}
-                  hitSlop={10}
-                  style={({ pressed }) => [styles.photoRemoveButton, { opacity: pressed ? 0.72 : 1 }]}
-                >
-                  <Ionicons accessible={false} name="trash-outline" size={17} color="#FFFFFF" />
-                </Pressable>
-              </View>
+              </>
             ) : (
               <Pressable
                 accessibilityRole="button"
@@ -333,29 +349,21 @@ export function QuickScheduleInputStep({
                 <View style={[styles.photoEmptyIcon, { backgroundColor: mode === "dark" ? "rgba(36,107,254,0.16)" : "rgba(36,107,254,0.09)" }]}>
                   <Ionicons accessible={false} name="image-outline" size={23} color={BLUE} />
                 </View>
-                <Text style={[styles.photoEmptyTitle, { color: colors.textPrimary }]}>일정이 담긴 사진을 추가하세요</Text>
-                <Text style={[styles.photoEmptyMeta, { color: colors.textSecondary }]}>촬영하거나 사진 앱에서 선택하면 바로 읽습니다.</Text>
+                <Text lineBreakStrategyIOS="hangul-word" style={[styles.photoEmptyTitle, { color: colors.textPrimary }]}>{largeText ? "일정 사진 추가" : "일정이 담긴 사진을 추가하세요"}</Text>
+                <Text lineBreakStrategyIOS="hangul-word" style={[styles.photoEmptyMeta, { color: colors.textSecondary }]}>{largeText ? "사진을 찍거나 보관함에서 골라 주세요." : "촬영하거나 사진 앱에서 선택하면 바로 읽습니다."}</Text>
               </Pressable>
             )}
 
             {selectedPhoto && (
               <View style={[styles.photoTranscriptWrap, { backgroundColor: mode === "dark" ? "#151821" : "#F8FAFD", borderColor: colors.inputBorder }]}>
-                <View style={styles.photoTranscriptHeader}>
-                  <View style={[styles.photoResultIcon, { backgroundColor: isPhotoRecognizing ? "rgba(36,107,254,0.12)" : photoRecognitionError ? "rgba(239,68,68,0.10)" : "rgba(16,185,129,0.10)" }]}>
-                    <Ionicons accessible={false} name={isPhotoRecognizing ? "scan-outline" : photoRecognitionError ? "alert-circle-outline" : "document-text-outline"} size={18} color={isPhotoRecognizing ? BLUE : photoRecognitionError ? "#D94A4A" : "#0D9F6E"} />
+                {isPhotoRecognizing && !photoRecognitionError && (
+                  <View style={styles.photoTranscriptHeader} accessibilityLiveRegion="polite">
+                    <ActivityIndicator size="small" color={BLUE} />
+                    <Text style={[styles.photoTranscriptLabel, { color: colors.textPrimary }]}>사진을 읽고 있어요</Text>
                   </View>
-                  <View style={styles.photoResultTitleWrap}>
-                    <Text style={[styles.photoTranscriptLabel, { color: colors.textPrimary }]}>{isPhotoRecognizing ? "사진을 읽고 있어요" : "읽어온 내용"}</Text>
-                    {isPhotoRecognizing && <Text style={[styles.photoResultMeta, { color: colors.textSecondary }]}>날짜·시간·장소를 찾고 있어요</Text>}
-                  </View>
-                  {photoTranscriptTruncated ? (
-                    <View style={styles.truncatedRecognitionBadge}><Text style={[styles.photoConfidence, styles.truncatedRecognitionText]}>일부만 표시</Text></View>
-                  ) : photoNeedsReview ? (
-                    <View style={styles.photoReviewBadge}><Text style={styles.photoReviewBadgeText}>확인 필요</Text></View>
-                  ) : null}
-                </View>
+                )}
 
-                {isPhotoRecognizing ? (
+                {isPhotoRecognizing && !photoRecognitionError ? (
                   <View pointerEvents="none" testID="quick-schedule-photo-reading-placeholder" style={styles.photoReadingPlaceholder}>
                     <View style={[styles.photoReadingLine, styles.photoReadingLineLong]} />
                     <View style={[styles.photoReadingLine, styles.photoReadingLineMedium]} />
@@ -365,17 +373,24 @@ export function QuickScheduleInputStep({
                   <>
                     {photoRecognitionError && (
                       <View style={[styles.photoRecognitionErrorWrap, { backgroundColor: photoErrorSurface, borderColor: photoErrorBorder }]}>
-                        <Text style={[styles.photoRecognitionErrorTitle, { color: photoErrorTitleColor }]}>일정 내용을 찾지 못했어요</Text>
-                        <Text style={[styles.photoRecognitionErrorText, { color: photoErrorTextColor }]}>날짜나 시간이 선명한 사진으로 바꾸거나 직접 입력해 주세요.</Text>
-                        <Pressable accessibilityRole="button" accessibilityLabel="사진 내용 다시 읽기" onPress={onPhotoRecognitionRetry} style={({ pressed }) => [styles.photoRecognitionRetry, { opacity: pressed ? 0.72 : 1 }]}>
-                          <Ionicons accessible={false} name="refresh" size={15} color={BLUE} />
+                        <Text accessibilityLiveRegion="polite" style={[styles.photoRecognitionErrorTitle, { color: photoErrorTitleColor }]}>
+                          {isPhotoRecognizing ? "사진을 다시 읽고 있어요" : "일정 내용을 찾지 못했어요"}
+                        </Text>
+                        <Text style={[styles.photoRecognitionErrorText, { color: photoErrorTextColor }]}>날짜와 시간을 직접 적거나 사진을 바꿔 보세요.</Text>
+                        <Pressable accessibilityRole="button" accessibilityLabel="사진 내용 다시 읽기"
+                          accessibilityState={{ busy: isPhotoRecognizing, disabled: isPhotoRecognizing || submitting }}
+                          disabled={isPhotoRecognizing || submitting}
+                          onPress={onPhotoRecognitionRetry} style={({ pressed }) => [styles.photoRecognitionRetry, { opacity: pressed || isPhotoRecognizing ? 0.72 : 1 }]}>
+                          {isPhotoRecognizing ? <ActivityIndicator size="small" color={BLUE} /> :
+                            <Ionicons accessible={false} name="refresh-outline" size={15} color={BLUE} />}
                           <Text style={styles.photoRecognitionRetryText}>다시 읽기</Text>
                         </Pressable>
                       </View>
                     )}
-                    <View style={styles.photoTranscriptInputWrap}>
+                    <Reanimated.View entering={photoTextEntrance} style={styles.photoTranscriptInputWrap}>
                       <Text style={[styles.photoTranscriptInputLabel, { color: colors.textSecondary }]}>{photoRecognitionError ? "직접 입력" : "일정 문장"}</Text>
                       <TextInput
+                        testID="quick-schedule-photo-transcript"
                         accessibilityLabel="사진에서 읽은 내용"
                         editable={!submitting}
                         multiline
@@ -385,13 +400,13 @@ export function QuickScheduleInputStep({
                         placeholder={photoRecognitionError ? "읽지 못한 내용을 직접 입력해 주세요." : "읽은 내용을 확인하고 수정할 수 있어요."}
                         placeholderTextColor={colors.inputPlaceholder}
                         selectionColor={BLUE}
-                        style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
+                        style={[styles.photoTranscriptInput, largeText && styles.photoTranscriptInputLarge, { color: colors.textPrimary }]}
                       />
-                    </View>
-                    {photoNeedsReview && (
+                    </Reanimated.View>
+                    {(photoNeedsReview || photoTranscriptTruncated) && !photoRecognitionError && (
                       <View style={styles.lowConfidenceNotice}>
                         <Ionicons accessible={false} name="alert-circle-outline" size={14} color="#F59E0B" />
-                        <Text style={styles.lowConfidenceNoticeText}>일부 내용을 정확히 읽지 못했어요. 날짜·시간·장소를 확인해 주세요.</Text>
+                        <Text style={styles.lowConfidenceNoticeText}>{photoTranscriptTruncated ? "사진 내용 일부만 표시했어요. 빠진 내용이 있으면 추가해 주세요." : "날짜·시간·장소를 확인해 주세요."}</Text>
                       </View>
                     )}
                   </>
@@ -442,14 +457,15 @@ export function QuickScheduleInputStep({
                 maxLength={QUICK_TEXT_LIMIT}
                 value={voiceTranscript}
                 onChangeText={onVoiceTranscriptChange}
-                placeholder={isVoiceRecording ? "말한 내용이 여기에 표시됩니다." : voiceUri ? "필요하면 내용을 직접 적어 주세요." : "직접 입력해도 됩니다."}
+                placeholder={isVoiceRecording ? "말한 내용이 여기에 표시됩니다." : voiceUri ? "필요하면 내용을 직접 적어 주세요." : largeText ? "직접 적어도 돼요." : "직접 입력해도 됩니다."}
                 placeholderTextColor={colors.inputPlaceholder}
                 selectionColor={BLUE}
-                style={[styles.voiceTranscriptInput, { color: colors.textPrimary }]}
+                style={[styles.voiceTranscriptInput, largeText && styles.voiceTranscriptInputLarge, { color: colors.textPrimary }]}
               />
             </View>
           </View>
         )}
+        </Reanimated.View>
       </ScrollView>
 
       <Pressable
@@ -458,15 +474,14 @@ export function QuickScheduleInputStep({
         accessibilityState={{ disabled: !canSubmit, busy: submitting }}
         disabled={!canSubmit}
         onPress={onSubmit}
-        style={({ pressed }) => [styles.submitButton, isTossPreview && inputDesignPreviewStyles.action, { opacity: !canSubmit ? 0.45 : pressed ? 0.78 : 1 }]}
+        style={({ pressed }) => [styles.submitButton, largeText && styles.submitButtonLarge, { opacity: !canSubmit ? 0.45 : pressed ? 0.78 : 1 }]}
       >
-        {submitting ? (
+        {submitting && showSubmitProgress ? (
           <BrandedLoader size="button" variant="schedule" accessibilityLabel="일정을 만들고 있어요" />
         ) : (
           <>
-            {!isTossPreview && <Ionicons accessible={false} name="calendar-outline" size={17} color="#fff" />}
-            <Text style={[styles.submitText, isTossPreview && inputDesignPreviewStyles.actionText]}>{isTossPreview ? "일정 확인하기" : "일정 미리보기"}</Text>
-            {isTossPreview && <ScheduleIcon name="forward" role="formControl" color="#fff" />}
+            <Ionicons accessible={false} name="calendar-outline" size={17} color="#fff" />
+            <Text maxFontSizeMultiplier={largeText ? 2.35 : undefined} style={styles.submitText}>일정 미리보기</Text>
           </>
         )}
       </Pressable>

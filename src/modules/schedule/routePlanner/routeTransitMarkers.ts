@@ -472,6 +472,16 @@ export function buildTransitPassStopMarkers(
 
   const groups: StopMarkerGroup[] = [];
   const seenCoordinates = new Set<string>();
+  // Reserve the selected coordinate before earlier legs can claim it.
+  const selectedLeg = selectedStop ? legs[selectedStop.legIndex] : undefined;
+  const selectedStops = selectedLeg?.passStops;
+  const selectedCoordinate = selectedStop && selectedLeg && isRideLegKind(selectedLeg.kind) &&
+    selectedStops && selectedStop.stopIndex > 0 && selectedStop.stopIndex < selectedStops.length - 1
+    ? selectedStops[selectedStop.stopIndex]?.coord
+    : undefined;
+  const coordinateKey = (coord: RoutePathCoord) =>
+    `${coord.lat.toFixed(5)}:${coord.lng.toFixed(5)}`;
+  if (selectedCoordinate) seenCoordinates.add(coordinateKey(selectedCoordinate));
   legs.forEach((leg, legIndex) => {
     if (
       !isRideLegKind(leg.kind) ||
@@ -515,8 +525,8 @@ export function buildTransitPassStopMarkers(
       // 축소 후에도 사용자가 직접 고른 정류장은 맥락을 잃지 않도록 한 개만 유지한다.
       if (!policy.visible && !selected) return;
 
-      const key = `${stop.coord.lat.toFixed(5)}:${stop.coord.lng.toFixed(5)}`;
-      if (seenCoordinates.has(key)) return;
+      const key = coordinateKey(stop.coord);
+      if (!selected && seenCoordinates.has(key)) return;
       seenCoordinates.add(key);
 
       const stopName = normalizeTransitStopName(stop.name) ?? stop.name;
@@ -576,12 +586,14 @@ export function buildTransitPassStopMarkers(
     const policy = getTransitStopMarkerPolicy(kind, mapZoom);
     const maxPerLeg = policy.visible ? policy.maxPerLeg : 1;
     const maxTotal = policy.visible ? policy.maxTotal : 1;
-    const candidateCounts = kindGroups.map(group =>
-      Math.min(group.markers.length, maxPerLeg),
+    // The explicit selection consumes the first slot in this mode's budget.
+    const selectedGroupIndex = kindGroups.findIndex(group => group.markers.some(marker => marker.selected));
+    const candidateCounts = kindGroups.map((group, index) =>
+      Math.min(group.markers.length, maxPerLeg) - (index === selectedGroupIndex ? 1 : 0),
     );
     const allocations = allocateTransitStopMarkerCounts(
       candidateCounts,
-      maxTotal,
+      maxTotal - (selectedGroupIndex >= 0 ? 1 : 0),
     );
     const selectedMarkersByGroup: StopMarkerCandidate[][] = [];
 
@@ -589,7 +601,7 @@ export function buildTransitPassStopMarkers(
       const selectedIndex = group.markers.findIndex(marker => marker.selected);
       const sampledIndices = sampleTransitStopIndices(
         group.markers.length,
-        allocations[groupIndex] ?? 0,
+        allocations[groupIndex] + (selectedIndex >= 0 ? 1 : 0),
         selectedIndex >= 0 ? selectedIndex : undefined,
       );
       const selectedMarkers = sampledIndices.map(index => group.markers[index]);

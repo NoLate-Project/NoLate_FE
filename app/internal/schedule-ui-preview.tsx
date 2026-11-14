@@ -9,20 +9,14 @@ import PlainScheduleDetailView, {
     PLAIN_SCHEDULE_DETAIL_CONTENT_GAP,
     PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT,
 } from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
-import RouteDetailDesignPreview, {
-    type RouteDetailDesignVariant,
-    type RouteDetailPreviewSheetMode,
-} from "../../src/modules/schedule/components/detail/RouteDetailDesignPreview";
 import QuickScheduleModal from "../../src/modules/schedule/components/form/QuickScheduleModal";
 import ScheduleAddModal from "../../src/modules/schedule/components/form/ScheduleAddModal";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import { ScheduleDetail as ActualScheduleDetail } from "../schedule/[id]";
 import RouteSelectScreen from "../schedule/route-select";
 import { createScheduleInitialState } from "../../src/modules/schedule/initialState";
-import { buildSavedRouteDetailInfo } from "../../src/modules/schedule/savedRouteDetailPresentation";
 import { ScheduleProvider, useScheduleStore } from "../../src/modules/schedule/store";
 import { setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
-import { buildTransitRouteProgressSegments } from "../../src/modules/schedule/transitRouteProgress";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import type {
     ScheduleCategory,
@@ -197,9 +191,6 @@ const actualRouteDetailRoute = {
         },
     ],
 };
-const actualRouteDetailProgressSegments = buildTransitRouteProgressSegments(
-    actualRouteDetailRoute.transitLegs
-);
 
 const previewItem: ScheduleItem = {
     id: PREVIEW_ID,
@@ -267,13 +258,6 @@ const actualRouteDetailItem: ScheduleItem = {
         },
     ],
 };
-const actualRouteDetailInfo = buildSavedRouteDetailInfo({
-    route: actualRouteDetailRoute,
-    routeAlternative: actualRouteDetailRoute,
-    origin: actualRouteDetailItem.origin,
-    destination: actualRouteDetailItem.destination,
-    departureAt: new Date("2026-08-08T11:24:00+09:00"),
-}) ?? previewRoute.routeInfo;
 
 const quickParseResult: ScheduleParseResult = {
     analysisId: "schedule-ui-preview-analysis",
@@ -465,8 +449,7 @@ export default function ScheduleUiPreviewScreen() {
         field?: QuickPreviewField;
         section?: "top" | "bottom";
         category?: "open";
-        design?: RouteDetailDesignVariant;
-        sheet?: RouteDetailPreviewSheetMode;
+        sheet?: "compact" | "expanded";
         people?: "expanded";
     }>();
     const router = useRouter();
@@ -523,20 +506,9 @@ export default function ScheduleUiPreviewScreen() {
     if (screen === "detail") return <DetailPreview />;
     if (screen === "route") return <RouteInputPreview />;
     if (screen === "route-detail") {
-        if (params.design === "current") {
-            return (
-                <RouteDetailDesignPreview
-                    key={`current-${params.sheet ?? "expanded"}`}
-                    variant="current"
-                    initialSheetMode={params.sheet === "compact" ? "compact" : "expanded"}
-                    routeDetailInfo={actualRouteDetailInfo}
-                    routeProgressSegments={actualRouteDetailProgressSegments}
-                />
-            );
-        }
         return (
             <ActualScheduleDetail
-                key={`improved-${params.sheet ?? "expanded"}-${params.people ?? "collapsed"}`}
+                key={`route-detail-${params.sheet ?? "expanded"}-${params.people ?? "collapsed"}`}
                 previewItem={actualRouteDetailItem}
                 initialSheetMode={params.sheet === "compact" ? "compact" : "expanded"}
                 initialParticipantsExpanded={params.people === "expanded"}

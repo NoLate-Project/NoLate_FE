@@ -1,21 +1,27 @@
 import { createScheduleIndexStyles } from '../../../../routeSupport/schedule/index.styles';
-import { useMemo } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { useMemo, useRef, type ComponentProps, type ComponentRef } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import DayTimelineEventCard from './DayTimelineEventCard';
+import DayEventReturnHighlight from './DayEventReturnHighlight';
 import { getFloatingActionBarClearance } from '../shared/floatingActionBarLayout';
 import {
   DAY_MINUTES,
   DAY_TIMELINE_END_PADDING,
   DAY_TIMELINE_HOUR_HEIGHT,
   formatDayTimelineTimeRange,
+  formatDayTimelineDeparture,
 } from '../../dayTimelineLayout';
+import { addDaysToYmd } from '../../hooks/scheduleIndexControllerModel';
 import { CALENDAR_PRIMARY_PILL_LAYOUT } from '../../calendarMotion';
 import BrandedLoader from '../../../../ui/BrandedLoader';
 import type {
@@ -50,8 +56,6 @@ const DAY_WEEK_STRIP_HORIZONTAL_PADDING = 0;
 
 const DAY_TIMELINE_GUTTER = 54;
 
-const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
-
 function colorWithOpacity(color: string, opacity: number) {
   const normalized = color.replace('#', '');
   if (/^[0-9a-fA-F]{6}$/.test(normalized)) {
@@ -63,11 +67,22 @@ function colorWithOpacity(color: string, opacity: number) {
   return color;
 }
 
-function formatDayTitle(ymd: string) {
-  const date = new Date(`${ymd}T00:00:00`);
-  return `${date.getFullYear()}년 ${
-    date.getMonth() + 1
-  }월 ${date.getDate()}일 ${WEEKDAYS[date.getDay()]}요일`;
+function TimelineScheduleButton({
+  openSchedule,
+  ...props
+}: Omit<ComponentProps<typeof Pressable>, 'onPress'> & {
+  openSchedule: (restoreFocus: () => void) => void;
+}) {
+  const button = useRef<ComponentRef<typeof Pressable>>(null);
+  return (
+    <Pressable
+      {...props}
+      ref={button}
+      onPress={() => openSchedule(() => {
+        if (button.current) AccessibilityInfo.sendAccessibilityEvent?.(button.current, 'focus');
+      })}
+    />
+  );
 }
 
 function formatTimelineHour(hour: number) {
@@ -107,6 +122,7 @@ export function useScheduleDayTimelineContent(
     loading,
     modeTransitionFrom,
     onOpenSchedule,
+    returnHighlight,
     getScheduleSwipeActions,
     onRequestScheduleActions,
     onPressRetry,
@@ -146,7 +162,11 @@ export function useScheduleDayTimelineContent(
     handleTimelineScroll,
     attachSingleDayTimelineRef,
     attachMultiDayTimelineRef,
+    navigateToDayFromWeekStrip,
   } = controller;
+  const { fontScale, width } = useWindowDimensions();
+  const largeAllDayText = fontScale > 1.35;
+  const allDayEventMaxWidth = largeAllDayText ? Math.min(300, width - 112) : 180;
   const singleDayTimeline = useMemo(() => {
     if (!needsSingleDayContent) return null;
 
@@ -222,6 +242,8 @@ export function useScheduleDayTimelineContent(
             >
               {hour < 24 && (
                 <Text
+                  maxFontSizeMultiplier={1.35}
+                  numberOfLines={1}
                   style={[styles.dayHourText, { color: colors.textSecondary }]}
                 >
                   {formatTimelineHour(hour)}
@@ -246,7 +268,8 @@ export function useScheduleDayTimelineContent(
                     left={`${lane * laneWidth + laneInset}%`}
                     width={`${Math.max(0, laneWidth - laneInset * 2)}%`}
                     laneCount={laneCount}
-                    onPress={() => onOpenSchedule(item.id)}
+                    returnHighlightOpacity={returnHighlight?.id === item.id ? returnHighlight.opacity : undefined}
+                    onPress={restoreFocus => onOpenSchedule(item.id, restoreFocus)}
                     swipeActions={getScheduleSwipeActions?.(item)}
                     onLongPress={onRequestScheduleActions
                       ? () => onRequestScheduleActions(item)
@@ -304,6 +327,7 @@ export function useScheduleDayTimelineContent(
     onRequestScheduleActions,
     onPressRetry,
     positionedEvents,
+    returnHighlight,
     singleDayTimelineRef,
   ]);
 
@@ -382,6 +406,8 @@ export function useScheduleDayTimelineContent(
             >
               {hour < 24 && (
                 <Text
+                  maxFontSizeMultiplier={1.35}
+                  numberOfLines={1}
                   style={[styles.dayHourText, { color: colors.textSecondary }]}
                 >
                   {formatTimelineHour(hour)}
@@ -448,18 +474,23 @@ export function useScheduleDayTimelineContent(
                     const color = item.category?.color ?? '#8e8e93';
                     const top = (startMinute / 60) * DAY_TIMELINE_HOUR_HEIGHT;
                     const laneWidth = 100 / laneCount;
+                    const timeRange = formatDayTimelineTimeRange(item);
+                    const continuesFromPreviousDay = startMinute === 0 &&
+                      new Date(item.startAt).getTime() < new Date(`${column.day.dateString}T00:00:00`).getTime();
+                    const compactTime = continuesFromPreviousDay ? '자정부터' : formatDayTimelineDeparture(item.startAt);
+                    const textHeight = Math.ceil(14 * Math.min(fontScale, 1.5));
+                    const showsTime = height >= textHeight * 2 + 10;
+                    const showsFullRange = showsTime && laneCount === 1 && width >= 360 && fontScale <= 1.3 && !continuesFromPreviousDay;
 
                     return (
-                      <Pressable
+                      <TimelineScheduleButton
                         key={item.id}
                         accessibilityRole="button"
-                        accessibilityLabel={`${
-                          item.title
-                        }, ${formatDayTimelineTimeRange(item)}`}
+                        accessibilityLabel={[item.title, timeRange, `${column.day.month}월 ${column.day.day}일`].filter(Boolean).join(', ')}
                         accessibilityHint={onRequestScheduleActions
                           ? '길게 누르면 수정 또는 삭제 메뉴가 열립니다'
                           : undefined}
-                        onPress={() => onOpenSchedule(item.id)}
+                        openSchedule={restoreFocus => onOpenSchedule(item.id, restoreFocus)}
                         onLongPress={onRequestScheduleActions
                           ? () => onRequestScheduleActions(item)
                           : undefined}
@@ -479,12 +510,17 @@ export function useScheduleDayTimelineContent(
                               color,
                               mode === 'dark' ? 0.55 : 0.32,
                             ),
+                            borderLeftColor: color,
                             opacity: pressed ? 0.58 : 1,
                           },
                         ]}
                       >
+                        {returnHighlight?.id === item.id && (
+                          <DayEventReturnHighlight opacity={returnHighlight.opacity} color={colors.textPrimary} />
+                        )}
                         <Text
-                          numberOfLines={2}
+                          maxFontSizeMultiplier={1.5}
+                          numberOfLines={1}
                           style={[
                             styles.multiDayEventTitle,
                             { color: colors.textPrimary },
@@ -492,7 +528,13 @@ export function useScheduleDayTimelineContent(
                         >
                           {item.title}
                         </Text>
-                      </Pressable>
+                        {showsTime && (
+                          <Text maxFontSizeMultiplier={1.5} numberOfLines={1}
+                            style={[styles.multiDayEventTime, { color: colors.textSecondary }]}>
+                            {showsFullRange ? timeRange : compactTime}
+                          </Text>
+                        )}
+                      </TimelineScheduleButton>
                     );
                   },
                 )}
@@ -513,6 +555,7 @@ export function useScheduleDayTimelineContent(
     currentTimeLabel,
     currentTimeY,
     didPositionMultiTimelineRef,
+    fontScale,
     handleTimelineScroll,
     inlineError,
     initialTimelineOffset,
@@ -524,7 +567,9 @@ export function useScheduleDayTimelineContent(
     onOpenSchedule,
     onRequestScheduleActions,
     onPressRetry,
+    returnHighlight,
     todayKey,
+    width,
   ]);
 
   const currentModeTimeline = useMemo(() => {
@@ -543,7 +588,7 @@ export function useScheduleDayTimelineContent(
       <View
         style={[styles.dayAllDaySection, { borderBottomColor: colors.border }]}
       >
-        <Text style={[styles.dayAllDayLabel, { color: colors.textSecondary }]}>
+        <Text maxFontSizeMultiplier={1.35} numberOfLines={1} style={[styles.dayAllDayLabel, { color: colors.textSecondary }]}>
           종일
         </Text>
         <ScrollView
@@ -557,12 +602,12 @@ export function useScheduleDayTimelineContent(
             allDayItems.map(item => {
               const color = item.category?.color ?? '#8e8e93';
               return (
-                <Pressable
+                <TimelineScheduleButton
                   key={item.id}
                   accessibilityRole="button"
                   accessibilityLabel={`${item.title}, 종일`}
                   accessibilityHint={onRequestScheduleActions ? '길게 누르면 수정 또는 삭제 메뉴가 열립니다' : undefined}
-                  onPress={() => onOpenSchedule(item.id)}
+                  openSchedule={restoreFocus => onOpenSchedule(item.id, restoreFocus)}
                   onLongPress={onRequestScheduleActions
                     ? () => onRequestScheduleActions(item)
                     : undefined}
@@ -570,6 +615,7 @@ export function useScheduleDayTimelineContent(
                   style={({ pressed }) => [
                     styles.dayAllDayEvent,
                     {
+                      maxWidth: allDayEventMaxWidth,
                       backgroundColor: colorWithOpacity(
                         color,
                         mode === 'dark' ? 0.24 : 0.14,
@@ -579,23 +625,26 @@ export function useScheduleDayTimelineContent(
                     },
                   ]}
                 >
+                  {returnHighlight?.id === item.id && (
+                    <DayEventReturnHighlight opacity={returnHighlight.opacity} color={colors.textPrimary} radius={17} />
+                  )}
                   <View
                     style={[styles.dayAllDayDot, { backgroundColor: color }]}
                   />
                   <Text
-                    numberOfLines={1}
+                    numberOfLines={largeAllDayText ? 2 : 1}
                     style={[styles.dayAllDayTitle, { color }]}
                   >
                     {item.title}
                   </Text>
-                </Pressable>
+                </TimelineScheduleButton>
               );
             })
           )}
         </ScrollView>
       </View>
     ),
-    [allDayItems, colors.border, colors.textSecondary, mode, onOpenSchedule, onRequestScheduleActions],
+    [allDayEventMaxWidth, allDayItems, colors.border, colors.textPrimary, colors.textSecondary, largeAllDayText, mode, onOpenSchedule, onRequestScheduleActions, returnHighlight],
   );
 
   const multiDayAllDaySection = useMemo(
@@ -603,7 +652,7 @@ export function useScheduleDayTimelineContent(
       <View
         style={[styles.dayAllDaySection, { borderBottomColor: colors.border }]}
       >
-        <Text style={[styles.dayAllDayLabel, { color: colors.textSecondary }]}>
+        <Text maxFontSizeMultiplier={1.35} numberOfLines={1} style={[styles.dayAllDayLabel, { color: colors.textSecondary }]}>
           종일
         </Text>
         <ScrollView
@@ -617,12 +666,12 @@ export function useScheduleDayTimelineContent(
             multiDayAllDayItems.map(item => {
               const color = item.category?.color ?? '#8e8e93';
               return (
-                <Pressable
+                <TimelineScheduleButton
                   key={item.id}
                   accessibilityRole="button"
                   accessibilityLabel={`${item.title}, 종일`}
                   accessibilityHint={onRequestScheduleActions ? '길게 누르면 수정 또는 삭제 메뉴가 열립니다' : undefined}
-                  onPress={() => onOpenSchedule(item.id)}
+                  openSchedule={restoreFocus => onOpenSchedule(item.id, restoreFocus)}
                   onLongPress={onRequestScheduleActions
                     ? () => onRequestScheduleActions(item)
                     : undefined}
@@ -630,6 +679,7 @@ export function useScheduleDayTimelineContent(
                   style={({ pressed }) => [
                     styles.dayAllDayEvent,
                     {
+                      maxWidth: allDayEventMaxWidth,
                       backgroundColor: colorWithOpacity(
                         color,
                         mode === 'dark' ? 0.24 : 0.14,
@@ -639,16 +689,19 @@ export function useScheduleDayTimelineContent(
                     },
                   ]}
                 >
+                  {returnHighlight?.id === item.id && (
+                    <DayEventReturnHighlight opacity={returnHighlight.opacity} color={colors.textPrimary} radius={17} />
+                  )}
                   <View
                     style={[styles.dayAllDayDot, { backgroundColor: color }]}
                   />
                   <Text
-                    numberOfLines={1}
+                    numberOfLines={largeAllDayText ? 2 : 1}
                     style={[styles.dayAllDayTitle, { color }]}
                   >
                     {item.title}
                   </Text>
-                </Pressable>
+                </TimelineScheduleButton>
               );
             })
           )}
@@ -656,12 +709,16 @@ export function useScheduleDayTimelineContent(
       </View>
     ),
     [
+      allDayEventMaxWidth,
       colors.border,
+      colors.textPrimary,
       colors.textSecondary,
+      largeAllDayText,
       mode,
       onOpenSchedule,
       onRequestScheduleActions,
       multiDayAllDayItems,
+      returnHighlight,
     ],
   );
 
@@ -694,6 +751,44 @@ export function useScheduleDayTimelineContent(
     singleDayAllDaySection,
   ]);
 
+  const dateNavigation = (
+    <View style={[styles.dayDateTitleBar, { borderBottomColor: colors.border }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="이전 날짜"
+        onPress={() => navigateToDayFromWeekStrip(addDaysToYmd(selectedDay, -1))}
+        style={styles.dayDateStep}
+      >
+        <Ionicons accessible={false} name="chevron-back-outline" size={17} color={colors.textSecondary} />
+      </Pressable>
+      <Text accessibilityRole="header" maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word"
+        style={[styles.dayDateTitleText, { color: colors.textPrimary }]}>
+        {contentTitle}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="다음 날짜"
+        onPress={() => navigateToDayFromWeekStrip(addDaysToYmd(selectedDay, 1))}
+        style={styles.dayDateStep}
+      >
+        <Ionicons accessible={false} name="chevron-forward-outline" size={17} color={colors.textSecondary} />
+      </Pressable>
+    </View>
+  );
+
+  const multiDayColumnHeadings = (
+    <View style={[styles.multiDayDateHeadings, { borderBottomColor: colors.border }]}>
+      {multiDayColumns.map(({ day }) => (
+        <Text key={day.dateString}
+          accessibilityLabel={`${day.month}월 ${day.day}일 ${day.weekday}요일`}
+          maxFontSizeMultiplier={1.6}
+          style={[styles.multiDayDateHeading, { color: colors.textSecondary, borderLeftColor: colors.border }]}>
+          {`${day.day}일 ${day.weekday}`}
+        </Text>
+      ))}
+    </View>
+  );
+
   const singleDayPanelContent = (
     <View
       style={[
@@ -702,15 +797,7 @@ export function useScheduleDayTimelineContent(
       ]}
     >
       <Animated.View style={{ opacity: titleSectionOpacity }}>
-        <View
-          style={[styles.dayDateTitleBar, { borderBottomColor: colors.border }]}
-        >
-          <Text
-            style={[styles.dayDateTitleText, { color: colors.textPrimary }]}
-          >
-            {formatDayTitle(selectedDay)}
-          </Text>
-        </View>
+        {dateNavigation}
       </Animated.View>
 
       <Animated.View
@@ -730,16 +817,9 @@ export function useScheduleDayTimelineContent(
 
   const nonSingleDayPanelContent = (
     <>
-      <View style={styles.dayModeTitleSlot} pointerEvents="none">
-        <View
-          style={[styles.dayDateTitleBar, { borderBottomColor: colors.border }]}
-        >
-          <Text
-            style={[styles.dayDateTitleText, { color: colors.textPrimary }]}
-          >
-            {contentTitle}
-          </Text>
-        </View>
+      <View style={styles.dayModeTitleSlot}>
+        {dateNavigation}
+        {dayViewMode === 'multiDay' && multiDayColumnHeadings}
       </View>
 
       <Animated.View

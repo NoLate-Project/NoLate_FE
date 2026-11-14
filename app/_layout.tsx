@@ -1,3 +1,4 @@
+import { AuthFormDraftsProvider } from "../src/modules/auth/AuthFormDrafts";
 import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Redirect, Stack, useRouter, useSegments } from "expo-router";
 import { Alert, AppState, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
@@ -283,7 +284,9 @@ export default function RootLayout() {
                 ] : []}
             >
                 {!isLoading && isAuthenticated ? <NavigationPerformanceTracker /> : null}
-                <RootNavigator />
+                <AuthFormDraftsProvider>
+                    <RootNavigator />
+                </AuthFormDraftsProvider>
             </ImmediateNavigationTransitionProvider>
         </GestureHandlerRootView>
     );
@@ -294,6 +297,8 @@ function RootNavigator() {
     const { colors, mode } = useTheme();
     const segments = useSegments();
     const routeSegments = segments as string[];
+    const quickScheduleBenchmarkEnabled =
+        __DEV__ || process.env.EXPO_PUBLIC_ENABLE_QUICK_SCHEDULE_BENCHMARK === "true";
 
     if (isLoading) {
         return (
@@ -301,11 +306,10 @@ function RootNavigator() {
                 <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
                 <BrandedLoadingState
                     fill
-                    size="full"
-                    variant="auth"
-                    accessibilityLabel="NoLate를 준비하고 있어요. 로그인 상태를 확인하고 있어요"
+                    settleOnly
+                    settleDelayMs={150}
+                    accessibilityLabel="NoLate를 준비하고 있어요"
                     title="NoLate를 준비하고 있어요"
-                    caption="로그인 상태를 확인하고 있어요"
                 />
             </View>
         );
@@ -343,7 +347,9 @@ function RootNavigator() {
             <Stack.Screen
                 name="share/[token]"
             />
-            {__DEV__ ? internalPreviewRoutes.map(name => <Stack.Screen key={name} name={`internal/${name}`}/>) : null}
+            <Stack.Protected guard={__DEV__}>
+                {internalPreviewRoutes.map(name => <Stack.Screen key={name} name={`internal/${name}`}/>)}
+            </Stack.Protected>
             <Stack.Protected guard={isAuthenticated}>
                 <Stack.Screen
                     name="onboarding/calendar-import"
@@ -372,7 +378,9 @@ function RootNavigator() {
                     name="schedule/index"
                 />
                 <Stack.Screen name="schedule/journey" />
-                <Stack.Screen name="internal/quick-schedule-benchmark" />
+                <Stack.Protected guard={quickScheduleBenchmarkEnabled}>
+                    <Stack.Screen name="internal/quick-schedule-benchmark" />
+                </Stack.Protected>
                 <Stack.Screen
                     name="notifications"
                     options={{

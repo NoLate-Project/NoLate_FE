@@ -34,11 +34,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0,
   },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   tabSurface: {
     height: 50,
     marginHorizontal: 18,
@@ -54,7 +49,8 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
-    height: 42,
+    minHeight: 44,
+    paddingVertical: 5,
     borderRadius: 21,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'transparent',
@@ -67,8 +63,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tabLabel: {
+    flexShrink: 1,
     fontSize: 15,
-    lineHeight: 20,
     fontWeight: '900',
     letterSpacing: 0,
   },
@@ -99,7 +95,7 @@ const styles = StyleSheet.create({
   searchField: {
     flex: 1,
     minWidth: 0,
-    height: 48,
+    minHeight: 48,
     paddingHorizontal: 14,
     borderWidth: 1,
     borderRadius: 16,
@@ -110,10 +106,9 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     minWidth: 0,
-    height: 46,
-    padding: 0,
+    minHeight: 46,
+    paddingVertical: 9,
     fontSize: 15,
-    lineHeight: 20,
     fontWeight: '700',
     letterSpacing: 0,
   },
@@ -155,6 +150,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  listToolbarLarge: { alignItems: "flex-start", flexDirection: "column", gap: 8, paddingVertical: 8 },
   resultLabel: {
     fontSize: 13,
     lineHeight: 18,
@@ -162,7 +158,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   calendarManageAction: {
-    height: 34,
+    minHeight: 44,
+    paddingVertical: 6,
     borderWidth: 1,
     borderRadius: 17,
     paddingHorizontal: 11,
@@ -239,6 +236,11 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 4,
   },
+  calendarCardMeta: { marginTop: 5, marginBottom: 0, justifyContent: 'space-between' },
+  cardStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 },
+  stackedCardLine: { flex: 0 },
+  stackedCardTime: { marginLeft: 0, flexShrink: 1 },
+  stackedCardStatus: { maxWidth: '100%' },
   cardEyebrow: {
     flex: 1,
     minWidth: 0,
@@ -357,8 +359,8 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   moreButton: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },

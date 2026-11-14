@@ -7,16 +7,19 @@ import {
     Text,
     TextInput,
     View,
+    useWindowDimensions,
 } from "react-native";
 
 import RouteEndpointReselectCard from "../../modules/schedule/components/route/RouteEndpointReselectCard";
 import TransitRouteProgressBar from "../../modules/schedule/components/route/TransitRouteProgressBar";
+import { DisclosureChevron } from "../../modules/schedule/components/route/RouteStepTimeline.helpers";
 import IntercityTimetableSheet from "../../modules/schedule/components/route/IntercityTimetableSheet";
 import BusBookingAction from "../../modules/schedule/components/route/BusBookingAction";
 import TrainBookingAction from "../../modules/schedule/components/route/TrainBookingAction";
 import { isIntercityRideKind, transitModeLabel } from "../../modules/map/transitModes";
 import type { TransitLegDetail, RouteAlternativeOption } from "../../modules/map/tmapApiCore";
 import { TRAVEL_MODE_META } from "../../modules/schedule/travelMode";
+import { routeColorForWhiteIcon } from "../../modules/schedule/routeColorContrast";
 import { shouldShowRequiredMapAttribution } from "../../modules/map/routingService";
 import {
     buildRouteInfoFromAlternative,
@@ -26,7 +29,6 @@ import { getNaverLikeRouteRecommendationLabel } from "../../modules/schedule/rou
 import BrandedLoader from "../../ui/BrandedLoader";
 import styles from "./route-select.styles";
 import {
-    AnimatedRouteCardShell,
     AnimatedRouteExpansion,
     AnimatedTransitFilterButton,
     AnimatedTravelModeButton,
@@ -45,9 +47,9 @@ import {
     formatRouteTimeFare,
     formatScheduleRouteNoticeTime,
     isRideLegKind,
+    sharesTransitDurationEstimate,
 } from "./routeSelectRouteModel";
 import type { RouteSelectController } from "./useRouteSelectController";
-import { JourneySelectedRouteTrial } from "../../modules/journey/JourneySelectedRouteTrial";
 
 type RouteSelectResultsScreenProps = {
     controller: RouteSelectController;
@@ -58,6 +60,14 @@ export function RouteSelectResultsScreen({
     controller,
 }: RouteSelectResultsScreenProps) {
     const [timetableLeg, setTimetableLeg] = React.useState<{ leg: TransitLegDetail; option: RouteAlternativeOption; legIndex: number }>();
+    const { fontScale, height } = useWindowDimensions();
+    const routeScroll = React.useRef<ScrollView>(null);
+    const restoredCandidate = React.useRef<View>(null);
+    const interactedWithCandidates = React.useRef(false);
+    const currentScrollY = React.useRef(0);
+    const restoredCandidateScroll = React.useRef(false);
+    const modeRowOffset = React.useRef(0);
+    const revealWalkResult = React.useRef(false);
     const {
         statusBarStyle,
         insets,
@@ -72,9 +82,12 @@ export function RouteSelectResultsScreen({
         transitRouteFilter,
         routeLoading,
         routeError,
+        showTransitRecovery,
         routeSubmitPending,
+        appliesToSchedule,
         routePointUiRevisionRef,
         routeDepartureAt,
+        hasExplicitDeparture,
         routeScheduleBased,
         routeTargetArrivalAt,
         origin,
@@ -84,6 +97,12 @@ export function RouteSelectResultsScreen({
         transitFilterCounts,
         visibleRouteAlternatives,
         routeContentAnimatedStyle,
+        reduceMotion,
+        restoredScrollY,
+        restoredCandidateId,
+        restoredExpandedCandidateId,
+        collapsedCandidateId,
+        setCollapsedCandidateId,
         selectTravelMode,
         selectTransitFilter,
         hasTransitFilters,
@@ -96,11 +115,64 @@ export function RouteSelectResultsScreen({
         retryRouteSearch,
         openRouteAttribution,
         openMapForOption,
+        routeMapPending,
         saveRouteOption,
         applyIntercityService,
         importedTicket,
         routeUi,
     } = controller;
+    const largeRouteText = fontScale > 1.35;
+    const sharedDurationEstimate = sharesTransitDurationEstimate(visibleRouteAlternatives);
+    const routeTimeBasis = hasExplicitDeparture ? "출발" : routeScheduleBased ? "일정" : "현재 시간";
+    const routeReferenceTime = hasExplicitDeparture
+        ? formatScheduleRouteNoticeTime(routeDepartureAt)
+        : routeScheduleBased && routeTargetArrivalAt
+        ? `${formatScheduleRouteNoticeTime(routeTargetArrivalAt)} 도착`
+        : formatCurrentRouteNoticeTime(routeDepartureAt);
+    const showWalkingRoutes = () => {
+        revealWalkResult.current = largeRouteText;
+        selectTravelMode("WALK");
+    };
+    const updateCandidateScrollAfterLayout = () => {
+        if (!restoredCandidateScroll.current && restoredScrollY !== undefined) {
+            restoredCandidateScroll.current = true;
+            currentScrollY.current = restoredScrollY;
+            routeScroll.current?.scrollTo({ y: restoredScrollY, animated: false });
+            return;
+        }
+        if (!revealWalkResult.current || travelMode !== "WALK" || routeLoading) return;
+        revealWalkResult.current = false;
+        routeScroll.current?.scrollTo({ y: modeRowOffset.current, animated: !reduceMotion });
+    };
+    const revealRestoredCandidate = () => {
+        const scroll = routeScroll.current;
+        const viewport = scroll?.getNativeScrollRef();
+        const candidate = restoredCandidate.current;
+        if (!scroll || !viewport || !candidate || restoredCandidateScroll.current) return;
+        viewport.measureInWindow((_x, viewportY, _width, height) => {
+            candidate.measureInWindow((_candidateX, candidateY, _candidateWidth, candidateHeight) => {
+                if (restoredCandidateScroll.current || height <= 0 || candidateHeight <= 0) return;
+                restoredCandidateScroll.current = true;
+                if (candidateY >= viewportY && candidateY + candidateHeight <= viewportY + height) return;
+                scroll.scrollTo({ y: Math.max(0, currentScrollY.current + candidateY - viewportY - 8), animated: false });
+            });
+        });
+    };
+    const scheduleAction = (
+        <Pressable
+            onPress={goToScheduleList}
+            accessibilityRole="button"
+            accessibilityLabel="일정 목록으로 이동"
+            style={[
+                styles.routeResultScheduleButton,
+                largeRouteText && styles.routeResultScheduleFooterButton,
+                { backgroundColor: largeRouteText ? routeUi.surface2 : routeUi.surface, borderColor: routeUi.border },
+            ]}
+        >
+            <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
+            <Text style={[styles.routeResultScheduleButtonText, { color: routeUi.textSecondary }]}>일정</Text>
+        </Pressable>
+    );
     return (
         <View
             style={[
@@ -145,10 +217,15 @@ export function RouteSelectResultsScreen({
             )}
 
             <ScrollView
+                ref={routeScroll}
                 directionalLockEnabled
                 nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
+                contentOffset={restoredScrollY === undefined ? undefined : { x: 0, y: restoredScrollY }}
+                onScroll={(event) => { currentScrollY.current = Math.max(0, event.nativeEvent.contentOffset.y); }}
+                scrollEventThrottle={16}
+                onContentSizeChange={updateCandidateScrollAfterLayout}
                 contentContainerStyle={[styles.content, { paddingBottom: routeListBottomPadding }]}
             >
                 {!shouldShowRouteResults && (
@@ -226,25 +303,23 @@ export function RouteSelectResultsScreen({
                                 accentRed: routeUi.accentRed,
                             }}
                             style={styles.routeCompactCardInHeader}
+                            stackLabels={largeRouteText}
+                            footerAction={largeRouteText ? scheduleAction : undefined}
                         />
-                        <Pressable
-                            onPress={goToScheduleList}
-                            accessibilityRole="button"
-                            accessibilityLabel="일정 목록으로 이동"
-                            style={[styles.routeResultScheduleButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
-                        >
-                            <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
-                            <Text style={[styles.routeResultScheduleButtonText, { color: routeUi.textSecondary }]}>일정</Text>
-                        </Pressable>
+                        {!largeRouteText && scheduleAction}
                     </View>
                 )}
 
                 {shouldShowRouteResults && (
-                <View style={styles.modeRow}>
+                <View
+                    style={styles.modeRow}
+                    onLayout={largeRouteText ? (event) => { modeRowOffset.current = event.nativeEvent.layout.y; } : undefined}
+                >
                     {SELECTABLE_TRAVEL_MODES.map((modeItem) => {
                         const selected = travelMode === modeItem;
                         return (
                             <AnimatedTravelModeButton
+                                reduceMotion={reduceMotion}
                                 key={modeItem}
                                 selected={selected}
                                 label={TRAVEL_MODE_META[modeItem].label}
@@ -252,7 +327,10 @@ export function RouteSelectResultsScreen({
 	                                backgroundColor={selected ? routeUi.selectedModeBg : "transparent"}
                                 borderColor={selected ? "rgba(41,121,255,0.95)" : "transparent"}
                                 textColor={selected ? routeUi.accentBlue : routeUi.textSecondary}
-                                onPress={() => selectTravelMode(modeItem)}
+                                onPress={() => {
+                                    revealWalkResult.current = false;
+                                    selectTravelMode(modeItem);
+                                }}
                             />
                         );
                     })}
@@ -260,12 +338,13 @@ export function RouteSelectResultsScreen({
                 )}
 
                 {shouldShowRouteResults && (
-                    <Animated.View style={routeContentAnimatedStyle}>
-                {hasTransitFilters && (
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-	                        contentContainerStyle={[styles.transitFilterRow, { borderBottomColor: routeUi.border }]}
+                    <View style={[
+                        largeRouteText && revealWalkResult.current && travelMode === "WALK" && routeLoading &&
+                            { minHeight: height - insets.top },
+                    ]}>
+                {hasTransitFilters && !showTransitRecovery && (
+                    <View
+                        style={[styles.transitFilterRow, largeRouteText && styles.transitFilterRowWrapped, { borderBottomColor: routeUi.border }]}
                     >
                         {TRANSIT_FILTER_ITEMS.map((item) => {
                             const selected = transitRouteFilter === item.key;
@@ -274,43 +353,78 @@ export function RouteSelectResultsScreen({
                             const label = item.key === "ALL" ? item.label : `${item.label} ${count}`;
                             return (
                                 <AnimatedTransitFilterButton
+                                    reduceMotion={reduceMotion}
                                     key={item.key}
-                                    onPress={() => selectTransitFilter(item.key)}
+                                    onPress={() => {
+                                        if (!selected) interactedWithCandidates.current = true;
+                                        selectTransitFilter(item.key);
+                                    }}
                                     disabled={disabled}
                                     selected={selected}
+                                    wrapped={largeRouteText}
                                     label={label}
                                     textColor={selected ? routeUi.textPrimary : routeUi.textSecondary}
                                     accentColor={routeUi.accentBlue}
                                 />
                             );
                         })}
-                    </ScrollView>
-                )}
-
-                {hasTransitFilters && visibleRouteAlternatives.length > 0 && (
-                    <View style={styles.currentRouteNotice}>
-                        <View style={styles.currentRouteTimeGroup}>
-                            <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>
-                                {routeScheduleBased ? "일정" : "현재 시간"}
-                            </Text>
-                            <Text style={[styles.currentRouteNoticeTimeText, { color: routeUi.accentBlue }]}>
-                                {routeScheduleBased && routeTargetArrivalAt
-                                    ? `${formatScheduleRouteNoticeTime(routeTargetArrivalAt)} 도착`
-                                    : formatCurrentRouteNoticeTime(routeDepartureAt)}
-                            </Text>
-                            <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>
-                                기준
-                            </Text>
-                        </View>
-                        <View accessibilityLabel="추천 경로순" style={styles.currentRouteSortGroup}>
-                            <Text style={[styles.currentRouteSortText, { color: routeUi.textSecondary }]}>
-                                추천 경로순
-                            </Text>
-                        </View>
                     </View>
                 )}
 
-                    <View style={styles.routeList}>
+                {hasTransitFilters && !showTransitRecovery && visibleRouteAlternatives.length > 0 && (
+                    <>
+                        <View style={styles.currentRouteNotice}>
+                            {largeRouteText ? (
+                                <Text lineBreakStrategyIOS="hangul-word" style={[styles.currentRouteNoticeText, styles.currentRouteNoticeExpanded, { color: routeUi.textSecondary }]}>
+                                    {`${routeTimeBasis} ${routeReferenceTime} 기준`}
+                                </Text>
+                            ) : (
+                                <>
+                                    <View style={styles.currentRouteTimeGroup}>
+                                        <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>{routeTimeBasis}</Text>
+                                        <Text style={[styles.currentRouteNoticeTimeText, { color: routeUi.accentBlue }]}>{routeReferenceTime}</Text>
+                                        <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>기준</Text>
+                                    </View>
+                                    <View accessibilityLabel="추천 경로순" style={styles.currentRouteSortGroup}>
+                                        <Text style={[styles.currentRouteSortText, { color: routeUi.textSecondary }]}>추천 경로순</Text>
+                                    </View>
+                                </>
+                            )}
+                        </View>
+                        {sharedDurationEstimate && !routeLoading && !routeError && (
+                            <Text
+                                lineBreakStrategyIOS="hangul-word"
+                                style={[styles.currentRouteEstimateText, { color: routeUi.textSecondary }]}
+                            >
+                                이동 시간은 예상값이에요
+                            </Text>
+                        )}
+                    </>
+                )}
+
+                    <Animated.View style={[styles.routeList, routeContentAnimatedStyle]}>
+                    {hasRouteCoords && showTransitRecovery && (
+                        <View style={styles.transitRecovery}>
+                            <Text accessibilityRole="header" lineBreakStrategyIOS="hangul-word" style={[styles.transitRecoveryTitle, { color: routeUi.textPrimary }]}>
+                                대중교통 경로를 찾지 못했어요
+                            </Text>
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="도보 경로 보기"
+                                onPress={showWalkingRoutes}
+                                style={({ pressed }) => [
+                                    styles.transitRecoveryAction,
+                                    { backgroundColor: routeUi.surface2, opacity: pressed ? 0.75 : 1 },
+                                ]}
+                            >
+                                <Ionicons name="walk-outline" size={19} color={routeUi.textPrimary} />
+                                <Text lineBreakStrategyIOS="hangul-word" style={[styles.transitRecoveryActionText, { color: routeUi.textPrimary }]}>
+                                    도보 경로 보기
+                                </Text>
+                                <Ionicons name="chevron-forward-outline" size={15} color={routeUi.textSecondary} />
+                            </Pressable>
+                        </View>
+                    )}
                     {hasRouteCoords && routeLoading && (
                         <View style={[styles.emptyCard, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
                             <BrandedLoader
@@ -322,7 +436,7 @@ export function RouteSelectResultsScreen({
                         </View>
                     )}
 
-                    {hasRouteCoords && !routeLoading && !!routeError && (
+                    {hasRouteCoords && !routeLoading && !showTransitRecovery && !!routeError && (
                         <View style={[styles.emptyCard, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
                             <Text style={[styles.emptyText, { color: routeUi.textSecondary }]}>{routeError}</Text>
                             <Pressable
@@ -331,13 +445,13 @@ export function RouteSelectResultsScreen({
                                 accessibilityLabel="경로 다시 검색"
                                 style={[styles.emptyRetryButton, { backgroundColor: routeUi.accentBlue }]}
                             >
-                                <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                                <Ionicons name="refresh-outline" size={15} color="#FFFFFF" />
                                 <Text style={styles.emptyRetryText}>다시 검색</Text>
                             </Pressable>
                         </View>
                     )}
 
-                    {hasRouteCoords && !routeLoading && !routeError && visibleRouteAlternatives.length === 0 && (
+                    {hasRouteCoords && !routeLoading && !showTransitRecovery && !routeError && visibleRouteAlternatives.length === 0 && (
                         <View style={[styles.emptyCard, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
                             <Text style={[styles.emptyText, { color: routeUi.textSecondary }]}>
                                 선택한 교통수단에 해당하는 경로가 없습니다.
@@ -345,7 +459,7 @@ export function RouteSelectResultsScreen({
                         </View>
                     )}
 
-                    {hasRouteCoords && !routeLoading && !routeError && visibleRouteAlternatives.map((option, displayIndex) => {
+                    {hasRouteCoords && !routeLoading && !showTransitRecovery && !routeError && visibleRouteAlternatives.map((option, displayIndex) => {
                         const selected = selectedRouteId === option.id;
                         const routeInfo = buildRouteInfoFromAlternative(
                             option,
@@ -355,125 +469,161 @@ export function RouteSelectResultsScreen({
                             displayIndex
                         );
                         const progressSegments = buildRouteProgressSegments(option);
+                        const rideSegments = progressSegments.filter(segment => segment.isRide);
+                        const usesLegLabels = rideSegments.length > 0;
                         const routeMetricChips = buildRouteMetricChips(option);
                         const accent = selected ? routeUi.selectedBorder : routeUi.border;
                         const cardBackground = selected ? routeUi.selectedSurface : routeUi.surface;
                         const routeTimeFare = formatRouteTimeFare(option, routeDepartureAt, {
                             targetArrivalAt: routeTargetArrivalAt?.toISOString(),
                             routeInfo,
-                        });
-                        const routeBoardingSummary = buildRouteBoardingSummary(option, originText);
+                        }, !sharedDurationEstimate);
+                        const duration = formatRouteInfoDuration(routeInfo.totalDurationMinutes);
+                        const timingLabel = routeTimeFare ? (
+                            <Text
+                                lineBreakStrategyIOS="hangul-word"
+                                style={[styles.routeOptionTimeFare, { color: routeUi.textSecondary }]}
+                            >
+                                {routeTimeFare}
+                            </Text>
+                        ) : null;
                         const dropdownSummaryItems = buildRouteDropdownSummaryItems(
                             option,
                             originText,
                             destinationText
                         );
+                        const hasDetails = dropdownSummaryItems.length > 0;
+                        const detailsExpanded = selected && hasDetails && collapsedCandidateId !== option.id;
+                        const routeBoardingSummary = !detailsExpanded && rideSegments.length < 3
+                            ? buildRouteBoardingSummary(option, originText)
+                            : undefined;
+                        const routeLegSummary = !detailsExpanded && usesLegLabels
+                            ? rideSegments
+                                .map(segment => `${segment.lineLabel ?? transitModeLabel(segment.kind)} ${segment.label}`)
+                                .join(", ")
+                            : undefined;
                         const selectRoute = () => {
-                            configureRouteExpansionAnimation();
+                            if (selected && !hasDetails) return;
+                            interactedWithCandidates.current = true;
+                            if (!reduceMotion) configureRouteExpansionAnimation();
+                            if (selected) {
+                                setCollapsedCandidateId(detailsExpanded ? option.id : undefined);
+                                return;
+                            }
+                            setCollapsedCandidateId(undefined);
                             setSelectedRouteId(option.id);
                         };
                         return (
-                            <View key={option.id} style={styles.routeCandidateItem}>
-                                <AnimatedRouteCardShell
-                                    selected={selected}
-                                    style={[
-                                        styles.routeOptionCard,
-                                        {
-                                            backgroundColor: cardBackground,
-                                            borderColor: accent,
-                                        },
-	                                        selected
-	                                            ? (isDark ? styles.routeOptionCardSelectedDark : styles.routeOptionCardSelectedLight)
-	                                            : styles.routeOptionCardInactive,
-	                                    ]}
-	                                >
-	                                    <Pressable
-                                            onPress={selectRoute}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={`${formatRouteInfoDuration(routeInfo.totalDurationMinutes)} 경로`}
-                                            accessibilityState={{ selected, expanded: selected }}
-                                            style={styles.routeOptionPressable}
-                                        >
+                            <View
+                                key={option.id}
+                                ref={option.id === restoredCandidateId ? restoredCandidate : undefined}
+                                collapsable={option.id === restoredCandidateId ? false : undefined}
+                                onLayout={option.id === restoredCandidateId ? revealRestoredCandidate : undefined}
+                                style={styles.routeCandidateItem}
+                            >
+                                <View style={[styles.routeOptionCard, { backgroundColor: cardBackground, borderColor: accent }]}>
+                                    <Pressable
+                                        onPress={selectRoute}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`${duration} 경로`}
+                                        accessibilityValue={{ text: [routeTimeFare, ...routeMetricChips.map((metric) => metric.label)]
+                                            .filter(Boolean).join(", ") }}
+                                        accessibilityHint={[
+                                            routeLegSummary, routeBoardingSummary,
+                                            selected && hasDetails ? (detailsExpanded ? "상세를 접습니다" : "상세를 펼칩니다") : undefined,
+                                        ].filter(Boolean).join(", ")}
+                                        accessibilityState={{ selected, ...(hasDetails && { expanded: detailsExpanded }) }}
+                                        style={styles.routeOptionPressable}
+                                    >
                                         <View style={styles.routeOptionHeader}>
-                                            <View style={styles.routeOptionHeaderRow}>
-                                                <View style={styles.routeOptionTitleMetaRow}>
-                                                    <View
-                                                        style={[
-                                                            styles.routeOptionLabelPill,
-                                                            { backgroundColor: selected ? routeUi.selectedBorder : routeUi.surface2 },
-                                                        ]}
-                                                    >
-                                                        {selected && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
-                                                        <Text style={[styles.routeOptionLabel, { color: selected ? "#FFFFFF" : routeUi.textSecondary }]}>
-                                                            {option.intercityJourney ? "선택 운행편" : getNaverLikeRouteRecommendationLabel(
-                                                                option,
-                                                                visibleRouteAlternatives,
-                                                                displayIndex
-                                                            )}
-                                                        </Text>
-                                                    </View>
-                                                    {!!routeTimeFare && (
-                                                        <Text numberOfLines={1} style={[styles.routeOptionTimeFare, { color: routeUi.textSecondary }]}>
-                                                            {routeTimeFare}
-                                                        </Text>
-                                                    )}
-                                                </View>
-                                                <View style={styles.routeOptionDurationWrap}>
-                                                    <Text numberOfLines={1} style={[styles.routeOptionDuration, { color: routeUi.textPrimary }]}>
-                                                        {formatRouteInfoDuration(routeInfo.totalDurationMinutes)}
+                                            <View style={[styles.routeOptionHeaderRow, largeRouteText && styles.routeOptionHeaderStack]}>
+                                                <Text
+                                                    lineBreakStrategyIOS="hangul-word"
+                                                    style={[
+                                                        styles.routeOptionDuration,
+                                                        largeRouteText && styles.routeOptionDurationExpanded,
+                                                        { color: routeUi.textPrimary },
+                                                    ]}
+                                                >
+                                                    {duration}
+                                                </Text>
+                                                <View style={styles.routeOptionLabelRow}>
+                                                    {selected && <Ionicons name="checkmark-outline" size={15} color={routeUi.accentBlue} />}
+                                                    <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeOptionLabel, {
+                                                        color: selected ? routeUi.accentBlue : routeUi.textSecondary,
+                                                    }]}>
+                                                        {option.intercityJourney ? "선택 운행편" : getNaverLikeRouteRecommendationLabel(
+                                                            option, visibleRouteAlternatives, displayIndex
+                                                        )}
                                                     </Text>
+                                                    {hasDetails && <DisclosureChevron
+                                                        expanded={detailsExpanded}
+                                                        reduceMotion={reduceMotion}
+                                                        size={16}
+                                                        color={selected ? routeUi.accentBlue : routeUi.textSecondary}
+                                                    />}
                                                 </View>
                                             </View>
-                                            {routeMetricChips.length > 0 && <View style={styles.routeMetricRow}>
-                                                {routeMetricChips.map((metric) => {
-                                                    return (
-                                                        <View
-                                                            key={`${option.id}-${metric.key}`}
-                                                            style={[
-                                                                styles.routeMetricChip,
-                                                                {
-                                                                    backgroundColor: routeUi.neutralChipBg,
-                                                                    borderColor: routeUi.neutralChipBorder,
-                                                                },
-                                                            ]}
+                                            {timingLabel}
+                                            {routeMetricChips.length > 0 && (largeRouteText ? (
+                                                <View style={styles.routeMetricsWrapped}>
+                                                    {routeMetricChips.map(metric => (
+                                                        <Text
+                                                            key={metric.key}
+                                                            lineBreakStrategyIOS="hangul-word"
+                                                            style={[styles.routeMetricText, { color: routeUi.textSecondary }]}
                                                         >
-                                                            <Text
-                                                                numberOfLines={1}
-                                                                style={[
-                                                                    styles.routeMetricText,
-                                                                    { color: routeUi.textSecondary },
-                                                                ]}
-                                                            >
-                                                                {metric.label}
-                                                            </Text>
-                                                        </View>
-                                                    );
-                                                })}
-                                            </View>}
-                                            {progressSegments.length > 0 && (
-                                                <TransitRouteProgressBar
-                                                    segments={progressSegments}
-                                                    isDark={isDark}
-                                                    compact
-                                                />
-	                                        )}
-	                                            {!selected && !!routeBoardingSummary && (
-	                                                <View
-	                                                    style={[styles.routeBoardingSummaryRow, { borderTopColor: routeUi.border }]}
-	                                                >
-	                                                    <Ionicons name="navigate-circle-outline" size={17} color={routeUi.textSecondary} />
-	                                                    <Text
-	                                                        numberOfLines={1}
-	                                                        style={[styles.routeBoardingSummaryText, { color: routeUi.textSecondary }]}
-	                                                    >
-	                                                        {routeBoardingSummary}
-	                                                    </Text>
-	                                                </View>
-	                                            )}
-	                                        </View>
-									</Pressable>
-                                    {selected && dropdownSummaryItems.length > 0 && (
+                                                            {metric.label.replace(/(\d)([분회])/gu, "$1\u2060$2")}
+                                                        </Text>
+                                                    ))}
+                                                </View>
+                                            ) : (
+                                                <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeMetricText, { color: routeUi.textSecondary }]}>
+                                                    {routeMetricChips.map(metric => metric.label).join(" · ")}
+                                                </Text>
+                                            ))}
+                                            {progressSegments.length > 0 && !detailsExpanded && (
+                                                largeRouteText && !usesLegLabels ? (
+                                                    <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeOptionTimeFare, { color: routeUi.textSecondary }]}>
+                                                        {progressSegments.map((segment) =>
+                                                            `${segment.lineLabel ?? transitModeLabel(segment.kind)} ${segment.label}`
+                                                        ).join(" · ")}
+                                                    </Text>
+                                                ) : (
+                                                    <AnimatedRouteExpansion
+                                                        variant="summary"
+                                                        reduceMotion={reduceMotion}
+                                                        restored={!usesLegLabels || !selected || !interactedWithCandidates.current}
+                                                        style={undefined}
+                                                    >
+                                                        <TransitRouteProgressBar
+                                                            segments={progressSegments}
+                                                            isDark={isDark}
+                                                            compact
+                                                            labelledSummary={usesLegLabels}
+                                                            alignedSummary={usesLegLabels}
+                                                        />
+                                                    </AnimatedRouteExpansion>
+                                                )
+                                            )}
+                                            {!!routeBoardingSummary && (
+                                                <View style={styles.routeBoardingSummaryRow}>
+                                                    <Ionicons name="navigate-circle-outline" size={16} color={routeUi.textSecondary} />
+                                                    <Text
+                                                        numberOfLines={largeRouteText ? undefined : 1}
+                                                        lineBreakStrategyIOS="hangul-word"
+                                                        style={[styles.routeBoardingSummaryText, { color: routeUi.textSecondary }]}
+                                                    >
+                                                        {routeBoardingSummary}
+                                                    </Text>
+                                                </View>
+                                            )}
+                                        </View>
+                                    </Pressable>
+                                    {detailsExpanded && (
                                         <AnimatedRouteExpansion
+                                            reduceMotion={reduceMotion}
+                                            restored={!interactedWithCandidates.current && restoredExpandedCandidateId === option.id}
                                             style={[
                                                 styles.routeOptionExpansion,
                                                 { borderTopColor: routeUi.border },
@@ -486,15 +636,16 @@ export function RouteSelectResultsScreen({
                                                         (summary.kind === "TRANSFER"
                                                             ? routeUi.textSecondary
                                                             : routeUi.borderStrong);
+                                                    const iconColor = isRide ? "#FFFFFF" : routeUi.textSecondary;
                                                     const iconName: React.ComponentProps<typeof Ionicons>["name"] =
                                                         (summary.kind === "SUBWAY" || summary.kind === "TRAIN")
-                                                            ? "train"
+                                                            ? "train-outline"
                                                             : (["BUS", "EXPRESS_BUS", "INTERCITY_BUS", "COACH"].includes(summary.kind))
-                                                                ? "bus"
+                                                                ? "bus-outline"
                                                                 : summary.kind === "TRANSFER"
-                                                                    ? "swap-horizontal"
+                                                                    ? "swap-horizontal-outline"
                                                                     : summary.kind === "WALK"
-                                                                        ? "walk"
+                                                                        ? "walk-outline"
                                                                         : "navigate-outline";
                                                     return (
                                                         <View key={summary.key} style={styles.routeDropdownSummaryRow}>
@@ -504,14 +655,14 @@ export function RouteSelectResultsScreen({
                                                                         styles.routeDropdownIcon,
                                                                         {
                                                                             borderColor: itemColor,
-                                                                            backgroundColor: isRide ? itemColor : "transparent",
+                                                                            backgroundColor: isRide ? routeColorForWhiteIcon(itemColor) : "transparent",
                                                                         },
                                                                     ]}
                                                                 >
                                                                     <Ionicons
                                                                         name={iconName}
                                                                         size={14}
-                                                                        color={isRide ? "#FFFFFF" : itemColor}
+                                                                        color={iconColor}
                                                                     />
                                                                 </View>
                                                                 {summaryIndex < dropdownSummaryItems.length - 1 && (
@@ -525,17 +676,19 @@ export function RouteSelectResultsScreen({
                                                             </View>
                                                             <View style={styles.routeDropdownStepTextWrap}>
                                                                 <Text
-                                                                    numberOfLines={1}
+                                                                    numberOfLines={largeRouteText ? undefined : 1}
+                                                                    lineBreakStrategyIOS="hangul-word"
                                                                     style={[
                                                                         styles.routeDropdownStepLine,
-                                                                        { color: isRide ? itemColor : routeUi.textPrimary },
+                                                                        { color: routeUi.textPrimary },
                                                                     ]}
                                                                 >
                                                                     {summary.title}
                                                                 </Text>
                                                                 {!!summary.subtitle && (
                                                                     <Text
-                                                                        numberOfLines={1}
+                                                                        numberOfLines={largeRouteText ? undefined : 1}
+                                                                        lineBreakStrategyIOS="hangul-word"
                                                                         style={[
                                                                             styles.routeDropdownStepMeta,
                                                                             { color: routeUi.textSecondary },
@@ -580,15 +733,19 @@ export function RouteSelectResultsScreen({
                                         <View
                                             style={[
                                                 styles.routeCardActions,
+                                                largeRouteText && styles.routeCardActionsStack,
                                                 { borderTopColor: routeUi.border },
                                             ]}
                                         >
                                             <Pressable
-                                                onPress={() => openMapForOption(option)}
+                                                onPress={() => openMapForOption(option, currentScrollY.current)}
+                                                disabled={routeMapPending}
                                                 accessibilityRole="button"
-                                                accessibilityLabel="경로 상세 보기"
+                                                accessibilityLabel={routeMapPending ? "경로 지도를 여는 중" : "지도에서 경로 보기"}
+                                                accessibilityState={{ busy: routeMapPending, disabled: routeMapPending }}
                                                 style={[
                                                     styles.routeCardSecondaryButton,
+                                                    largeRouteText && styles.routeCardActionExpanded,
                                                     {
                                                         backgroundColor: routeUi.surface,
                                                         borderColor: routeUi.border,
@@ -596,21 +753,22 @@ export function RouteSelectResultsScreen({
                                                 ]}
                                             >
                                                 <Ionicons name="map-outline" size={15} color={routeUi.textPrimary} />
-                                                <Text style={[styles.routeCardSecondaryButtonText, { color: routeUi.textPrimary }]}>
-                                                    경로 상세 보기
+                                                <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeCardSecondaryButtonText, largeRouteText && styles.routeCardActionTextExpanded, { color: routeUi.textPrimary }]}>
+                                                    {routeMapPending ? "지도 여는 중…" : "지도에서 보기"}
                                                 </Text>
                                             </Pressable>
                                             <Pressable
                                                 onPress={() => saveRouteOption(option, displayIndex)}
                                                 disabled={routeSubmitPending}
                                                 accessibilityRole="button"
-                                                accessibilityLabel="이 경로 저장"
+                                                accessibilityLabel={appliesToSchedule ? "이 경로를 일정에 적용" : "이 경로 저장"}
                                                 accessibilityState={{
                                                     busy: routeSubmitPending,
                                                     disabled: routeSubmitPending,
                                                 }}
                                                 style={[
                                                     styles.routeCardPrimaryButton,
+                                                    largeRouteText && styles.routeCardActionExpanded,
                                                     {
                                                         backgroundColor: routeUi.accentBlue,
                                                         opacity: routeSubmitPending ? 0.58 : 1,
@@ -624,24 +782,20 @@ export function RouteSelectResultsScreen({
                                                         accessibilityLabel="선택한 경로를 저장하고 있어요"
                                                     />
                                                 ) : (
-                                                    <Text style={styles.routeCardPrimaryButtonText}>
-                                                        이 경로로 저장
+                                                    <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeCardPrimaryButtonText, largeRouteText && styles.routeCardActionTextExpanded]}>
+                                                        {appliesToSchedule ? "일정에 적용" : "이 경로로 저장"}
                                                     </Text>
                                                 )}
                                             </Pressable>
                                         </View>
                                     )}
 
-                                    {__DEV__ && selected && option.mode === "TRANSIT" ? (
-                                        <JourneySelectedRouteTrial route={option} origin={origin} destination={destination}
-                                            disabled={routeLoading || routeSubmitPending} />
-                                    ) : null}
-	                                </AnimatedRouteCardShell>
+	                                </View>
 	                            </View>
                         );
                     })}
-                    </View>
                     </Animated.View>
+                    </View>
                 )}
             </ScrollView>
         </View>

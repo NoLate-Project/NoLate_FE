@@ -28,6 +28,7 @@ export type NavigationTransitionShell = {
   backAccessibilityLabel?: string;
   showBack?: boolean;
   sceneKey?: string;
+  onSceneClose?: () => void;
 };
 
 export type PreMountedNavigationScene = {
@@ -46,6 +47,7 @@ type TransitionContextValue = {
     navigationAction: () => void,
   ): void;
   closeActiveScene(): boolean;
+  getPreviousSceneRoute(): string | undefined;
 };
 
 const PREMOUNTED_SHELLS: NavigationTransitionShell[] = [
@@ -85,7 +87,7 @@ export function ImmediateNavigationTransitionProvider({
     sceneActivityRefs.current[scene.route] ??= createSceneActivityStore();
   }
   const activeOverlayRef = useRef<ActiveOverlay | null>(null);
-  const sceneHistoryRef = useRef<string[]>([]);
+  const sceneHistoryRef = useRef<ActiveOverlay[]>([]);
   const underlyingRouteRef = useRef('/');
   const nextIdRef = useRef(1);
   const navigationFrameRef = useRef<number | null>(null);
@@ -144,19 +146,17 @@ export function ImmediateNavigationTransitionProvider({
     const current = activeOverlayRef.current;
     if (!current || current.kind !== 'scene') return false;
 
-    const previousRoute = sceneHistoryRef.current.pop();
-    const targetRoute = previousRoute && sceneRefs.current[previousRoute]
-      ? previousRoute
-      : '/schedule';
+    const previous = sceneHistoryRef.current.pop();
+    const previousScene = previous && sceneRefs.current[previous.route] ? previous : undefined;
+    const targetRoute = previousScene?.route ?? '/schedule';
     beginNavigationMeasurement('SCENE', current.route, targetRoute);
     setNativeOverlayVisibility('scene', current.route, false);
-    if (targetRoute === '/schedule') {
+    if (!previousScene) {
       sceneHistoryRef.current = [];
       activeOverlayRef.current = null;
     } else {
       const next = {
-        route: targetRoute,
-        title: '',
+        ...previousScene,
         id: nextIdRef.current++,
         kind: 'scene' as const,
       };
@@ -164,8 +164,14 @@ export function ImmediateNavigationTransitionProvider({
       setNativeOverlayVisibility('scene', targetRoute, true);
     }
     completeVisibleScene(targetRoute);
+    if (targetRoute === '/schedule') current.onSceneClose?.();
     return true;
   }, [completeVisibleScene, setNativeOverlayVisibility]);
+
+  const getPreviousSceneRoute = useCallback(
+    () => sceneHistoryRef.current.at(-1)?.route,
+    [],
+  );
 
   const runWithTransitionShell = useCallback<
     TransitionContextValue['runWithTransitionShell']
@@ -198,9 +204,9 @@ export function ImmediateNavigationTransitionProvider({
     ) {
       const fromRoute = activeOverlay?.route ?? '/schedule';
       if (activeOverlay?.kind === 'scene') {
-        const previousRoute = sceneHistoryRef.current.at(-1);
-        if (previousRoute === shell.route) sceneHistoryRef.current.pop();
-        else sceneHistoryRef.current.push(activeOverlay.route);
+        const previous = sceneHistoryRef.current.at(-1);
+        if (previous?.route === shell.route) sceneHistoryRef.current.pop();
+        else sceneHistoryRef.current.push(activeOverlay);
         setNativeOverlayVisibility('scene', activeOverlay.route, false);
       } else {
         sceneHistoryRef.current = [];
@@ -269,8 +275,9 @@ export function ImmediateNavigationTransitionProvider({
     () => ({
       runWithTransitionShell,
       closeActiveScene,
+      getPreviousSceneRoute,
     }),
-    [closeActiveScene, runWithTransitionShell],
+    [closeActiveScene, getPreviousSceneRoute, runWithTransitionShell],
   );
 
   useEffect(() => subscribeToFocusedDestination(route => {
@@ -358,6 +365,7 @@ export function useImmediateNavigationTransition() {
         navigationAction: () => void,
       ) => navigationAction(),
       closeActiveScene: () => false,
+      getPreviousSceneRoute: () => undefined,
     };
   }
   return context;

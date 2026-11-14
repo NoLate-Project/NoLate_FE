@@ -13,10 +13,13 @@ const mapPickerStyles = {
         left: 16,
         right: 16,
         top: 0,
+        gap: 8,
+        zIndex: 5,
+    },
+    mapPickerHeaderRow: {
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
-        zIndex: 5,
     },
     mapPickerIconButton: {
         width: 48,
@@ -26,12 +29,6 @@ const mapPickerStyles = {
         alignItems: "center",
         justifyContent: "center",
     },
-    mapPickerBackText: {
-        fontSize: 34,
-        fontWeight: "700",
-        lineHeight: 38,
-        marginTop: -2,
-    },
     mapPickerTitleBox: {
         flex: 1,
         minHeight: 48,
@@ -40,11 +37,6 @@ const mapPickerStyles = {
         alignItems: "center",
         justifyContent: "center",
         paddingHorizontal: 14,
-    },
-    mapPickerTitle: {
-        fontSize: 16,
-        fontWeight: "900",
-        letterSpacing: 0,
     },
     mapPickerBottomSheet: {
         position: "absolute",
@@ -58,24 +50,50 @@ const mapPickerStyles = {
         gap: 13,
         zIndex: 5,
     },
-    mapPickerInstruction: {
-        fontSize: 18,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
-    mapPickerAddressRow: {
-        minHeight: 42,
-        flexDirection: "row",
-        alignItems: "flex-start",
-        gap: 9,
-    },
-    mapPickerAddressText: {
-        flex: 1,
-        fontSize: 13,
+    mapPickerStageTitle: {
+        fontSize: 16,
         fontWeight: "700",
-        lineHeight: 18,
-        letterSpacing: 0,
+        textAlign: "center",
+        paddingVertical: 6,
     },
+    mapPickerOriginPill: {
+        alignSelf: "flex-start",
+        maxWidth: "82%",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        borderRadius: 10,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+    },
+    mapPickerOriginText: {
+        flexShrink: 1,
+        fontSize: 13,
+        fontWeight: "600",
+    },
+    mapPickerConfirmationSheet: {
+        paddingTop: 12,
+        gap: 8,
+    },
+    mapPickerPlace: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    mapPickerPlaceCopy: { flex: 1 },
+    mapPickerPlaceDetails: { gap: 3 },
+    mapPickerPlaceTitle: { fontSize: 16, fontWeight: "700" },
+    mapPickerPlaceAddress: { fontSize: 13, fontWeight: "500" },
+    mapPickerConfirm: {
+        minHeight: 48,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+    },
+    mapPickerConfirmText: { fontSize: 15, fontWeight: "700", textAlign: "center" },
 } as const;
 
 export default mapPickerStyles;

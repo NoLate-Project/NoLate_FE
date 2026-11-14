@@ -108,6 +108,7 @@ type FavoritePlaceReorderPayload = {
 
 type SaveFavoritePlaceOptions = {
     categoryId?: string;
+    label?: string;
 };
 
 function normalizeFavoritePlace(dto: FavoritePlaceDto): FavoritePlace {
@@ -219,7 +220,7 @@ export async function saveFavoritePlaceToApi(
         throw new Error("이 장소의 위치를 확인하지 못해 즐겨찾기에 저장할 수 없어요.");
     }
 
-    const label = place.name?.trim() || place.address?.trim() || "즐겨찾기 장소";
+    const label = options.label?.trim() || place.name?.trim() || place.address?.trim() || "즐겨찾기 장소";
     const categoryId = options.categoryId ? Number(options.categoryId) : undefined;
     const payload: SaveFavoritePlacePayload = {
         ...(typeof categoryId === "number" && Number.isFinite(categoryId) ? { categoryId } : {}),

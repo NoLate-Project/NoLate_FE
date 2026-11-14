@@ -6,7 +6,6 @@ import {
   type SetStateAction,
 } from 'react';
 import {
-  Alert,
   Animated,
   Easing,
   Keyboard,
@@ -37,10 +36,6 @@ import { useImmediateNavigationTransition } from '../../performance/ImmediateNav
 const SEARCH_TOOLBAR_OPEN_DURATION_MS = 120;
 
 export type ToolbarMenu = 'view' | 'search' | 'add';
-export type AddItemOptions = {
-  showErrorAlert?: boolean;
-};
-
 type SetValue<T> = Dispatch<SetStateAction<T>>;
 
 type Options = {
@@ -50,7 +45,6 @@ type Options = {
   commitAddHandoffPresentation: (kind: 'manual' | 'quick') => void;
   dispatch: ReturnType<typeof useScheduleStore>['dispatch'];
   fetchVisibleMonth: string;
-  getErrorMessage: (error: unknown) => string;
   isSearchToolbarOpen: boolean;
   loadSchedules: () => void;
   manualMorphPresenterRef: MutableRefObject<ScheduleAddMorphPresenter | null>;
@@ -95,7 +89,6 @@ export function useScheduleIndexToolbarActions({
   commitAddHandoffPresentation,
   dispatch,
   fetchVisibleMonth,
-  getErrorMessage,
   isSearchToolbarOpen,
   loadSchedules,
   manualMorphPresenterRef,
@@ -127,10 +120,7 @@ export function useScheduleIndexToolbarActions({
 }: Options) {
   const { runWithTransitionShell } = useImmediateNavigationTransition();
   // 새 일정 payload를 백엔드에 저장한 뒤 응답 값을 일정 저장소에 추가한다.
-  const addItem = async (
-    payload: Omit<ScheduleItem, 'id'>,
-    { showErrorAlert = true }: AddItemOptions = {},
-  ) => {
+  const addItem = async (payload: Omit<ScheduleItem, 'id'>) => {
     // Fence an already-running range GET before the POST can advance the
     // cache revision. Otherwise that GET can complete during alarm
     // recovery and publish an empty pre-mutation snapshot.
@@ -153,8 +143,8 @@ export function useScheduleIndexToolbarActions({
       // An uncached month performs the one authoritative fetch needed to
       // restore the rest of that month's schedules.
       loadSchedules();
+      return item;
     } catch (error) {
-      const message = getErrorMessage(error);
       dispatch({ type: 'SET_LOADING', loading: false });
       // If no newer range owns the screen, let the request that was in
       // flight before the POST publish when it eventually completes.
@@ -169,9 +159,6 @@ export function useScheduleIndexToolbarActions({
           readCalendarScheduleCache(scheduleFetchStartAt, scheduleFetchEndAt)
             .items,
         );
-      }
-      if (showErrorAlert) {
-        Alert.alert('일정 등록 실패', message);
       }
       throw error;
     }
@@ -510,20 +497,18 @@ export function useScheduleIndexToolbarActions({
   const openSharedCalendarManager = () => {
     runToolbarAction(() => {
       runWithTransitionShell(
-        { route: '/schedule/calendars', title: '공유 캘린더' },
+        { route: '/schedule/calendars', title: '공유 캘린더 관리' },
         () => router.push('/schedule/calendars'),
       );
     });
   };
 
-  /** 검색 UI를 닫고 선택한 일정 상세 화면으로 이동한다. */
+  /** 현재 검색 결과를 그대로 두고 선택한 일정 상세를 그 위에 연다. */
   const openScheduleFromSearch = (id: string) => {
-    setSearchQuery('');
-    runToolbarAction(() => {
-      router.push({
-        pathname: '/schedule/[id]',
-        params: { id },
-      });
+    Keyboard.dismiss();
+    router.push({
+      pathname: '/schedule/[id]',
+      params: { id, entrySource: 'calendar-search' },
     });
   };
 

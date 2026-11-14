@@ -12,6 +12,18 @@ import { createScheduleInitialState } from "../src/modules/schedule/initialState
 import { ScheduleProvider } from "../src/modules/schedule/store";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 
+const mockCloseActiveScene = jest.fn(() => false);
+const mockRouterBack = jest.fn();
+const mockRouterReplace = jest.fn();
+const mockRunWithTransitionShell = jest.fn((_shell: unknown, action: () => void) => action());
+
+jest.mock("../src/modules/performance/ImmediateNavigationTransition", () => ({
+    useImmediateNavigationTransition: () => ({
+        closeActiveScene: mockCloseActiveScene,
+        runWithTransitionShell: mockRunWithTransitionShell,
+    }),
+}));
+
 // The unit renderer has no native navigation container.
 jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
 
@@ -22,9 +34,9 @@ jest.mock("../src/modules/auth/authStorage", () => ({
 jest.mock("expo-router", () => ({
     useLocalSearchParams: jest.fn(() => ({})),
     useRouter: () => ({
-        back: jest.fn(),
+        back: mockRouterBack,
         canGoBack: () => true,
-        replace: jest.fn(),
+        replace: mockRouterReplace,
     }),
 }));
 jest.mock("react-native-safe-area-context", () => ({
@@ -65,6 +77,10 @@ describe("ScheduleCategoriesScreen load state", () => {
         ).IS_REACT_ACT_ENVIRONMENT = true;
     });
 
+    beforeEach(() => {
+        mockCloseActiveScene.mockReturnValue(false);
+    });
+
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
@@ -93,6 +109,54 @@ describe("ScheduleCategoriesScreen load state", () => {
             await new Promise<void>((resolve) => setTimeout(() => resolve(), 0));
         });
     }
+
+    test("중첩 화면에서는 이전 장면으로 돌아가며 메인 달력 전환을 요청하지 않는다", async () => {
+        mockGetCategories.mockResolvedValueOnce([]);
+        mockCloseActiveScene.mockReturnValue(true);
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "뒤로 가기" }).props.onPress();
+        });
+        expect(mockCloseActiveScene).toHaveBeenCalledTimes(1);
+        expect(mockRunWithTransitionShell).not.toHaveBeenCalled();
+        expect(mockRouterBack).not.toHaveBeenCalled();
+        expect(mockRouterReplace).not.toHaveBeenCalled();
+    });
+
+    test("직접 진입한 화면에서는 라우터의 이전 화면으로 돌아간다", async () => {
+        mockGetCategories.mockResolvedValueOnce([]);
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "뒤로 가기" }).props.onPress();
+        });
+        expect(mockCloseActiveScene).toHaveBeenCalledTimes(1);
+        expect(mockRouterBack).toHaveBeenCalledTimes(1);
+    });
+
+    test("공유 캘린더에서 열면 원래 캘린더를 선택한 관리 화면으로 복귀한다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({ calendarId: "7", returnTo: "calendars" });
+        mockGetCategories.mockResolvedValueOnce([]);
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "뒤로 가기" }).props.onPress();
+        });
+        expect(mockRouterBack).not.toHaveBeenCalled();
+        expect(mockRouterReplace).toHaveBeenCalledWith({
+            pathname: "/schedule/calendars",
+            params: { id: "7" },
+        });
+    });
+
+    test("유효한 공유 캘린더 없이 복귀 대상을 지정해도 일반 뒤로가기를 유지한다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({ calendarId: "invalid", returnTo: "calendars" });
+        mockGetCategories.mockResolvedValueOnce([]);
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "뒤로 가기" }).props.onPress();
+        });
+        expect(mockRouterBack).toHaveBeenCalledTimes(1);
+        expect(mockRouterReplace).not.toHaveBeenCalled();
+    });
 
     test("조회 실패를 빈 목록으로 오해시키지 않고 재시도를 제공한다", async () => {
         mockGetCategories.mockRejectedValueOnce(new Error("네트워크 오류"));

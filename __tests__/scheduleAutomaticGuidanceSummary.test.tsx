@@ -9,7 +9,7 @@ jest.mock('../src/routeSupport/schedule/ScheduleDetailChrome',()=>({APP_ACCENT_B
 jest.mock('../src/routeSupport/schedule/schedule-detail.styles',()=>({createScheduleDetailStyles:()=>({})}));
 jest.mock('../src/modules/journey/SavedJourneyGuidanceCard',()=>({SavedJourneyGuidanceCard:'GuidanceCard'}));
 const completeDeparture=jest.fn(),snapSheet=jest.fn();
-const presentation={item:{id:'42'},sheetMode:'compact',routeIdentityTitle:'출발 → 도착',
+const presentation={item:{id:'42'},sheetMode:'compact',routeIdentityTitle:'출발 → 도착',showRouteIdentityInSheet:true,
     departureTimeLabel:'권장 출발',recommendedDepartureTimeLabel:'08:00',routeArrivalSummary:'09:00 도착',routeFactLabels:[],routeProgressSegments:[],
     completeDeparture,snapSheet,hasDepartureInfo:true,departureCompleted:false,journeyGuidanceAvailable:true} as unknown as ScheduleDetailPresentation;
 const input={legs:[]} as unknown as JourneyRouteInput;
@@ -17,7 +17,7 @@ beforeEach(()=>jest.clearAllMocks());
 it('active GPS replaces departure hero so current stage/bar fits the compact viewport',()=>{
     let view!:ReactTestRenderer;
     act(()=>{view=TestRenderer.create(<ScheduleDetailRouteQuickSummary presentation={presentation}
-        automaticGuidanceActive automaticGuidancePrepared automaticRouteInput={input}/>);});
+        automaticGuidanceActive automaticRouteInput={input}/>);});
     const json=JSON.stringify(view.toJSON());
     expect(json).not.toContain('권장 출발');expect(json).not.toContain('길안내 시작');
     expect(view.root.findByType('GuidanceCard' as never).props).toMatchObject({input,scheduleId:'42',compact:true});
@@ -27,7 +27,7 @@ it('active GPS replaces departure hero so current stage/bar fits the compact vie
 });
 it('preparation alone or terminal binding does not fabricate active guidance or remove schedule summary',()=>{
     let view!:ReactTestRenderer;
-    act(()=>{view=TestRenderer.create(<ScheduleDetailRouteQuickSummary presentation={presentation} automaticGuidancePrepared/>);});
+    act(()=>{view=TestRenderer.create(<ScheduleDetailRouteQuickSummary presentation={presentation}/>);});
     expect(JSON.stringify(view.toJSON())).toContain('권장 출발');
     expect(view.root.findAllByType('GuidanceCard' as never)).toHaveLength(0);
     expect(JSON.stringify(view.toJSON())).not.toContain('길안내 시작');

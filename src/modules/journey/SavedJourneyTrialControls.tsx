@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import type { JourneyRouteInput } from "./journeyRouteInput";
 import { useAutomaticJourneyTrial } from "./useAutomaticJourneyTrial";
 import { currentJourneyAuthentication, type JourneyAuthenticationSource } from "./automaticJourneyAuthentication";
@@ -11,7 +12,7 @@ import {journeyNoticeAvailability} from './journeyNoticeAvailability';
 import {isAutomaticJourneyDevelopment} from './automaticJourney';
 
 /** Opt-in saved-route entry. Native and server independently enforce execution and account ownership. */
-export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authenticatedSchedule, previewAuthenticationSource, showDiagnostics=false, onTrialEnded }: {
+export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authenticatedSchedule, previewAuthenticationSource, showDiagnostics=false, onTrialEnded, onViewSavedRoute, isDark=false }: {
     input: JourneyRouteInput | null; savedRoute?: unknown; authenticatedSchedule?: { scheduleId: string; memberId: number };
     /** Internal QA caller only; never installed in real authentication storage. */
     previewAuthenticationSource?: JourneyAuthenticationSource;
@@ -19,10 +20,13 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     showDiagnostics?: boolean;
     /** Internal QA: the native remote-push pilot resets when its trial ends. */
     onTrialEnded?: () => void;
+    onViewSavedRoute?: () => void;
+    isDark?: boolean;
 }) {
     const [connected,setConnected]=useState<JourneyRouteInput|null>(null);
     const [connecting,setConnecting]=useState(false);
     const [connectionError,setConnectionError]=useState(false);
+    const [checksExpanded, setChecksExpanded] = useState(showDiagnostics);
     const [noticePending,setNoticePending]=useState(false);
     const noticeBusy=useRef(false);
     const noticePendingChanged=useCallback((pending:boolean)=>{noticeBusy.current=pending;setNoticePending(pending);},[]);
@@ -65,6 +69,12 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
             && (!authenticatedSchedule || binding.authMemberId === memberId);
     };
     const ownRunning = trial.running && ownsRunning();
+    const lastOwnedSession = useRef<{ scheduleId: string; sessionId: string; route: string | null; memberId?: number } | null>(null);
+    useEffect(() => {
+        if (ownRunning && snapshot?.sessionId) {
+            lastOwnedSession.current = { scheduleId, sessionId: snapshot.sessionId, route: baseRouteIdentity, memberId };
+        }
+    }, [ownRunning, snapshot?.sessionId, scheduleId, baseRouteIdentity, memberId]);
     const connectWalking=async()=>{
         if(!isAutomaticJourneyDevelopment()||connectionBusy.current||noticeBusy.current||trial.running||trial.pending||!baseInput||!authenticatedSchedule)return;
         connectionBusy.current=true;const revision=connectionRevision.current;setConnecting(true);setConnectionError(false);setConnected(null);
@@ -83,14 +93,28 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     const diagnosticCode=(value:unknown)=>typeof value==='string'&&/^[A-Z][A-Z0-9_]{0,95}$/.test(value)?value:'UNAVAILABLE';
     const count=(value:unknown,max=1000)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=max?value:0;
     const consentLabel=connected?.walkingSnapshot?.schemaVersion===4?'최대 2시간 위치 안내 시험 동의':'최대 10분 위치 안내 시험 동의';
+    const previous = lastOwnedSession.current;
+    const endedHere = !trial.running && previous?.scheduleId === scheduleId
+        && previous.route === baseRouteIdentity && previous.memberId === memberId
+        && previous.sessionId === snapshot?.sessionId
+        && (snapshot?.status === 'EXPIRED' || snapshot?.status === 'STOPPED');
+    const heading = ownRunning ? (snapshot?.status === 'ARMED' ? '출발 대기' : '위치 안내 중')
+        : endedHere ? '위치 안내가 끝났어요' : '위치 안내 설정';
+    const descriptionStyle = [styles.explanation, isDark && styles.explanationDark];
     return <View testID="saved-detail-controls" style={styles.root}>
-        <Text>위치 안내 시험 · {trial.running && !ownRunning ? '다른 경로 안내 중' : trial.snapshot?.status ?? 'IDLE'}</Text>
-        <Text>준비는 출발이 아닙니다. GPS 이동으로 출발을 판단합니다.</Text>
-        {trial.snapshot?.status==='EXPIRED'&&<Text accessibilityLiveRegion="polite">시험 계약 시간이 만료되어 안내를 종료했어요. 다시 이용하려면 경로를 새로 연결해 주세요.</Text>}
+        <Animated.View key={heading} entering={headingEntrance}>
+            <Text testID="saved-detail-guidance-heading" accessibilityRole="header" accessibilityLiveRegion="polite"
+                style={[styles.heading, isDark && styles.headingDark]}>{heading}</Text>
+        </Animated.View>
+        {!trial.running && <Text style={descriptionStyle}>
+            {endedHere ? '저장한 경로는 계속 볼 수 있어요.' : '준비를 마치면 위치를 확인해 출발과 이동 구간을 안내해요.'}
+        </Text>}
+        {endedHere && onViewSavedRoute && action('view-saved-route', '저장한 경로 보기', false, onViewSavedRoute)}
+        {endedHere && snapshot?.status === 'EXPIRED' && <Text style={descriptionStyle}>이용 시간이 끝났어요. 다시 안내받으려면 경로를 새로 연결해 주세요.</Text>}
         {!trial.running&&authenticatedSchedule&&baseInput?.provider==='odsay'&&baseInput.legs.length>=3&&baseInput.legs.length<=31
             &&baseInput.legs.length%2===1&&baseInput.legs.every((leg,i)=>leg.index===i&&(i%2===0?leg.kind==='WALK':leg.kind==='BUS'||subwayTrial&&baseInput.legs.length===3&&leg.kind==='SUBWAY'))&&
             action('connect-walking',connecting?'도보 경로 연결 중':'서버 도보 경로 연결',connecting||trial.pending,connectWalking)}
-        {connected&&<Text testID="saved-detail-walking-connected">TMAP 도보 연결됨 · 저장된 ODsay 대중교통 경로 유지 · 서버·기기 검사 필요</Text>}
+        {connected&&<Text testID="saved-detail-walking-connected">TMAP 도보 연결됨 · 저장된 ODsay 대중교통 경로 유지 · {ownRunning?'서버·기기 검사 완료':'서버·기기 검사 필요'}</Text>}
         {connected&&<Text>{connected.walkingSnapshot?.schemaVersion===4
             ?'경로 연결 후 5분 안에 준비해야 합니다. 준비된 안내는 최대 2시간이며 위치·차량 신선도와 서버 재검증·취소·경로 변경 검사는 그대로 유지합니다.'
             :connected.walkingSnapshot?.schemaVersion===3
@@ -99,24 +123,29 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         {connectionError&&<Text accessibilityLiveRegion="polite">도보 경로를 연결하지 못했어요. 이전 경로로 안내를 시작하지 않아요.</Text>}
         {/* Admission preflight is not the lifetime of an already prepared session.
             Runtime rejection remains visible below and is enforced by server/native. */}
-        {!trial.running && issue && <Text testID="saved-detail-unsupported">{issue}</Text>}
-        {trial.running && !ownRunning && <Text testID="saved-detail-other-session">다른 경로의 안내를 먼저 종료해 주세요. 이 화면에서는 다른 경로를 변경하거나 종료하지 않아요.</Text>}
+        {!trial.running && issue && <Text style={descriptionStyle} testID="saved-detail-unsupported">{issue}</Text>}
+        {trial.running && !ownRunning && <Text style={descriptionStyle} testID="saved-detail-other-session">다른 경로의 안내를 먼저 종료해 주세요.</Text>}
         {!trial.running && !issue && !connecting && <>
-            <Text>대중교통 경로 시험 · 서버·기기 재검증 후 준비돼요. 현장 GPS 검증 전입니다.</Text>
-            <JourneyNoticeControls compact running={trial.running} pending={trial.pending} refresh={trial.refresh}
+            <JourneyNoticeControls compact isDark={isDark} running={trial.running} pending={trial.pending} refresh={trial.refresh}
                 selectedMode={trial.snapshot?.guidanceNoticeMode} permission={trial.snapshot?.guidanceNoticePermission} onPendingChange={noticePendingChanged}/>
             {action('assess', '안내 경로 검사', !trial.canAssess, trial.assess)}
             <Pressable testID="saved-detail-consent" accessibilityRole="checkbox" accessibilityLabel={consentLabel}
                 disabled={trial.pending || noticePending || !trial.eligible} accessibilityState={{ checked: trial.consented, disabled: trial.pending || noticePending || !trial.eligible }}
-                onPress={() => {if(!noticeBusy.current&&!trial.pending&&trial.eligible)trial.setConsented(!trial.consented);}} style={styles.consent}><Text>{trial.consented ? '☑' : '☐'} {consentLabel}</Text></Pressable>
+                onPress={() => {if(!noticeBusy.current&&!trial.pending&&trial.eligible)trial.setConsented(!trial.consented);}} style={styles.consent}><Text style={descriptionStyle}>{trial.consented ? '☑' : '☐'} {consentLabel}</Text></Pressable>
             {action('prepare', '위치 안내 준비', !trial.canPrepare, trial.prepare)}
         </>}
         {ownRunning && action('stop', '위치 안내 종료', trial.pending, () => { if (ownsRunning()) return trial.stop(); })}
-        {!trial.running && <View testID="saved-detail-provider-preflight" style={{ gap: 6 }}>
-            <Text accessibilityRole="header">실제 경로 연결 전 확인</Text>
-            {preflight.checks.map(check => <Text key={check.code} testID={`saved-detail-preflight-${check.code}`}>
-                {check.state === 'PRESENT' ? '입력 있음' : check.state === 'MISSING' ? '미확보' : '재검증 필요'} · {check.detail}
-            </Text>)}
+        {!trial.running && <View testID="saved-detail-provider-preflight" style={styles.root}>
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: checksExpanded }}
+                accessibilityLabel="경로 연결 상태" onPress={() => setChecksExpanded(value => !value)} style={styles.checksToggle}>
+                <Text style={[styles.checksLabel, isDark && styles.checksLabelDark]}>경로 연결 상태</Text>
+                <Text style={descriptionStyle}>{checksExpanded ? '접기' : '보기'}</Text>
+            </Pressable>
+            {checksExpanded && <Animated.View entering={headingEntrance} style={styles.checksList}>
+                {preflight.checks.map(check => <Text style={descriptionStyle} key={check.code} testID={`saved-detail-preflight-${check.code}`}>
+                    {check.state === 'PRESENT' ? '입력 있음' : check.state === 'MISSING' ? '미확보' : '재검증 필요'} · {check.detail}
+                </Text>)}
+            </Animated.View>}
         </View>}
         {ownRunning&&<Text testID="saved-detail-notice-channel">안내 방식 · {trial.snapshot?.guidanceNoticeMode==='VOICE_AND_NOTIFICATIONS'
             ?'전경 음성 + 알림':trial.snapshot?.guidanceNoticeMode==='NOTIFICATIONS'?'알림':'꺼짐'}</Text>}
@@ -147,5 +176,12 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         </View>}
     </View>;
 }
-const styles = StyleSheet.create({ root: { gap: 6, paddingVertical: 8 }, button: { padding: 12, backgroundColor: '#1264C7', borderRadius: 10 },
+const headingEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+const styles = StyleSheet.create({ root: { gap: 8, paddingVertical: 10 },
+    heading: { color: '#111827', fontSize: 17, fontWeight: '700' }, headingDark: { color: '#F3F4F6' },
+    explanation: { color: '#475569', fontSize: 13 }, explanationDark: { color: '#BCC8D7' },
+    checksToggle: { minHeight: 44, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    checksLabel: { color: '#1264C7', fontSize: 14, fontWeight: '600' }, checksLabelDark: { color: '#78B4FF' },
+    checksList: { gap: 8 },
+    button: { minHeight: 44, justifyContent: 'center', padding: 12, backgroundColor: '#1264C7', borderRadius: 10 },
     disabled: { backgroundColor: '#A8B8CC' }, label: { color: 'white', fontWeight: '600' }, consent: { paddingVertical: 12 } });

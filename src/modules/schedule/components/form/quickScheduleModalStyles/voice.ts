@@ -135,6 +135,7 @@ export function createVoiceStyles(options: QuickScheduleModalStylesOptions) {
         fontWeight: "400",
         textAlignVertical: "top",
     },
+        voiceTranscriptInputLarge: { minHeight: 84, maxHeight: 160, lineHeight: undefined },
         centerFlow: {
         flex: 1,
         alignItems: "center",
@@ -142,24 +143,10 @@ export function createVoiceStyles(options: QuickScheduleModalStylesOptions) {
         paddingHorizontal: 8,
         gap: 10,
     },
-        statusIconWrap: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
-        alignItems: "center",
-        justifyContent: "center",
-        marginBottom: 4,
-    },
         flowHeadline: {
         fontSize: 17,
         lineHeight: 23,
         fontWeight: "900",
-        textAlign: "center",
-    },
-        flowCaption: {
-        fontSize: 13,
-        lineHeight: 19,
-        fontWeight: "600",
         textAlign: "center",
     },
     });

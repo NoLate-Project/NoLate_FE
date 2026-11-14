@@ -64,6 +64,23 @@ const transitRoute: RouteAlternativeOption = {
 };
 
 describe("saved route map presentation", () => {
+    it.each([13, 17.2])("keeps one selected stop label at zoom %s", mapZoom => {
+        const presentation = buildSavedRouteMapPresentation({
+            route: transitRoute,
+            origin,
+            destination,
+            mapZoom,
+            isDark: false,
+            selectedTransitStop: { legIndex: 1, stopIndex: 2 },
+        });
+        const selectedMarkers = presentation.markers.filter(marker =>
+            marker.interactionId === "transit-stop:1:2"
+        );
+        expect(selectedMarkers).toEqual([
+            expect.objectContaining({ displayType: "station", dotSize: 18 }),
+            expect.objectContaining({ displayType: "routeLabel", badgeLabel: "을지로3가역" }),
+        ]);
+    });
     it("repairs legacy saved ODsay WALK tails and keeps every marker on the adopted path", () => {
         const legacyOrigin = { name: "출발", lat: 37.5, lng: 127.0 };
         const firstRepeatStart = { lat: 37.5, lng: 127.0001 };

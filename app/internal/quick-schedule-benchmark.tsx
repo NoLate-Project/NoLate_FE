@@ -37,8 +37,6 @@ import {
 } from "../../src/modules/schedule/liveSpeechRecognition";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
-const enabled = __DEV__ || process.env.EXPO_PUBLIC_ENABLE_QUICK_SCHEDULE_BENCHMARK === "true";
-
 function platformName(): QuickScheduleBenchmarkPlatform {
     if (Platform.OS === "ios") return "IOS";
     if (Platform.OS === "android") return "ANDROID";
@@ -58,7 +56,6 @@ export default function QuickScheduleBenchmarkScreen() {
     );
 
     useEffect(() => {
-        if (!enabled) return;
         loadQuickScheduleBenchmarkSession()
             .then((saved) => {
                 if (saved) setSession(saved);
@@ -231,17 +228,6 @@ export default function QuickScheduleBenchmarkScreen() {
             },
         ]);
     }, []);
-
-    if (!enabled) {
-        return (
-            <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
-                <Text style={[styles.title, { color: colors.textPrimary }]}>실기기 신뢰도 측정 비활성화</Text>
-                <Text style={[styles.body, { color: colors.textSecondary }]}>
-                    이 내부 화면은 개발 빌드 또는 측정 전용 릴리스 후보 빌드에서만 열립니다.
-                </Text>
-            </SafeAreaView>
-        );
-    }
 
     return (
         <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>

@@ -2,25 +2,27 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
 import { Animated, PanResponder } from 'react-native';
+import { useSystemReduceMotion } from '../../performance/useSystemReduceMotion';
 
 import type { RouteAlternativeOption } from '../../map/routingService';
 import type { TravelMode } from '../types';
-import type { BottomSheetSnap } from './bottomSheetLayout';
+import { getBottomSheetSnapFromGesture, getBottomSheetSnapTarget, type BottomSheetSnap } from './bottomSheetLayout';
 import type { SelectedTransitMapStop } from './routeTransitMarkers';
 
 const BOTTOM_SHEET_EDGE_RESISTANCE = 0.28;
 const BOTTOM_SHEET_EDGE_OVERSHOOT = 30;
-const BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION = 180;
-const BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD = 0.45;
+const HANDLE_MOVE_THRESHOLD = 6;
 
 type SetValue<T> = Dispatch<SetStateAction<T>>;
 
 type Options = {
+  bottomSheetSnap: BottomSheetSnap;
   bottomSheetAnimatedOffsetRef: MutableRefObject<number>;
   bottomSheetCollapsedOffset: number;
   bottomSheetDragMaxOffset: number;
@@ -49,6 +51,7 @@ type Options = {
  * 가장자리 저항과 속도 기반 스냅 판정을 한곳에 모아 화면별 시트 동작을 일관되게 유지한다.
  */
 export function useRoutePlannerBottomSheetController({
+  bottomSheetSnap,
   bottomSheetAnimatedOffsetRef,
   bottomSheetCollapsedOffset,
   bottomSheetDragMaxOffset,
@@ -71,6 +74,16 @@ export function useRoutePlannerBottomSheetController({
   setSelectedTransitMapStop,
   travelMode,
 }: Options) {
+  const reduceMotion = useSystemReduceMotion();
+  const pendingSnapTarget = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    const target = pendingSnapTarget.current;
+    if (!reduceMotion || target === undefined) return;
+    pendingSnapTarget.current = undefined;
+    bottomSheetTranslateY.stopAnimation();
+    bottomSheetTranslateY.setValue(target);
+  }, [bottomSheetTranslateY, reduceMotion]);
   useEffect(() => {
     const listenerId = bottomSheetTranslateY.addListener(({ value }) => {
       const roundedOffset = Math.round(value);
@@ -105,6 +118,13 @@ export function useRoutePlannerBottomSheetController({
 
   const animateBottomSheetTo = useCallback(
     (toValue: number) => {
+      if (reduceMotion) {
+        pendingSnapTarget.current = undefined;
+        bottomSheetTranslateY.stopAnimation();
+        bottomSheetTranslateY.setValue(toValue);
+        return;
+      }
+      pendingSnapTarget.current = toValue;
       Animated.spring(bottomSheetTranslateY, {
         toValue,
         useNativeDriver: true,
@@ -114,33 +134,34 @@ export function useRoutePlannerBottomSheetController({
         overshootClamping: true,
         restDisplacementThreshold: 0.35,
         restSpeedThreshold: 0.35,
-      }).start();
+      }).start(({ finished }) => {
+        if (finished && pendingSnapTarget.current === toValue) pendingSnapTarget.current = undefined;
+      });
     },
-    [bottomSheetTranslateY],
+    [bottomSheetTranslateY, reduceMotion],
   );
 
-  const getBottomSheetSnapTarget = useCallback(
-    (snap: BottomSheetSnap) => {
-      if (snap === 'hidden') return bottomSheetHiddenOffset;
-      if (snap === 'expanded') return bottomSheetExpandedOffset;
-      if (snap === 'middle')
-        return isRouteDetailMode
-          ? bottomSheetMiddleOffset
-          : bottomSheetCollapsedOffset;
-      return bottomSheetCollapsedOffset;
-    },
-    [
-      bottomSheetCollapsedOffset,
-      bottomSheetExpandedOffset,
-      bottomSheetHiddenOffset,
-      bottomSheetMiddleOffset,
-      isRouteDetailMode,
-    ],
+  const offsets = useMemo(() => ({
+    bottomSheetCollapsedOffset,
+    bottomSheetDragMaxOffset,
+    bottomSheetExpandedOffset,
+    bottomSheetHiddenOffset,
+    bottomSheetMiddleOffset,
+  }), [
+    bottomSheetCollapsedOffset,
+    bottomSheetDragMaxOffset,
+    bottomSheetExpandedOffset,
+    bottomSheetHiddenOffset,
+    bottomSheetMiddleOffset,
+  ]);
+  const getSnapTarget = useCallback(
+    (snap: BottomSheetSnap) => getBottomSheetSnapTarget(snap, offsets, isRouteDetailMode),
+    [offsets, isRouteDetailMode],
   );
 
   const snapBottomSheetTo = useCallback(
     (snap: BottomSheetSnap) => {
-      const target = getBottomSheetSnapTarget(snap);
+      const target = getSnapTarget(snap);
       if (snap === 'hidden') {
         setBottomSheetSnap('hidden');
         setIsBottomSheetCollapsed(true);
@@ -157,7 +178,7 @@ export function useRoutePlannerBottomSheetController({
     },
     [
       animateBottomSheetTo,
-      getBottomSheetSnapTarget,
+      getSnapTarget,
       isBottomSheetHidden,
       setBottomSheetSnap,
       setIsBottomSheetCollapsed,
@@ -166,56 +187,15 @@ export function useRoutePlannerBottomSheetController({
   );
 
   const getSnapFromGesture = useCallback(
-    (current: number, velocityY: number): BottomSheetSnap => {
-      if (bottomSheetCollapsedOffset <= 0) return 'collapsed';
-      if (!isRouteDetailMode) {
-        const midpoint =
-          bottomSheetExpandedOffset +
-          (bottomSheetCollapsedOffset - bottomSheetExpandedOffset) * 0.52;
-        const projected =
-          current + velocityY * BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION;
-
-        if (velocityY <= -BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD)
-          return 'expanded';
-        if (velocityY >= BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD)
-          return 'collapsed';
-        return projected >= midpoint ? 'collapsed' : 'expanded';
-      }
-
-      if (velocityY <= -BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD) {
-        return current > bottomSheetMiddleOffset ? 'middle' : 'expanded';
-      }
-      if (velocityY >= BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD) {
-        return current < bottomSheetMiddleOffset ? 'middle' : 'collapsed';
-      }
-
-      const projected = Math.min(
-        Math.max(
-          bottomSheetExpandedOffset,
-          current + velocityY * BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION,
-        ),
-        bottomSheetDragMaxOffset,
-      );
-      const snapPoints: Array<{ snap: BottomSheetSnap; value: number }> = [
-        { snap: 'expanded', value: bottomSheetExpandedOffset },
-        { snap: 'middle', value: bottomSheetMiddleOffset },
-        { snap: 'collapsed', value: bottomSheetCollapsedOffset },
-      ];
-      return snapPoints.reduce((nearest, candidate) =>
-        Math.abs(candidate.value - projected) <
-        Math.abs(nearest.value - projected)
-          ? candidate
-          : nearest,
-      ).snap;
-    },
-    [
-      bottomSheetCollapsedOffset,
-      bottomSheetDragMaxOffset,
-      bottomSheetExpandedOffset,
-      bottomSheetMiddleOffset,
-      isRouteDetailMode,
-    ],
+    (current: number, velocityY: number) => getBottomSheetSnapFromGesture({
+      ...offsets, current, velocityY, isRouteDetailMode,
+    }),
+    [offsets, isRouteDetailMode],
   );
+
+  const toggleBottomSheetFromHandle = useCallback(() => {
+    snapBottomSheetTo(bottomSheetSnap === 'expanded' ? 'collapsed' : 'expanded');
+  }, [bottomSheetSnap, snapBottomSheetTo]);
 
   const bottomHandlePanResponder = useMemo(
     () =>
@@ -225,14 +205,16 @@ export function useRoutePlannerBottomSheetController({
         onMoveShouldSetPanResponder: (_event, gestureState) =>
           !isBottomSheetHidden &&
           bottomSheetCollapsedOffset > 0 &&
-          Math.abs(gestureState.dy) > 1 &&
-          Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 0.6,
+          Math.abs(gestureState.dy) > HANDLE_MOVE_THRESHOLD &&
+          Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
         onPanResponderGrant: () => {
+          pendingSnapTarget.current = undefined;
           bottomSheetTranslateY.stopAnimation(value => {
             bottomSheetStartYRef.current = value;
           });
         },
         onPanResponderMove: (_event, gestureState) => {
+          if (Math.abs(gestureState.dy) <= HANDLE_MOVE_THRESHOLD || Math.abs(gestureState.dy) <= Math.abs(gestureState.dx)) return;
           let next = bottomSheetStartYRef.current + gestureState.dy;
           if (next < bottomSheetDragMinOffset) {
             next =
@@ -253,6 +235,10 @@ export function useRoutePlannerBottomSheetController({
           bottomSheetTranslateY.setValue(next);
         },
         onPanResponderRelease: (_event, gestureState) => {
+          if (Math.abs(gestureState.dx) <= HANDLE_MOVE_THRESHOLD && Math.abs(gestureState.dy) <= HANDLE_MOVE_THRESHOLD) {
+            toggleBottomSheetFromHandle();
+            return;
+          }
           bottomSheetTranslateY.stopAnimation(current => {
             snapBottomSheetTo(getSnapFromGesture(current, gestureState.vy));
           });
@@ -272,13 +258,16 @@ export function useRoutePlannerBottomSheetController({
       getSnapFromGesture,
       isBottomSheetHidden,
       snapBottomSheetTo,
+      toggleBottomSheetFromHandle,
     ],
   );
 
   return {
     animateBottomSheetTo,
     bottomHandlePanResponder,
-    getBottomSheetSnapTarget,
+    getBottomSheetSnapTarget: getSnapTarget,
+    reduceMotion,
     snapBottomSheetTo,
+    toggleBottomSheetFromHandle,
   };
 }

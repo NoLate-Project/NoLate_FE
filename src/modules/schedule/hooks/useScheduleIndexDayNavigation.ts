@@ -1,5 +1,8 @@
 import {
   useCallback,
+  useEffect,
+  useRef,
+  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -9,8 +12,9 @@ import {
   Easing,
   unstable_batchedUpdates,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 
+import { isContinuousMonthViewMode, type CalendarViewMode } from '../components/calendar/viewMode';
 import type { DayTransitionContext } from '../components/calendar/CalendarWrapper';
 import {
   CALENDAR_DEPTH_MOTION,
@@ -31,16 +35,14 @@ type SetValue<T> = Dispatch<SetStateAction<T>>;
 
 type Options = {
   addDaysToYmd: (day: string, offset: number) => string;
-  addItem: (
-    payload: Omit<ScheduleItem, 'id'>,
-    options?: { showErrorAlert?: boolean },
-  ) => Promise<void>;
+  addItem: (payload: Omit<ScheduleItem, 'id'>) => Promise<ScheduleItem>;
   calendarDepth: CalendarDepth;
+  calendarViewMode: CalendarViewMode;
   calendarTransition: Animated.Value;
   closeToolbarMenu: (afterClose?: () => void) => void;
-  dayDisplayPrepareRef: MutableRefObject<((day: string) => void) | null>;
   dayLayerMounted: boolean;
-  dayLayerMountedRef: MutableRefObject<boolean>;
+  dayTransitionContext: DayTransitionContext;
+  dayTransitionTargetDay: string | null;
   dayModeTransition: Animated.Value;
   dayPageNavigationActiveRef: MutableRefObject<boolean>;
   dayTransition: Animated.Value;
@@ -82,11 +84,12 @@ export function useScheduleIndexDayNavigation({
   addDaysToYmd,
   addItem,
   calendarDepth,
+  calendarViewMode,
   calendarTransition,
   closeToolbarMenu,
-  dayDisplayPrepareRef,
   dayLayerMounted,
-  dayLayerMountedRef,
+  dayTransitionContext,
+  dayTransitionTargetDay,
   dayModeTransition,
   dayPageNavigationActiveRef,
   dayTransition,
@@ -120,6 +123,73 @@ export function useScheduleIndexDayNavigation({
   yearOverviewProgress,
 }: Options) {
   const { runWithTransitionShell } = useImmediateNavigationTransition();
+  const openedSchedule = useRef<{ id: string; restoreFocus?: () => void } | null>(null);
+  const returnFocusFrame = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (returnFocusFrame.current !== null) cancelAnimationFrame(returnFocusFrame.current);
+  }, []);
+  const returnOpacity = useRef(new Animated.Value(0)).current;
+  const [returnedScheduleId, setReturnedScheduleId] = useState<string | null>(null);
+  const [savedAgendaTarget, setSavedAgendaTarget] = useState<{
+    day: string;
+    itemId: string;
+    categoryId?: string;
+    stackPending?: boolean;
+  }>();
+  const pendingStackSaveRef = useRef<{ itemId: string; finish: (apply?: boolean) => void } | null>(null);
+  const stackSaveCloseRef = useRef<{ itemId: string; resolve: () => void } | null>(null);
+  useEffect(() => () => {
+    pendingStackSaveRef.current?.finish(false);
+    stackSaveCloseRef.current?.resolve();
+  }, []);
+  useEffect(() => {
+    const close = stackSaveCloseRef.current;
+    if (!close || savedAgendaTarget?.itemId !== close.itemId || savedAgendaTarget.stackPending) return;
+    // Let the calendar commit paint before the native close animation uncovers it.
+    let closeFrame: number | undefined;
+    const paintFrame = requestAnimationFrame(() => {
+      closeFrame = requestAnimationFrame(() => {
+        if (stackSaveCloseRef.current !== close) return;
+        stackSaveCloseRef.current = null;
+        close.resolve();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(paintFrame);
+      if (closeFrame !== undefined) cancelAnimationFrame(closeFrame);
+    };
+  }, [savedAgendaTarget]);
+  const handleSavedStackPositionReady = useCallback((itemId: string) => {
+    const pending = pendingStackSaveRef.current;
+    if (pending?.itemId === itemId) pending.finish();
+  }, []);
+  const highlightReturnedSchedule = useCallback(() => {
+    const entry = openedSchedule.current;
+    openedSchedule.current = null;
+    if (!entry) return;
+    setReturnedScheduleId(entry.id);
+    if (entry.restoreFocus) {
+      if (returnFocusFrame.current !== null) cancelAnimationFrame(returnFocusFrame.current);
+      returnFocusFrame.current = requestAnimationFrame(() => {
+        returnFocusFrame.current = null;
+        entry.restoreFocus?.();
+      });
+    }
+  }, []);
+  useFocusEffect(highlightReturnedSchedule);
+  useEffect(() => {
+    if (!returnedScheduleId || reduceMotionEnabled) {
+      returnOpacity.setValue(0);
+      if (returnedScheduleId) setReturnedScheduleId(null);
+      return;
+    }
+    returnOpacity.setValue(0.09);
+    const fade = Animated.timing(returnOpacity, { toValue: 0, duration: 180, useNativeDriver: true });
+    fade.start(({ finished }) => {
+      if (finished) setReturnedScheduleId(null);
+    });
+    return () => fade.stop();
+  }, [reduceMotionEnabled, returnOpacity, returnedScheduleId]);
   /** 달력이 보고한 표시 월을 반영하고 오늘이 아닌 월로 이동하면 오늘 버튼의 준비 상태를 해제한다. */
   const handleVisibleMonthChange = useCallback(
     (month: string) => {
@@ -164,13 +234,47 @@ export function useScheduleIndexDayNavigation({
     [selectCalendarDay],
   );
 
-  /** 빠른 일정 저장 후 실제 시작 일자로 달력 포커스를 이동하며 오류 표시는 모달에 위임한다. */
-  const addQuickItem = async (payload: Omit<ScheduleItem, 'id'>) => {
-    // 빠른 일정 모달이 저장 오류를 표시하므로 상위 Alert는 중복 노출하지 않는다.
-    await addItem(payload, { showErrorAlert: false });
+  /** 저장한 일정의 시작 일자를 달력에서 선택하고 모달에서 저장 오류를 표시한다. */
+  const addAndRevealItem = async (payload: Omit<ScheduleItem, 'id'>) => {
+    const saved = await addItem(payload);
 
-    const savedDay = getScheduleFocusDay(payload.startAt);
-    if (savedDay) selectCalendarDay(savedDay);
+    const savedDay = getScheduleFocusDay(saved.startAt);
+    if (!savedDay) return;
+
+    const target = { day: savedDay, itemId: saved.id, categoryId: saved.category?.id };
+    if (calendarDepth !== 'month' || !isContinuousMonthViewMode(calendarViewMode)) {
+      selectCalendarDay(savedDay);
+      setSavedAgendaTarget(target);
+      return;
+    }
+
+    await new Promise<void>(resolve => {
+      // Keep the editor open until native scrolling confirms the return position.
+      const finish = (apply = true) => {
+        clearTimeout(watchdog);
+        pendingStackSaveRef.current = null;
+        if (apply) {
+          stackSaveCloseRef.current?.resolve();
+          stackSaveCloseRef.current = { itemId: saved.id, resolve };
+          unstable_batchedUpdates(() => {
+            setVisibleMonth(savedDay);
+            setSavedAgendaTarget(target);
+          });
+        } else {
+          resolve();
+        }
+      };
+      const watchdog = setTimeout(finish, CALENDAR_INTERACTION_BUDGET_MS);
+      pendingStackSaveRef.current?.finish(false);
+      pendingStackSaveRef.current = { itemId: saved.id, finish };
+      unstable_batchedUpdates(() => {
+        setPendingSelectedDay(savedDay);
+        dispatch({ type: 'SET_SELECTED_DAY', day: savedDay });
+        setTransitionMonthKey(null);
+        setTodayButtonPrimed(savedDay === todayKey);
+        setSavedAgendaTarget({ ...target, stackPending: true });
+      });
+    });
   };
 
   /** 월간·일간 레이어 사이의 이동을 실행하고 watchdog으로 중단된 전환도 목표 상태에 확정한다. */
@@ -193,12 +297,12 @@ export function useScheduleIndexDayNavigation({
           dayTransition.stopAnimation();
           dayTransition.setValue(toValue);
         }
-        setIsDayTransitionActive(false);
-        setDayTransitionContext('idle');
-        transitionStartedRef.current = false;
-        if (finished || forceValue) {
-          afterAnimation?.();
-        }
+        unstable_batchedUpdates(() => {
+          if (finished || forceValue) afterAnimation?.();
+          setIsDayTransitionActive(false);
+          setDayTransitionContext('idle');
+          transitionStartedRef.current = false;
+        });
       };
 
       dayTransition.stopAnimation();
@@ -259,9 +363,10 @@ export function useScheduleIndexDayNavigation({
         setIsYearDepthTransitionActive(false);
       };
 
-      const duration = reduceMotionEnabled
-        ? CALENDAR_DEPTH_MOTION.reduceMotionDurationMs
-        : CALENDAR_DEPTH_MOTION.depthSlideDurationMs;
+      if (reduceMotionEnabled) {
+        finishTransition(true, true);
+        return;
+      }
       dayTransitionCleanupTimerRef.current = setTimeout(() => {
         finishTransition(true, true);
       }, CALENDAR_INTERACTION_BUDGET_MS);
@@ -269,10 +374,8 @@ export function useScheduleIndexDayNavigation({
       yearOverviewProgress.stopAnimation();
       Animated.timing(yearOverviewProgress, {
         toValue,
-        duration,
-        easing: reduceMotionEnabled
-          ? Easing.out(Easing.cubic)
-          : CALENDAR_DEPTH_EASING,
+        duration: CALENDAR_DEPTH_MOTION.depthSlideDurationMs,
+        easing: CALENDAR_DEPTH_EASING,
         useNativeDriver: true,
         isInteraction: false,
       }).start(({ finished }) => finishTransition(finished));
@@ -366,13 +469,16 @@ export function useScheduleIndexDayNavigation({
 
   /** 일간 화면에서 선택한 일정의 상세 라우트로 이동한다. */
   const handleOpenScheduleFromDayDisplay = useCallback(
-    (id: string) => {
+    (id: string, restoreFocus?: () => void) => {
+      openedSchedule.current = { id, restoreFocus };
+      setReturnedScheduleId(null);
       runWithTransitionShell(
         {
           route: '/schedule/[id]',
           title: '일정 상세',
           backAccessibilityLabel: '이전 화면으로 돌아가기',
           sceneKey: id,
+          onSceneClose: highlightReturnedSchedule,
         },
         () => router.push({
           pathname: '/schedule/[id]',
@@ -380,8 +486,47 @@ export function useScheduleIndexDayNavigation({
         }),
       );
     },
-    [router, runWithTransitionShell],
+    [highlightReturnedSchedule, router, runWithTransitionShell],
   );
+
+  useEffect(() => {
+    if (dayTransitionContext !== 'monthToDay' || !dayTransitionTargetDay) return;
+    const targetDay = dayTransitionTargetDay;
+    // Start revealing the timeline after the target date has committed to its view.
+    let revealFrame: number | undefined;
+    const prepareFrame = requestAnimationFrame(() => {
+      revealFrame = requestAnimationFrame(() => {
+        const commitDay = () => {
+          setPendingSelectedDay(targetDay);
+          dispatch({ type: 'SET_SELECTED_DAY', day: targetDay });
+          setVisibleMonth(targetDay);
+          setCalendarDepth('day');
+          setDayTransitionTargetDay(null);
+          setTransitionMonthKey(null);
+        };
+        if (reduceMotionEnabled) {
+          unstable_batchedUpdates(() => {
+            commitDay();
+            setIsDayTransitionActive(false);
+            setDayTransitionContext('idle');
+            transitionStartedRef.current = false;
+          });
+          dayTransition.setValue(1);
+          return;
+        }
+        animateDayTransition(1, commitDay, 'monthToDay');
+      });
+    });
+    return () => {
+      cancelAnimationFrame(prepareFrame);
+      if (revealFrame !== undefined) cancelAnimationFrame(revealFrame);
+    };
+  }, [
+    animateDayTransition, dayTransition, dayTransitionContext,
+    dayTransitionTargetDay, dispatch, reduceMotionEnabled, setCalendarDepth,
+    setDayTransitionContext, setDayTransitionTargetDay, setIsDayTransitionActive,
+    setPendingSelectedDay, setTransitionMonthKey, setVisibleMonth, transitionStartedRef,
+  ]);
 
   /** 월간 화면에서 누른 날짜를 준비한 뒤 잠금 상태를 공유하며 일간 깊이로 전환한다. */
   const handleOpenDay = useCallback(
@@ -394,7 +539,6 @@ export function useScheduleIndexDayNavigation({
       )
         return;
       transitionStartedRef.current = true;
-      const wasDayLayerMounted = dayLayerMountedRef.current;
 
       closeToolbarMenu();
       calendarTransition.stopAnimation();
@@ -402,7 +546,6 @@ export function useScheduleIndexDayNavigation({
       dayTransition.stopAnimation();
       dayTransition.setValue(0);
       setDayTransitionTargetDay(day);
-      dayDisplayPrepareRef.current?.(day);
       setTodayButtonPrimed(day === todayKey);
       setTransitionMonthKey(
         day.slice(0, 7) === selectedDayRef.current.slice(0, 7)
@@ -419,50 +562,23 @@ export function useScheduleIndexDayNavigation({
       dayModeTransition.setValue(1);
       setDayTransitionContext('monthToDay');
       setIsDayTransitionActive(true);
-      /** 일간 레이어가 마운트된 뒤 선택 상태와 깊이를 목표 날짜로 커밋한다. */
-      const startTransition = () => {
-        animateDayTransition(
-          1,
-          () => {
-            setPendingSelectedDay(day);
-            dispatch({ type: 'SET_SELECTED_DAY', day });
-            setVisibleMonth(day);
-            setCalendarDepth('day');
-            setDayTransitionTargetDay(null);
-            setTransitionMonthKey(null);
-          },
-          'monthToDay',
-        );
-      };
-      if (wasDayLayerMounted) {
-        startTransition();
-      } else {
-        requestAnimationFrame(startTransition);
-      }
     },
     [
-      animateDayTransition,
       calendarTransition,
       closeToolbarMenu,
-      dayDisplayPrepareRef,
-      dayLayerMountedRef,
       dayTransition,
       dayModeTransition,
-      dispatch,
       isDayTransitionActiveRef,
       isYearDepthTransitionActiveRef,
       selectedDayRef,
-      setCalendarDepth,
       setDayLayerMounted,
       setDayModeTransitionFrom,
       setDayTransitionContext,
       setDayTransitionTargetDay,
       setDayViewMode,
       setIsDayTransitionActive,
-      setPendingSelectedDay,
       setTodayButtonPrimed,
       setTransitionMonthKey,
-      setVisibleMonth,
       setYearOverviewClosing,
       setYearOverviewVisible,
       todayKey,
@@ -519,7 +635,8 @@ export function useScheduleIndexDayNavigation({
 
 
   return {
-    addQuickItem,
+    addAndRevealItem,
+    savedAgendaTarget,
     animateDayModeTransition,
     animateDayTransition,
     animateYearDepthTransition,
@@ -527,7 +644,11 @@ export function useScheduleIndexDayNavigation({
     handleNavigateTodayFromDayDisplay,
     handleOpenDay,
     handleOpenScheduleFromDayDisplay,
+    agendaReturnHighlight: returnedScheduleId && !reduceMotionEnabled
+      ? { id: returnedScheduleId, opacity: returnOpacity }
+      : undefined,
     handleSelectDay,
+    handleSavedStackPositionReady,
     handleSelectDayFromDayDisplay,
     handleShiftDay,
     handleVisibleMonthChange,

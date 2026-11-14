@@ -1,16 +1,24 @@
 import * as SecureStore from "expo-secure-store";
+import * as Device from "expo-device";
 import { Platform } from "react-native";
 
-// 예전에 CODE_SIGNING_ALLOWED=NO로 만든 iOS QA 빌드는 Keychain entitlement가 없어
-// AsyncStorage로 우회했다. 정상 서명된 개발 빌드는 SecureStore를 우선 사용하고,
-// 기존 QA 빌드의 값은 한 번 읽어 Keychain으로 이관한다.
+// Xcode의 iOS 시뮬레이터 Release 서명은 Keychain entitlement가 비어 있을 수 있다.
+// 로컬 격리 서버를 가리키는 시뮬레이터 시험 빌드에서만 저장소를 대체한다.
+// 실기기와 운영 API 빌드는 항상 SecureStore/Keychain을 사용한다.
+const isolatedSimulatorBuild =
+    !Device.isDevice &&
+    /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/?$/i.test(
+        process.env.EXPO_PUBLIC_LOCAL_API_BASE_URL ?? ""
+    );
 const canUseDevelopmentFallback =
-    __DEV__ && Platform.OS === "ios" && process.env.NODE_ENV !== "test";
+    Platform.OS === "ios" && !Device.isDevice && process.env.NODE_ENV !== "test" &&
+    (__DEV__ || isolatedSimulatorBuild);
 
 let didWarnAboutFallback = false;
 
 async function getSimulatorStorage() {
-    const module = await import("@react-native-async-storage/async-storage");
+    const module = require("@react-native-async-storage/async-storage") as
+        typeof import("@react-native-async-storage/async-storage");
     return module.default;
 }
 
@@ -18,7 +26,7 @@ function warnAboutFallback(error: unknown) {
     if (didWarnAboutFallback) return;
     didWarnAboutFallback = true;
     console.warn(
-        "[auth] iOS Keychain을 사용할 수 없어 개발용 저장소로 대체합니다. " +
+        "[auth] iOS Keychain을 사용할 수 없어 시뮬레이터 시험 저장소로 대체합니다. " +
         "앱과 공유 확장을 정상 서명했는지 확인해 주세요.",
         error
     );

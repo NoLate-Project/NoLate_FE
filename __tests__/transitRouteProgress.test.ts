@@ -1,5 +1,5 @@
 import type { TransitLegDetail } from "../src/modules/map/routingService";
-import { buildTransitRouteProgressSegments } from "../src/modules/schedule/transitRouteProgress";
+import { buildTransitRouteProgressSegments, getTransitRouteSummaryAccessibilityLabel } from "../src/modules/schedule/transitRouteProgress";
 
 describe("buildTransitRouteProgressSegments", () => {
     it("표시 label이 없는 저장 구간도 안전하게 그리고 노선명이 없으면 교통수단만 표시한다", () => {
@@ -58,5 +58,17 @@ describe("buildTransitRouteProgressSegments", () => {
             "31",
             "버스",
         ]);
+    });
+});
+
+describe("getTransitRouteSummaryAccessibilityLabel", () => {
+    it("describes transfer walks and falls back for unnamed rides", () => {
+        const [subway, walk, bus] = buildTransitRouteProgressSegments([
+            { kind: "SUBWAY", label: "4호선", lineName: "4호선", durationMinutes: 16 },
+            { kind: "WALK", label: "도보", durationMinutes: 3 },
+            { kind: "BUS", label: "버스", durationMinutes: 8 },
+        ]);
+        expect(getTransitRouteSummaryAccessibilityLabel([subway, walk, { ...bus, lineLabel: undefined }]))
+            .toBe("이동 경로, 4호선 16분, 환승 도보 3분, 버스 8분");
     });
 });

@@ -10,6 +10,7 @@ import {
 } from './routeMapTypesAndStyle';
 import {
   distanceMeters,
+  estimateMetersPerPixel,
   isValidCoordinate,
   offsetCoordByMeters,
 } from './routeMapCoordinate';
@@ -419,4 +420,26 @@ export function getPaddedCameraCenterForFixedZoom(
     -dxPixels * metersPerPixel,
   );
   return { latitude: shifted.lat, longitude: shifted.lng };
+}
+
+/** Centers the stop in the map area between the header and the route sheet. */
+export function getTransitStopCameraCenter(
+  stop: { lat: number; lng: number },
+  zoom: number,
+  viewportHeight: number,
+  headerBottom: number,
+  sheetTop: number,
+  currentCamera?: { latitude: number; zoom: number; metersPerPixel?: number },
+) {
+  const visibleBottom = Math.max(0, Math.min(viewportHeight, sheetTop));
+  const visibleTop = Math.max(0, Math.min(visibleBottom, headerBottom));
+  const screenY = (visibleTop + visibleBottom) / 2;
+  const estimatedScale = estimateMetersPerPixel(stop.lat, zoom);
+  const measuredScale = currentCamera?.metersPerPixel;
+  // Preserve the map SDK's screen scale while projecting it to the requested latitude and zoom.
+  const scale = currentCamera && typeof measuredScale === 'number' && Number.isFinite(measuredScale) && measuredScale > 0
+    ? measuredScale * estimatedScale / estimateMetersPerPixel(currentCamera.latitude, currentCamera.zoom)
+    : estimatedScale;
+  const northMeters = (screenY - viewportHeight / 2) * scale;
+  return offsetCoordByMeters(stop, northMeters, 0);
 }

@@ -18,6 +18,9 @@ const mockGetLocalAlarmSound = jest.fn();
 const mockSetLocalAlarmSound = jest.fn();
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
+jest.mock("react-native-safe-area-context", () => ({
+    useSafeAreaInsets: () => ({ top: 0, bottom: 34, left: 0, right: 0 }),
+}));
 jest.mock("../src/modules/notification/departureAlarm", () => ({
     getDepartureAlarmCapabilities: (...args: unknown[]) => mockGetCapabilities(...args),
     getNativeNoLateAlarmSoundPreference: (...args: unknown[]) => mockGetNativeAlarmSound(...args),
@@ -113,7 +116,8 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
     });
 
     beforeEach(() => {
-        appStateHandler = undefined;
+        const handlers = new Set<(state: string) => void>();
+        appStateHandler = state => handlers.forEach(handler => handler(state));
         onAlertModeChange.mockReset();
         mockGetCapabilities.mockReset().mockResolvedValue(iosReady);
         mockOpenExactAlarmSettings.mockReset().mockResolvedValue(true);
@@ -130,8 +134,9 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         mockSetLocalAlarmSound.mockReset().mockResolvedValue(undefined);
         mockRequestPushNotificationPermission.mockReset().mockResolvedValue(true);
         appStateSpy = jest.spyOn(AppState, "addEventListener").mockImplementation((_event, handler) => {
-            appStateHandler = handler as (state: string) => void;
-            return { remove: jest.fn() };
+            const callback = handler as (state: string) => void;
+            handlers.add(callback);
+            return { remove: () => { handlers.delete(callback); } };
         });
         linkingSpy = jest.spyOn(Linking, "openSettings").mockResolvedValue();
     });
@@ -399,190 +404,100 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(rendered).not.toContain("설정 필요");
     });
 
-    test("여러 알람음 중 하나를 선택하고 즉시 미리 듣는다", async () => {
-        await renderCard("ALARM", "flat");
-
-        const soundRow = renderer!.root.findByProps({
-            accessibilityLabel: "소리 및 진동, 현재 차임",
-        });
-        expect(soundRow.props.disabled).toBe(false);
-
+    const press = async (label: string) => {
         await act(async () => {
-            soundRow.props.onPress();
-            await Promise.resolve();
+            renderer!.root.findByProps({ accessibilityLabel: label }).props.onPress();
         });
+    };
+
+    test("선택, 미리 듣기, 적용을 각각 조작한다", async () => {
+        await renderCard("ALARM", "flat");
+        await press("소리 및 진동, 현재 차임");
 
         const soundList = renderer!.root.findByProps({ accessibilityLabel: "알람음 목록" });
-        expect(soundList).toBeTruthy();
-        const soundLabels = [
-            "차임",
-            "벨",
-            "비프",
-            "디지털",
-            "크리스털",
-            "노크",
-            "3연속",
-            "상승 신호",
-            "사이렌",
-            "경적",
-        ];
-        expect(new Set(
-            soundList
-                .findAllByProps({ accessibilityRole: "radio" })
-                .map(option => option.props.accessibilityLabel),
-        )).toEqual(new Set(soundLabels.map(label => `${label} 알람음`)));
-        for (const label of soundLabels) {
-            expect(renderer!.root.findByProps({ accessibilityLabel: `${label} 알람음` })).toBeTruthy();
-        }
-        expect(
-            renderer!.root.findByProps({
-                children: "소리 모드에서는 진동과 함께 울리고, 무음일 때는 진동만 울려요.",
-            }),
-        ).toBeTruthy();
-        expect(
-            StyleSheet.flatten(renderer!.root.findByProps({ testID: "alarm-sound-picker-sheet" }).props.style),
-        ).toMatchObject({ backgroundColor: "#FFFFFF" });
+        const labels = ["차임", "벨", "비프", "디지털", "크리스털", "노크", "3연속", "상승 신호", "사이렌", "경적"];
+        expect(new Set(soundList.findAllByProps({ accessibilityRole: "radio" })
+            .map(option => option.props.accessibilityLabel))).toEqual(new Set(labels.map(label => `${label} 알람음`)));
+        expect(renderer!.root.findByProps({ children: "모든 출발 알람에 적용돼요." })).toBeTruthy();
+        expect(StyleSheet.flatten(renderer!.root.findByProps({ testID: "alarm-sound-picker-sheet" }).props.style))
+            .toMatchObject({ backgroundColor: "#FFFFFF" });
 
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await press("경적 알람음");
+        expect(mockStartAlarmAudio).not.toHaveBeenCalled();
+        await press("벨 미리 듣기");
+        expect(mockStartAlarmAudio).toHaveBeenCalledWith("BELL");
+        expect(renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.accessibilityState.checked).toBe(true);
+        await press("벨 미리 듣기 중지");
+        expect(mockStopAlarmAudio).toHaveBeenCalledTimes(1);
+        expect(mockSetNativeAlarmSound).not.toHaveBeenCalled();
+        expect(mockSetLocalAlarmSound).not.toHaveBeenCalled();
 
+        await press("알람음 적용");
         expect(mockSetNativeAlarmSound).toHaveBeenCalledWith("KLAXON");
         expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("KLAXON");
-        expect(mockStartAlarmAudio).toHaveBeenCalledWith("KLAXON");
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.accessibilityState,
-        ).toEqual({ checked: true, disabled: false });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.accessibilityHint).toBe(
-            "미리 듣기를 중지합니다",
-        );
-
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        expect(mockStopAlarmAudio).toHaveBeenCalledTimes(1);
-        expect(mockSetNativeAlarmSound).toHaveBeenCalledTimes(1);
-        expect(mockSetLocalAlarmSound).toHaveBeenCalledTimes(1);
-    });
-
-    test("선택 시트가 닫힌 동안 늦게 저장된 알람음을 재생하지 않는다", async () => {
-        const nativeSave = deferred<boolean>();
-        mockSetNativeAlarmSound.mockReturnValueOnce(nativeSave.promise);
-        await renderCard("ALARM", "flat");
-
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        expect(mockSetNativeAlarmSound).toHaveBeenCalledWith("BELL");
-
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람음 선택 완료" }).props.onPress();
-            await Promise.resolve();
-        });
+        expect(mockStartAlarmAudio).toHaveBeenCalledTimes(1);
         expect(renderer!.root.findByType(Modal).props.visible).toBe(false);
-
-        await act(async () => {
-            nativeSave.resolve(true);
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("BELL");
-        expect(mockStartAlarmAudio).not.toHaveBeenCalled();
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 벨" }).props.disabled,
-        ).toBe(false);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 경적" })).toBeTruthy();
     });
 
-    test("앱이 백그라운드로 간 동안 저장이 끝나도 미리 듣기를 시작하지 않는다", async () => {
+    test("적용하지 않고 닫으면 미리 듣기를 중지하고 선택을 버린다", async () => {
+        await renderCard("ALARM", "flat");
+        await press("소리 및 진동, 현재 차임");
+        await press("벨 알람음");
+        await press("벨 미리 듣기");
+        await press("알람음 선택 닫기");
+
+        expect(renderer!.root.findByType(Modal).props.visible).toBe(false);
+        expect(mockStopAlarmAudio).toHaveBeenCalledTimes(1);
+        expect(mockSetNativeAlarmSound).not.toHaveBeenCalled();
+        await press("소리 및 진동, 현재 차임");
+        expect(renderer!.root.findByProps({ accessibilityLabel: "차임 알람음" }).props.accessibilityState.checked).toBe(true);
+    });
+
+    test("백그라운드에서 적용이 끝나도 미리 듣기를 시작하지 않는다", async () => {
         const nativeSave = deferred<boolean>();
         mockSetNativeAlarmSound.mockReturnValueOnce(nativeSave.promise);
         await renderCard("ALARM", "flat");
+        await press("소리 및 진동, 현재 차임");
+        await press("비프 알람음");
+        await press("알람음 적용");
 
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "비프 알람음" }).props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            appStateHandler?.("background");
-            await Promise.resolve();
-        });
-        await act(async () => {
-            nativeSave.resolve(true);
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "알람음 적용" }).props.accessibilityState.busy).toBe(true);
+        await act(async () => { appStateHandler?.("background"); });
+        await act(async () => { nativeSave.resolve(true); });
 
         expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("BEEP");
         expect(mockStartAlarmAudio).not.toHaveBeenCalled();
     });
 
-    test("네이티브 저장 실패 시 기존 알람음으로 되돌리고 재생하지 않는다", async () => {
+    test("네이티브 저장에 실패하면 새 선택을 유지하며 다시 적용할 수 있다", async () => {
         mockSetNativeAlarmSound.mockResolvedValueOnce(false);
         await renderCard("ALARM", "flat");
-
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await press("소리 및 진동, 현재 차임");
+        await press("벨 알람음");
+        await press("알람음 적용");
 
         expect(mockSetLocalAlarmSound).not.toHaveBeenCalled();
         expect(mockStartAlarmAudio).not.toHaveBeenCalled();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "차임 알람음" }).props.accessibilityState).toEqual({
-            checked: true,
-            disabled: false,
-        });
-        expect(renderer!.root.findByProps({ children: "알람음을 바꾸지 못했어요." })).toBeTruthy();
+        expect(renderer!.root.findByType(Modal).props.visible).toBe(true);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.accessibilityState.checked).toBe(true);
+        expect(renderer!.root.findByProps({ children: "알람음을 바꾸지 못했어요. 다시 시도해 주세요." })).toBeTruthy();
+
+        await press("알람음 적용");
+        expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("BELL");
+        expect(renderer!.root.findByType(Modal).props.visible).toBe(false);
     });
 
-    test("로컬 캐시 저장 실패는 네이티브에서 바뀐 알람음과 미리 듣기를 되돌리지 않는다", async () => {
+    test("네이티브 저장 후 로컬 캐시에 실패해도 적용한 음을 유지한다", async () => {
         mockSetLocalAlarmSound.mockRejectedValueOnce(new Error("storage unavailable"));
         await renderCard("ALARM", "flat");
-
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "비프 알람음" }).props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await press("소리 및 진동, 현재 차임");
+        await press("비프 알람음");
+        await press("알람음 적용");
 
         expect(mockSetNativeAlarmSound).toHaveBeenCalledWith("BEEP");
-        expect(mockStartAlarmAudio).toHaveBeenCalledWith("BEEP");
-        expect(renderer!.root.findByProps({ accessibilityLabel: "비프 알람음" }).props.accessibilityState).toEqual({
-            checked: true,
-            disabled: false,
-        });
-        expect(renderer!.root.findAllByProps({ children: "알람음을 바꾸지 못했어요." })).toHaveLength(0);
+        expect(mockStartAlarmAudio).not.toHaveBeenCalled();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 비프" })).toBeTruthy();
     });
 
     test("최초 iOS 알림 요청은 앱 안의 알림 허용 버튼으로 시작한다", async () => {
@@ -700,7 +615,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             await Promise.resolve();
         });
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "차임 알람음" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "차임 미리 듣기" }).props.onPress();
             await Promise.resolve();
             await Promise.resolve();
             await Promise.resolve();
@@ -802,7 +717,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             await Promise.resolve();
         });
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "비프 알람음" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "비프 미리 듣기" }).props.onPress();
             await Promise.resolve();
             await Promise.resolve();
             await Promise.resolve();

@@ -135,6 +135,7 @@ export function DetailMonthGridCell({
                     ]}
                 >
                     <Text
+                        allowFontScaling={false}
                         style={[
                             styles.detailMonthGridDayText,
                             {
@@ -151,6 +152,7 @@ export function DetailMonthGridCell({
                     {lunarText ? (
                         <Text
                             testID="calendar-lunar-date"
+                            allowFontScaling={false}
                             numberOfLines={1}
                             style={[
                                 styles.detailMonthGridLunarText,
@@ -173,6 +175,7 @@ export function DetailMonthGridCell({
                 {hasHoliday ? (
                     <Text
                         testID="calendar-holiday-name"
+                        allowFontScaling={false}
                         numberOfLines={1}
                         ellipsizeMode="tail"
                         style={[

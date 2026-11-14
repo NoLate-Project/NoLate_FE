@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, Alert, Animated, Easing, Keyboard, Platform, UIManager } from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -34,6 +35,7 @@ import {
     selectFavoritePlacesByTab,
 } from "../../modules/schedule/favoritePlaceSelection";
 import { useTheme } from "../../modules/theme/ThemeContext";
+import { usePreMountedSceneActivity } from "../../modules/performance/preMountedSceneActivity";
 import {
     CATEGORY_COLORS,
     configureCategoryContentLayout,
@@ -118,14 +120,16 @@ export function usePlacesSettings() {
         }
     }, []);
 
-    useFocusEffect(
-        useCallback(() => {
-            void loadPlaces(!loadedOnceRef.current);
-            return () => {
-                loadRequestIdRef.current += 1;
-            };
-        }, [loadPlaces])
-    );
+    const navigationFocused = useIsFocused();
+    const sceneActive = usePreMountedSceneActivity();
+    const isFocused = sceneActive ?? navigationFocused;
+    useEffect(() => {
+        if (!isFocused) return;
+        void loadPlaces(!loadedOnceRef.current);
+        return () => {
+            loadRequestIdRef.current += 1;
+        };
+    }, [isFocused, loadPlaces]);
 
     const selectedCategoryId = selectedCategoryKey !== DEFAULT_ADDRESS_FAVORITE_TAB_ID
         && selectedCategoryKey !== UNCATEGORIZED_FAVORITE_TAB_ID

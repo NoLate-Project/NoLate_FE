@@ -9,23 +9,32 @@ struct NoLateGuidanceLiveActivity: Widget {
         .padding(.horizontal, 18).padding(.vertical, 14)
         .activityBackgroundTint(Color(.systemBackground))
         .activitySystemActionForegroundColor(.primary)
-        .widgetURL(URL(string: "nolate:///internal/journey-guidance?showDetail=1"))
+        .widgetURL(scheduleURL(context.state))
     } dynamicIsland: { context in
       DynamicIsland {
         DynamicIslandExpandedRegion(.bottom) {
           NoLateGuidanceCard(legs: context.attributes.routeLegs, content: context.state, isStale: context.isStale)
         }
       } compactLeading: {
-        Image(systemName: NoLateGuidancePresentationPolicy.presentation(context.state,
-          legs: context.attributes.routeLegs, now: Date().timeIntervalSince1970, isStale: context.isStale).symbol)
+        NoLateActivityIcons.guidance(NoLateGuidancePresentationPolicy.presentation(context.state,
+          legs: context.attributes.routeLegs, now: Date().timeIntervalSince1970, isStale: context.isStale).symbol, size: 14)
           .foregroundStyle(.blue)
       } compactTrailing: {
         Text(NoLateGuidancePresentationPolicy.presentation(context.state,
           legs: context.attributes.routeLegs, now: Date().timeIntervalSince1970, isStale: context.isStale).compact)
           .font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
-      } minimal: { Image(systemName: "location.fill").foregroundStyle(.blue) }
-      .widgetURL(URL(string: "nolate:///internal/journey-guidance?showDetail=1"))
+      } minimal: { NoLateActivityIcons.image(62576, size: 18).foregroundStyle(.blue) }
+      .widgetURL(scheduleURL(context.state))
     }
+  }
+
+  private func scheduleURL(_ content: NoLateGuidanceContent) -> URL? {
+    let id = content.scheduleId
+    guard id.first != "0", id.utf8.allSatisfy({ (48...57).contains($0) }),
+          let value = UInt64(id), value > 0, value <= 9_007_199_254_740_991 else {
+      return URL(string: "nolate://schedule")
+    }
+    return URL(string: "nolate://schedule/\(id)?openRouteDetail=1")
   }
 }
 
@@ -39,10 +48,10 @@ private struct NoLateGuidanceCard: View {
     let presentation = NoLateGuidancePresentationPolicy.presentation(content, legs: legs, now: now, isStale: isStale)
     let arrival = NoLateGuidancePresentationPolicy.freshArrival(content, legs: legs, now: now, isStale: isStale)
     VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 10) {
-        Image(systemName: presentation.symbol).font(.system(size: 19, weight: .semibold))
-          .foregroundStyle(.blue).frame(width: 38, height: 38)
-          .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+      HStack(spacing: 8) {
+        NoLateActivityIcons.guidance(presentation.symbol, size: 19)
+          .foregroundStyle(.blue).frame(width: 34, height: 34)
+          .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
         VStack(alignment: .leading, spacing: 3) {
           Text(presentation.title).font(.headline)
             .accessibilityLabel(presentation.title)
@@ -52,77 +61,88 @@ private struct NoLateGuidanceCard: View {
             .lineLimit(1).minimumScaleFactor(0.8)
         }
         Spacer(minLength: 0)
+        NoLateActivityIcons.image(62015, size: 13)
+          .foregroundStyle(.secondary).accessibilityHidden(true)
       }
       NoLateGuidanceRouteBar(legs: legs, content: content, isStale: isStale)
-      HStack(spacing: 5) {
-        if let arrival {
-          Image(systemName: "bus.fill").foregroundStyle(.green)
+      if let arrival {
+        HStack(spacing: 5) {
+          NoLateActivityIcons.image(61892, size: 12).foregroundStyle(.green)
           Text("버스 도착까지").foregroundStyle(.secondary)
           Text(Date(timeIntervalSince1970: arrival.expectedAt), style: .timer)
             .fontWeight(.semibold).monospacedDigit()
           Spacer(minLength: 4)
           Text(arrival.directionLabel).foregroundStyle(.secondary).lineLimit(1)
-        } else {
-          Text(presentation.symbol == "location.slash" ? "위치 정보 업데이트 필요" : "NoLate · 대중교통 안내")
-            .foregroundStyle(.secondary)
-          Spacer(minLength: 0)
-        }
-      }.font(.caption).lineLimit(1).minimumScaleFactor(0.8)
+        }.font(.caption).lineLimit(1).minimumScaleFactor(0.8)
+      }
     }.dynamicTypeSize(...DynamicTypeSize.xxxLarge)
   }
 }
 
 /// Provider labels/colours with planned proportions. Progress still comes from fresh GPS only.
 private struct NoLateGuidanceRouteBar: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.isLuminanceReduced) private var isLuminanceReduced
   let legs: [NoLateGuidanceRouteLeg]
   let content: NoLateGuidanceContent
   let isStale: Bool
 
   var body: some View {
+    let motion = reduceMotion || isLuminanceReduced
+      ? nil : Animation.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
     let position = NoLateGuidanceRoutePositionPolicy.position(content, legs: legs,
       now: Date().timeIntervalSince1970, isStale: isStale)
     let displayLegs = NoLateGuidanceRouteLayoutPolicy.validTopology(legs) ? legs : []
     let layout = NoLateGuidanceRouteLayoutPolicy.layout(displayLegs)
     VStack(alignment: .leading, spacing: 3) {
-    GeometryReader { proxy in
-      let width = max(0, proxy.size.width - 32)
-      ZStack(alignment: .topLeading) {
-        HStack(spacing: 0) {
-          ForEach(displayLegs, id: \.index) { leg in
-            color(leg).frame(width: width * layout.fractions[leg.index])
+      GeometryReader { proxy in
+        let width = max(0, proxy.size.width - 22)
+        ZStack(alignment: .topLeading) {
+          HStack(spacing: 0) {
+            ForEach(displayLegs, id: \.index) { leg in
+              color(leg).frame(width: width * layout.fractions[leg.index])
+            }
           }
-        }.frame(width: width, height: 10).clipShape(Capsule())
-          .overlay(Capsule().stroke(Color.primary.opacity(0.5), lineWidth: 1)).offset(x: 16, y: 13)
-        if displayLegs.count <= 8 {
-          ForEach(displayLegs, id: \.index) { leg in
-            Image(systemName: symbol(leg.kind)).font(.system(size: 11, weight: .semibold))
-              .foregroundStyle(NoLateGuidanceRouteLayoutPolicy.darkIconInk(leg.lineColor ?? fallbackHex(leg.kind)) ? .black : .white).frame(width: 24, height: 24)
-              .background(color(leg), in: Circle())
-              .overlay(Circle().stroke(Color.primary.opacity(0.25), lineWidth: 1))
-              .offset(x: 4 + width * layout.start(leg.index), y: 6)
-              .accessibilityLabel(NoLateGuidanceRouteLayoutPolicy.label(leg))
+          .frame(width: width, height: 8)
+          .clipShape(Capsule())
+          .offset(x: 11, y: 7)
+
+          if let position {
+            NoLateActivityIcons.image(62576, size: 12).rotationEffect(.degrees(45))
+              .foregroundStyle(.white)
+              .frame(width: 22, height: 22).background(.blue, in: Circle())
+              .overlay(Circle().stroke(.white, lineWidth: 2))
+              .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+              .offset(x: width * position.barFraction)
+              .animation(motion, value: position.barFraction)
+              .transition(motion == nil ? .identity : .asymmetric(
+                insertion: .modifier(active: NoLateGuidanceMarkerEntrance(progress: 0),
+                                     identity: NoLateGuidanceMarkerEntrance(progress: 1)),
+                removal: .identity
+              ))
+              .accessibilityHidden(true)
           }
         }
-        if let position {
-          Image(systemName: "location.north.fill").rotationEffect(.degrees(90))
-            .font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-            .frame(width: 32, height: 32).background(.blue, in: Circle())
-            .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 3))
-            .shadow(color: .blue.opacity(0.22), radius: 3, y: 1)
-            .offset(x: width * position.barFraction, y: 2)
-            .accessibilityLabel(content.phase == "RIDING" ? (content.subway == nil ? "현재 위치: 버스 이동 구간" : "현재 위치: 지하철 이동 구간") : content.phase == "WAITING" ? "현재 위치: 승차 정류장" : "현재 위치: 도보 구간")
-            .accessibilityIdentifier("guidance-lock-route-position")
-        }
+        .animation(motion, value: position != nil)
       }
-    }.frame(height: 36)
-    HStack(spacing: 6) {
-      // Compact visual list; accessibility below preserves every original leg, including repeats.
-      Text(legs.filter { ["BUS", "SUBWAY"].contains($0.kind) }.prefix(2)
-        .map { NoLateGuidanceRouteLayoutPolicy.label($0) }.joined(separator: " → "))
-        .font(.caption2).lineLimit(1).minimumScaleFactor(0.8)
-      Spacer(minLength: 0)
-      Text(layout.caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-    }
+      .frame(height: 22)
+
+      HStack(spacing: 6) {
+        let rides = displayLegs.filter { ["BUS", "SUBWAY"].contains($0.kind) }
+        ForEach(rides.prefix(3), id: \.index) { leg in
+          HStack(spacing: 3) {
+            Circle().fill(color(leg)).frame(width: 5, height: 5)
+            Text(NoLateGuidanceRouteLayoutPolicy.label(leg)).lineLimit(1)
+          }
+        }
+        if rides.count > 3 {
+          Text("+\(rides.count - 3)").foregroundStyle(.secondary)
+        }
+        Spacer(minLength: 0)
+        Text(layout.basis == "TIME" ? "구간별 예정 시간" : layout.caption)
+          .foregroundStyle(.secondary).lineLimit(1)
+      }
+      .font(.caption2)
     }.accessibilityElement(children: .ignore)
       .accessibilityLabel(legs.map { "\($0.index + 1). \(NoLateGuidanceRouteLayoutPolicy.label($0))" }.joined(separator: " → ")
         + ". \(layout.caption). 전체 여정 완료율이 아닙니다."
@@ -137,13 +157,22 @@ private struct NoLateGuidanceRouteBar: View {
     default: return Color(hex: "78828F")
     }
   }
-  private func symbol(_ kind: String) -> String {
-    switch kind { case "WALK": return "figure.walk"; case "BUS": return "bus.fill"; case "SUBWAY": return "tram.fill"; default: return "ellipsis" }
+
+}
+
+private struct NoLateGuidanceMarkerEntrance: AnimatableModifier {
+  var progress: Double
+
+  var animatableData: Double {
+    get { progress }
+    set { progress = newValue }
   }
-  private func fallbackHex(_ kind: String) -> String {
-    kind == "BUS" ? "2F963B" : kind == "SUBWAY" ? "239FD2" : "78828F"
-  }
-  private func label(_ kind: String) -> String {
-    switch kind { case "WALK": return "도보"; case "BUS": return "버스"; case "SUBWAY": return "지하철"; default: return "기타 이동" }
+
+  func body(content: Content) -> some View {
+    content
+      .rotation3DEffect(.degrees(26 * (1 - progress)), axis: (x: 1, y: 0, z: 0), perspective: 0.3)
+      .scaleEffect(0.82 + 0.18 * progress)
+      .offset(y: -7 * (1 - progress))
+      .opacity(0.2 + 0.8 * progress)
   }
 }

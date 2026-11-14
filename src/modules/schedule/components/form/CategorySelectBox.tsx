@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
+import { useReducedMotion } from "react-native-reanimated";
 
 import { useTheme } from "../../../theme/ThemeContext";
 
@@ -36,6 +37,7 @@ export default function CategorySelectBox({
     onExpandedChange,
 }: Props) {
     const { colors, mode } = useTheme();
+    const reduceMotion = useReducedMotion();
     const [internalOpen, setInternalOpen] = useState(false);
     const [closing, setClosing] = useState(false);
     const [measuredContentHeight, setMeasuredContentHeight] = useState(0);
@@ -54,11 +56,21 @@ export default function CategorySelectBox({
     useEffect(() => {
         const wasOpen = prevOpenRef.current;
         prevOpenRef.current = open;
+        if (reduceMotion) {
+            expandAnim.setValue(open ? 1 : 0);
+            setClosing(false);
+            return;
+        }
         let animation: Animated.CompositeAnimation | undefined;
 
         if (open && !wasOpen) {
             setClosing(false);
-            animation = Animated.spring(expandAnim, {
+            animation = hideTrigger ? Animated.timing(expandAnim, {
+                toValue: 1,
+                duration: 200,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: false,
+            }) : Animated.spring(expandAnim, {
                 toValue: 1,
                 useNativeDriver: false,
                 damping: 18,
@@ -69,7 +81,7 @@ export default function CategorySelectBox({
             setClosing(true);
             animation = Animated.timing(expandAnim, {
                 toValue: 0,
-                duration: 200,
+                duration: hideTrigger ? 160 : 200,
                 useNativeDriver: false,
             });
         }
@@ -78,7 +90,7 @@ export default function CategorySelectBox({
             if (finished && !open) setClosing(false);
         });
         return () => animation?.stop();
-    }, [open, expandAnim]);
+    }, [open, expandAnim, hideTrigger, reduceMotion]);
 
     const estimatedContentHeight =
         ITEM_HEIGHT * categories.length + (onManageCategories ? MANAGE_BUTTON_HEIGHT : 0);

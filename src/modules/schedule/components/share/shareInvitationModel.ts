@@ -14,6 +14,7 @@ export type ShareInvitationSheetProps = {
     initialContentMode?: ScheduleShareContentMode;
     onCalendarContentModeChange?: (mode: ScheduleShareContentMode) => Promise<void>;
     onClose: () => void;
+    embedded?: boolean;
 };
 export type ShareMode = "direct" | "link";
 export type GrantableSharePermission = Extract<ScheduleSharePermission, "VIEWER" | "EDITOR">;

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image, Platform, Text, View } from 'react-native';
 
-import QuickScheduleLogoLoader from '../../modules/schedule/components/form/QuickScheduleLogoLoader';
+import CalendarImportStatusMark from './CalendarImportStatusMark';
 import type { AppColors } from '../../modules/theme/ThemeContext';
 import { ProviderOptionRow } from './CalendarImportCandidates';
 import {
@@ -72,7 +72,7 @@ export default function CalendarImportEarlySteps({
               style={styles.introLogoImage}
             />
           </View>
-          <Text style={styles.title}>
+          <Text accessibilityRole="header" style={styles.title}>
             캘린더를 연결하면{'\n'}출발 준비가 쉬워져요
           </Text>
           <Text style={styles.subtitle}>
@@ -89,7 +89,7 @@ export default function CalendarImportEarlySteps({
       {step === 'provider' && (
         <View style={styles.stepWrap}>
           <Text style={styles.eyebrow}>캘린더 가져오기</Text>
-          <Text style={styles.title}>어느 캘린더에서{'\n'}가져올까요?</Text>
+          <Text accessibilityRole="header" style={styles.title}>어느 캘린더에서{'\n'}가져올까요?</Text>
           <Text style={styles.subtitle}>
             여러 캘린더를 함께 선택할 수 있어요.
           </Text>
@@ -116,7 +116,7 @@ export default function CalendarImportEarlySteps({
                 : 'phone-portrait-outline'
             }
           />
-          <Text style={styles.title}>
+          <Text accessibilityRole="header" style={styles.title}>
             {permissionProviderLabel}의{'\n'}일정을 확인할게요
           </Text>
           <Text style={styles.subtitle}>
@@ -133,7 +133,7 @@ export default function CalendarImportEarlySteps({
           />
           {errorMessage ? (
             <View accessibilityLiveRegion="polite" style={styles.inlineNotice}>
-              <Ionicons
+              <Ionicons accessible={false} importantForAccessibility="no"
                 name="information-circle-outline"
                 size={18}
                 color={colors.textSecondary}
@@ -146,43 +146,25 @@ export default function CalendarImportEarlySteps({
 
       {step === 'scanning' && (
         <View style={styles.stepWrap}>
-          <QuickScheduleLogoLoader
-            variant="calendar"
-            accessibilityLabel={`다가오는 일정을 찾고 있어요. ${
-              SCAN_MESSAGES[Math.min(scanStage, SCAN_MESSAGES.length - 1)]
-            }`}
-          />
-          <Text style={styles.title}>가져올 일정을{'\n'}찾고 있어요</Text>
-          <Text style={styles.subtitle}>{scanStatusMessage}</Text>
+          <View style={styles.centeredStatusHeader}>
+            <CalendarImportStatusMark scanning />
+            <Text accessibilityRole="header" style={[styles.title, { textAlign: 'center' }]}>가져올 일정을{'\n'}찾고 있어요</Text>
+            <Text style={[styles.subtitle, { textAlign: 'center' }]}>
+              {scanStatusMessage === SCAN_MESSAGES[scanStage] ? '선택한 캘린더에서 다가오는 일정을 확인합니다.' : scanStatusMessage}
+            </Text>
+          </View>
           <View style={styles.scanList}>
-            {SCAN_MESSAGES.map((message, index) => (
-              <View key={message} style={styles.scanRow}>
-                <Ionicons
-                  name={
-                    scanStage > index
-                      ? 'checkmark-circle'
-                      : scanStage === index
-                      ? 'time-outline'
-                      : 'ellipse-outline'
-                  }
-                  size={19}
-                  color={scanStage >= index ? BRAND_BLUE : colors.textDisabled}
-                />
-                <Text
-                  style={[
-                    styles.scanText,
-                    {
-                      color:
-                        scanStage >= index
-                          ? colors.textPrimary
-                          : colors.textSecondary,
-                    },
-                  ]}
-                >
-                  {message}
-                </Text>
-              </View>
-            ))}
+            {SCAN_MESSAGES.slice(0, scanStage + 1).map((message, index) => {
+              const complete = scanStage > index;
+              return (
+                <View key={message} style={styles.scanRow}>
+                  <Ionicons accessible={false} name={complete ? 'checkmark-circle-outline' : 'time-outline'} size={20}
+                    color={complete ? '#148A64' : BRAND_BLUE} />
+                  <Text style={[styles.scanText, { color: colors.textPrimary }]}>{message}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{complete ? '완료' : '진행 중'}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
       )}

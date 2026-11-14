@@ -72,7 +72,8 @@ struct NoLateJourneySubwayRideCore: Sendable {
     guard fix.observedAt.isFinite, fix.observedAt >= armedAt, fix.observedAt <= now,
       now - fix.observedAt < 15, fix.horizontalAccuracyMeters.isFinite,
       (0...25).contains(fix.horizontalAccuracyMeters), fix.coordinate.latitude.isFinite,
-      fix.coordinate.longitude.isFinite else { uncertain("PASSENGER_LOCATION_UNRELIABLE"); return }
+      (-90...90).contains(fix.coordinate.latitude), fix.coordinate.longitude.isFinite,
+      (-180...180).contains(fix.coordinate.longitude) else { uncertain("PASSENGER_LOCATION_UNRELIABLE"); return }
     if let prior = lastGPS {
       let elapsed = fix.observedAt - prior.at
       // CoreLocation may deliver a newer sequence with the same (or an older)

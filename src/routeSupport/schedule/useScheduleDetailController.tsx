@@ -1,7 +1,8 @@
 import { hasPersistableScheduleRoute } from "../../modules/schedule/scheduleRouteTiming";
 import { getImportedTicket } from "../../modules/schedule/importedTicket";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, Alert, Platform, useWindowDimensions } from 'react-native';
+import { createLatestRequestGuard } from '../../modules/map/routeAsyncGuard';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,7 +28,10 @@ import type {
 import {
   buildScheduleRoutePlannerInitial,
   consumeScheduleRouteUpdatePayload,
+  isRoutePlannerFlowPath,
+  observeRoutePlannerReturn,
   setRoutePlannerInitial,
+  type ScheduleRouteUpdatePayload,
 } from '../../modules/schedule/routePlannerSession';
 import { isRouteSetupEntryRequested } from '../../modules/schedule/routeSetupNavigation';
 import { isRouteDetailEntryRequested } from '../../modules/schedule/routeDetailNavigation';
@@ -67,6 +71,7 @@ import {
 } from './scheduleDetailModel';
 import { useScheduleDetailSheetController } from './useScheduleDetailSheetController';
 import { useScheduleDetailMapController } from './useScheduleDetailMapController';
+import { applyMatchedTransitTimeline } from '../../modules/schedule/matchedTransitTimeline';
 import { useScheduleDepartureStatusController } from './useScheduleDepartureStatusController';
 
 /**
@@ -84,42 +89,54 @@ export function useScheduleDetailController({
   previewCurrentMemberId,
   onPreviewOpenEditor,
 }: ScheduleDetailPreviewProps = {}) {
-  const { id: routeId, openRouteSetup, openRouteDetail } = useLocalSearchParams<{
+  const { id: routeId, openRouteSetup, openRouteDetail, entrySource } = useLocalSearchParams<{
     id: string;
+    entrySource?: string;
     openRouteSetup?: string | string[];
     openRouteDetail?: string | string[];
   }>();
-  const id = routeId ?? initialItem?.id;
   const pathname = usePathname();
   const router = useRouter();
+  const internalPreviewItem =
+    typeof __DEV__ === 'boolean' && __DEV__ ? previewItem : undefined;
+  const id = internalPreviewItem?.id ?? routeId ?? initialItem?.id;
   const { runWithTransitionShell } = useImmediateNavigationTransition();
   const goBack = useCallback(() => {
+    if ((entrySource === 'calendar-search' || entrySource === 'notification-inbox') && router.canGoBack()) {
+      // Preserve the visible list during the native back transition.
+      router.back();
+      return;
+    }
     runWithTransitionShell(
       { route: '/schedule', title: '일정', showBack: false },
       () => goBackFromScheduleDetail(router),
     );
-  }, [router, runWithTransitionShell]);
+  }, [entrySource, router, runWithTransitionShell]);
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { colors, mode } = useTheme();
   const isDark = mode === 'dark';
   const { state, dispatch } = useScheduleStore();
-  const internalPreviewItem =
-    typeof __DEV__ === 'boolean' && __DEV__ ? previewItem : undefined;
   const {
     handleExpandedContentLayout,
+    handleSheetHeaderLayout,
+    largeRouteHeader,
     participantDisclosureAnimatedStyle,
     participantDisclosureProgress,
     participantsExpanded,
     previewParticipantsExpanded,
+    reduceMotion,
     setExpandedContentHeight,
     setParticipantsExpanded,
+    setRouteHeaderHeight,
     sheetBottomPadding,
     sheetMaxHeight,
     sheetMinHeight,
     sheetMode,
     sheetPanResponder,
     sheetQuickSummaryAnimatedStyle,
+    sheetExpandedContentAnimatedStyle,
+    sheetHandleAnimatedStyle,
     sheetScrollRef,
     sheetTranslateY,
     snapSheet,
@@ -142,7 +159,15 @@ export function useScheduleDetailController({
       ? previewCurrentMemberId
       : null,
   );
-  const [departureActionPending, setDepartureActionPending] = useState(false);
+  const [departureSubmission, setDepartureSubmission] = useState<{
+    scheduleId: string;
+    status: 'pending' | 'failed' | 'recorded';
+  }>();
+  const departureRequests = useRef(new Set<string>()).current;
+  const departureSubmissionStatus = departureSubmission?.scheduleId === id
+    ? departureSubmission?.status
+    : undefined;
+  const departureActionPending = departureSubmissionStatus === 'pending';
   const [departureNudgePendingMemberId, setDepartureNudgePendingMemberId] =
     useState<number>();
   const [nowMs, setNowMs] = useState(() =>
@@ -153,11 +178,21 @@ export function useScheduleDetailController({
   const [previewDepartedAt, setPreviewDepartedAt] = useState<string>();
   const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string>();
   const [routeSavePending, setRouteSavePending] = useState(false);
+  const [confirmedRouteScheduleId, setConfirmedRouteScheduleId] = useState<string>();
+  const routeSaveConfirmed = !!id && confirmedRouteScheduleId === id;
+  const [failedRouteSave, setFailedRouteSave] = useState<{
+    scheduleId: string;
+    payload: ScheduleRouteUpdatePayload;
+  }>();
+  const routeSaveInFlight = useRef(false);
   const routeDetailAdPendingRef = useRef(false);
   const [inspectedTravelPlan, setInspectedTravelPlan] =
     useState<ScheduleTravelPlan>();
   const [travelPlanDetailPendingMemberId, setTravelPlanDetailPendingMemberId] =
     useState<number>();
+  const [failedTravelPlanMemberId, setFailedTravelPlanMemberId] = useState<number>();
+  const travelPlanRequests = useRef(createLatestRequestGuard()).current;
+  const travelPlanRequestPending = useRef(false);
   const routePlannerWasActiveRef = useRef(false);
   const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
 
@@ -266,16 +301,22 @@ export function useScheduleDetailController({
     savedDisplayTravelMinutes,
     displayTravelMode,
     handleMapMarkerPress,
+    canShowPassStopOnMap,
+    handleRoutePassStopPress,
     handleMapZoomChanged,
     handleRouteStepPress,
     mapCoords,
     mapRef,
     mapZoom,
     moveToCurrentLocation,
-    routeDetailInfo,
+    showWholeRoute,
+    routeDetailInfo: savedRouteDetailInfo,
     routeOption,
     routeProgressSegments,
+    focusedLegIndex,
+    hasFocusedMapLocation,
     selectedRoutePassStop,
+    selectedRoutePassStopName,
     selectedRouteStepId,
   } = useScheduleDetailMapController({
     scheduleId: id,
@@ -287,9 +328,14 @@ export function useScheduleDetailController({
     topInset: insets.top,
     sheetMinHeight,
     openRouteDetail,
+    reduceMotion,
     snapSheet,
   });
   const currentTravelMinutes = displayedDepartureTiming.travelMinutes;
+  const routeDetailInfo = useMemo(() => inspectedTravelPlan
+    ? savedRouteDetailInfo
+    : applyMatchedTransitTimeline(savedRouteDetailInfo, departureStatus),
+    [departureStatus, inspectedTravelPlan, savedRouteDetailInfo]);
   const effectiveTransitRoutePresentation = inspectedTravelPlan
     ? undefined
     : buildPlannedJourneyArrivalPresentation(departureStatus, nowMs) ??
@@ -322,6 +368,7 @@ export function useScheduleDetailController({
     setExpandedContentHeight(0);
     setInspectedTravelPlan(undefined);
     setTravelPlanDetailPendingMemberId(undefined);
+    setFailedTravelPlanMemberId(undefined);
     setDepartureNudgePendingMemberId(undefined);
     setPreviewDepartedAt(undefined);
   }, [
@@ -331,6 +378,11 @@ export function useScheduleDetailController({
     setExpandedContentHeight,
     setParticipantsExpanded,
   ]);
+
+  useEffect(() => () => {
+    travelPlanRequests.invalidate();
+    travelPlanRequestPending.current = false;
+  }, [id, travelPlanRequests]);
 
   useEffect(() => {
     if (internalPreviewItem) return undefined;
@@ -374,10 +426,7 @@ export function useScheduleDetailController({
           }
         })
         .catch(error => {
-          const routeFlowActive =
-            pathname === '/schedule/route-select' ||
-            pathname === '/schedule/route-planner';
-          if (!cancelled && !routeFlowActive)
+          if (!cancelled && !isRoutePlannerFlowPath(pathname))
             setLoadError(getErrorMessage(error));
         })
         .finally(() => {
@@ -402,22 +451,24 @@ export function useScheduleDetailController({
   const journeyGuidanceAvailable = !internalPreviewItem && !inspectedTravelPlan && canOpenJourneyGuidance(item);
 
   const completeDeparture = useCallback(async () => {
-    if (departureActionPending) return;
+    if (inspectedTravelPlan) return;
     if (journeyGuidanceAvailable && id) {
       // Enter the opt-in screen first; only its confirmed start records departure.
       router.push(journeyGuidanceRoute(id));
       return;
     }
+    if (!id || currentMemberDepartedAt || departureRequests.has(id)) return;
     if (internalPreviewItem) {
+      setDepartureSubmission({ scheduleId: id, status: 'recorded' });
       setPreviewDepartedAt(new Date(nowMs).toISOString());
       return;
     }
-    if (!id) return;
 
-    setDepartureActionPending(true);
+    departureRequests.add(id);
+    setDepartureSubmission({ scheduleId: id, status: 'pending' });
     try {
-      const completedAt = new Date().toISOString();
       const updated = await completeScheduleDeparture(id);
+      const completedAt = new Date().toISOString();
       dispatch({
         type: 'UPDATE_ITEM',
         item: {
@@ -430,17 +481,22 @@ export function useScheduleDetailController({
             updated.departureParticipants ?? item?.departureParticipants,
         },
       });
-    } catch (error) {
-      Alert.alert('출발 완료 실패', getErrorMessage(error));
+      setDepartureSubmission(current => current?.scheduleId === id
+        ? { scheduleId: id, status: 'recorded' } : current);
+    } catch {
+      setDepartureSubmission(current => current?.scheduleId === id
+        ? { scheduleId: id, status: 'failed' } : current);
     } finally {
-      setDepartureActionPending(false);
+      departureRequests.delete(id);
     }
   }, [
     canManageSchedule,
-    departureActionPending,
+    currentMemberDepartedAt,
+    departureRequests,
     dispatch,
     id,
     internalPreviewItem,
+    inspectedTravelPlan,
     item?.departureParticipants,
     journeyGuidanceAvailable,
     nowMs,
@@ -509,30 +565,50 @@ export function useScheduleDetailController({
     [departureNudgePendingMemberId, requestDepartureNudge],
   );
 
+  const returnToOwnTravelPlan = useCallback(() => {
+    travelPlanRequests.invalidate();
+    travelPlanRequestPending.current = false;
+    setTravelPlanDetailPendingMemberId(undefined);
+    setFailedTravelPlanMemberId(undefined);
+    setInspectedTravelPlan(undefined);
+    clearRouteFocus();
+  }, [clearRouteFocus, travelPlanRequests]);
+
   const openParticipantTravelPlan = useCallback(
     async (participant: ScheduleTravelPlanParticipant) => {
       if (
         internalPreviewItem ||
         !id ||
-        travelPlanDetailPendingMemberId !== undefined
+        travelPlanRequestPending.current
       )
         return;
       if (participant.memberId === currentMemberId) {
-        setInspectedTravelPlan(undefined);
+        if (inspectedTravelPlan) returnToOwnTravelPlan();
         return;
       }
       if (!canOpenParticipantTravelPlan(participant, currentMemberId)) return;
+      if (inspectedTravelPlan?.memberId === participant.memberId) {
+        snapSheet('compact');
+        return;
+      }
 
+      const requestId = travelPlanRequests.begin();
+      travelPlanRequestPending.current = true;
+      setFailedTravelPlanMemberId(undefined);
       setTravelPlanDetailPendingMemberId(participant.memberId);
       try {
         const plan = await getScheduleTravelPlan(id, participant.memberId);
+        if (!travelPlanRequests.isCurrent(requestId)) return;
         setInspectedTravelPlan(plan);
         clearRouteFocus();
         snapSheet('compact');
-      } catch (error) {
-        Alert.alert('이동 계획을 불러오지 못했어요', getErrorMessage(error));
+      } catch {
+        if (travelPlanRequests.isCurrent(requestId)) setFailedTravelPlanMemberId(participant.memberId);
       } finally {
-        setTravelPlanDetailPendingMemberId(undefined);
+        if (travelPlanRequests.isCurrent(requestId)) {
+          travelPlanRequestPending.current = false;
+          setTravelPlanDetailPendingMemberId(undefined);
+        }
       }
     },
     [
@@ -540,8 +616,10 @@ export function useScheduleDetailController({
       clearRouteFocus,
       id,
       internalPreviewItem,
+      inspectedTravelPlan,
+      returnToOwnTravelPlan,
       snapSheet,
-      travelPlanDetailPendingMemberId,
+      travelPlanRequests,
     ],
   );
 
@@ -574,16 +652,19 @@ export function useScheduleDetailController({
     );
     setRoutePlannerInitial(
       targetSessionId,
-      buildScheduleRoutePlannerInitial({
-        origin: item.origin,
-        destination: item.destination,
-        travelMode,
-        travelMinutes: item.travelMinutes,
-        locationName: item.locationName,
-        targetArrivalAt: item.startAt,
-        departureAt: item.departAt,
-        route: item.route,
-      }),
+      {
+        ...buildScheduleRoutePlannerInitial({
+          origin: item.origin,
+          destination: item.destination,
+          travelMode,
+          travelMinutes: item.travelMinutes,
+          locationName: item.locationName,
+          targetArrivalAt: item.startAt,
+          departureAt: item.departAt,
+          route: item.route,
+        }),
+        appliesToExistingSchedule: true,
+      },
     );
     routePlannerWasActiveRef.current = false;
     setRoutePlannerSessionId(targetSessionId);
@@ -669,43 +750,62 @@ export function useScheduleDetailController({
   ]);
 
   useEffect(() => {
-    const routeFlowActive =
-      pathname === '/schedule/route-select' ||
-      pathname === '/schedule/route-planner';
-    if (routeFlowActive) {
-      if (routePlannerSessionId) routePlannerWasActiveRef.current = true;
-      return;
-    }
-    if (!item || !routePlannerSessionId || !routePlannerWasActiveRef.current)
-      return;
+    if (!confirmedRouteScheduleId) return;
+    const timeout = setTimeout(() => setConfirmedRouteScheduleId(undefined), 3500);
+    return () => clearTimeout(timeout);
+  }, [confirmedRouteScheduleId]);
 
-    routePlannerWasActiveRef.current = false;
+  const saveSelectedRoute = useCallback(async (payload: ScheduleRouteUpdatePayload, isRetry = false) => {
+    if (!item || routeSaveInFlight.current) return;
+    routeSaveInFlight.current = true;
+    if (!isRetry) setFailedRouteSave(undefined);
+    setConfirmedRouteScheduleId(undefined);
+    setRouteSavePending(true);
+    try {
+      const updated = await saveScheduleRouteAsMyTravelPlan(item, payload, {
+        upsertMyTravelPlan: upsertMyScheduleTravelPlan,
+        reloadSchedule: getSchedule,
+        canResolveCommonDestination: canEditSchedule,
+      });
+      setInspectedTravelPlan(undefined);
+      dispatch({ type: 'UPDATE_ITEM', item: updated });
+      setFailedRouteSave(undefined);
+      setConfirmedRouteScheduleId(item.id);
+    } catch {
+      setFailedRouteSave({ scheduleId: item.id, payload });
+    } finally {
+      routeSaveInFlight.current = false;
+      setRouteSavePending(false);
+    }
+  }, [canEditSchedule, dispatch, item]);
+
+  const canRetryRouteSave = failedRouteSave !== undefined && failedRouteSave.scheduleId === id;
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || routeSavePending) return;
+    if (routeSaveConfirmed) AccessibilityInfo.announceForAccessibility('경로를 적용했어요');
+    else if (canRetryRouteSave) AccessibilityInfo.announceForAccessibility('경로를 적용하지 못했어요');
+  }, [canRetryRouteSave, routeSaveConfirmed, routeSavePending]);
+
+  const retryRouteSave = () => {
+    if (canRetryRouteSave) void saveSelectedRoute(failedRouteSave.payload, true);
+  };
+
+  useEffect(() => {
+    if (!item || !routePlannerSessionId) return;
+    const observation = observeRoutePlannerReturn(
+      pathname,
+      routePlannerWasActiveRef.current,
+    );
+    routePlannerWasActiveRef.current = observation.hasVisitedRouteFlow;
+    if (!observation.shouldConsumeResult) return;
+
     const payload = consumeScheduleRouteUpdatePayload(
       routePlannerSessionId,
       item,
     );
     setRoutePlannerSessionId(undefined);
-    if (!payload) return;
-
-    setRouteSavePending(true);
-    const saveRoute = saveScheduleRouteAsMyTravelPlan(item, payload, {
-      upsertMyTravelPlan: upsertMyScheduleTravelPlan,
-      reloadSchedule: getSchedule,
-      canResolveCommonDestination: canEditSchedule,
-    });
-
-    saveRoute
-      .then(updated => {
-        setInspectedTravelPlan(undefined);
-        dispatch({ type: 'UPDATE_ITEM', item: updated });
-      })
-      .catch(error => {
-        Alert.alert('경로 저장 실패', getErrorMessage(error));
-      })
-      .finally(() => {
-        setRouteSavePending(false);
-      });
-  }, [canEditSchedule, dispatch, item, pathname, routePlannerSessionId]);
+    if (payload) void saveSelectedRoute(payload);
+  }, [item, pathname, routePlannerSessionId, saveSelectedRoute]);
 
   return {
     id,
@@ -725,6 +825,8 @@ export function useScheduleDetailController({
     authoritativeDetailLoaded: !internalPreviewItem && loadedDetailId === id,
     loadError,
     setRetryKey,
+    setRouteHeaderHeight,
+    largeRouteHeader,
     sheetMaxHeight,
     sheetMinHeight,
     sheetBottomPadding,
@@ -737,14 +839,19 @@ export function useScheduleDetailController({
     setMemoSheetVisible,
     currentMemberId,
     departureActionPending,
+    departureSubmissionStatus,
     departureNudgePendingMemberId,
     participantsExpanded,
     nowMs,
     currentLocationPending,
     routeSavePending,
+    routeSaveConfirmed,
+    canRetryRouteSave,
+    retryRouteSave,
     inspectedTravelPlan,
-    setInspectedTravelPlan,
+    returnToOwnTravelPlan,
     travelPlanDetailPendingMemberId,
+    failedTravelPlanMemberId,
     item,
     canManageSchedule,
     canEditSchedule,
@@ -755,10 +862,13 @@ export function useScheduleDetailController({
     preservingEarlierDeparture: displayedDepartureTiming.preservingEarlierDeparture,
     departureDisplayState,
     sheetQuickSummaryAnimatedStyle,
+    sheetExpandedContentAnimatedStyle,
+    sheetHandleAnimatedStyle,
     snapSheet,
     participantDisclosureAnimatedStyle,
     toggleParticipantsExpanded,
     handleExpandedContentLayout,
+    handleSheetHeaderLayout,
     sheetPanResponder,
     displayOrigin,
     displayDestination,
@@ -774,12 +884,19 @@ export function useScheduleDetailController({
     mapCoords,
     routeDetailInfo,
     routeProgressSegments,
+    focusedLegIndex,
+    hasFocusedMapLocation,
     selectedRouteStepId,
     selectedRoutePassStop,
+    selectedRoutePassStopName,
+    reduceMotion,
     handleMapMarkerPress,
+    canShowPassStopOnMap,
+    handleRoutePassStopPress,
     handleRouteStepPress,
     handleMapZoomChanged,
     moveToCurrentLocation,
+    showWholeRoute,
     completeDeparture,
     journeyGuidanceAvailable,
     confirmDepartureNudge,

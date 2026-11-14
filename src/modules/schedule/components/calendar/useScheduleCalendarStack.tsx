@@ -5,6 +5,7 @@ import React, {
     useRef,
 } from "react";
 import {
+    type LayoutChangeEvent,
     type NativeScrollEvent,
     type NativeSyntheticEvent,
     Text,
@@ -42,6 +43,7 @@ const styles = createScheduleCalendarStyles({
     DETAIL_MONTH_GRID_HORIZONTAL_PADDING,
     WEEKDAY_HEADER_HEIGHT,
 });
+const STACK_MONTH_SWITCH_FRACTION = 0.32;
 
 type CalendarPresentation = ReturnType<
     typeof useScheduleCalendarPresentation
@@ -64,6 +66,8 @@ type UseScheduleCalendarStackParams = {
     onVisibleMonthChange: (month: string) => void;
     onOpenDay: (day: string) => void;
     todayFocusTarget?: TodayFocusTarget | null;
+    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean };
+    onSavedStackPositionReady?: (itemId: string) => void;
 };
 
 /**
@@ -84,6 +88,8 @@ export function useScheduleCalendarStack({
     onVisibleMonthChange,
     onOpenDay,
     todayFocusTarget,
+    savedDateTarget,
+    onSavedStackPositionReady,
 }: UseScheduleCalendarStackParams) {
     const {
         colors,
@@ -144,6 +150,12 @@ export function useScheduleCalendarStack({
     );
     const visibleMonthChangeRef = useRef(onVisibleMonthChange);
     visibleMonthChangeRef.current = onVisibleMonthChange;
+    const stackViewport = useRef({ height: 0, offset: 0 });
+    const handledSavedItem = useRef<string | undefined>(undefined);
+    const pendingSavedScroll = useRef<{ itemId: string; offset: number } | null>(null);
+    const handleStackLayout = useCallback((event: LayoutChangeEvent) => {
+        stackViewport.current.height = event.nativeEvent.layout.height;
+    }, []);
 
     /** 현재 스택 월을 갱신하고 사용자 스크롤에서 발생한 변경만 부모에 보고한다. */
     const updateActiveStackMonth = useCallback((
@@ -162,7 +174,12 @@ export function useScheduleCalendarStack({
     }, [activeStackMonthRef, internallyReportedStackMonthRef]);
 
     useEffect(() => {
+        if (!savedDateTarget?.stackPending
+            || pendingSavedScroll.current?.itemId !== savedDateTarget.itemId) {
+            pendingSavedScroll.current = null;
+        }
         if (!isContinuousMonthViewMode(viewMode) || stackTargetMonthIndex < 0) {
+            pendingSavedScroll.current = null;
             positionedStackListSessionRef.current = null;
             positionedStackTargetMonthRef.current = null;
             internallyReportedStackMonthRef.current = null;
@@ -174,6 +191,10 @@ export function useScheduleCalendarStack({
             positionedStackListSessionRef.current !== stackListSessionKey;
         const hasExplicitScrollRequest =
             handledStackScrollRequestRef.current !== scrollRequest;
+        const savedDayIndex = savedDateTarget?.day === selectedDay
+            && savedDateTarget.itemId !== handledSavedItem.current
+            ? targetMonth.days.findIndex(day => day?.dateString === savedDateTarget.day)
+            : -1;
         const hasNewTargetMonth =
             positionedStackTargetMonthRef.current !== targetMonth.key;
         const hasTransitionTarget = Boolean(
@@ -183,6 +204,7 @@ export function useScheduleCalendarStack({
             internallyReportedStackMonthRef.current === targetMonth.key
             && !isNewListSession
             && !hasExplicitScrollRequest
+            && savedDayIndex < 0
             && !hasTransitionTarget
             && !todayFocusTarget;
 
@@ -200,6 +222,7 @@ export function useScheduleCalendarStack({
         if (
             !isNewListSession
             && !hasExplicitScrollRequest
+            && savedDayIndex < 0
             && !hasTransitionTarget
             && !todayFocusTarget
             && !hasNewTargetMonth
@@ -212,26 +235,50 @@ export function useScheduleCalendarStack({
 
         internallyReportedStackMonthRef.current = null;
         positionedStackTargetMonthRef.current = targetMonth.key;
-        updateActiveStackMonth(
-            targetMonth,
-            !transitionActive && !normalizeMonthCandidate(transitionMonthKey)
-        );
+        if (!savedDateTarget?.stackPending) {
+            updateActiveStackMonth(
+                targetMonth,
+                !transitionActive && !normalizeMonthCandidate(transitionMonthKey)
+            );
+        }
 
         const scrollFrame = requestAnimationFrame(() => {
             const stackList = stackListRef.current;
             if (!stackList) return;
 
-            stackList.scrollToOffset({
-                // The sticky header already names the target month. Skip the
-                // inline section title for programmatic jumps so it is not
-                // duplicated directly beneath the sticky title.
-                offset: Math.max(
-                    0,
-                    stackMonthLayouts[stackTargetMonthIndex].offset
-                        + targetMonth.headerHeight
-                ),
-                animated: false,
-            });
+            const monthStart = stackMonthLayouts[stackTargetMonthIndex].offset + targetMonth.headerHeight;
+            if (savedDayIndex >= 0 && savedDateTarget) {
+                handledSavedItem.current = savedDateTarget.itemId;
+                const weekTop = monthStart + Math.floor(savedDayIndex / 7) * targetMonth.dayHeight;
+                const weekBottom = weekTop + targetMonth.dayHeight;
+                const { height, offset } = stackViewport.current;
+                const weekIsVisible = !isNewListSession && height > 0
+                    && weekTop >= offset && weekBottom <= offset + height;
+                if (!weekIsVisible) {
+                    const nearestOffset = isNewListSession || height <= 0 || weekTop < offset
+                        ? weekTop
+                        : Math.max(monthStart, weekBottom - height);
+                    // Keep the month's sticky title while bringing the saved week into view.
+                    const monthEnd = stackMonthLayouts[stackTargetMonthIndex].offset + targetMonth.height;
+                    const lastMonthOffset = Math.max(monthStart, monthEnd - height * STACK_MONTH_SWITCH_FRACTION - 1);
+                    const targetOffset = Math.min(nearestOffset, lastMonthOffset);
+                    if (savedDateTarget.stackPending) {
+                        pendingSavedScroll.current = { itemId: savedDateTarget.itemId, offset: targetOffset };
+                    }
+                    stackList.scrollToOffset({ offset: targetOffset, animated: false });
+                } else if (savedDateTarget.stackPending) {
+                    updateActiveStackMonth(targetMonth, false);
+                    onSavedStackPositionReady?.(savedDateTarget.itemId);
+                }
+            } else {
+                stackList.scrollToOffset({
+                    // The sticky header already names the target month. Skip the
+                    // inline section title for programmatic jumps so it is not
+                    // duplicated directly beneath the sticky title.
+                    offset: Math.max(0, monthStart),
+                    animated: false,
+                });
+            }
             if (todayFocusTarget?.day.slice(0, 7) === targetMonth.key) {
                 acknowledgeTodayFocusTarget(todayFocusTarget.day);
             }
@@ -242,9 +289,12 @@ export function useScheduleCalendarStack({
         acknowledgeTodayFocusTarget,
         handledStackScrollRequestRef,
         internallyReportedStackMonthRef,
+        onSavedStackPositionReady,
         positionedStackListSessionRef,
         positionedStackTargetMonthRef,
+        savedDateTarget,
         scrollRequest,
+        selectedDay,
         stackListRef,
         stackMonthLayouts,
         stackMonths,
@@ -273,8 +323,21 @@ export function useScheduleCalendarStack({
             // just before the target item, incorrectly reporting the prior month.
             return;
         }
+        stackViewport.current = { height: viewportHeight, offset: contentOffsetY };
 
-        const monthSwitchLine = contentOffsetY + viewportHeight * 0.32;
+        const savedScroll = pendingSavedScroll.current;
+        if (savedDateTarget?.stackPending) {
+            if (savedScroll?.itemId === savedDateTarget.itemId
+                && Math.abs(contentOffsetY - savedScroll.offset) <= 1) {
+                pendingSavedScroll.current = null;
+                const savedMonth = stackMonths[stackTargetMonthIndex];
+                if (savedMonth) updateActiveStackMonth(savedMonth, false);
+                onSavedStackPositionReady?.(savedScroll.itemId);
+            }
+            return;
+        }
+
+        const monthSwitchLine = contentOffsetY + viewportHeight * STACK_MONTH_SWITCH_FRACTION;
         let activeIndex = 0;
 
         for (let index = 1; index < stackMonthLayouts.length; index += 1) {
@@ -287,8 +350,11 @@ export function useScheduleCalendarStack({
             updateActiveStackMonth(nextActiveMonth, !transitionActive);
         }
     }, [
+        onSavedStackPositionReady,
+        savedDateTarget,
         stackMonthLayouts,
         stackMonths,
+        stackTargetMonthIndex,
         transitionActive,
         updateActiveStackMonth,
     ]);
@@ -307,7 +373,7 @@ export function useScheduleCalendarStack({
         >
             {item.headerHeight > 0 && (
                 <View style={[styles.stackMonthHeader, { height: item.headerHeight }]}>
-                    <Text style={[styles.stackMonthTitle, { color: colors.monthTextColor }]}>
+                    <Text maxFontSizeMultiplier={1.35} style={[styles.stackMonthTitle, { color: colors.monthTextColor }]}>
                         {item.month}월
                     </Text>
                 </View>
@@ -397,6 +463,7 @@ export function useScheduleCalendarStack({
         stackMonthLayouts,
         stackTargetMonthIndex,
         handleStackScroll,
+        handleStackLayout,
         renderStackMonth,
     };
 }

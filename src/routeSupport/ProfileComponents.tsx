@@ -17,6 +17,7 @@ export function AccountInfoRow({
     onPress,
     actionLabel,
     actionIcon,
+    buttonRef,
 }: {
     label: string;
     value: string;
@@ -26,6 +27,7 @@ export function AccountInfoRow({
     onPress?: () => void;
     actionLabel?: string;
     actionIcon?: React.ComponentProps<typeof Ionicons>["name"];
+    buttonRef?: React.Ref<React.ElementRef<typeof Pressable>>;
 }) {
     const content = (
         <>
@@ -56,6 +58,7 @@ export function AccountInfoRow({
     if (onPress) {
         return (
             <Pressable
+                ref={buttonRef}
                 accessibilityRole="button"
                 accessibilityLabel={`${label}, ${value}${actionLabel ? `, ${actionLabel}` : ""}`}
                 onPress={onPress}

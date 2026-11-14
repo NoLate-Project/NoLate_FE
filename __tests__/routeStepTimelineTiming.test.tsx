@@ -1,7 +1,9 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
+import { getSubwayArrivals } from "../src/api/transitArrivals";
 import RouteStepTimeline from "../src/modules/schedule/components/route/RouteStepTimeline";
+import { getArrivalClockText, getArrivalWaitText } from "../src/modules/schedule/components/route/RouteStepTimeline.helpers";
 import type { RouteInfo, RouteStep } from "../src/modules/schedule/routeInfo";
 
 jest.mock("@expo/vector-icons", () => ({
@@ -50,6 +52,48 @@ function buildRouteInfo(durations: StepDuration[]): RouteInfo {
 }
 
 describe("RouteStepTimeline timing", () => {
+    it("uses the predicted clock to age a delayed station response", () => {
+        const expected = new Date(2026, 9, 4, 11, 5);
+        const arrival = { provider: "seoul-openapi", kind: "SUBWAY", expectedAt: expected.toISOString(), waitMinutes: 5 };
+        expect(getArrivalClockText(arrival)).toBe("11:05");
+        expect(getArrivalWaitText(arrival, expected.getTime() - 110_000)).toBe("2분");
+        expect(getArrivalWaitText(arrival, expected.getTime() + 10_000)).toBe("예정 시각 지남");
+    });
+
+    it("anchors a legacy relative wait to its source timestamp rather than the current clock", () => {
+        const source = new Date(2026, 9, 4, 11, 0);
+        const arrival = {
+            provider: "seoul-openapi", kind: "SUBWAY", sourceUpdatedAt: source.toISOString(),
+            observedAt: new Date(source.getTime() + 120_000).toISOString(), waitSeconds: 240, waitMinutes: 4,
+        };
+        expect(getArrivalClockText(arrival)).toBe("11:04");
+        expect(getArrivalWaitText(arrival, source.getTime() + 180_000)).toBe("1분");
+    });
+
+    it("renders delayed data using its source time even when the response just arrived", async () => {
+        const source = new Date(2026, 9, 4, 11, 0);
+        const expected = new Date(2026, 9, 4, 11, 5);
+        const receipt = new Date(2026, 9, 4, 11, 3, 10);
+        const now = jest.spyOn(Date, "now").mockReturnValue(receipt.getTime());
+        jest.mocked(getSubwayArrivals).mockResolvedValueOnce([{
+            provider: "seoul-openapi", kind: "SUBWAY", waitMinutes: 5,
+            expectedAt: expected.toISOString(), sourceUpdatedAt: source.toISOString(), observedAt: receipt.toISOString(),
+        }]);
+        try {
+            await act(async () => {
+                renderer = TestRenderer.create(
+                    <RouteStepTimeline routeInfo={buildRouteInfo([{ durationMinutes: 5 }])} compact inlineStationRail />
+                );
+            });
+            const row = renderer!.root.findByProps({ testID: "route-step-row-leg-0" });
+            for (const text of ["11:05", "2분", "갱신 지연", "3분 전 갱신"]) {
+                expect(row.findAll(node => node.props.children === text).length).toBeGreaterThan(0);
+            }
+        } finally {
+            now.mockRestore();
+        }
+    });
+
     let renderer: ReactTestRenderer | undefined;
 
     afterEach(async () => {

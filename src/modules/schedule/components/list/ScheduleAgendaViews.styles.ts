@@ -66,9 +66,14 @@ const styles = StyleSheet.create({
         alignItems: "center",
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
+    agendaFilterNotice: {
+        fontSize: 13,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+    },
     agendaFilterPill: {
         minWidth: 90,
-        maxWidth: 190,
+        maxWidth: "100%",
         minHeight: 32,
         paddingHorizontal: 11,
         borderWidth: StyleSheet.hairlineWidth,
@@ -132,6 +137,13 @@ const styles = StyleSheet.create({
     section: {
         gap: 8,
     },
+    unpositionedAgenda: {
+        opacity: 0,
+    },
+    entryHighlight: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 6,
+    },
     sectionHeader: {
         minHeight: 29,
         paddingHorizontal: 1,
@@ -176,6 +188,11 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         gap: 8,
         paddingHorizontal: 20,
+    },
+    loadingState: {
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        paddingTop: 4,
     },
     emptyText: {
         textAlign: "center",

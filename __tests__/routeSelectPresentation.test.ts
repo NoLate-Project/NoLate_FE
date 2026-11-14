@@ -27,14 +27,14 @@ function getStyleBlock(styleName: string) {
 }
 
 describe("route select presentation", () => {
-    test("장소 바로가기와 목록 카드는 일정 폼의 20pt 여백과 14pt 반경을 사용한다", () => {
+    test("장소 바로가기와 최근 검색은 기존 카드 간격을 유지하고 검색 결과는 구분선으로 나눈다", () => {
         expect(getStyleBlock("searchModeActionRow")).toContain("paddingHorizontal: 20");
         expect(getStyleBlock("searchModeActionRow")).toContain("paddingBottom: 10");
-        expect(getStyleBlock("searchModeActionButton")).toContain("minHeight: 58");
+        expect(getStyleBlock("searchModeActionButton")).toContain("minHeight: 48");
         expect(getStyleBlock("searchModeActionButton")).toContain("borderRadius: 14");
         expect(getStyleBlock("searchModeRecentRow")).toContain("borderRadius: 14");
         expect(getStyleBlock("searchModeRecentRow")).toContain("marginHorizontal: 20");
-        expect(getStyleBlock("searchModeResultRow")).toContain("borderRadius: 14");
+        expect(getStyleBlock("searchModeResultRow")).toContain("borderBottomWidth: StyleSheet.hairlineWidth");
         expect(getStyleBlock("searchModeResultRow")).toContain("marginHorizontal: 20");
     });
 

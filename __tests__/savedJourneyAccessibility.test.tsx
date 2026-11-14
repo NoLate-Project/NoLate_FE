@@ -29,7 +29,7 @@ it('exposes compact GPS guidance separately from expand buttons and allows scrol
         snapSheet: jest.fn(), recommendedDepartureTimeLabel: '12:00', routeFactLabels: [], routeProgressSegments: [],
         item: { id: '9001' }, primaryText: '#111', secondaryText: '#444', topCardAccentText: '#1264C7' } as unknown as ScheduleDetailPresentation;
     let view!: ReactTestRenderer;
-    act(() => { view = TestRenderer.create(<ScheduleDetailRouteQuickSummary presentation={presentation} automaticGuidancePrepared automaticRouteInput={route} />); });
+    act(() => { view = TestRenderer.create(<ScheduleDetailRouteQuickSummary presentation={presentation} automaticRouteInput={route} />); });
     const guidance = view.root.findByProps({ testID: 'stress-guidance' });
     let parent = guidance.parent;
     while (parent) { expect(parent.type).not.toBe(Pressable); parent = parent.parent; }

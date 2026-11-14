@@ -100,10 +100,6 @@ export function useScheduleIndexState(
     useState<CalendarScope>('all');
   const [calendarShareTarget, setCalendarShareTarget] =
     useState<ScheduleCalendar | null>(null);
-  const pendingCalendarShareTargetRef = useRef<ScheduleCalendar | null>(null);
-  const calendarShareFallbackTimeoutRef = useRef<ReturnType<
-    typeof setTimeout
-  > | null>(null);
   const searchSequenceRef = useRef(0);
   const searchAbortControllerRef = useRef<AbortController | null>(null);
   const handledSearchRetryKeyRef = useRef(searchRetryKey);
@@ -135,7 +131,6 @@ export function useScheduleIndexState(
   const [firstDay, setFirstDay] = useState<0 | 1>(0);
   const [calendarScopeSelectorVisible, setCalendarScopeSelectorVisible] =
     useState(false);
-  const [calendarSettingsVisible, setCalendarSettingsVisible] = useState(false);
   const [calendarScrollRequest, setCalendarScrollRequest] = useState(0);
   const [dayTodayRequest, setDayTodayRequest] = useState(0);
   const [yearTodayRequest, setYearTodayRequest] = useState(0);
@@ -159,10 +154,8 @@ export function useScheduleIndexState(
     useState(false);
   const [todayFocusTarget, setTodayFocusTarget] =
     useState<TodayFocusTarget | null>(null);
-  const dayLayerMountedRef = useRef(dayLayerMounted);
   const isDayTransitionActiveRef = useRef(isDayTransitionActive);
   const isYearDepthTransitionActiveRef = useRef(isYearDepthTransitionActive);
-  dayLayerMountedRef.current = dayLayerMounted;
   isDayTransitionActiveRef.current = isDayTransitionActive;
   isYearDepthTransitionActiveRef.current = isYearDepthTransitionActive;
 
@@ -216,7 +209,6 @@ export function useScheduleIndexState(
   const nativeSearchSessionRef = useRef<string | null>(null);
   const primaryDatePillNativeRef = useRef<LiquidGlassIconButtonHandle>(null);
   const searchInputRef = useRef<TextInput>(null);
-  const dayDisplayPrepareRef = useRef<((day: string) => void) | null>(null);
   const monthCalendarHeightRef = useRef(0);
   const monthCalendarDayHeightRef = useRef(
     CALENDAR_DAY_HEIGHTS[initialCalendarViewMode],
@@ -420,8 +412,6 @@ export function useScheduleIndexState(
     setActiveCalendarScope,
     calendarShareTarget,
     setCalendarShareTarget,
-    pendingCalendarShareTargetRef,
-    calendarShareFallbackTimeoutRef,
     searchSequenceRef,
     searchAbortControllerRef,
     handledSearchRetryKeyRef,
@@ -432,8 +422,6 @@ export function useScheduleIndexState(
     setFirstDay,
     calendarScopeSelectorVisible,
     setCalendarScopeSelectorVisible,
-    calendarSettingsVisible,
-    setCalendarSettingsVisible,
     calendarScrollRequest,
     setCalendarScrollRequest,
     dayTodayRequest,
@@ -462,7 +450,6 @@ export function useScheduleIndexState(
     setIsTodayFocusTransitionActive,
     todayFocusTarget,
     setTodayFocusTarget,
-    dayLayerMountedRef,
     isDayTransitionActiveRef,
     isYearDepthTransitionActiveRef,
     retainedMonthAgendaPanelKind,
@@ -490,7 +477,6 @@ export function useScheduleIndexState(
     nativeSearchSessionRef,
     primaryDatePillNativeRef,
     searchInputRef,
-    dayDisplayPrepareRef,
     monthCalendarHeightRef,
     monthCalendarDayHeightRef,
     monthDisplayHeightRef,

@@ -57,6 +57,7 @@ const mockState = {
 };
 
 let mockThemeMode: "light" | "dark" = "light";
+let mockFontScale = 1;
 let mockPathname = "/schedule/1";
 let mockRouteParams: { id: string; preview?: string } = { id: "1" };
 const mockRouterPush = jest.fn();
@@ -72,6 +73,9 @@ const mockGetAuthMember = jest.fn();
 const mockGetScheduleCalendars = jest.fn();
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
+jest.mock("react-native/Libraries/Utilities/useWindowDimensions", () => ({
+    default: () => ({ width: 402, height: 874, scale: 3, fontScale: mockFontScale }),
+}));
 jest.mock("expo-router", () => ({
     useLocalSearchParams: () => mockRouteParams,
     usePathname: () => mockPathname,
@@ -181,10 +185,10 @@ jest.mock("../src/modules/schedule/components/form/CategorySelectBox", () => {
 jest.mock("../src/modules/schedule/components/form/LocationInputRow", () => {
     const mockReact = require("react");
     const { Pressable: MockPressable } = require("react-native");
-    return ({ onPress }: { onPress: () => void }) => mockReact.createElement(MockPressable, {
+    return ({ onPress, footer }: { onPress: () => void; footer?: React.ReactNode }) => mockReact.createElement(MockPressable, {
         accessibilityLabel: "이동 경로 수정",
         onPress,
-    });
+    }, footer);
 });
 jest.mock("../src/modules/schedule/components/form/NotificationSettingsCard", () => {
     const mockReact = require("react");
@@ -234,6 +238,7 @@ describe("ScheduleEditScreen route return", () => {
 
     beforeEach(() => {
         mockThemeMode = "light";
+        mockFontScale = 1;
         mockPathname = "/schedule/1";
         mockRouteParams = { id: "1" };
         mockState.itemsById["1"] = mockItem;
@@ -446,7 +451,7 @@ describe("ScheduleEditScreen route return", () => {
             expanded: false,
             hideTrigger: true,
         });
-        expect(categoryChevron.findByProps({ name: "chevron-down" }).props).toMatchObject({
+        expect(categoryChevron.findByProps({ name: "chevron-down-outline" }).props).toMatchObject({
             size: 13,
             color: "#6E6E73",
         });
@@ -463,7 +468,7 @@ describe("ScheduleEditScreen route return", () => {
             expanded: true,
             hideTrigger: true,
         });
-        expect(categoryChevron.findByProps({ name: "chevron-down" }).props.color).toBe("#2979FF");
+        expect(categoryChevron.findByProps({ name: "chevron-down-outline" }).props.color).toBe("#2979FF");
         expect(renderer!.root.findByProps({
             testID: "schedule-edit-category-dismiss-layer",
         })).toBeTruthy();
@@ -482,7 +487,7 @@ describe("ScheduleEditScreen route return", () => {
         expect(picker.props.expanded).toBe(false);
         expect(timingSpy).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ toValue: 0, duration: 200, useNativeDriver: false }),
+            expect.objectContaining({ toValue: 0, duration: 160, useNativeDriver: false }),
         );
         expect(renderer!.root.findByProps({ testID: "schedule-edit-category-dismiss-layer" }).props.accessible)
             .toBe(false);
@@ -564,6 +569,7 @@ describe("ScheduleEditScreen route return", () => {
             params: { sessionId },
         });
         expect(getRoutePlannerInitial(sessionId)).toEqual({
+            returnToScheduleDraft: true,
             origin: mockItem.origin,
             destination: mockItem.destination,
             travelMode: "TRANSIT",
@@ -692,6 +698,8 @@ describe("ScheduleEditScreen route return", () => {
         });
 
         const saveButton = renderer!.root.findByProps({ accessibilityLabel: "일정 수정 저장" });
+        expect(renderer!.root.findAllByProps({ children: "일정을 저장하면 새 경로가 반영돼요." }).length)
+            .toBeGreaterThan(0);
         expect(saveButton.props.disabled).toBe(false);
         expect(mockGetSchedule).toHaveBeenCalledTimes(1);
 

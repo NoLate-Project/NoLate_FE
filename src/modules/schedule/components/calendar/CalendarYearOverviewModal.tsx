@@ -7,6 +7,7 @@ import {
     Pressable,
     ScrollView,
     Text,
+    useWindowDimensions,
     View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -65,6 +66,8 @@ function getMonthCells(year: number, month: number, firstDay: 0 | 1) {
 }
 
 type YearMonthPreviewProps = {
+    twoColumns: boolean;
+    dayFontScale: number;
     year: number;
     month: number;
     firstDay: 0 | 1;
@@ -83,6 +86,8 @@ type YearMonthPreviewProps = {
 };
 
 const YearMonthPreview = React.memo(function YearMonthPreview({
+    twoColumns,
+    dayFontScale,
     year,
     month,
     firstDay,
@@ -150,10 +155,12 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
             ].filter(Boolean).join(", ")}
             style={({ pressed }) => [
                 styles.monthPreview,
+                twoColumns && styles.monthPreviewWide,
                 { opacity: pressed ? 0.55 : 1 },
             ]}
         >
             <Text
+                maxFontSizeMultiplier={twoColumns ? 1.3 : 1.15}
                 style={[
                     styles.monthTitle,
                     {
@@ -199,7 +206,7 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                                 : textPrimary;
 
                     return (
-                        <View key={cellIndex} style={styles.dayCell}>
+                        <View key={cellIndex} style={[styles.dayCell, twoColumns && styles.dayCellWide]}>
                             {day !== null && (
                                 <View
                                     testID={density
@@ -207,6 +214,7 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                                         : undefined}
                                     style={[
                                         styles.dayBadge,
+                                        twoColumns && styles.dayBadgeWide,
                                         showDensity && styles.scheduleDensityBadge,
                                         (showDensity || isSelectedDay || isToday) && {
                                             backgroundColor: badgeFill,
@@ -215,6 +223,7 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                                     ]}
                                 >
                                     <Text
+                                        maxFontSizeMultiplier={dayFontScale}
                                         style={[
                                             styles.dayText,
                                             showDensity
@@ -249,6 +258,9 @@ function CalendarYearOverviewModal({
 }: Props) {
     const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
+    const { width, fontScale } = useWindowDimensions();
+    const twoColumns = fontScale > 1.25;
+    const dayFontScale = twoColumns ? (width >= 360 ? 1.6 : 1.35) : 1.05;
     const selectedDate = new Date(`${selectedDay}T00:00:00`);
     const today = new Date();
     const todayYear = today.getFullYear();
@@ -485,7 +497,10 @@ function CalendarYearOverviewModal({
                             }}
                         >
                             <View style={[styles.yearHeader, { borderBottomColor: colors.border }]}>
-                                <Text style={[styles.yearTitle, { color: sectionYearColor }]}>
+                                <Text
+                                    maxFontSizeMultiplier={1.45}
+                                    style={[styles.yearTitle, { color: sectionYearColor }]}
+                                >
                                     {sectionYear}년
                                 </Text>
                             </View>
@@ -512,6 +527,8 @@ function CalendarYearOverviewModal({
                                     return (
                                         <YearMonthPreview
                                             key={monthKey}
+                                            twoColumns={twoColumns}
+                                            dayFontScale={dayFontScale}
                                             year={sectionYear}
                                             month={month}
                                             firstDay={firstDay}

@@ -122,7 +122,6 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         gap: 16,
     },
-    destructiveHeaderText: { flex: 1, minWidth: 0 },
     editSheetTitle: {
         fontSize: 21,
         fontWeight: "900",
@@ -172,14 +171,17 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "900",
     },
-    destructiveButton: {
-        height: 52,
-        marginTop: 20,
-        borderRadius: 15,
-        backgroundColor: "#DC2626",
+    accountNotice: {
+        position: "absolute",
+        left: 16,
+        right: 16,
+        flexDirection: "row",
         alignItems: "center",
-        justifyContent: "center",
+        gap: 8,
+        padding: 14,
+        borderRadius: 14,
     },
+    accountNoticeText: { flex: 1, fontSize: 14, fontWeight: "700" },
     section: {
         gap: 8,
     },

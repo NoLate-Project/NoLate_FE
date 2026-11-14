@@ -38,6 +38,8 @@ type Props = {
     transitionContext?: "idle" | "yearToMonth" | "monthToDay" | "dayToMonth";
     reduceMotionEnabled?: boolean;
     todayFocusTarget?: TodayFocusTarget | null;
+    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean };
+    onSavedStackPositionReady?: (itemId: string) => void;
     onTodayFocusReady?: (day: string) => void;
     onRegisterDetailMonthMotionCancel?: (
         cancel: (() => void) | null
@@ -110,6 +112,8 @@ export default function ScheduleCalendar({
     transitionActive = false,
     reduceMotionEnabled = false,
     todayFocusTarget,
+    savedDateTarget,
+    onSavedStackPositionReady,
     onTodayFocusReady,
     onRegisterDetailMonthMotionCancel,
     onRegisterDetailMonthMotionShift,
@@ -125,6 +129,7 @@ export default function ScheduleCalendar({
     const calendarState = useScheduleCalendarState({
         selectedDay,
         focusedMonth,
+        savedStackDay: savedDateTarget?.stackPending ? savedDateTarget.day : undefined,
         calendarDaysByDate,
         onSelectDay,
         onOpenDay,
@@ -258,12 +263,15 @@ export default function ScheduleCalendar({
         onVisibleMonthChange,
         onOpenDay,
         todayFocusTarget,
+        savedDateTarget,
+        onSavedStackPositionReady,
     });
     const {
         stackMonths,
         stackMonthLayouts,
         stackTargetMonthIndex,
         handleStackScroll,
+        handleStackLayout,
         renderStackMonth,
     } = calendarStack;
     const selectedWeekDays = useMemo(
@@ -360,6 +368,7 @@ export default function ScheduleCalendar({
                     }
                     getItemLayout={(_, index) => stackMonthLayouts[index]}
                     onScroll={handleStackScroll}
+                    onLayout={handleStackLayout}
                     scrollEventThrottle={16}
                     showsVerticalScrollIndicator={false}
                     removeClippedSubviews={false}

@@ -2,6 +2,8 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
+  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -443,17 +445,22 @@ export function useScheduleIndexAuxiliaryData({
     activeCalendarScope,
   )}:${normalizedSearchKeyword.toLowerCase()}`;
   const searchKeywordLength = Array.from(normalizedSearchKeyword).length;
+  const displayedSearchKeyRef = useRef<string | null>(null);
+  const [settledSearchKey, setSettledSearchKey] = useState<string | null>(null);
   useEffect(() => {
     const sequence = searchSequenceRef.current + 1;
     searchSequenceRef.current = sequence;
     const forceRefresh = handledSearchRetryKeyRef.current !== searchRetryKey;
     handledSearchRetryKeyRef.current = searchRetryKey;
-    if (!isFocused || searchKeywordLength < SEARCH_MIN_QUERY_LENGTH) {
+    if (searchKeywordLength < SEARCH_MIN_QUERY_LENGTH) {
+      displayedSearchKeyRef.current = null;
+      setSettledSearchKey(null);
       setSearchResults([]);
       setSearchLoading(false);
       setSearchError(null);
       return undefined;
     }
+    if (!isFocused) return undefined;
 
     const cache = searchResultCacheRef.current;
     const cached = cache.get(normalizedSearchCacheKey);
@@ -466,13 +473,18 @@ export function useScheduleIndexAuxiliaryData({
       // repeated equivalent queries stay entirely local.
       cache.delete(normalizedSearchCacheKey);
       cache.set(normalizedSearchCacheKey, cached);
+      displayedSearchKeyRef.current = normalizedSearchCacheKey;
       setSearchResults(cached.items);
       setSearchLoading(false);
       setSearchError(null);
+      setSettledSearchKey(normalizedSearchCacheKey);
       return undefined;
     }
 
-    setSearchLoading(true);
+    // Keep an existing result list mounted when refreshing the same query on return.
+    const keepCachedResults = !forceRefresh && displayedSearchKeyRef.current === normalizedSearchCacheKey && !!cached?.items.length;
+    if (!keepCachedResults) displayedSearchKeyRef.current = null;
+    setSearchLoading(!keepCachedResults);
     setSearchError(null);
     const abortController = new AbortController();
     searchAbortControllerRef.current = abortController;
@@ -510,6 +522,8 @@ export function useScheduleIndexAuxiliaryData({
             cache.delete(oldestKey);
           }
           setSearchResults(visibleItems);
+          displayedSearchKeyRef.current = normalizedSearchCacheKey;
+          setSettledSearchKey(normalizedSearchCacheKey);
         })
         .catch(error => {
           if (
@@ -517,8 +531,11 @@ export function useScheduleIndexAuxiliaryData({
             searchSequenceRef.current !== sequence
           )
             return;
-          setSearchResults([]);
-          setSearchError(getErrorMessage(error));
+          if (!keepCachedResults) {
+            setSearchResults([]);
+            setSearchError(getErrorMessage(error));
+            setSettledSearchKey(normalizedSearchCacheKey);
+          }
         })
         .finally(() => {
           if (searchAbortControllerRef.current === abortController) {
@@ -567,6 +584,8 @@ export function useScheduleIndexAuxiliaryData({
     retryCategoryLoad,
     routeSetupItems,
     searchKeywordLength,
+    searchAwaitingCurrentQuery: searchKeywordLength >= SEARCH_MIN_QUERY_LENGTH
+      && settledSearchKey !== normalizedSearchCacheKey,
     writableCategories,
     yearOverviewItems,
   };

@@ -1,5 +1,6 @@
 import { startOfDay } from "../../../lib/util/data";
 import { getRouteInfoFromRoute, isRouteInfo, type RouteInfo } from "./routeInfo";
+import { resolveSavedDepartureAt } from "./scheduleRouteTiming";
 import type { ScheduleItem, TravelMode } from "./types";
 
 export const DAY_MINUTES = 24 * 60;
@@ -13,6 +14,23 @@ export const DAY_TIMELINE_CARD_VERTICAL_PADDING = 5;
 export const DAY_TIMELINE_TITLE_LINE_HEIGHT = 18;
 export const DAY_TIMELINE_META_LINE_HEIGHT = 14;
 export const DAY_TIMELINE_TRAVEL_LINE_HEIGHT = 14;
+export const DAY_TIMELINE_EVENT_MAX_FONT_SCALE = 1.5;
+
+export function getDayTimelineEventRows(height: number, fontScale: number) {
+    const scale = Math.min(fontScale, DAY_TIMELINE_EVENT_MAX_FONT_SCALE);
+    const titleHeight = Math.ceil(DAY_TIMELINE_TITLE_LINE_HEIGHT * scale);
+    const metaHeight = Math.ceil(DAY_TIMELINE_META_LINE_HEIGHT * scale);
+    const travelHeight = Math.ceil(DAY_TIMELINE_TRAVEL_LINE_HEIGHT * scale);
+    const contentHeight = height - DAY_TIMELINE_CARD_VERTICAL_PADDING * 2 - 1;
+
+    return {
+        titleHeight,
+        metaHeight,
+        travelHeight,
+        fitsMetadata: contentHeight >= titleHeight + metaHeight,
+        fitsTravel: contentHeight >= titleHeight + metaHeight + travelHeight,
+    };
+}
 
 export type PositionedEvent = {
     item: ScheduleItem;
@@ -78,17 +96,14 @@ export function getDayTimelineEventMetadata(item: ScheduleItem): DayTimelineEven
     const routeInfo = getRouteInfoFromRoute(item.route);
     const travelMinutes = validPositiveMinutes(item.travelMinutes)
         ?? validPositiveMinutes(routeInfo?.totalDurationMinutes);
-    let departureAt = validDateString(item.departAt);
-
-    if (!departureAt && travelMinutes) {
-        const startAt = new Date(item.startAt);
-        if (!Number.isNaN(startAt.getTime())) {
-            departureAt = new Date(startAt.getTime() - travelMinutes * 60_000).toISOString();
-        }
-    }
+    const travelMode = item.travelMode ?? inferTravelMode(routeInfo);
+    const fixedService = Boolean(routeInfo?.intercityJourney);
+    let departureAt = resolveSavedDepartureAt({ ...item, travelMinutes, travelMode, fixedService })?.toISOString();
 
     // 이전 버전이 현재 시각으로 저장한 nested routeInfo보다 일정 시각 기반 계산을 우선한다.
-    departureAt ??= validDateString(persistedRouteInfo?.departureTime);
+    if (!departureAt && (travelMode !== "TRANSIT" || fixedService)) {
+        departureAt = validDateString(persistedRouteInfo?.departureTime);
+    }
 
     const locationCandidate = firstNonEmpty(
         item.destination?.name,
@@ -109,7 +124,7 @@ export function getDayTimelineEventMetadata(item: ScheduleItem): DayTimelineEven
         location,
         travelMinutes,
         departureAt,
-        travelMode: item.travelMode ?? inferTravelMode(routeInfo),
+        travelMode,
         isTravel,
     };
 }
@@ -201,18 +216,13 @@ export function buildPositionedEvents(
     return events;
 }
 
-export function formatDayTimelineClock(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "";
-    const hour = date.getHours() % 12 || 12;
-    return `${hour}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
 export function formatDayTimelineTimeRange(item: ScheduleItem) {
-    const start = formatDayTimelineClock(item.startAt);
+    const start = formatDayTimelineDeparture(item.startAt);
     if (!start || item.hasEndTime === false) return start;
-    const end = formatDayTimelineClock(item.endAt);
-    return end ? `${start} - ${end}` : start;
+    const end = formatDayTimelineDeparture(item.endAt);
+    if (!end) return start;
+    const endText = start.slice(0, 2) === end.slice(0, 2) ? end.slice(3) : end;
+    return `${start} - ${endText}`;
 }
 
 export function formatDayTimelineDeparture(value?: string) {

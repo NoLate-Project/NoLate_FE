@@ -162,8 +162,12 @@ apiClient.interceptors.response.use(
         const originalRequest = error.config as RetryableRequestConfig | undefined;
         const requestUrl = originalRequest?.url ?? "";
 
+        // A003 on account maintenance means the confirmation password was wrong.
+        const rejectedConfirmationPassword = error.response?.data?.errorCode === "A003" &&
+            (requestUrl === "/api/member/password" || requestUrl === "/api/member/withdraw");
         if (
             error.response?.status === 401 &&
+            !rejectedConfirmationPassword &&
             originalRequest &&
             !originalRequest._retryAuth &&
             !isAuthEndpoint(requestUrl)

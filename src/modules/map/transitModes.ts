@@ -19,6 +19,12 @@ export function transitModeLabel(kind: string): string {
     return TRANSIT_MODE_LABELS[kind as keyof typeof TRANSIT_MODE_LABELS] ?? "이동 수단 확인";
 }
 
+export function formatTransferBoardingTarget(kind: TransitRideKind, lineName?: string): string {
+    const line = lineName?.trim() || transitModeLabel(kind);
+    const label = kind === "BUS" && /^\d+$/u.test(line) ? `${line}번` : line;
+    return `${label} 타는 곳까지`;
+}
+
 export function intercityRideColor(kind: string): string | undefined {
     if (kind === "TRAIN") return "#2563EB";
     if (kind === "EXPRESS_BUS" || kind === "COACH") return "#7C3AED";

@@ -1,4 +1,43 @@
 import SwiftUI
+import CoreText
+import UIKit
+
+/// The same bundled Ionicons outline family used by the calendar and WidgetKit.
+enum NoLateActivityIcons {
+  private static let fontName: String? = {
+    guard let url = Bundle.main.url(forResource: "Ionicons", withExtension: "ttf"),
+      let provider = CGDataProvider(url: url as CFURL), let font = CGFont(provider),
+      let name = font.postScriptName else { return nil }
+    CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    return name as String
+  }()
+
+  static func image(_ code: UInt32, size: CGFloat) -> Image {
+    guard let name = fontName, let font = UIFont(name: name, size: size), let scalar = UnicodeScalar(code) else {
+      assertionFailure("The bundled NoLate outline font is unavailable")
+      return Image(uiImage: UIImage())
+    }
+    let glyph = String(scalar) as NSString
+    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.black]
+    let measured = glyph.size(withAttributes: attributes)
+    let bitmap = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
+      glyph.draw(at: CGPoint(x: (size - measured.width) / 2, y: (size - measured.height) / 2), withAttributes: attributes)
+    }
+    return Image(uiImage: bitmap.withRenderingMode(.alwaysTemplate))
+  }
+
+  static func guidance(_ symbol: String, size: CGFloat) -> Image {
+    let code: UInt32
+    switch symbol {
+    case "figure.walk": code = 63011 // walk-outline
+    case "tram.fill": code = 62957 // train-outline
+    case "bus.fill": code = 61892 // bus-outline
+    case "location.slash": code = 62402 // locate-outline
+    default: code = 62576 // navigate-outline
+    }
+    return image(code, size: size)
+  }
+}
 
 struct NoLateRouteBarView: View {
   let segments: [NoLateRouteSegment]
@@ -100,26 +139,21 @@ struct NoLateRouteBarView: View {
   private func routeIcon(for segment: NoLateRouteSegment) -> some View {
     switch segment.kind {
     case .origin:
-      Image(systemName: "circle.fill")
+      NoLateActivityIcons.image(62724, size: compact ? 14 : 16)
     case .destination:
-      NoLateDestinationPinShape()
-        .fill(style: FillStyle(eoFill: true))
-        .frame(
-          width: compact ? 11 : 12,
-          height: compact ? 14 : 16
-        )
+      NoLateActivityIcons.image(62405, size: compact ? 14 : 16)
     case .walk:
-      Image(systemName: "figure.walk")
+      NoLateActivityIcons.image(63011, size: compact ? 14 : 16)
     case .subway:
-      Image(systemName: "tram.fill")
+      NoLateActivityIcons.image(62957, size: compact ? 14 : 16)
     case .bus:
-      Image(systemName: "bus.fill")
+      NoLateActivityIcons.image(61892, size: compact ? 14 : 16)
     case .drive:
-      Image(systemName: "car.fill")
+      NoLateActivityIcons.image(61922, size: compact ? 14 : 16)
     case .bike:
-      Image(systemName: "bicycle")
+      NoLateActivityIcons.image(61847, size: compact ? 14 : 16)
     case .transfer:
-      Image(systemName: "arrow.left.arrow.right")
+      NoLateActivityIcons.image(62897, size: compact ? 14 : 16)
     }
   }
 

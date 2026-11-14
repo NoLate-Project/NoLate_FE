@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 
 import { getEnv } from "../../api/env";
 import { OdsayApiError } from "./odsayApiError";
+import { getIsolatedOdsaySimulatorTransport } from "./odsaySimulatorTransport";
 import type { Place } from "../schedule/types";
 import type {
     RoutePathCoord,
@@ -671,10 +672,11 @@ export async function getOdsayTransitRouteOptions(
     destination: Place,
     departureAt = new Date()
 ): Promise<TransitRouteOption[]> {
-    const apiKey = resolveOdsayApiKey();
+    const isolated = await getIsolatedOdsaySimulatorTransport();
+    const apiKey = isolated?.apiKey ?? resolveOdsayApiKey();
     if (!apiKey) throw new OdsayApiError("KEY_MISSING", "대중교통 경로 인증키가 설정되지 않았습니다.");
 
-    const response = await axios.get(`${ODSAY_API_BASE_URL}/maasRP`, {
+    const response = await axios.get(`${isolated?.baseUrl ?? ODSAY_API_BASE_URL}/maasRP`, {
         timeout: ODSAY_REQUEST_TIMEOUT_MS,
         params: {
             apiKey,

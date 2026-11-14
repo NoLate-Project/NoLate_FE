@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useCallback, useRef, useState } from "react";
+import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
+import type { TmapLoadState } from "../../modules/map/TmapMapView";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import {
   canSendDepartureNudge,
@@ -28,10 +30,25 @@ type ScheduleDetailLayoutProps = {
   presentation: ScheduleDetailPresentation;
 };
 
+const travelPlanFeedbackEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+
 /** 계산이 끝난 일정 상세 화면을 지도·헤더·경로 시트·보조 모달 순서로 조립한다. */
 export function ScheduleDetailLayout({
   presentation,
 }: ScheduleDetailLayoutProps) {
+  const [mapState, setMapState] = useState<TmapLoadState | 'retrying'>('loading');
+  const [mapRevision, setMapRevision] = useState(0);
+  const hasInteractiveMap = presentation.shouldRenderMap &&
+    (!presentation.offlineGuidancePreview || Boolean(presentation.inspectedTravelPlan));
+
+  const updateMapLoadState = useCallback((state: TmapLoadState) => {
+    setMapState(current => current === 'retrying' && state === 'loading' ? current : state);
+  }, []);
+
+  const retryMap = () => {
+    setMapState('retrying');
+    setMapRevision(revision => revision + 1);
+  };
   const {
     colors,
     isDark,
@@ -39,8 +56,8 @@ export function ScheduleDetailLayout({
     departureNudgePendingMemberId,
     inspectedTravelPlan,
     travelPlanDetailPendingMemberId,
+    failedTravelPlanMemberId,
     item,
-    departureParticipants,
     confirmDepartureNudge,
     openParticipantTravelPlan,
     sheetBorder,
@@ -51,154 +68,111 @@ export function ScheduleDetailLayout({
     participantPresentations,
     travelPlanParticipants,
   } = presentation;
-  const renderDepartureParticipantChips = () => {
-    if (departureParticipants.length <= 1) return null;
+  const departureByMember = new Map(participantPresentations.map(person => [person.memberId, person]));
+  const planByMember = new Map(travelPlanParticipants.map(plan => [plan.memberId, plan]));
+  const companionIds = [...new Set([...departureByMember.keys(), ...planByMember.keys()])];
+  const openingTravelPlan = travelPlanDetailPendingMemberId !== undefined;
 
-    return (
-      <View style={styles.departureParticipants}>
-        {participantPresentations.map(participant => {
-          const departed = participant.departed;
-          const canNudge = canSendDepartureNudge(
-            participant,
-            currentMemberId,
-            item.ownerMemberId,
-          );
-          const nudgePending =
-            departureNudgePendingMemberId === participant.memberId;
-          const profile = (
-            <>
-              <View
-                style={[
-                  styles.departureParticipantAvatar,
-                  {
-                    backgroundColor: departed
-                      ? isDark
-                        ? 'rgba(34,197,94,0.22)'
-                        : 'rgba(34,197,94,0.14)'
-                      : canNudge
-                      ? isDark
-                        ? 'rgba(41,121,255,0.24)'
-                        : 'rgba(41,121,255,0.12)'
-                      : isDark
-                      ? 'rgba(255,255,255,0.10)'
-                      : 'rgba(15,23,42,0.07)',
-                    borderColor: canNudge ? topCardAccentText : 'transparent',
-                    borderWidth: canNudge ? 1 : 0,
-                  },
-                ]}
-              >
-                {nudgePending ? (
-                  <ActivityIndicator size="small" color={topCardAccentText} />
-                ) : (
-                  <Text
-                    style={[
-                      styles.departureParticipantAvatarText,
-                      {
-                        color: departed
-                          ? isDark
-                            ? '#BBF7D0'
-                            : '#166534'
-                          : canNudge
-                          ? topCardAccentText
-                          : secondaryText,
-                      },
-                    ]}
-                  >
-                    {participant.avatarLabel}
-                  </Text>
-                )}
-                {departed && (
-                  <View style={styles.departureParticipantCheck}>
-                    <Ionicons name="checkmark" size={8} color="#FFFFFF" />
-                  </View>
-                )}
-                {canNudge && !nudgePending && (
-                  <View
-                    style={[
-                      styles.departureParticipantBell,
-                      { backgroundColor: topCardAccentText },
-                    ]}
-                  >
-                    <Ionicons name="notifications" size={8} color="#FFFFFF" />
-                  </View>
-                )}
-              </View>
-              <View style={styles.departureParticipantCopy}>
-                <Text
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                  style={[
-                    styles.departureParticipantName,
-                    { color: primaryText },
-                  ]}
-                >
-                  {participant.label}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={[
-                    styles.departureParticipantStatus,
-                    {
-                      color: departed
-                        ? isDark
-                          ? '#86EFAC'
-                          : '#15803D'
-                        : canNudge
-                        ? topCardAccentText
-                        : secondaryText,
-                    },
-                  ]}
-                >
-                  {departed ? '출발 완료' : '대기 중'}
-                </Text>
-              </View>
-            </>
-          );
+  const firstCompanionRow = useRef<View>(null);
+  const renderRouteCompanions = (onFirstRowLayout: (row: View) => void) => (
+    <View style={styles.routeCompanionList}>
+      {companionIds.map((memberId, index) => {
+        const departure = departureByMember.get(memberId);
+        const plan = planByMember.get(memberId);
+        const label = memberId === currentMemberId ? '나'
+          : departure?.label ?? (plan ? travelPlanParticipantLabel(plan) : '참여자');
+        const status = departure ? (departure.departed ? '출발 완료' : '대기 중') : null;
+        const planLabel = plan
+          ? plan.status === 'READY' && plan.travelMinutes
+            ? `${travelModeLabel(plan.travelMode ?? undefined)} ${plan.travelMinutes}분`
+            : travelPlanStatusLabel(plan.status)
+          : null;
+        const routeLabel = [plan?.originName, planLabel].filter(Boolean).join(' · ');
+        const canOpen = Boolean(plan && canOpenParticipantTravelPlan(plan, currentMemberId));
+        const selected = canOpen && (inspectedTravelPlan?.memberId === memberId
+          || (!inspectedTravelPlan && memberId === currentMemberId));
+        const opening = travelPlanDetailPendingMemberId === memberId;
+        const failed = failedTravelPlanMemberId === memberId;
+        const canNudge = Boolean(departure && canSendDepartureNudge(departure, currentMemberId, item.ownerMemberId));
+        const sending = departureNudgePendingMemberId === memberId;
+        const feedback = opening ? '경로를 불러오는 중' : failed ? '경로를 불러오지 못했어요 · 다시 시도' : undefined;
+        const rowAccessibilityLabel = [label, status, feedback ?? routeLabel].filter(Boolean).join(', ');
 
-          return canNudge ? (
+        return (
+          <View
+            key={memberId}
+            ref={index === 0 ? firstCompanionRow : undefined}
+            onLayout={index === 0 ? () => {
+              if (firstCompanionRow.current) onFirstRowLayout(firstCompanionRow.current);
+            } : undefined}
+            style={[styles.routeCompanionRow, { borderBottomColor: sheetBorder }]}
+          >
             <Pressable
-              key={`${participant.memberId}-${participant.role}`}
-              onPress={() =>
-                confirmDepartureNudge(participant.memberId, participant.label)
-              }
-              disabled={departureNudgePendingMemberId !== undefined}
-              accessibilityRole="button"
-              accessibilityLabel={`${participant.label}, 대기 중, 출발 확인 알림 보내기`}
-              accessibilityHint="프로필을 누르면 해당 참가자의 기기로 출발 확인 푸시를 보냅니다."
-              accessibilityState={{
-                busy: nudgePending,
-                disabled: departureNudgePendingMemberId !== undefined,
-              }}
+              testID={`route-companion-${memberId}`}
+              accessible
+              disabled={!canOpen || openingTravelPlan}
+              accessibilityRole={canOpen ? 'button' : 'text'}
+              accessibilityLabel={rowAccessibilityLabel}
+              accessibilityState={canOpen ? { selected, busy: opening, disabled: openingTravelPlan } : undefined}
+              accessibilityHint={canOpen ? '이 사람의 경로를 지도에서 봅니다.' : undefined}
+              onPress={plan && canOpen ? () => openParticipantTravelPlan(plan) : undefined}
               style={({ pressed }) => [
-                styles.departureParticipantItem,
-                {
-                  opacity: pressed
-                    ? 0.56
-                    : departureNudgePendingMemberId !== undefined &&
-                      !nudgePending
-                    ? 0.42
-                    : 1,
-                },
+                styles.routeCompanionMain,
+                { opacity: pressed ? 0.62 : 1 },
               ]}
             >
-              {profile}
+              <View style={[styles.travelPlanAvatar, { backgroundColor: topCardControlBg }]}>
+                <Text allowFontScaling={false} style={[styles.routeCompanionInitial, { color: topCardAccentText }]}>
+                  {departure?.avatarLabel ?? label.slice(0, 1)}
+                </Text>
+              </View>
+              <View style={styles.travelPlanCopy}>
+                <Text maxFontSizeMultiplier={2} style={[styles.routeCompanionName, { color: primaryText }]}>{label}</Text>
+                {status ? (
+                  <Text maxFontSizeMultiplier={1.75} style={[
+                    styles.routeCompanionMeta,
+                    { color: departure?.departed ? (isDark ? '#86EFAC' : '#15803D') : secondaryText },
+                  ]}>{status}</Text>
+                ) : null}
+                {feedback || routeLabel ? (
+                  <Reanimated.Text
+                    key={feedback ?? routeLabel}
+                    entering={feedback ? travelPlanFeedbackEntrance : undefined}
+                    accessibilityLiveRegion="polite"
+                    maxFontSizeMultiplier={1.75}
+                    lineBreakStrategyIOS="hangul-word"
+                    style={[styles.routeCompanionMeta, { color: failed ? topCardAccentText : secondaryText }]}
+                  >{feedback ?? routeLabel}</Reanimated.Text>
+                ) : null}
+              </View>
+              {opening ? (
+                <ActivityIndicator size="small" color={topCardAccentText} />
+              ) : canOpen ? (
+                <Ionicons
+                  name={failed ? 'refresh-outline' : selected ? 'checkmark-circle-outline' : 'chevron-forward-outline'}
+                  size={16}
+                  color={selected ? topCardAccentText : secondaryText}
+                />
+              ) : null}
             </Pressable>
-          ) : (
-            <View
-              key={`${participant.memberId}-${participant.role}`}
-              accessible
-              accessibilityLabel={`${participant.label}, ${
-                departed ? '출발함' : '대기 중'
-              }`}
-              style={styles.departureParticipantItem}
-            >
-              {profile}
-            </View>
-          );
-        })}
-      </View>
-    );
-  };
+            {canNudge ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${label}에게 출발 확인 알림 보내기`}
+                accessibilityState={{ busy: sending, disabled: departureNudgePendingMemberId !== undefined }}
+                disabled={departureNudgePendingMemberId !== undefined}
+                onPress={() => confirmDepartureNudge(memberId, label)}
+                style={({ pressed }) => [styles.routeCompanionAction, { opacity: pressed ? 0.62 : 1 }]}
+              >
+                {sending ? <ActivityIndicator size="small" color={topCardAccentText} />
+                  : <Ionicons name="notifications-outline" size={19} color={topCardAccentText} />}
+              </Pressable>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
 
   const renderTravelPlanRows = () => {
     if (travelPlanParticipants.length <= 1) return null;
@@ -215,6 +189,7 @@ export function ScheduleDetailLayout({
             (!inspectedTravelPlan && participant.memberId === currentMemberId);
           const pending =
             travelPlanDetailPendingMemberId === participant.memberId;
+          const failed = failedTravelPlanMemberId === participant.memberId;
           const detail =
             participant.status === 'READY' && participant.travelMinutes
               ? `${travelModeLabel(participant.travelMode ?? undefined)} ${
@@ -226,15 +201,15 @@ export function ScheduleDetailLayout({
             <Pressable
               key={`travel-plan-${participant.memberId}`}
               onPress={() => openParticipantTravelPlan(participant)}
-              disabled={!canOpen || pending}
+              disabled={!canOpen || openingTravelPlan}
               accessibilityRole={canOpen ? 'button' : undefined}
               accessibilityLabel={`${travelPlanParticipantLabel(
                 participant,
-              )}, ${detail}`}
+              )}, ${pending ? '경로를 불러오는 중' : failed ? '경로를 불러오지 못했어요 · 다시 시도' : detail}`}
               accessibilityState={{
                 selected,
                 busy: pending,
-                disabled: !canOpen,
+                disabled: !canOpen || openingTravelPlan,
               }}
               style={({ pressed }) => [
                 styles.travelPlanRow,
@@ -284,18 +259,20 @@ export function ScheduleDetailLayout({
                   {participant.memberId === currentMemberId ? ' · 나' : ''}
                 </Text>
                 <Text
-                  numberOfLines={1}
+                  numberOfLines={pending || failed ? undefined : 1}
+                  lineBreakStrategyIOS="hangul-word"
                   style={[styles.travelPlanMeta, { color: secondaryText }]}
                 >
-                  {participant.originName ? `${participant.originName} · ` : ''}
-                  {detail}
+                  {pending ? '경로를 불러오는 중'
+                    : failed ? '경로를 불러오지 못했어요 · 다시 시도'
+                    : [participant.originName, detail].filter(Boolean).join(' · ')}
                 </Text>
               </View>
               {pending ? (
                 <ActivityIndicator size="small" color={topCardAccentText} />
               ) : canOpen ? (
                 <Ionicons
-                  name="chevron-forward"
+                  name={failed ? "refresh-outline" : "chevron-forward-outline"}
                   size={15}
                   color={secondaryText}
                 />
@@ -312,12 +289,19 @@ export function ScheduleDetailLayout({
       <ScheduleDetailBackground
         presentation={presentation}
         renderTravelPlanRows={renderTravelPlanRows}
+        mapReady={hasInteractiveMap && mapState === 'ready'}
+        mapRevision={mapRevision}
+        onMapLoadStateChange={updateMapLoadState}
       />
-      <ScheduleDetailHeader presentation={presentation} />
+      <ScheduleDetailHeader
+        presentation={presentation}
+        mapState={hasInteractiveMap ? mapState : undefined}
+        onRetryMap={retryMap}
+      />
       <ScheduleDetailRouteSheet
         presentation={presentation}
-        renderDepartureParticipantChips={renderDepartureParticipantChips}
-        renderTravelPlanRows={renderTravelPlanRows}
+        companionCount={companionIds.length}
+        renderRouteCompanions={renderRouteCompanions}
       />
       <ScheduleDetailAuxiliarySheets presentation={presentation} />
     </View>

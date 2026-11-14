@@ -1,7 +1,8 @@
-import { useCallback, useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { useRouter } from "expo-router";
 
 import type { TravelMode } from "../types";
+import type { ScheduleRouteDraftChange } from "../components/form/ScheduleRouteDraftNotice";
 import { buildRoutePlannerPlace, buildScheduleRoutePlannerInitial, consumeRoutePlannerResult,
     observeRoutePlannerReturn, setRoutePlannerInitial } from "../routePlannerSession";
 import { startOfLocalScheduleDay } from "../scheduleFormDate";
@@ -49,6 +50,7 @@ type ScheduleEditRoutePlannerInput = {
 
 /** 일정 폼과 경로 선택 화면 사이의 세션 생성·초기화·복귀 결과 반영을 관리합니다. */
 export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput) {
+    const [routeDraftChange, setRouteDraftChange] = useState<ScheduleRouteDraftChange>();
     const {
         pathname, router, routePlannerSessionId, setRoutePlannerSessionId, routePlannerAwayRef,
         routeTimingTargetArrivalRef, pendingRouteTimingTargetArrivalRef, markFormDirty,
@@ -79,7 +81,7 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
             ? startOfLocalScheduleDay(startDay)
             : mergeDateTime(startDay, startTime);
         pendingRouteTimingTargetArrivalRef.current = targetArrivalAt.toISOString();
-        setRoutePlannerInitial(sessionId, buildScheduleRoutePlannerInitial({
+        setRoutePlannerInitial(sessionId, { ...buildScheduleRoutePlannerInitial({
             origin: nextOrigin,
             destination: nextDestination,
             travelMode,
@@ -90,7 +92,7 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name ?? nextOrigin?.name,
             targetArrivalAt,
-        }));
+        }), returnToScheduleDraft: true });
 
         // setState가 실제 화면 전환보다 먼저 반영될 수 있다. 경로 화면 진입을 확인하기 전에는
         // 아직 비어 있는 세션 결과를 소비하지 않는다.
@@ -122,6 +124,7 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
     /** 저장된 경로·출발 시각·이동 시간을 함께 비워 불완전한 경로 상태를 방지합니다. */
     const clearRoute = useCallback(() => {
         markFormDirty();
+        setRouteDraftChange(previous => ({ kind: "removed", revision: (previous?.revision ?? 0) + 1 }));
         setOriginText("");
         setDestinationText("");
         setOriginAddress(undefined);
@@ -167,6 +170,7 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
         if (!result) return;
 
         markFormDirty();
+        setRouteDraftChange(previous => ({ kind: "applied", revision: (previous?.revision ?? 0) + 1 }));
         setOriginText(result.origin?.name ?? "");
         setOriginAddress(result.origin?.address);
         setOriginLat(result.origin?.lat);
@@ -202,5 +206,5 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
         setTravelMode,
     ]);
 
-    return { openRoutePlanner, clearRoute };
+    return { openRoutePlanner, clearRoute, routeDraftChange };
 }

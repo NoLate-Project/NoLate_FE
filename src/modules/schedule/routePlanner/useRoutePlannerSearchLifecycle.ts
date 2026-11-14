@@ -49,8 +49,10 @@ type Options = {
   forcedRouteId?: string;
   forcedRouteIndex?: number;
   forcedSheetState?: DebugSheetState;
+  startsWithRouteOverview: boolean;
   getBottomSheetSnapTarget: (snap: BottomSheetSnap) => number;
   handoffRoute?: RouteAlternativeOption;
+  handoffAlternatives: RouteAlternativeOption[];
   hasBottomSheetMeasured: boolean;
   hasRouteReady: boolean;
   initial: ReturnType<typeof getRoutePlannerInitial>;
@@ -135,8 +137,10 @@ export function useRoutePlannerSearchLifecycle({
   forcedRouteId,
   forcedRouteIndex,
   forcedSheetState,
+  startsWithRouteOverview,
   getBottomSheetSnapTarget,
   handoffRoute,
+  handoffAlternatives,
   hasBottomSheetMeasured,
   hasRouteReady,
   initial,
@@ -214,10 +218,14 @@ export function useRoutePlannerSearchLifecycle({
       setSelectedAlternativeId(target.id);
       selectedAlternativeIdRef.current = target.id;
       setFocusedTransitLegIndex(undefined);
+      setFocusedRouteStepId(undefined);
+      setSelectedTransitMapStop(undefined);
     },
     [
       selectedAlternativeIdRef,
       setFocusedTransitLegIndex,
+      setFocusedRouteStepId,
+      setSelectedTransitMapStop,
       setSelectedAlternativeId,
       visibleAlternatives,
     ],
@@ -252,7 +260,7 @@ export function useRoutePlannerSearchLifecycle({
     setDestinationLng(initial?.destination?.lng);
     setTravelMode(initial?.travelMode ?? 'CAR');
     setTransitRouteFilter('ALL');
-    setRouteAlternatives(handoffRoute ? [handoffRoute] : []);
+    setRouteAlternatives(handoffAlternatives);
     setSelectedAlternativeId(handoffRoute?.id);
     selectedAlternativeIdRef.current = handoffRoute?.id;
     // 새 OD가 들어오면 이전 경로가 새 목적지의 결과처럼 잠시라도 보이지 않게 즉시 비운다.
@@ -292,6 +300,7 @@ export function useRoutePlannerSearchLifecycle({
     );
   }, [
     handoffRoute,
+    handoffAlternatives,
     initial,
     initialSyncKey,
     forcedEditTarget,
@@ -359,6 +368,9 @@ export function useRoutePlannerSearchLifecycle({
 
   useEffect(() => {
     if (!visibleAlternatives.length) return;
+    const hasSelectedVisible = visibleAlternatives.some(item => item.id === selectedAlternativeId);
+    // The route ID from navigation seeds selection only while the current choice is unavailable.
+    if (hasSelectedVisible) return;
     if (forcedRouteId) {
       const forcedById = visibleAlternatives.find(
         item => item.id === forcedRouteId,
@@ -385,10 +397,6 @@ export function useRoutePlannerSearchLifecycle({
       }
       return;
     }
-    const hasSelectedVisible = visibleAlternatives.some(
-      item => item.id === selectedAlternativeId,
-    );
-    if (hasSelectedVisible) return;
     const fallback = visibleAlternatives[0];
     setSelectedAlternativeId(fallback.id);
     selectedAlternativeIdRef.current = fallback.id;
@@ -488,20 +496,20 @@ export function useRoutePlannerSearchLifecycle({
       return;
     }
 
-    // 경로가 처음 준비되는 순간에는 펼쳐서 안내하고,
-    // 이후에는 사용자가 숨긴 상태까지 유지한다.
+    // 후보에서 이동한 대중교통은 지도를 먼저 보여 주고, 이후 사용자가 정한 높이를 유지한다.
     if (!prevHasRouteReady) {
       if (isBottomSheetHidden) {
         setIsBottomSheetHidden(false);
       }
       const nextSnap: BottomSheetSnap = isRouteDetailMode
-        ? 'middle'
+        ? (startsWithRouteOverview ? 'collapsed' : 'middle')
         : 'expanded';
       setBottomSheetSnap(nextSnap);
       setIsBottomSheetCollapsed(nextSnap !== 'expanded');
     }
   }, [
     forcedSheetState,
+    startsWithRouteOverview,
     isMapInitialized,
     hasBottomSheetMeasured,
     isBottomSheetHidden,
@@ -569,7 +577,7 @@ export function useRoutePlannerSearchLifecycle({
 
     // 목록에서 선택한 경로는 이미 완성된 API 응답이다. 최초 진입 재조회로 다른 후보가 덮어쓰지 않게 한다.
     if (isHandoffRequestCurrent && handoffRoute) {
-      setRouteAlternatives([handoffRoute]);
+      setRouteAlternatives(handoffAlternatives);
       setSelectedAlternativeId(handoffRoute.id);
       selectedAlternativeIdRef.current = handoffRoute.id;
       setFocusedTransitLegIndex(undefined);
@@ -635,10 +643,10 @@ export function useRoutePlannerSearchLifecycle({
         }
 
         const selected =
-          sortedAlternatives.find(item => item.id === forcedRouteId) ??
           sortedAlternatives.find(
             item => item.id === selectedAlternativeIdRef.current,
           ) ??
+          sortedAlternatives.find(item => item.id === forcedRouteId) ??
           sortedAlternatives[0];
         setSelectedAlternativeId(selected.id);
         selectedAlternativeIdRef.current = selected.id;
@@ -675,6 +683,7 @@ export function useRoutePlannerSearchLifecycle({
     destinationLng,
     forcedRouteId,
     handoffRoute,
+    handoffAlternatives,
     isHandoffRequestCurrent,
     requestedTransitDepartureAt,
     selectedAlternativeIdRef,

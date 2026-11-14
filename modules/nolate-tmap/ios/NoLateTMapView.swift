@@ -564,12 +564,31 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
     guard let coordinate = NoLateTMapValue.coordinate(payload) else {
       return
     }
-    // TMap exposes separate location/zoom animations. Starting both back-to-back can
-    // replace the first animation, so apply zoom first and animate the location once.
-    if let zoom = NoLateTMapValue.int(payload["zoom"]) {
-      mapView.setZoom(NoLateTMapValue.clamp(zoom, min: 6, max: 18))
+    let zoom = NoLateTMapValue.int(payload["zoom"]).map { NoLateTMapValue.clamp($0, min: 6, max: 18) }
+    let duration = NoLateTMapValue.double(payload["duration"])
+    let shouldAnimate = !UIAccessibility.isReduceMotionEnabled && duration != 0
+    if let zoom, let renderer = mapView.vsmMapView {
+      let point = VSMMapPoint(longitude: coordinate.longitude, latitude: coordinate.latitude)
+      let update: VSMCameraUpdate?
+      if shouldAnimate {
+        let milliseconds = UInt32(max(1, min(1_000, duration ?? 400)).rounded())
+        let animation = VSMAnimationInfoMake(.easeOutCubic, milliseconds)
+        update = VSMCameraUpdate(center: point, zoom: Double(zoom), animation: animation)
+      } else {
+        update = VSMCameraUpdate(center: point, zoom: Double(zoom))
+      }
+      if let update {
+        renderer.moveCamera(update)
+        return
+      }
     }
-    mapView.animateTo(location: coordinate)
+
+    if let zoom { mapView.setZoom(zoom) }
+    if !shouldAnimate {
+      mapView.setCenter(coordinate)
+    } else {
+      mapView.animateTo(location: coordinate)
+    }
   }
 
   private func fitBounds(_ payload: [String: Any]) {

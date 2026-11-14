@@ -1,0 +1,1146 @@
+{
+  "date": "2026-11-04",
+  "scope": "iOS simulator regression checkpoint; entire simulator goal remains in progress",
+  "environment": {
+    "device": "iPhone 17 Pro",
+    "os": "iOS 27.0 and iOS 26.5 simulators; per-case runtime recorded below",
+    "build": "1.3.0 (58), Release arm64",
+    "api": "isolated loopback H2 through a passive observation proxy",
+    "physicalDeviceUsed": false,
+    "androidTested": false,
+    "productionChanged": false
+  },
+  "fixes": [
+    "Reject out-of-range passenger GPS coordinates before distance calculation",
+    "Invalidate restored calendar data without trusted revision and invalidate rows before persisting a new revision",
+    "Migrate cache v1 to v2 while retaining stale summaries offline",
+    "Bypass revision cooldown on app foreground return; preserve same-account request coalescing",
+    "Recognize the observed flat Seoul INFO-200 no-train envelope while rejecting contradictory or mixed envelopes",
+    "Allow a hidden calendar to warm its cache without replacing the visible full schedule with a summary",
+    "Use existing scene history for nested back navigation; keep the selected calendar when a category is routed out of an overlay",
+    "Load a pre-mounted calendar manager only when its own scene is actually visible"
+  ],
+  "verification": {
+    "frontendVerify": {
+      "command": "npm run verify",
+      "suites": 353,
+      "tests": 3630,
+      "failures": 0,
+      "typeErrors": 0,
+      "lintErrors": 0,
+      "lintWarnings": 231
+    },
+    "swiftJourneyPolicy": {
+      "total": 393,
+      "skipped": 1,
+      "failed": 0
+    },
+    "swiftAlarmPolicy": {
+      "passed": 32
+    },
+    "backendAfterFix": {
+      "exit": 0,
+      "suites": 387,
+      "tests": 2787,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 9,
+      "skippedCases": [
+        {
+          "suite": "com.noLate.transit.infrastructure.SeoulMetroShortestPathLiveTest",
+          "test": "official daytime endpoint returns a usable ordered segment()"
+        },
+        {
+          "suite": "com.noLate.auth.apple.AppleTokenLifecycleMySqlMigrationTest",
+          "test": "reviewed migration accepts clean and reapply but rejects semantic and receipt drift()"
+        },
+        {
+          "suite": "com.noLate.schedule.domain.PushEtaTrustMySqlMigrationTest",
+          "test": "migration creates exact trust schema and rejects reapplication()"
+        },
+        {
+          "suite": "com.noLate.schedule.domain.ScheduleRouteOptimisticLockMigrationContractTest",
+          "test": "mysql 84 backfills existing rows and safely accepts reapplication()"
+        },
+        {
+          "suite": "com.noLate.transit.infrastructure.SeoulMetroRealtimeStationCrosswalkLiveTest",
+          "test": "official ALL arrivals corroborate line qualified station IDs()"
+        },
+        {
+          "suite": "com.noLate.journey.automatic.TmapServerPedestrianProviderTest",
+          "test": "opt in live Tmap pedestrian provider returns walk for saved ODsay endpoints()"
+        },
+        {
+          "suite": "com.noLate.journey.automatic.LiveOfficialSubwayServicePatternCatalogLiveTest",
+          "test": "simulator saved route reaches the official path and current train feed()"
+        },
+        {
+          "suite": "com.noLate.journey.automatic.LiveOfficialSubwayServicePatternCatalogLiveTest",
+          "test": "persisted ODsay line two route resolves against today's official station path()"
+        },
+        {
+          "suite": "com.noLate.journey.automatic.LiveOfficialSubwayServicePatternCatalogLiveTest",
+          "test": "official path resolves saved calls without requiring every live arrival()"
+        }
+      ]
+    },
+    "backendSnapshotBeforeFix": {
+      "suites": 387,
+      "total": 2785,
+      "skipped": 9,
+      "failures": 0,
+      "mysqlExcluded": true
+    },
+    "subwayFlatNoDataRegression": {
+      "before": {
+        "exit": 1,
+        "suites": 1,
+        "tests": 22,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "station referenced source observation never certifies passenger or station order()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "bounded provider train and station identities remain opaque strings()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "application HTTP quota and malformed responses keep bounded separate outcomes()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "line identity both ID and canonical request name must match()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "flat no data rejects missing counts positive rows wrong status and mixed envelopes()",
+            "failed": true,
+            "skipped": false
+          },
+          {
+            "name": "partial page cannot establish unique train candidates()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "application error cannot expose arbitrary provider message or code()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "query window is bounded and line catalog has unique provider identifiers()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "duplicate train conflicts remove every row rather than selecting newest()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "direction state service and last train codes never guess()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "train position shares existing subway wire quota and has no automatic retry()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "exclusive freshness deadline and future source are not repaired by receipt()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "unsupported timestamp cannot borrow receipt date or clock()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "credential missing makes no request and network error retains no key or cause()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "redirect never forwards key or retries to trap()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "official flat no data envelope reports no trains without observation authority()",
+            "failed": true,
+            "skipped": false
+          },
+          {
+            "name": "midnight does not map yesterday clock to today()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "explicit no data differs from missing or contradictory envelope()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "invalid calendar and mismatched full clock date are rejected()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "loopback HTTP end to end uses encoded official line query with fresh source and bounded wire metrics()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "explicit date and clock forms have one strict Seoul instant()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "malformed duplicate trailing excessive depth size and UTF8 have sanitized failures()",
+            "failed": false,
+            "skipped": false
+          }
+        ]
+      },
+      "after": {
+        "exit": 0,
+        "suites": 1,
+        "tests": 22,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "station referenced source observation never certifies passenger or station order()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "bounded provider train and station identities remain opaque strings()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "application HTTP quota and malformed responses keep bounded separate outcomes()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "line identity both ID and canonical request name must match()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "flat no data rejects missing counts positive rows wrong status and mixed envelopes()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "partial page cannot establish unique train candidates()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "application error cannot expose arbitrary provider message or code()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "query window is bounded and line catalog has unique provider identifiers()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "duplicate train conflicts remove every row rather than selecting newest()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "direction state service and last train codes never guess()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "train position shares existing subway wire quota and has no automatic retry()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "exclusive freshness deadline and future source are not repaired by receipt()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "unsupported timestamp cannot borrow receipt date or clock()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "credential missing makes no request and network error retains no key or cause()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "redirect never forwards key or retries to trap()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "official flat no data envelope reports no trains without observation authority()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "midnight does not map yesterday clock to today()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "explicit no data differs from missing or contradictory envelope()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "invalid calendar and mismatched full clock date are rejected()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "loopback HTTP end to end uses encoded official line query with fresh source and bounded wire metrics()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "explicit date and clock forms have one strict Seoul instant()",
+            "failed": false,
+            "skipped": false
+          },
+          {
+            "name": "malformed duplicate trailing excessive depth size and UTF8 have sanitized failures()",
+            "failed": false,
+            "skipped": false
+          }
+        ]
+      }
+    },
+    "officialCatalogAfter": {
+      "exit": 0,
+      "suites": 1,
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        {
+          "name": "official path resolves saved calls without requiring every live arrival()",
+          "failed": false,
+          "skipped": false
+        }
+      ]
+    },
+    "calendarCacheRegression": {
+      "suites": 4,
+      "tests": 19,
+      "failures": 0
+    },
+    "negativeShareApi": {
+      "scheduleListUnchanged": true,
+      "beforeIds": [
+        12
+      ],
+      "afterIds": [
+        12
+      ],
+      "scheduleCreateRequests": 0,
+      "startSequence": 735,
+      "endSequence": 791,
+      "cases": [
+        "Cancel unconfirmed review",
+        "Reject cancelled ticket after confirmation",
+        "Reject multi-page PDF",
+        "Reject carrier link without ticket details"
+      ]
+    },
+    "formatApiTruth": {
+      "8": {
+        "scheduleId": 12,
+        "kind": "INTERCITY_BUS",
+        "source": "IOS_SHARE_PDF",
+        "scheduleCount": 1,
+        "notificationEnabled": false,
+        "bookingStatus": "UNVERIFIED",
+        "travelPlanStatus": "NOT_CONFIGURED",
+        "routeSetupRequired": true,
+        "capturedWithoutApiRelogin": true
+      },
+      "3": {
+        "scheduleId": 13,
+        "kind": "INTERCITY_BUS",
+        "source": "IOS_SHARE_PDF",
+        "scheduleCount": 1,
+        "notificationEnabled": false,
+        "bookingStatus": "UNVERIFIED",
+        "travelPlanStatus": "NOT_CONFIGURED",
+        "routeSetupRequired": true,
+        "capturedWithoutApiRelogin": true
+      },
+      "4": {
+        "scheduleId": 14,
+        "kind": "TRAIN",
+        "source": "IOS_SHARE_IMAGE",
+        "scheduleCount": 1,
+        "notificationEnabled": false,
+        "bookingStatus": "UNVERIFIED",
+        "travelPlanStatus": "NOT_CONFIGURED",
+        "routeSetupRequired": true,
+        "capturedWithoutApiRelogin": true
+      },
+      "5": {
+        "scheduleId": 15,
+        "kind": "TRAIN",
+        "source": "IOS_SHARE_TEXT",
+        "scheduleCount": 1,
+        "notificationEnabled": false,
+        "bookingStatus": "UNVERIFIED",
+        "travelPlanStatus": "NOT_CONFIGURED",
+        "routeSetupRequired": true,
+        "capturedWithoutApiRelogin": true
+      },
+      "6": {
+        "scheduleId": 16,
+        "kind": "INTERCITY_BUS",
+        "source": "IOS_SHARE_IMAGE",
+        "scheduleCount": 1,
+        "notificationEnabled": false,
+        "bookingStatus": "UNVERIFIED",
+        "travelPlanStatus": "NOT_CONFIGURED",
+        "routeSetupRequired": true,
+        "capturedWithoutApiRelogin": true
+      }
+    },
+    "tmapWalkingLive": {
+      "exit": 0,
+      "suites": 1,
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        {
+          "name": "two HTTP requests maximum with fail fast no queue and permit release()",
+          "failed": false,
+          "skipped": false
+        },
+        {
+          "name": "socket contract scenarios use real coordinator and never confer navigation readiness()",
+          "failed": false,
+          "skipped": false
+        },
+        {
+          "name": "invalid destination key and request reject before any socket request()",
+          "failed": false,
+          "skipped": false
+        },
+        {
+          "name": "fixed official HTTPS destination and raw request bound server parsing with header-only artificial key()",
+          "failed": false,
+          "skipped": false
+        },
+        {
+          "name": "opt in live Tmap pedestrian provider returns walk for saved ODsay endpoints()",
+          "failed": false,
+          "skipped": false
+        },
+        {
+          "name": "redirect status fixed and chunked limits empty and malformed UTF8 fail with no retry or trap()",
+          "failed": false,
+          "skipped": false
+        },
+        {
+          "name": "total timeout includes headers and stalled streaming body and closes work()",
+          "failed": false,
+          "skipped": false
+        }
+      ]
+    },
+    "officialDaytimePath": {
+      "exit": 0,
+      "suites": 1,
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        {
+          "name": "official daytime endpoint returns a usable ordered segment()",
+          "failed": false,
+          "skipped": false
+        }
+      ]
+    },
+    "warmReturnSeconds": 22.03308606147766,
+    "coldRepair": {
+      "serverTicketUnchanged": true,
+      "serverIds": [
+        9,
+        10
+      ],
+      "cacheVersion": 2,
+      "cacheRevision": 7,
+      "cacheMonthIds": {
+        "2026-09": [],
+        "2026-10": [],
+        "2026-12": [],
+        "2027-01": [],
+        "2026-11": [
+          "9",
+          "10"
+        ],
+        "2026-01": [],
+        "2026-02": [],
+        "2026-03": [],
+        "2026-04": [],
+        "2026-05": [],
+        "2026-06": [],
+        "2026-07": [],
+        "2026-08": []
+      },
+      "loginDuringRecovery": false,
+      "reimportDuringRecovery": false,
+      "appDataDeleted": false,
+      "comparison": "GET /api/schedules/10 before and after, same captured native session",
+      "listDetailProjectionDifference": [
+        "departureParticipants",
+        "travelPlanParticipants"
+      ]
+    },
+    "nativeCases": [
+      {
+        "case": "testAppReviewFreshInstallATTAndRestart-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketImageShareSaveReopen-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketPDFDuplicateExistingShare-01",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketPDFDuplicateExistingShare-02",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketPDFShareDuplicateSaveReopen-01",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketPDFShareDuplicateSaveReopen-02",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketPDFShareDuplicateSaveReopen-03",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketPDFShareDuplicateSaveReopen-04",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testBusTicketScannedPDFShareSaveReopen-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testCalendarCreateAndEdit-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingBusTicketAfterProcessRestart-01",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingBusTicketAfterProcessRestart-02",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingBusTicketAfterProcessRestart-03",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingBusTicketAfterProcessRestart-04",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingBusTicketAfterProcessRestart-05",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingSyntheticMemberLogin-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingSyntheticMemberLogin-02",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testLoginInputAndValidation-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testNewMemberScheduleJourney-01",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testNewMemberScheduleJourney-02",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testNewMemberScheduleJourney-03",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSavedCalendarScheduleAfterProcessRestart-01",
+        "runtime": "27.0",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSavedCalendarScheduleAfterProcessRestart-02",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSavedCalendarScheduleAfterProcessRestart-03",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSyntheticCalendarCreateReopenAndArchive-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testTicketShareCancelAndInvalidInputs-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testTrainTicketImageShareSaveReopen-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testTrainTicketTextShareSaveReopen-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testTrainTicketTextShareWarmReturn-01",
+        "runtime": "27.0",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testAppReviewFreshInstallATTAndRestart-01",
+        "runtime": "26.5",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testExistingTrainTicketAfterProcessRestart-01",
+        "runtime": "26.5",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testNewMemberScheduleJourney-01",
+        "runtime": "26.5",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testNewMemberScheduleJourney-02",
+        "runtime": "26.5",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSavedCalendarScheduleAfterProcessRestart-01",
+        "runtime": "26.5",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSyntheticCalendarCreateReopenAndArchive-01",
+        "runtime": "26.5",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSyntheticCalendarCreateReopenAndArchive-02",
+        "runtime": "26.5",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSyntheticCalendarCreateReopenAndArchive-03",
+        "runtime": "26.5",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSyntheticCalendarCreateReopenAndArchive-04",
+        "runtime": "26.5",
+        "exitCode": 65,
+        "result": "Failed",
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testSyntheticCalendarCreateReopenAndArchive-05",
+        "runtime": "26.5",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      },
+      {
+        "case": "testTrainTicketTextShareWarmReturn-01",
+        "runtime": "26.5",
+        "exitCode": 0,
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresultKeptPrivately": true
+      }
+    ]
+  },
+  "artifactAppliesFrom": "Warm-return test onward; earlier baseline and cache-repair artifacts are kept privately with separate hashes",
+  "artifact": {
+    "api": "http://127.0.0.1:5526",
+    "bundleSha256": "6039894f963281c294bdffb2aa56c400d35d0a935a52b4d7e69c77ac2a2bb6ec",
+    "binarySha256": "46624672800082ec4b434c2eafaf4ba2497d5c2a78141e61d1684b48726590fe",
+    "foregroundRevisionBypassesCooldown": true,
+    "sourceSnapshot": "build-source-hashes.json"
+  },
+  "backendWorkingSourceSha256": {
+    "src/test/kotlin/com/noLate/transit/infrastructure/SeoulMetroShortestPathLiveTest.kt": "abfcdef7a0feee83c7d4afb055befaea969d3b8b584a01fb14b79fa0e84f0391",
+    "src/main/kotlin/com/noLate/transit/infrastructure/SeoulSubwayTrainObservationParser.kt": "22161c344c8bb0578d09b5eb3698f9495051d66917d494e1c0a9d5af7e6540e6",
+    "src/test/kotlin/com/noLate/transit/infrastructure/SeoulSubwayTrainObservationTest.kt": "e79b9264245c83e45bd796ef6d158859a1d77c3cd2eb7d260568395a50f224b1"
+  },
+  "artifactTimeline": {
+    "foreground": {
+      "api": "http://127.0.0.1:5526",
+      "bundleSha256": "6039894f963281c294bdffb2aa56c400d35d0a935a52b4d7e69c77ac2a2bb6ec",
+      "binarySha256": "46624672800082ec4b434c2eafaf4ba2497d5c2a78141e61d1684b48726590fe",
+      "foregroundRevisionBypassesCooldown": true,
+      "sourceSnapshot": "build-source-hashes.json"
+    },
+    "latestRuntime": {
+      "api": "http://127.0.0.1:5526",
+      "bundleSha256": "87a48576e9af4d406cb6e860d0da9e5b1511155b883baedc747e881519251fdc",
+      "binarySha256": "bee8ba70703ae6de06ca7074634af93ec2cb2fa485041da62ff63b1701b98523",
+      "sourceSnapshot": "latest-release-source-hashes.json",
+      "emptyNoticeCleanupGuardIncluded": true,
+      "currentCalendarListFocusGuardIncluded": true,
+      "appDataDeletion": false
+    },
+    "detailOwnership": {
+      "api": "http://127.0.0.1:5526",
+      "bundleSha256": "85a73e9d175a382633466f4c1b0cc65406f1cee0e8454bd73fa51f9fc578b0cb",
+      "binarySha256": "9f344d3dcc632a50d252e2ac3a468ffc0a70902f5dda09d59dff5f0302a28cbc",
+      "sourceSnapshot": "detail-ownership-source-hashes.json",
+      "expoUpdatesEnabled": false,
+      "hiddenCalendarCannotPublishSummary": true,
+      "appDataDeleted": false,
+      "existingMember6Ticket": 16,
+      "existingMember9Ticket": 18
+    },
+    "calendarBack": {
+      "api": "http://127.0.0.1:5526",
+      "bundleSha256": "80b0e4e260f34d3dcf9f059bce0175e0c6380372a873c60c6a2d422f7b70ff58",
+      "binarySha256": "2d1dde568d8c7a0b8293ae42519af569906122664f1c78fa74d88bea5fa09cf0",
+      "sourceSnapshot": "calendar-back-source-hashes.json",
+      "expoUpdatesEnabled": false,
+      "nestedBackUsesSceneHistory": true,
+      "appDataDeleted": false,
+      "existingMember6Ticket": 16,
+      "existingMember9Ticket": 18
+    },
+    "calendarReturn": {
+      "api": "http://127.0.0.1:5526",
+      "bundleSha256": "45bea2230210a55d6bbfe8b240d4128a4a608980f2e2720c954a3b924774935a",
+      "binarySha256": "d356d0809e448c19dcf0ff1ad4cc421d2138d498187eed77d27a56befb08b152",
+      "sourceSnapshot": "calendar-return-source-hashes.json",
+      "expoUpdatesEnabled": false,
+      "nestedBackUsesSceneHistory": true,
+      "overlayCategoryReturnKeepsCalendarId": true,
+      "hiddenManagerUsesActualSceneActivity": true,
+      "appDataDeleted": false,
+      "existingMember6Ticket": 16,
+      "existingMember9Ticket": 18
+    }
+  },
+  "backgroundDetailRegression": {
+    "beforeFailed": 1,
+    "afterSuites": 4,
+    "afterTests": 26,
+    "afterFailed": 0,
+    "nativeVerificationPending": false,
+    "nativeProof": {
+      "cases": [
+        {
+          "case": "testExistingBusTicketAfterProcessRestart-05",
+          "runtime": "27.0",
+          "startTime": 1793738533.168,
+          "finishTime": 1793738576.336,
+          "passed": 1,
+          "uiTestSourceSha256": "ab3126f8c718aba46f224075f64d3f8e2931899f34bea42b38b44d5cb433db22"
+        },
+        {
+          "case": "testExistingTrainTicketAfterProcessRestart-01",
+          "runtime": "26.5",
+          "startTime": 1793738533.146,
+          "finishTime": 1793738560.329,
+          "passed": 1,
+          "uiTestSourceSha256": "ab3126f8c718aba46f224075f64d3f8e2931899f34bea42b38b44d5cb433db22"
+        }
+      ],
+      "sameMember6Ticket": 16,
+      "sameMember9Ticket": 18,
+      "api": "http://127.0.0.1:5526",
+      "member6ServerDetailUnchanged": true,
+      "member9TicketFieldsUnchanged": true,
+      "loginRequestsDuringCases": 0,
+      "scheduleCreateRequestsDuringCases": 0
+    }
+  },
+  "nodeScriptTests": {
+    "passed": 81,
+    "failed": 0
+  },
+  "pythonHelperTests": {
+    "passed": 215,
+    "failed": 0
+  },
+  "workingSourceSha256": {
+    "src/api/schedule.ts": "921f89c91d3fd6f1b04f4f2c14e8e703eb86bc67cc239d3100a55d5398ff4ab6",
+    "src/modules/schedule/calendarScheduleCache.ts": "c9c97f804c660f30c786303af5b69705bc553b8a896405e3d35de04a320d48ce",
+    "src/modules/schedule/hooks/useScheduleIndexCalendarData.ts": "1be226dcc80732bfbd2c7a732cee8e7cd821bf9535eeb8cd6982f49d9b4e3db5",
+    "modules/nolate-live-activity/ios/NoLateJourneySubwayRideCore.swift": "d1e0eea71e7d0ea14e9aeabcff699c920d395891de9c3f5dedb19d1ac4a8d0b8",
+    "e2e/ios/NoLateE2ETests.swift": "d56d771c9c2937205f0995187d32583b9aabd6c59346c6dd3c96c1c84be20bbf",
+    "app/schedule/categories.tsx": "23a9a426f2f9745e659a16dff61a7ec1c03a5f0218203d57ffcf9eb190853608",
+    "app/schedule/calendars.tsx": "0ec81334ce012df0f57400d5b88b42f1bdecc9219105a4219430ccbe998e0f77"
+  },
+  "initialFailures": [
+    "Out-of-range GPS regression failed 12 assertions before the guard",
+    "Persisted calendar held revision 7 with old rows and hid a successfully stored ticket",
+    "Foreground revision check returned false inside cooldown before the force option",
+    "An API re-login invalidated a native test session; later recovery checks avoid re-login",
+    "A partial review-button tap failed before the test made the entire control visible",
+    "An unfocused calendar preload replaced the visible full item with its summary; regression failed before the focus guard",
+    "The latest iOS27 cold reopen lost ticket-card and memo presentation while the server retained both; repaired on both runtimes without re-login or re-import",
+    "One iOS runtime pre-main DYLD failure was recovered by restarting only the owned simulator"
+  ],
+  "limits": [
+    "Synthetic ticket fixtures do not validate real carrier ticket formats or booking validity",
+    "No date/station prefill or new booking integration; those remain deferred until after launch",
+    "No physical device, Android, production deployment, or nationwide coverage claim",
+    "MySQL container verification remains unavailable because Docker did not respond within its bounded probe",
+    "Live official provider opt-in tests and full saved-route navigation must be assessed separately; skipped tests are not passes",
+    "Image and scanned-PDF station names required manual review corrections in synthetic fixtures; successful save does not prove perfect OCR",
+    "Screenshots and raw XCTest logs remain private; input logs can contain synthetic credentials"
+  ],
+  "calendarNavigationRegression": {
+    "initialNativeAttempts": [
+      {
+        "attempt": 1,
+        "failure": "Test hit-point check rejected a visible RN category row"
+      },
+      {
+        "attempt": 2,
+        "failure": "Category back returned to the root calendar"
+      },
+      {
+        "attempt": 3,
+        "failure": "Scene-close guard alone did not restore the manager omitted from router history"
+      },
+      {
+        "attempt": 4,
+        "failure": "Back/reopen worked; test-only bottom exclusion rejected a fully visible archive button"
+      }
+    ],
+    "backGuardBefore": {
+      "failed": 4,
+      "passed": 26
+    },
+    "returnTargetBefore": {
+      "failed": 2,
+      "passed": 31
+    },
+    "after": {
+      "suites": 2,
+      "passed": 35,
+      "failed": 0
+    },
+    "nativeVerificationPending": false,
+    "nativeProof": {
+      "cases": [
+        {
+          "case": "testSyntheticCalendarCreateReopenAndArchive-05",
+          "runtime": "26.5",
+          "passed": 1,
+          "startTime": 1793740356.71,
+          "finishTime": 1793740458.272,
+          "uiTestSourceSha256": "11f3dd3e87de6cf1d40d7cb4b7c80614e0f4873fde3ee952df37124c8bf5f060",
+          "calendarCreates": 1,
+          "calendarArchives": 1,
+          "loginRequests": 0,
+          "scheduleCreateRequests": 0
+        },
+        {
+          "case": "testSyntheticCalendarCreateReopenAndArchive-01",
+          "runtime": "27.0",
+          "passed": 1,
+          "startTime": 1793740474.299,
+          "finishTime": 1793740584.88,
+          "uiTestSourceSha256": "11f3dd3e87de6cf1d40d7cb4b7c80614e0f4873fde3ee952df37124c8bf5f060",
+          "calendarCreates": 1,
+          "calendarArchives": 1,
+          "loginRequests": 0,
+          "scheduleCreateRequests": 0
+        }
+      ],
+      "api": "http://127.0.0.1:5526",
+      "existingScheduleIdsPreserved": [
+        16,
+        17,
+        18
+      ],
+      "existingScheduleBodiesUnchanged": true,
+      "bothActiveCalendarListsEmpty": true,
+      "mainAppDataDeleted": false,
+      "syntheticCalendarsArchivedThroughNativeConfirmation": true,
+      "repeatedCategoryBackAndForegroundReopenVerified": true,
+      "privateCleanupLimitedToFailedSyntheticCalendars": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "artifact": "calendar-return-artifact-proof.json"
+    }
+  }
+}

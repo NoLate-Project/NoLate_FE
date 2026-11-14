@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated } from 'react-native';
-import { useLocalSearchParams, usePathname } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 
 import { createLatestRequestGuard } from '../../map/routeAsyncGuard';
 import type {
@@ -16,6 +16,7 @@ import type {
 import type { RouteEndpointAccessPath } from '../../map/routeEndpointAccess';
 import {
   getRoutePlannerInitial,
+  getRouteCandidateListSnapshot,
 } from '../routePlannerSession';
 import { resolveScheduleRouteDepartureContext } from '../scheduleRouteTiming';
 import { resolveRouteSelectionHandoff } from '../routeSelectionHandoff';
@@ -61,7 +62,6 @@ const INITIAL_CAMERA = {
  * query 변경과 언마운트 시 비동기 검색·제출 타이머를 정리해 이전 화면 작업이 남지 않게 한다.
  */
 export function useRoutePlannerState() {
-  const pathname = usePathname();
   const params = useLocalSearchParams<{
     sessionId?: string;
     routeId?: string;
@@ -82,7 +82,6 @@ export function useRoutePlannerState() {
     departureAt?: string;
     entrySource?: string;
   }>();
-  const isRouteSelectionScreen = pathname === '/schedule/route-select';
   const sessionId =
     typeof params.sessionId === 'string' ? params.sessionId : '';
   const sessionInitial = sessionId
@@ -152,8 +151,9 @@ export function useRoutePlannerState() {
     [sessionInitial, paramOrigin, paramDestination, paramTravelMode],
   );
   const initialRouteDepartureAt = useMemo(() => {
-    const persistedDepartureAt = initial?.departureAt
-      ? new Date(initial.departureAt)
+    const departureAt = initial?.requestedDepartureAt ?? initial?.departureAt;
+    const persistedDepartureAt = departureAt
+      ? new Date(departureAt)
       : undefined;
     if (
       persistedDepartureAt &&
@@ -165,7 +165,7 @@ export function useRoutePlannerState() {
       initial?.targetArrivalAt,
       initial?.travelMinutes,
     ).departureAt;
-  }, [initial?.departureAt, initial?.targetArrivalAt, initial?.travelMinutes]);
+  }, [initial?.requestedDepartureAt, initial?.departureAt, initial?.targetArrivalAt, initial?.travelMinutes]);
   const forcedEditTarget = useMemo(
     () => parseRoutePointTargetParam(params.editTarget),
     [params.editTarget],
@@ -207,6 +207,21 @@ export function useRoutePlannerState() {
       ),
     [forcedRouteId, initial?.route, initial?.travelMode],
   );
+  const handoffAlternatives = useMemo(() => {
+    if (!handoffRoute) return [];
+    const snapshot = sessionId && params.entrySource === 'route-candidates'
+      ? getRouteCandidateListSnapshot(sessionId)
+      : undefined;
+    if (snapshot?.selectedRouteId !== handoffRoute.id || !snapshot.visibleRouteIds?.includes(handoffRoute.id)) {
+      return [handoffRoute];
+    }
+    const byId = new Map(snapshot.alternatives.map(option => [option.id, option]));
+    return snapshot.visibleRouteIds.flatMap(id => {
+      if (id === handoffRoute.id) return [handoffRoute];
+      const route = resolveRouteSelectionHandoff(byId.get(id), handoffRoute.mode);
+      return route ? [route] : [];
+    });
+  }, [handoffRoute, params.entrySource, sessionId]);
   // QA 카메라/레이어는 운영 query와 연결하지 않는다. Release에서는 상수 분기로
   // 제거될 수 있도록 __DEV__ 안쪽에만 두고 사용자 입력으로 활성화하지 않는다.
   const qaCameraPresetId =
@@ -221,6 +236,7 @@ export function useRoutePlannerState() {
   // 지도 테마는 사용자 프로필 테마를 따르고, QA용 dim 막도 기본 화면에는 얹지 않는다.
   const qaMapBaseDimOpacity = 0;
   const shouldReturnToScheduleDetail = params.entrySource === 'schedule-detail';
+  const startsWithRouteOverview = params.entrySource === 'route-candidates' && handoffRoute?.mode === 'TRANSIT';
 
   const [originName, setOriginName] = useState(initial?.origin?.name ?? '');
   const [destinationName, setDestinationName] = useState(
@@ -306,7 +322,7 @@ export function useRoutePlannerState() {
   );
   const [routeAlternatives, setRouteAlternatives] = useState<
     RouteAlternativeOption[]
-  >(() => (handoffRoute ? [handoffRoute] : []));
+  >(handoffAlternatives);
   const [transitRouteFilter, setTransitRouteFilter] =
     useState<TransitRouteFilter>('ALL');
   const [selectedAlternativeId, setSelectedAlternativeId] = useState<
@@ -435,7 +451,9 @@ export function useRoutePlannerState() {
     forcedRouteId,
     forcedRouteIndex,
     forcedSheetState,
+    startsWithRouteOverview,
     handoffRoute,
+    handoffAlternatives,
     hasBottomSheetMeasured,
     initial,
     initializedOriginRef,
@@ -445,7 +463,6 @@ export function useRoutePlannerState() {
     isMapInitialized,
     isRoutePointEditMode,
     isRouteQaBaseOnly,
-    isRouteSelectionScreen,
     isTransitDeparturePickerOpen,
     lastAppliedInitialKeyRef,
     lastCameraActionKeyRef,
@@ -534,6 +551,7 @@ export function useRoutePlannerState() {
     setTransitWalkDetailOverlays,
     setTravelMode,
     shouldReturnToScheduleDetail,
+    returnToScheduleDraft: initial?.returnToScheduleDraft,
     transitActionBarHeight,
     transitConnectorCacheRef,
     transitConnectorOverlays,

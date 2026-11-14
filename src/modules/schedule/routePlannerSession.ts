@@ -1,6 +1,10 @@
 import type { Place, ScheduleItem, TravelMode } from "./types";
+import type { RouteAlternativeOption } from "../map/routingService";
+import type { TransitRouteFilter } from "./routePlanner/params";
 
 export type RoutePlannerPayload = {
+    returnToScheduleDraft?: boolean;
+    appliesToExistingSchedule?: boolean;
     origin?: Place;
     destination?: Place;
     travelMode: TravelMode;
@@ -10,6 +14,8 @@ export type RoutePlannerPayload = {
     targetArrivalAt?: string;
     /** 공급자 경로를 조회하고 저장할 때 사용한 실제 출발 기준 시각. */
     departureAt?: string;
+    /** 사용자가 지도에서 직접 선택한 조회 기준. 경로별 예상 출발 시각과 별개다. */
+    requestedDepartureAt?: string;
     // 기존 일정에 저장된 route 형식도 함께 통과시키고, 소비 화면의 경계에서 용도별로 검증한다.
     route?: unknown;
 };
@@ -145,7 +151,18 @@ export function buildScheduleRouteUpdatePayload(
 type RoutePlannerSession = {
     initial?: RoutePlannerPayload;
     result?: RoutePlannerPayload;
+    candidateList?: RouteCandidateListSnapshot;
     updatedAt: number;
+};
+
+export type RouteCandidateListSnapshot = {
+    alternatives: RouteAlternativeOption[];
+    visibleRouteIds?: readonly string[];
+    selectedRouteId: string;
+    selectedDetailsCollapsed?: boolean;
+    transitFilter: TransitRouteFilter;
+    scrollY?: number;
+    departureAt: Date;
 };
 
 const ROUTE_PLANNER_SESSION_TTL_MS = 1000 * 60 * 60;
@@ -189,11 +206,34 @@ function getOrCreateSession(sessionId: string): RoutePlannerSession {
 
 export function setRoutePlannerInitial(sessionId: string, initial: RoutePlannerPayload): void {
     const session = getOrCreateSession(sessionId);
+    const previous = session.initial;
+    if (previous?.travelMode !== initial.travelMode ||
+        previous?.targetArrivalAt !== initial.targetArrivalAt ||
+        previous?.origin?.lat !== initial.origin?.lat ||
+        previous?.origin?.lng !== initial.origin?.lng ||
+        previous?.destination?.lat !== initial.destination?.lat ||
+        previous?.destination?.lng !== initial.destination?.lng) {
+        delete session.candidateList;
+    }
     session.initial = initial;
     if (latestSessionId !== sessionId) {
         latestSessionId = sessionId;
         sessionListeners.forEach((listener) => listener());
     }
+}
+
+export function setRouteCandidateListSnapshot(sessionId: string, snapshot: RouteCandidateListSnapshot): void {
+    getOrCreateSession(sessionId).candidateList = snapshot;
+}
+
+export function getRouteCandidateListSnapshot(sessionId: string): RouteCandidateListSnapshot | undefined {
+    pruneExpiredSessions();
+    return sessions.get(sessionId)?.candidateList;
+}
+
+export function clearRouteCandidateListSnapshot(sessionId: string): void {
+    const session = sessions.get(sessionId);
+    if (session) delete session.candidateList;
 }
 
 export function getRoutePlannerInitial(sessionId: string): RoutePlannerPayload | undefined {
@@ -203,6 +243,7 @@ export function getRoutePlannerInitial(sessionId: string): RoutePlannerPayload |
 
 export function setRoutePlannerResult(sessionId: string, result: RoutePlannerPayload): void {
     const session = getOrCreateSession(sessionId);
+    delete session.candidateList;
     session.result = result;
 }
 

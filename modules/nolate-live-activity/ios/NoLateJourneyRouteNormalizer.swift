@@ -295,7 +295,7 @@ enum NoLateJourneyRouteNormalizer {
     let cross: Double
   }
 
-  private static let endpointTolerance = 75.0
+  static let staticGeometryEndpointToleranceMeters = 75.0
   private static let maximumIntersectionComparisons = 200_000
   private static let earthRadius = 6_371_000.0
 
@@ -410,13 +410,13 @@ enum NoLateJourneyRouteNormalizer {
     if distance(origin, destination) < 1 { reasons.append("ROUTE_ENDPOINTS_IDENTICAL") }
     if let first = input.legs.first, let start = first.start,
        let shapeStart = (try? routeCoordinates(input, legIndex:0))?.first ?? nil, valid(start), valid(shapeStart) {
-      if distance(origin, start) > endpointTolerance || distance(origin, shapeStart) > endpointTolerance {
+      if distance(origin, start) > staticGeometryEndpointToleranceMeters || distance(origin, shapeStart) > staticGeometryEndpointToleranceMeters {
         reasons.append("ORIGIN_MISMATCH")
       }
     } else { reasons.append("ORIGIN_UNVERIFIABLE") }
     if let last = input.legs.last, let end = last.end,
        let shapeEnd = (try? routeCoordinates(input, legIndex:input.legs.count-1))?.last ?? nil, valid(end), valid(shapeEnd) {
-      if distance(destination, end) > endpointTolerance || distance(destination, shapeEnd) > endpointTolerance {
+      if distance(destination, end) > staticGeometryEndpointToleranceMeters || distance(destination, shapeEnd) > staticGeometryEndpointToleranceMeters {
         reasons.append("DESTINATION_MISMATCH")
       }
     } else { reasons.append("DESTINATION_UNVERIFIABLE") }
@@ -476,7 +476,7 @@ enum NoLateJourneyRouteNormalizer {
     }
     if !length.isFinite || length <= 0 { reasons.append("GEOMETRY_ZERO_LENGTH") }
     if let start = leg.start, let end = leg.end, valid(start), valid(end) {
-      if distance(start, coordinates[0]) > endpointTolerance || distance(end, coordinates[coordinates.count - 1]) > endpointTolerance {
+      if distance(start, coordinates[0]) > staticGeometryEndpointToleranceMeters || distance(end, coordinates[coordinates.count - 1]) > staticGeometryEndpointToleranceMeters {
         reasons.append("GEOMETRY_ENDPOINT_MISMATCH")
       }
     } else { reasons.append("LEG_ENDPOINT_INVALID_OR_MISSING") }
@@ -512,7 +512,7 @@ enum NoLateJourneyRouteNormalizer {
     guard stopCoordinates.count == leg.stops.count else { return unique(reasons) }
     if Set(stopCoordinates).count != stopCoordinates.count { reasons.append("AMBIGUOUS_STOP_OCCURRENCE") }
     if let start = leg.start, let end = leg.end, valid(start), valid(end) {
-      if distance(start, stopCoordinates[0]) > endpointTolerance || distance(end, stopCoordinates[stopCoordinates.count - 1]) > endpointTolerance {
+      if distance(start, stopCoordinates[0]) > staticGeometryEndpointToleranceMeters || distance(end, stopCoordinates[stopCoordinates.count - 1]) > staticGeometryEndpointToleranceMeters {
         reasons.append("STOP_ENDPOINT_MISMATCH")
       }
     } else { reasons.append("STOP_ENDPOINT_UNVERIFIABLE") }
@@ -524,7 +524,7 @@ enum NoLateJourneyRouteNormalizer {
         reasons.append("STOP_PROJECTION_UNAVAILABLE")
         continue
       }
-      if best.cross > endpointTolerance { reasons.append("STOP_OFF_GEOMETRY") }
+      if best.cross > staticGeometryEndpointToleranceMeters { reasons.append("STOP_OFF_GEOMETRY") }
       if projections.contains(where: { abs($0.cross - best.cross) <= 5 && abs($0.along - best.along) >= 30 }) {
         reasons.append("AMBIGUOUS_STOP_PROJECTION")
       }

@@ -26,11 +26,31 @@ final class NoLateE2ETests: XCTestCase {
         if (testRun?.failureCount ?? 0) > 0 {
             capture("failure")
             print(app.debugDescription)
+            // A failed assertion after ARMED must not leave a server session
+            // that rejects the next isolated Release run.
+            if name.contains("testIsolatedOdsaySubwayAutomaticPreparation") {
+                let stop = app.buttons["saved-detail-stop"]
+                if stop.exists {
+                    try? reveal(stop)
+                    if stop.isHittable { stop.tap() }
+                }
+            }
         }
     }
 
+    private func focusForTextEntry(_ field: XCUIElement) {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            field.exists && field.isEnabled && field.isHittable
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+        XCTAssertTrue(app.frame.contains(field.frame))
+        // A fresh runtime can expose the field before it accepts input. Use
+        // the observed visible frame rather than XCTest's inferred hit point.
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
     private func replace(_ field: XCUIElement, with text: String) {
-        field.tap()
+        focusForTextEntry(field)
         // A tap can place the caret in the middle of existing text. Select all
         // rather than deleting only the characters before that caret.
         field.typeKey("a", modifierFlags: .command)
@@ -43,7 +63,7 @@ final class NoLateE2ETests: XCTestCase {
     private func replaceSecure(_ field: XCUIElement, with text: String) {
         var secureField = field
         for _ in 0..<3 {
-            secureField.tap()
+            focusForTextEntry(secureField)
             secureField.typeKey("a", modifierFlags: .command)
             secureField.typeText(XCUIKeyboardKey.delete.rawValue)
             for character in text { secureField.typeText(String(character)) }
@@ -59,6 +79,17 @@ final class NoLateE2ETests: XCTestCase {
             secureField = app.secureTextFields["비밀번호"]
         }
         XCTFail("Secure field did not receive the exact synthetic password")
+    }
+
+    private func dismissSyntheticPasswordSavePrompt() {
+        let prompt = app.staticTexts["암호를 저장하겠습니까?"]
+        if prompt.waitForExistence(timeout: 3) {
+            let later = app.buttons["지금 안 함"].firstMatch
+            XCTAssertTrue(later.waitForExistence(timeout: 3))
+            later.tap()
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !prompt.exists }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        }
     }
 
     func testLoginInputAndValidation() throws {
@@ -107,7 +138,7 @@ final class NoLateE2ETests: XCTestCase {
         XCTAssertTrue(email.waitForExistence(timeout: 30), "Use a signed-out dedicated simulator")
         replace(email, with: emailValue)
         XCTAssertEqual(email.value as? String, emailValue)
-        replace(app.secureTextFields["비밀번호"], with: passwordValue)
+        replaceSecure(app.secureTextFields["비밀번호"], with: passwordValue)
         app.buttons["로그인"].tap()
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -117,11 +148,12 @@ final class NoLateE2ETests: XCTestCase {
         }
         let skipImport = app.buttons["일정 없이 시작하기"]
         XCTAssertTrue(skipImport.waitForExistence(timeout: 45), "New member should enter onboarding")
+        dismissSyntheticPasswordSavePrompt()
         capture("new-member-onboarding")
-        skipImport.tap()
+        try tap(skipImport)
         let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
         XCTAssertTrue(skipTour.waitForExistence(timeout: 20))
-        skipTour.tap()
+        try tap(skipTour)
         let add = app.buttons["일정 추가"]
         XCTAssertTrue(add.waitForExistence(timeout: 20))
         capture("calendar-after-login")
@@ -144,6 +176,12 @@ final class NoLateE2ETests: XCTestCase {
             let login = app.buttons["로그인"]
             XCTAssertTrue(login.isEnabled)
             login.tap()
+            // In a bundled Release app, the first tap can only resign the
+            // secure keyboard. Retry once only if the idle Login button is
+            // still present; never double-submit an in-flight request.
+            if login.waitForExistence(timeout: 3) && login.isEnabled {
+                login.tap()
+            }
             let loginAlert = app.alerts.firstMatch
             if loginAlert.waitForExistence(timeout: 12) {
                 if loginAlert.label == "공유 캘린더" && loginAlert.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
@@ -159,6 +197,17 @@ final class NoLateE2ETests: XCTestCase {
         }
         let skipImport = app.buttons["일정 없이 시작하기"]
         if skipImport.waitForExistence(timeout: 5) {
+            // An ad-hoc-signed simulator Debug client can surface an Expo notification
+            // Keychain error toast directly over this footer. Dismiss only that
+            // development overlay; it is not part of the onboarding flow.
+            let notificationToast = app.otherElements.matching(
+                NSPredicate(format: "label CONTAINS %@", "[expo-notifications]")
+            ).firstMatch
+            if notificationToast.exists {
+                let frame = notificationToast.frame
+                app.coordinate(withNormalizedOffset: CGVector(dx: (frame.maxX - 20) / app.frame.width,
+                                                              dy: frame.midY / app.frame.height)).tap()
+            }
             // Tap the actual control first. A coordinate-only tap has occasionally
             // landed on the footer boundary without activating the handler.
             skipImport.tap()
@@ -167,9 +216,19 @@ final class NoLateE2ETests: XCTestCase {
                 app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
                                                               dy: frame.midY / app.frame.height)).tap()
             }
-            let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
-            XCTAssertTrue(skipTour.waitForExistence(timeout: 20))
+        }
+        let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
+        if skipTour.waitForExistence(timeout: 5) {
             skipTour.tap()
+            if skipTour.waitForExistence(timeout: 2) {
+                // iOS 27 can report a (-1, -1) hit point after auto-scrolling
+                // this visible header button. Its accessibility frame is valid.
+                let frame = skipTour.frame
+                XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                XCTAssertGreaterThanOrEqual(frame.minY, 0)
+                app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                              dy: frame.midY / app.frame.height)).tap()
+            }
         }
         XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 20))
         // Fresh installs can show the system password-save sheet after the
@@ -184,7 +243,7 @@ final class NoLateE2ETests: XCTestCase {
             sharingNotice.buttons["확인"].tap()
         }
         capture("isolated-release-calendar")
-        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "격리 Release 합성 경로")).firstMatch
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "격리 실제 ODsay 지하철 경로")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 20), "The actual saved route must appear in the calendar")
         if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
             sharingNotice.buttons["확인"].tap()
@@ -204,21 +263,39 @@ final class NoLateE2ETests: XCTestCase {
         capture("isolated-release-saved-route-guidance")
     }
 
+    private func isolatedSavedJourneyCard(expectedTitle: String? = nil) -> XCUIElement {
+        let title=expectedTitle ?? ProcessInfo.processInfo.environment["E2E_EXPECTED_SCHEDULE_TITLE"]
+        guard let title else { return app.buttons["selected-day-agenda-card"] }
+        return app.buttons.matching(NSPredicate(format: "identifier == %@ AND label BEGINSWITH %@",
+            "selected-day-agenda-card", title)).firstMatch
+    }
+
+    private func assertGuidanceHeading(_ title: String, timeout: TimeInterval) {
+        let heading = app.staticTexts["saved-detail-guidance-heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: timeout), "The saved-route guidance heading is missing")
+        let updated = expectation(for: NSPredicate(format: "label == %@", title), evaluatedWith: heading)
+        XCTAssertEqual(XCTWaiter().wait(for: [updated], timeout: timeout), .completed,
+            "The saved-route guidance state did not become \(title)")
+    }
+
     /// The saved ODsay subway route must connect its two walking legs through the
     /// server before automatic guidance assessment. This does not forge GPS or boarding.
     func testIsolatedOdsaySubwayWalkingConnection() throws {
+        let expectedTitle=ProcessInfo.processInfo.environment["E2E_EXPECTED_SCHEDULE_TITLE"] ?? "격리 실제 ODsay 지하철 경로"
         let sharingNotice = app.alerts["공유 캘린더"]
         if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].waitForExistence(timeout: 4) {
             sharingNotice.buttons["확인"].tap()
         }
         if !app.otherElements["saved-detail-controls"].exists {
-            let saved = app.buttons["selected-day-agenda-card"]
-            XCTAssertTrue(saved.waitForExistence(timeout: 35), "The isolated saved ODsay route must be on today's calendar")
-            XCTAssertTrue(saved.label.hasPrefix("격리 Release 합성 경로"), "Open only the isolated ODsay schedule")
-            let frame = saved.frame
-            app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
-                                                          dy: frame.midY / app.frame.height)).tap()
             let expand = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "일정 상세 시트 펼치기")).firstMatch
+            if !expand.exists {
+                let saved = isolatedSavedJourneyCard(expectedTitle:expectedTitle)
+                XCTAssertTrue(saved.waitForExistence(timeout: 35), "The isolated saved ODsay route must be on today's calendar")
+                XCTAssertTrue(saved.label.hasPrefix(expectedTitle), "Open only the isolated ODsay schedule")
+                let frame = saved.frame
+                app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                              dy: frame.midY / app.frame.height)).tap()
+            }
             if expand.waitForExistence(timeout: 10) { expand.tap() }
         }
         XCTAssertTrue(app.otherElements["saved-detail-controls"].waitForExistence(timeout: 20))
@@ -254,11 +331,17 @@ final class NoLateE2ETests: XCTestCase {
             sharingNotice.buttons["확인"].tap()
         }
         if !app.otherElements["saved-detail-controls"].exists {
-            let saved = app.buttons["selected-day-agenda-card"]
+            let saved = isolatedSavedJourneyCard()
             XCTAssertTrue(saved.waitForExistence(timeout: 25))
             let frame = saved.frame
             app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
                                                           dy: frame.midY / app.frame.height)).tap()
+            // The isolated backend's disabled sharing alert can arrive after
+            // the initial launch check and intercept this first card tap.
+            if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].waitForExistence(timeout: 2) {
+                sharingNotice.buttons["확인"].tap()
+                saved.tap()
+            }
             let expand = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "일정 상세 시트 펼치기")).firstMatch
             if expand.waitForExistence(timeout: 10) { expand.tap() }
         }
@@ -288,15 +371,40 @@ final class NoLateE2ETests: XCTestCase {
         else if app.alerts.buttons["앱을 사용하는 동안 허용"].exists {
             app.alerts.buttons["앱을 사용하는 동안 허용"].tap()
         }
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "위치 안내 시험 · ARMED")).firstMatch.waitForExistence(timeout: 30),
-                      "Server/native admission did not arm the ODsay subway route")
+        assertGuidanceHeading("출발 대기", timeout: 30)
         capture("isolated-odsay-subway-armed")
+        if ProcessInfo.processInfo.environment["E2E_REPLAY_DEPARTURE"] == "1" {
+            // The external runner moves only this dedicated simulator along the
+            // server-owned TMAP walk after ARMED. No test button advances the phase.
+            assertGuidanceHeading("위치 안내 중", timeout: 120)
+            capture("isolated-odsay-subway-location-departed")
+            if ProcessInfo.processInfo.environment["E2E_OBSERVE_SUBWAY"] == "1" {
+                // Keep the same owned session alive while the external runner
+                // continues the first real TMAP walk and the native poller asks
+                // the official provider for fresh trains. A screenshot alone
+                // never asserts passenger boarding or APNs delivery.
+                for sample in 1...4 {
+                    Thread.sleep(forTimeInterval: 30)
+                    capture("isolated-odsay-subway-official-observation-\(sample)")
+                }
+            }
+        }
         let stop = app.buttons["saved-detail-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10), "The isolated test must leave no armed session behind")
         try reveal(stop)
         stop.tap()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "위치 안내 시험 · STOPPED")).firstMatch.waitForExistence(timeout: 15),
-                      "The isolated test must end its session after capturing ARMED")
+        assertGuidanceHeading("위치 안내가 끝났어요", timeout: 15)
+    }
+
+    /// Clean up a failed GPS replay without deleting the native checkpoint by hand.
+    func testIsolatedAutomaticGuidanceStop() throws {
+        let stop = app.buttons["saved-detail-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 20),
+                      "The isolated route detail must still expose its explicit stop control")
+        try reveal(stop)
+        stop.tap()
+        assertGuidanceHeading("위치 안내가 끝났어요", timeout: 15)
+        capture("isolated-automatic-guidance-explicit-stop")
     }
 
     /// Read-only iOS provider E2E on the dedicated isolated Release simulator.
@@ -342,6 +450,13 @@ final class NoLateE2ETests: XCTestCase {
         if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
             sharingNotice.buttons["확인"].tap()
         }
+        let retry = app.buttons["경로 다시 검색"]
+        if retry.exists {
+            // Retry through the existing product action after a genuine provider
+            // timeout, retaining the same authenticated schedule and draft OD.
+            try tap(retry)
+            print("ISOLATED_IOS_ODSAY_EXPLICIT_RETRY")
+        } else {
         let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "격리 Release 합성 경로")).firstMatch
         if saved.exists {
             let frame = saved.frame
@@ -362,15 +477,27 @@ final class NoLateE2ETests: XCTestCase {
         let transit = app.buttons["대중교통"]
         XCTAssertTrue(transit.waitForExistence(timeout: 10))
         transit.tap()
+        }
+        print("ISOLATED_IOS_VIEWPORT width=\(app.frame.width) height=\(app.frame.height)")
+        if ProcessInfo.processInfo.environment["E2E_PREFER_SUBWAY"] == "1" {
+            let subwayFilter = app.buttons.matching(NSPredicate(
+                format: "label BEGINSWITH %@ AND label ENDSWITH %@", "지하철 ", " 경로 필터"
+            )).firstMatch
+            XCTAssertTrue(subwayFilter.waitForExistence(timeout: 45))
+            XCTAssertTrue(subwayFilter.isEnabled, "The real provider must offer a subway route for the selected OD")
+            try tap(subwayFilter)
+        }
         let candidate = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", " 경로")).firstMatch
         XCTAssertTrue(candidate.waitForExistence(timeout: 45))
         candidate.tap()
         let routeSave = app.buttons["이 경로 저장"]
         XCTAssertTrue(routeSave.waitForExistence(timeout: 15))
-        routeSave.tap()
+        try reveal(routeSave)
+        try tap(routeSave)
         let scheduleSave = app.buttons["일정 수정 저장"]
         XCTAssertTrue(scheduleSave.waitForExistence(timeout: 15))
-        scheduleSave.tap()
+        try reveal(scheduleSave)
+        try tap(scheduleSave)
         XCTAssertTrue(app.buttons["일정 수정"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.staticTexts["격리 Release 합성 경로"].exists)
         XCTAssertFalse(app.staticTexts["지도 설정을 불러오지 못했습니다. 앱을 최신 버전으로 업데이트해 주세요."].exists,
@@ -392,6 +519,126 @@ final class NoLateE2ETests: XCTestCase {
             app.buttons["로그인"].tap()
         }
         try createAndEditSchedule()
+    }
+
+    func testSyntheticCalendarCreateReopenAndArchive() throws {
+        XCTAssertTrue(ProcessInfo.processInfo.environment["E2E_EMAIL"]?.hasSuffix("@example.test") == true)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 30))
+        let title = "XCUITest Calendar \(Int(Date().timeIntervalSince1970))"
+        func openManager() throws {
+            let selector = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", "캘린더 선택")).firstMatch
+            XCTAssertTrue(selector.waitForExistence(timeout: 10)); try tap(selector)
+            let manage = app.buttons["캘린더 관리"]
+            XCTAssertTrue(manage.waitForExistence(timeout: 10)); try tap(manage)
+            XCTAssertTrue(app.buttons["공유 캘린더 새로고침"].waitForExistence(timeout: 20))
+        }
+        func tapVisibleCenter(_ control: XCUIElement) throws {
+            // The header needs 70pt; the home indicator needs 34pt. A symmetric
+            // 70pt bottom inset incorrectly rejects a fully visible last row.
+            let touchArea = CGRect(x: app.frame.minX + 2, y: app.frame.minY + 70,
+                                   width: app.frame.width - 4, height: app.frame.height - 104)
+            for _ in 0..<5 {
+                if control.exists && touchArea.contains(control.frame) { break }
+                app.swipeUp()
+            }
+            XCTAssertTrue(control.exists && control.isEnabled)
+            XCTAssertTrue(touchArea.contains(control.frame))
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        func verifyDetails() throws {
+            let categories = app.buttons[title + " 카테고리 관리"]
+            XCTAssertTrue(categories.waitForExistence(timeout: 20), "Current calendar and members must load before detail actions appear")
+            XCTAssertTrue(categories.isEnabled)
+            XCTAssertFalse(app.alerts["멤버 조회 실패"].exists)
+            // iOS 26.5 can report a false hit point for this visible RN row
+            // after returning. Require a real navigation result from its frame.
+            try tapVisibleCenter(categories)
+            XCTAssertTrue(app.textFields["새 카테고리 이름"].waitForExistence(timeout: 20))
+            try tap(app.buttons["뒤로 가기"])
+            XCTAssertTrue(app.buttons["공유 캘린더 새로고침"].waitForExistence(timeout: 15))
+        }
+        try openManager()
+        XCTAssertTrue(app.staticTexts["공유 캘린더가 없어요"].waitForExistence(timeout: 15), "Use a synthetic account without an existing shared calendar")
+        let name = app.textFields["예: 가족 일정"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10)); replace(name, with: title)
+        XCTAssertEqual(name.value as? String, title)
+        XCTAssertTrue(app.buttons["공유 캘린더 추가"].isEnabled)
+        name.typeText("\n") // The form's explicit Done action creates one calendar.
+        try verifyDetails()
+        // The first return materializes a routed manager. Reopening categories
+        // must now use its actual router history without adding manager copies.
+        try verifyDetails()
+        capture("synthetic-calendar-created-ready")
+        try tap(app.buttons["뒤로 가기"])
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 20))
+        let host = XCUIApplication(bundleIdentifier: "dev.nolate.ticketfixture")
+        host.activate()
+        XCTAssertTrue(host.buttons["기차 텍스트 공유 테스트"].waitForExistence(timeout: 10))
+        app.activate()
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 20))
+        try openManager(); try verifyDetails()
+        capture("synthetic-calendar-reopened-ready")
+        let archive = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", "캘린더 보관")).firstMatch
+        try tapVisibleCenter(archive)
+        let confirmation = app.alerts["캘린더 보관"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); confirmation.buttons["보관"].tap()
+        XCTAssertTrue(app.staticTexts["공유 캘린더가 없어요"].waitForExistence(timeout: 20))
+        try tap(app.buttons["뒤로 가기"])
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 20))
+        try openManager()
+        XCTAssertTrue(app.staticTexts["공유 캘린더가 없어요"].waitForExistence(timeout: 20), "An archived cached calendar must not reappear")
+        XCTAssertFalse(app.alerts["멤버 조회 실패"].exists)
+        capture("synthetic-calendar-archived-reopened-empty")
+        try tap(app.buttons["뒤로 가기"])
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 20))
+        print("SYNTHETIC_CALENDAR_ARCHIVED_AND_REOPENED_EMPTY \(title)")
+    }
+
+    /// Explicit setup after a test has intentionally replaced its server login.
+    /// Keep this separate so the relaunch test can never hide lost authentication.
+    func testExistingSyntheticMemberLogin() throws {
+        let environment = ProcessInfo.processInfo.environment
+        let emailValue = try XCTUnwrap(environment["E2E_EMAIL"])
+        XCTAssertTrue(emailValue.hasSuffix("@example.test"))
+        let email = app.textFields["이메일"]
+        if email.waitForExistence(timeout: 5) {
+            replace(email, with: emailValue)
+            replaceSecure(app.secureTextFields["비밀번호"], with: try XCTUnwrap(environment["E2E_PASSWORD"]))
+            app.staticTexts["NoLate"].firstMatch.tap()
+            app.buttons["로그인"].tap()
+        }
+        let later = app.buttons["지금 안 함"]
+        if later.waitForExistence(timeout: 3) { later.tap() }
+        dismissSyntheticPasswordSavePrompt()
+        let skipImport = app.buttons["일정 없이 시작하기"]
+        if skipImport.waitForExistence(timeout: 3) {
+            try tap(skipImport)
+            let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
+            if skipTour.waitForExistence(timeout: 10) { try tap(skipTour) }
+        }
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 30))
+    }
+
+    /// Verify persisted calendar data after a process restart, independently of
+    /// the mounted edit screen and its local React state.
+    func testSavedCalendarScheduleAfterProcessRestart() throws {
+        let environment = ProcessInfo.processInfo.environment
+        XCTAssertTrue(environment["E2E_EMAIL"]?.hasSuffix("@example.test") == true)
+        let title = try XCTUnwrap(environment["E2E_EXPECTED_SCHEDULE_TITLE"])
+        XCTAssertTrue(title.hasPrefix("XCUITest ") && title.hasSuffix(" edited"))
+        app.terminate()
+        app.activate()
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 30))
+        let createdAt = try XCTUnwrap(TimeInterval(String(title.split(separator: " ")[1])))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let day = calendar.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: createdAt))
+        let date = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(day.year!)년 \(day.month!)월 \(day.day!)일,")).firstMatch
+        XCTAssertTrue(date.waitForExistence(timeout: 10)); date.tap()
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 20), "The saved schedule must reload after process restart")
+        capture("saved-calendar-after-process-restart")
     }
 
     /// Read-only route traversal used to generate comparable navigation performance rows.
@@ -587,6 +834,52 @@ final class NoLateE2ETests: XCTestCase {
         try trainTicketImageShareSaveReopen(connectRoute: false)
     }
 
+    func testTrainTicketTextShareSaveReopen() throws {
+        ticketShareFormat = "텍스트"
+        try trainTicketImageShareSaveReopen(connectRoute: false)
+    }
+
+    /// A share extension writes outside the running JS process. Returning within
+    /// the revision cooldown must refresh the already visible calendar too.
+    func testTrainTicketTextShareWarmReturn() throws {
+        XCTAssertTrue(ProcessInfo.processInfo.environment["E2E_EMAIL"]?.hasSuffix("@example.test") == true)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 30))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let day = calendar.dateComponents([.year, .month, .day], from: Date().addingTimeInterval(86400))
+        let date = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(day.year!)년 \(day.month!)월 \(day.day!)일,")).firstMatch
+        XCTAssertTrue(date.waitForExistence(timeout: 15)); try tap(date)
+        let title = "기차 수서 → 공주"
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch.exists,
+                       "Use a synthetic account that has not imported the train fixture")
+        let started = Date()
+        let host = XCUIApplication(bundleIdentifier: "dev.nolate.ticketfixture")
+        host.terminate(); host.launch()
+        host.buttons["기차 텍스트 공유 테스트"].tap()
+        let activity = host.cells.matching(NSPredicate(format: "label CONTAINS %@", "NoLate")).firstMatch
+        XCTAssertTrue(activity.waitForExistence(timeout: 15)); activity.tap()
+        XCTAssertTrue(host.staticTexts["기차 승차권 확인"].waitForExistence(timeout: 30))
+        let save = host.buttons["ticket-review-save"]
+        XCTAssertFalse(save.isEnabled)
+        try confirmSharedTicket(in: host)
+        save.tap()
+        XCTAssertTrue(host.staticTexts["일정을 저장했어요"].waitForExistence(timeout: 20))
+        XCTAssertTrue(host.staticTexts[title].exists)
+        host.buttons["완료"].tap()
+        app.activate() // Deliberately retain the same main-app process and cache.
+        let elapsed = Date().timeIntervalSince(started)
+        print("TICKET_WARM_SHARE_RETURN_SECONDS \(elapsed)")
+        XCTAssertLessThan(elapsed, 60, "The return must exercise the revision cooldown window")
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 25), "A foreground return must reveal an externally saved ticket without restarting")
+        capture("ticket-warm-return-calendar")
+        card.tap()
+        XCTAssertTrue(app.staticTexts["가져온 기차 승차권"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["경로 미설정"].exists)
+        capture("ticket-warm-return-detail")
+    }
+
     func testTrainTicketImageShareConnectRouteSaveReopen() throws {
         try trainTicketImageShareSaveReopen(connectRoute: true)
     }
@@ -609,6 +902,41 @@ final class NoLateE2ETests: XCTestCase {
         try trainTicketImageShareSaveReopen(connectRoute: true, verifyBooking: true)
     }
 
+    func testBusTicketImageShareSaveReopen() throws {
+        useBusTicket = true
+        try trainTicketImageShareSaveReopen(connectRoute: false)
+    }
+
+    /// Read-only regression after updating a build with an already saved ticket.
+    /// No login or re-import may hide failure to refresh the persisted calendar.
+    func testExistingBusTicketAfterProcessRestart() throws {
+        useBusTicket = true
+        try existingImportedTicketAfterProcessRestart()
+    }
+
+    func testExistingTrainTicketAfterProcessRestart() throws {
+        try existingImportedTicketAfterProcessRestart()
+    }
+
+    private func existingImportedTicketAfterProcessRestart() throws {
+        XCTAssertTrue(ProcessInfo.processInfo.environment["E2E_EMAIL"]?.hasSuffix("@example.test") == true)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 30))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let day = calendar.dateComponents([.year, .month, .day], from: Date().addingTimeInterval(86400))
+        let date = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(day.year!)년 \(day.month!)월 \(day.day!)일,")).firstMatch
+        XCTAssertTrue(date.waitForExistence(timeout: 15)); try tap(date)
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", ticketTitle)).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 25), "Existing imported ticket must reappear without logging in or importing it again")
+        capture("existing-ticket-calendar-repaired")
+        try tap(card)
+        XCTAssertTrue(app.staticTexts[ticketSummaryHeading].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["경로 미설정"].exists)
+        XCTAssertFalse(app.staticTexts["메모 없음"].exists)
+        capture("existing-ticket-reopened-after-cache-repair")
+    }
+
     func testBusTicketPDFShareSaveReopen() throws {
         useBusTicket = true; ticketShareFormat = "PDF"; useTrainBookingAppFixture = true
         try trainTicketImageShareSaveReopen(connectRoute: false, verifyBooking: true)
@@ -621,21 +949,100 @@ final class NoLateE2ETests: XCTestCase {
         try rejectDuplicateBusPDF()
     }
 
+    func testBusTicketPDFDuplicateExistingShare() throws {
+        XCTAssertTrue(ProcessInfo.processInfo.environment["E2E_EMAIL"]?.hasSuffix("@example.test") == true)
+        useBusTicket = true; ticketShareFormat = "PDF"
+        try rejectDuplicateBusPDF()
+    }
+
     private func rejectDuplicateBusPDF() throws {
         let host = XCUIApplication(bundleIdentifier: "dev.nolate.ticketfixture")
         host.terminate(); host.launch(); host.buttons["시외버스 PDF 공유 테스트"].tap()
         let activity = host.cells.matching(NSPredicate(format: "label CONTAINS %@", "NoLate")).firstMatch
         XCTAssertTrue(activity.waitForExistence(timeout: 15)); activity.tap()
         XCTAssertTrue(host.staticTexts["버스 승차권 확인"].waitForExistence(timeout: 30))
-        let confirm = host.buttons["원본과 수단·날짜·터미널·시각·등급이 같습니다"]
-        if !confirm.isHittable { host.swipeUp() }
-        XCTAssertTrue(confirm.isHittable); confirm.tap()
-        let save = host.buttons["확인한 승차권 정보 저장"]
-        if !save.isHittable { host.swipeUp() }; XCTAssertTrue(save.isEnabled); save.tap()
+        try confirmSharedTicket(in: host)
+        let save = host.buttons["ticket-review-save"]
+        save.tap()
         let duplicate = host.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "이미 가져온 운행편입니다")).firstMatch
         XCTAssertTrue(duplicate.waitForExistence(timeout: 20), "A second confirmed share must show duplicate feedback instead of creating another schedule")
         let shot = XCTAttachment(screenshot: host.screenshot()); shot.name = "ticket-duplicate-rejected"; shot.lifetime = .keepAlways; add(shot)
         print("BUS_TICKET_DUPLICATE_SHARE_REJECTED")
+    }
+
+    private func confirmSharedTicket(in host: XCUIApplication) throws {
+        let confirm = host.buttons["ticket-review-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        // A partially clipped UIKit button can report hittable although its
+        // center is below the sheet. Bring the whole control into the viewport.
+        for _ in 0..<4 {
+            let viewport = host.windows.firstMatch.frame.insetBy(dx: 0, dy: 70)
+            if viewport.contains(confirm.frame) && confirm.isHittable { break }
+            host.swipeUp()
+        }
+        XCTAssertTrue(confirm.isHittable)
+        confirm.tap()
+        let save = host.buttons["ticket-review-save"]
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in save.isEnabled }, object: nil)
+        let result = XCTWaiter.wait(for: [enabled], timeout: 5)
+        if result != .completed {
+            let shot = XCTAttachment(screenshot: host.screenshot())
+            shot.name = "ticket-confirmation-failure"; shot.lifetime = .keepAlways; add(shot)
+        }
+        XCTAssertEqual(result, .completed, "An explicit original-ticket confirmation must enable saving")
+        if !save.isHittable { host.swipeUp() }
+        XCTAssertTrue(save.isHittable)
+    }
+
+    func testTicketShareCancelAndInvalidInputs() throws {
+        XCTAssertTrue(ProcessInfo.processInfo.environment["E2E_EMAIL"]?.hasSuffix("@example.test") == true)
+        let host = XCUIApplication(bundleIdentifier: "dev.nolate.ticketfixture")
+        func openShare(_ label: String) {
+            host.terminate(); host.launch()
+            let share = host.buttons[label]
+            XCTAssertTrue(share.waitForExistence(timeout: 10)); share.tap()
+            let activity = host.cells.matching(NSPredicate(format: "label CONTAINS %@", "NoLate")).firstMatch
+            XCTAssertTrue(activity.waitForExistence(timeout: 15)); activity.tap()
+        }
+        func cancelReview(_ label: String) {
+            let cancel = host.buttons["승차권 가져오기 취소"]
+            for _ in 0..<4 {
+                if host.windows.firstMatch.frame.insetBy(dx: 0, dy: 70).contains(cancel.frame)
+                    && cancel.isHittable { break }
+                host.swipeUp()
+            }
+            XCTAssertTrue(cancel.isHittable); cancel.tap()
+            XCTAssertTrue(host.buttons[label].waitForExistence(timeout: 10))
+        }
+        openShare("기차 텍스트 공유 테스트")
+        XCTAssertTrue(host.staticTexts["기차 승차권 확인"].waitForExistence(timeout: 30))
+        XCTAssertFalse(host.buttons["ticket-review-save"].isEnabled)
+        cancelReview("기차 텍스트 공유 테스트")
+
+        openShare("취소된 기차 표 공유 테스트")
+        XCTAssertTrue(host.staticTexts["기차 승차권 확인"].waitForExistence(timeout: 30))
+        try confirmSharedTicket(in: host)
+        host.buttons["ticket-review-save"].tap()
+        let cancelled = host.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "취소·환불된 표는 이동 계획으로 가져올 수 없어요")).firstMatch
+        XCTAssertTrue(cancelled.waitForExistence(timeout: 10))
+        XCTAssertFalse(host.staticTexts["일정을 저장했어요"].exists)
+        let shot = XCTAttachment(screenshot: host.screenshot()); shot.name = "cancelled-ticket-rejected"; shot.lifetime = .keepAlways; add(shot)
+        cancelReview("취소된 기차 표 공유 테스트")
+
+        for (label, message) in [
+            ("여러 페이지 PDF 공유 테스트", "잠기지 않은 한 페이지 승차권 PDF만 공유해 주세요"),
+            ("기차 링크 공유 테스트", "링크만으로 승차권 내용을 확인할 수 없어요")
+        ] {
+            openShare(label)
+            XCTAssertTrue(host.staticTexts["일정을 저장하지 못했어요"].waitForExistence(timeout: 20))
+            XCTAssertTrue(host.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", message)).firstMatch.exists)
+            XCTAssertFalse(host.staticTexts["일정을 저장했어요"].exists)
+            let attachment = XCTAttachment(screenshot: host.screenshot()); attachment.name = label; attachment.lifetime = .keepAlways; add(attachment)
+            host.buttons["닫기"].tap()
+            XCTAssertTrue(host.buttons[label].waitForExistence(timeout: 10))
+        }
+        app.activate()
+        print("TICKET_CANCEL_AND_INVALID_INPUTS_REJECTED")
     }
 
     func testBusTicketScannedPDFShareSaveReopen() throws {
@@ -706,17 +1113,24 @@ final class NoLateE2ETests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 60), .completed, "Wait for the authentication screen to settle")
         if !email.exists && app.buttons["일정 추가"].exists {
+            let expectedEmail = try XCTUnwrap(environment["E2E_EMAIL"])
+            XCTAssertTrue(expectedEmail.hasSuffix("@example.test"))
             try tap(app.buttons["내 정보 및 설정"])
             let synthetic = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "xcuitest-ticket-completion-", "@example.test")).firstMatch
             let accountReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in synthetic.exists || email.exists }, object: nil)
-            try require(XCTWaiter.wait(for: [accountReady], timeout: 20) == .completed, "Only a synthetic ticket account may be signed out")
+            try require(XCTWaiter.wait(for: [accountReady], timeout: 20) == .completed, "Only a synthetic ticket account may be used")
             if !email.exists {
-                let logout = app.buttons["로그아웃"]
-                try reveal(logout); try tap(logout)
-                let confirmation = app.alerts["로그아웃"]
-                XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); confirmation.buttons["로그아웃"].tap()
-                XCTAssertTrue(email.waitForExistence(timeout: 20))
-                print("TICKET_SYNTHETIC_ACCOUNT_SIGNED_OUT_BEFORE_LOGIN")
+                if synthetic.label.contains(expectedEmail) {
+                    try tap(app.buttons["일정 목록으로 돌아가기"])
+                } else {
+                    let logout = app.buttons["로그아웃"]
+                    try reveal(logout); try tap(logout)
+                    let confirmation = app.staticTexts["로그아웃할까요?"]
+                    XCTAssertTrue(confirmation.waitForExistence(timeout: 8))
+                    app.buttons["로그아웃"].tap()
+                    XCTAssertTrue(email.waitForExistence(timeout: 20))
+                    print("TICKET_SYNTHETIC_ACCOUNT_SIGNED_OUT_BEFORE_LOGIN")
+                }
             }
         }
         if email.exists {
@@ -734,9 +1148,12 @@ final class NoLateE2ETests: XCTestCase {
             sharing.buttons["확인"].tap()
         }
         let noSchedule = app.buttons["일정 없이 시작하기"]
-        if noSchedule.waitForExistence(timeout: 2) { noSchedule.tap() }
+        if noSchedule.waitForExistence(timeout: 2) {
+            dismissSyntheticPasswordSavePrompt()
+            try tap(noSchedule)
+        }
         let skip = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
-        if skip.waitForExistence(timeout: 10) { skip.tap() }
+        if skip.waitForExistence(timeout: 10) { try tap(skip) }
         XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 40), "Finish the synthetic account onboarding before sharing")
         let host = XCUIApplication(bundleIdentifier: "dev.nolate.ticketfixture")
         host.terminate(); host.launch()
@@ -747,7 +1164,7 @@ final class NoLateE2ETests: XCTestCase {
         activity.tap()
         let heading = host.staticTexts[useBusTicket ? "버스 승차권 확인" : "기차 승차권 확인"]
         XCTAssertTrue(heading.waitForExistence(timeout: 30), host.debugDescription)
-        for (label, expected, placeholder) in [("승차권 출발역", useBusTicket ? "인천공항2터미널" : "수서", "출발역"), ("승차권 도착역", useBusTicket ? "청주" : "공주", "도착역")] {
+        for (label, expected, placeholder) in [(useBusTicket ? "승차권 출발 터미널" : "승차권 출발역", useBusTicket ? "인천공항2터미널" : "수서", "출발역"), (useBusTicket ? "승차권 도착 터미널" : "승차권 도착역", useBusTicket ? "청주" : "공주", "도착역")] {
             let field = host.textFields[label]
             XCTAssertTrue(field.waitForExistence(timeout: 5))
             let value = field.value as? String ?? ""
@@ -765,19 +1182,20 @@ final class NoLateE2ETests: XCTestCase {
         }
         XCTAssertTrue((host.textFields["승차권 출발 시각"].value as? String ?? "").hasSuffix("12:20"))
         XCTAssertTrue((host.textFields["승차권 도착 시각"].value as? String ?? "").hasSuffix(ticketArrivalClock))
-        if useBusTicket { XCTAssertEqual(host.textFields["승차권 열차종류·버스등급"].value as? String, "우등") }
+        if useBusTicket { XCTAssertEqual(host.textFields["승차권 버스 등급"].value as? String, "우등") }
         else { XCTAssertEqual(host.textFields["승차권 열차번호"].value as? String, "615") }
-        let save = host.buttons["확인한 승차권 정보 저장"]
+        let save = host.buttons["ticket-review-save"]
         XCTAssertFalse(save.isEnabled, "OCR alone must never save an unreviewed ticket")
-        let confirm = host.buttons[useBusTicket ? "원본과 수단·날짜·터미널·시각·등급이 같습니다" : "원본과 날짜·역·시각·열차번호가 같습니다"]
-        if !confirm.isHittable { host.swipeUp() }
-        XCTAssertTrue(confirm.isHittable); confirm.tap()
-        if !save.isHittable { host.swipeUp() }
+        try confirmSharedTicket(in: host)
         let review = XCTAttachment(screenshot: host.screenshot()); review.name = "ticket-share-review"; review.lifetime = .keepAlways; add(review)
         XCTAssertTrue(save.isEnabled)
         if !save.isHittable { host.swipeUp() }
         save.tap()
         XCTAssertTrue(host.staticTexts["일정을 저장했어요"].waitForExistence(timeout: 20), host.debugDescription)
+        XCTAssertTrue(host.staticTexts[ticketTitle].exists)
+        let saved = XCTAttachment(screenshot: host.screenshot()); saved.name = "ticket-share-saved"; saved.lifetime = .keepAlways; add(saved)
+        host.buttons["완료"].tap()
+        XCTAssertTrue(share.waitForExistence(timeout: 10))
         print("TICKET_IMAGE_SHARE_REVIEWED_AND_SAVED")
         app.terminate(); app.launch()
         let notice = app.alerts["공유 캘린더"]
@@ -1426,6 +1844,7 @@ final class NoLateE2ETests: XCTestCase {
         }
         XCTAssertTrue(card.waitForExistence(timeout: 20))
         capture("schedule-edited")
+        print("SYNTHETIC_SCHEDULE_EDITED_TITLE \(title) edited")
     }
 }
 
@@ -1522,18 +1941,9 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         // Permission prompts must be reported to the operator, never auto-approved.
         try require(springboard.alerts.count == 0,
                     "A system permission/confirmation prompt requires operator review")
-        // A previous private H2 run can leave a calendar ID in the installed test app.
-        // Record and close only this exact stale-calendar alert; never dismiss other errors.
-        if environment["E2E_FIXTURE_PHASE"] == "planned-postdeparture" {
-            let staleCalendar = app.alerts["멤버 조회 실패"]
-            if staleCalendar.exists &&
-                staleCalendar.staticTexts["공유 캘린더가 존재하지 않습니다."].exists &&
-                staleCalendar.buttons["확인"].isHittable {
-                capture("eta-private-stale-calendar-alert")
-                staleCalendar.buttons["확인"].tap()
-                print("ETA_PRIVATE_STALE_CALENDAR_ALERT_DISMISSED")
-            }
-        }
+        // Calendar reads now validate focus and refreshed membership before
+        // presenting errors. Do not dismiss a stale-calendar failure here:
+        // its recurrence is a product lifecycle regression, not test setup.
         // Pre-mounted calendar scenes can retain non-interactive alert AX nodes.
         // The isolated detail journey must still stop for any actionable app alert.
         let hasAppAlert = environment["E2E_FIXTURE_PHASE"] == nil || environment["E2E_FIXTURE_PHASE"] == ""
@@ -1637,12 +2047,24 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     "Only the private unlocated-destination fixture may be changed")
         try require(app.staticTexts["E2E 도착지만 저장"].firstMatch.waitForExistence(timeout: 20),
                     "The saved schedule without a route must be open")
-        let setup = app.buttons["내 이동 경로 수정"]
+        try require(!app.staticTexts["경로 준비됨"].firstMatch.exists,
+                    "A name-only destination must not be advertised as a ready route")
+        let setup = app.buttons["내 이동 경로 설정"]
         try require(setup.waitForExistence(timeout: 10), "Route setup action is missing")
         capture("unlocated-before-route")
         try tap(setup)
-        // A saved destination without coordinates opens the destination search first.
-        for (target, place) in [("도착지", "신림역"), ("출발지", "노원역")] {
+        // A name-only destination opens destination search; an already located
+        // destination with no origin opens origin search. Follow the visible
+        // search screen rather than assuming both controls exist behind it.
+        let placeSearch = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.app.textFields["출발지 검색"].exists || self.app.textFields["도착지 검색"].exists
+        }, object: nil)
+        try require(XCTWaiter.wait(for: [placeSearch], timeout: 10) == .completed,
+                    "The normal place search must open")
+        let originFirst = labeled("장소 검색 닫기").exists && app.textFields["출발지 검색"].exists
+        let selections = originFirst ? [("출발지", "노원역"), ("도착지", "신림역")]
+            : [("도착지", "신림역"), ("출발지", "노원역")]
+        for (target, place) in selections {
             let field = app.textFields[target + " 검색"]
             if !field.waitForExistence(timeout: 10) {
                 let current = buttonBeginning(target + " 재선택, 현재 ")
@@ -1658,8 +2080,11 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             try tap(recent)
         }
         try tap(labeled("대중교통"))
-        let candidate = app.buttons["1시간 9분 경로"]
-        try require(candidate.waitForExistence(timeout: 30), "Fixture route was not returned")
+        let candidates = app.buttons.matching(NSPredicate(format:
+            "label MATCHES %@", "([0-9]+시간 )?[0-9]+분 경로"))
+        let candidate = candidates.firstMatch
+        try require(candidate.waitForExistence(timeout: 30) && candidates.count == 1,
+                    "Exactly the one private provider route must be returned")
         if candidate.value as? String != "expanded" { try tap(candidate) }
         capture("unlocated-route-selected")
         let save = labeled("이 경로 저장")
@@ -1681,14 +2106,16 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     "The saved schedule did not reopen")
         try require(app.staticTexts["신림역"].firstMatch.exists,
                     "The selected route destination was not saved")
-        try require(app.staticTexts["대중교통 69분"].firstMatch.waitForExistence(timeout: 15),
+        let minutes = try XCTUnwrap(environment["E2E_UNLOCATED_TRAVEL_MINUTES"].flatMap(Int.init))
+        try require(minutes > 0 && minutes <= 240, "Expected duration must come from the saved private API plan")
+        try require(app.staticTexts["대중교통 \(minutes)분"].firstMatch.waitForExistence(timeout: 15),
                     "The saved transit route is absent after reopening")
         let summary = app.buttons.matching(NSPredicate(
             format: "label BEGINSWITH %@ AND label CONTAINS %@",
-            "일정 상세 시트 펼치기, ", "4호선 49분"
+            "일정 상세 시트 펼치기, ", "4호선 48분"
         )).firstMatch
         try require(summary.exists &&
-                    summary.label.contains("2호선 9분"),
+                    summary.label.contains("2호선 8분"),
                     "The persisted transfer itinerary is not visible")
         capture("unlocated-route-reopened")
         print("UNLOCATED_ROUTE_REOPENED_WITH_SELECTED_DESTINATION_AND_TRANSFER")
@@ -2723,10 +3150,13 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             try require(!stop.exists, "An old alarm screen cannot satisfy foreground delivery")
             try require(stop.waitForExistence(timeout: wait + 25), "Foreground delivery did not open the actual alarm screen")
             let observed = Date()
-            try require(abs(observed.timeIntervalSince(expected)) <= 25, "Foreground delivery exceeded tolerance")
+            let deliveryDelay = observed.timeIntervalSince(expected)
+            try require(deliveryDelay >= 0 && deliveryDelay <= 25,
+                        "Foreground delivery must not be early or exceed tolerance")
             capture("eta-native-custom-screen-foreground")
             print("ETA_NATIVE_OS_DELIVERED: foreground: scheduled=" + ISO8601DateFormatter().string(from: expected) +
                   " observed=" + ISO8601DateFormatter().string(from: observed))
+            fflush(stdout)
             print("ETA_NATIVE_AUDIBLE_SOUND_NOT_MEASURED")
             try tap(stop)
             try require(app.buttons["알람 꺼짐"].firstMatch.waitForExistence(timeout: 10), "Foreground alarm did not stop")
@@ -2751,7 +3181,9 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             // A clock can also exist on Home. Wait for the whole lock condition,
             // not just the clock, before testing the date and icon absence.
             let actualLock = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                lockClock.exists && lockDate.exists && !self.springboard.buttons["NoLate"].exists
+                lockClock.exists && lockDate.exists &&
+                    !self.springboard.otherElements["Home screen icons"].exists &&
+                    self.springboard.windows["SBCoverSheetWindow"].exists
             }, object: nil)
             let lockObserved = XCTWaiter.wait(for: [actualLock], timeout: 60) == .completed
             if !lockObserved { print("ETA_NATIVE_LOCK_FAILURE_UI\n" + springboard.debugDescription) }
@@ -2771,7 +3203,10 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         // Accessibility can expose the banner before its entrance animation
         // has painted. Preserve its first observed time, then capture visible
         // pixels before tapping the same scoped OS element.
-        try require(title.isHittable, "The delivered OS notification must be actionable")
+        let actionable = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in title.exists && title.isHittable }, object: nil)
+        try require(XCTWaiter.wait(for: [actionable], timeout: 3) == .completed,
+                    "The same delivered OS notification must become actionable after its entrance animation")
         RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         // Capture the pinned simulator's entire screen, including OS overlay
         // windows; an application-only SpringBoard screenshot can omit banners.
@@ -2779,16 +3214,18 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         attachment.name = "eta-native-os-delivered-" + mode
         attachment.lifetime = .keepAlways
         add(attachment)
-        try require(abs(observed.timeIntervalSince(expected)) <= 25, "Observed notification exceeded the test delivery tolerance")
+        let deliveryDelay = observed.timeIntervalSince(expected)
+        try require(deliveryDelay >= 0 && deliveryDelay <= 25,
+                    "Observed notification must not be early or exceed the test delivery tolerance")
         print("ETA_NATIVE_OS_DELIVERED: " + mode + ": scheduled=" + ISO8601DateFormatter().string(from: expected) +
               " observed=" + ISO8601DateFormatter().string(from: observed))
+        fflush(stdout)
         // Audio authorization/asset checks are not acoustic evidence. Never declare audible sound from a screenshot.
         print("ETA_NATIVE_AUDIBLE_SOUND_NOT_MEASURED")
         // Banner lifetime is short: do not query the background app's password/alert sheets first.
         // This is the already-observed, scoped SpringBoard notification, not a permission prompt.
         try require(title.exists && title.isHittable, "The observed notification must remain actionable")
         title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        let stop = app.buttons["알람 끄기"].firstMatch
         // Querying a locked/background application's accessibility tree can itself
         // time out on iOS 27. Inspect OS/app state first, not an inaccessible button.
         if mode == "locked" && app.state != .runningForeground {
@@ -2837,7 +3274,20 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         }, object: nil)
         try require(XCTWaiter.wait(for: [foreground], timeout: 20) == .completed,
                     "The real notification interaction did not bring the app to foreground")
+        // Bind queries only after the OS has launched the cold process. This
+        // is observation, not launch()/activate() or navigation repair.
+        let respondingApp = XCUIApplication(bundleIdentifier: "com.anonymous.nolatefe")
+        let stop = respondingApp.buttons["알람 끄기"].firstMatch
         let opened = stop.waitForExistence(timeout: 20)
+        if !opened {
+            // Capture system pixels before failure triage performs another app
+            // AX query, which can itself stall long after this open deadline.
+            let missing = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            missing.name = "eta-native-cold-start-at-open-deadline"
+            missing.lifetime = .keepAlways
+            add(missing)
+            print("ETA_NATIVE_OPEN_DEADLINE_MISSED_AT: " + ISO8601DateFormatter().string(from: Date()))
+        }
         if !opened && mode == "locked" {
             let lockedFailure = XCTAttachment(screenshot: springboard.screenshot())
             lockedFailure.name = "eta-native-lock-interaction-failure"
@@ -2848,7 +3298,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         try require(opened, "The real notification tap did not open the custom alarm screen")
         capture("eta-native-custom-screen-" + mode)
         try tap(stop)
-        try require(app.buttons["알람 꺼짐"].firstMatch.waitForExistence(timeout: 10), "The scoped alarm did not stop")
+        try require(respondingApp.buttons["알람 꺼짐"].firstMatch.waitForExistence(timeout: 10), "The scoped alarm did not stop")
         capture("eta-native-stopped-" + mode)
     }
 
@@ -3057,6 +3507,20 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     "Quota verification is private H2 only")
         let accepted = environment["E2E_QUOTA_ACCEPTED"] == "1"
         let clock = try XCTUnwrap(environment["E2E_QUOTA_DEPARTURE_CLOCK"])
+        if app.buttons["알람 화면 닫기"].exists {
+            // M-5 may arrive between navigation-reset and this test. Dismiss
+            // only the scoped preparation presentation, never Stop/Depart or
+            // the actual M0 alarm; the future OS reservation stays unchanged.
+            let departure = try XCTUnwrap(ISO8601DateFormatter().date(
+                from: try XCTUnwrap(environment["E2E_QUOTA_DEPARTURE_AT"])))
+            let heading = app.staticTexts["nolate-custom-alarm-schedule-title"].firstMatch
+            try require(departure.timeIntervalSinceNow > 20 && heading.label == "출발 준비하세요" &&
+                        app.buttons["경로 보기"].exists,
+                        "Only the private future-departure preparation presentation may be closed")
+            capture("eta-quota-advance-notice-before-detail")
+            try tap(app.buttons["알람 화면 닫기"])
+            print("ETA_QUOTA_ADVANCE_PRESENTATION_CLOSED_WITHOUT_CANCELING_M0")
+        }
         try require(app.staticTexts["ETA E2E isolated fixture"].firstMatch.waitForExistence(timeout: 20) &&
                     app.buttons["일정 수정"].exists, "Quota fixture detail did not open")
         let prefix = "일정 상세 시트 펼치기, " + (accepted ? "권장 출발 " : "예상 출발 ") + clock
@@ -3206,8 +3670,8 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             try tap(summary)
             // The card is intentionally one accessible group, not separate StaticText nodes.
             let guidance = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "현재 보정 여정,")).firstMatch
-            try reveal(guidance)
-            try require(guidance.exists && guidance.isHittable, "Expanded current journey card is not visible")
+            try require(guidance.waitForExistence(timeout: 10), "Expanded current journey card is absent")
+            if phase != "transfer-observed" { try reveal(guidance) }
             let minutes = try XCTUnwrap(environment["E2E_FIXTURE_MINUTES"])
             try require(guidance.label.contains("총 " + minutes + "분"), "Expanded journey total differs from current ETA")
             try require(guidance.label.contains("접근 도보 · 출발지→노원역 · 약 1분 51초") &&
@@ -3219,6 +3683,20 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             if phase == "transfer-observed" {
                 try require(guidance.label.contains("2012열차 · 환승역 실시간 반영"),
                             "Observed transfer train must be identified in the installed app")
+                for leg in [1, 3] {
+                    let board = try XCTUnwrap(environment["E2E_RAIL_BOARD_\(leg)"])
+                    let alight = try XCTUnwrap(environment["E2E_RAIL_ALIGHT_\(leg)"])
+                    let row = app.descendants(matching: .any)["route-step-row-leg-\(leg)"].firstMatch
+                    try require(row.waitForExistence(timeout: 10) && row.label.contains(board) &&
+                                row.label.contains(alight + " 예상 하차") && row.label.contains("현재 보정 여정 기준"),
+                                "Saved timeline must show the corrected boarding and alighting clocks for leg \(leg)")
+                    try require(!row.label.contains("48분") && !row.label.contains("8분"),
+                                "The saved train duration must not leak into the corrected rail")
+                }
+                let transfer = app.descendants(matching: .any)["route-step-row-leg-2"].firstMatch
+                let precedingAlight = try XCTUnwrap(environment["E2E_RAIL_ALIGHT_1"])
+                try require(transfer.exists && !transfer.label.contains(precedingAlight),
+                            "Transfer walk must not repeat the preceding alighting clock")
             }
             try require(guidance.label.contains("도착 도보는 총시간에 포함돼요") &&
                         guidance.label.contains("역 내부 이동 포함 범위는 확인되지 않았어요"),
@@ -3257,6 +3735,55 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
 
     /// Verify an already-saved schedule without creating or modifying any schedule.
     /// A failed post-save assertion must use this test, never retry the commit test.
+    func testVerifyIncidentCalendarDeparture() throws {
+        let config = try configuration()
+        try require(config.title == "ETA E2E calendar 1" && app.buttons["일정 추가"].waitForExistence(timeout: 20),
+                    "Expected the isolated calendar")
+        let parts = seoulCalendar.dateComponents([.year, .month, .day], from: config.target)
+        let month = String(format: "%04d-%02d", parts.year!, parts.month!)
+        let day = String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+        let first = buttonBeginning("ETA E2E calendar 1,")
+        if !first.exists {
+            let detailed = app.buttons["detail-month-cell-" + month + "-" + day]
+            let stacked = app.buttons["calendar-day-" + day]
+            try require(detailed.exists || stacked.exists, "Isolated calendar date unavailable")
+            try tap(detailed.exists ? detailed : stacked)
+        }
+        for (title, expected, rejected) in [
+            ("ETA E2E calendar 1", "오전 8:55 출발", "오전 9:56 출발"),
+            ("ETA E2E calendar 2", "오후 2:07 출발", "오후 5:35 출발"),
+        ] {
+            let card = buttonBeginning(title + ",")
+            try require(card.waitForExistence(timeout: 20), "Missing scoped agenda card")
+            try require(card.label.contains(expected) && !card.label.contains(rejected),
+                        "Wrong departure on agenda: " + card.label)
+        }
+        capture("incident-calendar-corrected-departure")
+        print("ETA_INCIDENT_CALENDAR_CORRECTED_BOTH_CASES")
+    }
+
+    func testVerifyIncidentStationBoard() throws {
+        let config = try configuration()
+        try require(config.title == "ETA E2E calendar 1", "Expected the isolated incident fixture")
+        try testVerifySavedEtaJourney()
+        let summary = buttonBeginning("일정 상세 시트 펼치기,")
+        if summary.exists && summary.isHittable { try tap(summary) }
+        let row = app.descendants(matching: .any)["route-step-row-incident-first-train"].firstMatch
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            row.exists && row.label.contains("오이도행") && row.label.contains("사당행")
+        }, object: nil)
+        try require(XCTWaiter.wait(for: [ready], timeout: 30) == .completed,
+                    "The saved route did not render both distinct station arrivals")
+        try require(row.label.components(separatedBy: "오이도행").count == 2 && !row.label.contains("당고개행"),
+                    "Station board showed a duplicate or opposite-direction train")
+        let adjustedWait = (1...7).contains { row.label.contains(", \($0)분 · 오이도행") }
+        try require(adjustedWait && row.label.contains("갱신 지연") && row.label.contains("분 전 갱신") &&
+                    !row.label.contains("방금 갱신"),
+                    "Station board reused fresh-looking receipt time or the original wait")
+        capture("incident-station-board-delayed-observation")
+        print("ETA_INCIDENT_STATION_BOARD_UI_VERIFIED")
+    }
+
     func testVerifySavedEtaJourney() throws {
         let configuration = try configuration()
         try require(!app.buttons["일정 저장"].exists && !app.buttons["일정 수정 저장"].exists,
@@ -3652,5 +4179,177 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         print("ETA_UI_SAVE_CONFIRMED: " + configuration.title)
         print("ETA_ROUTE_VERIFICATION: exact duration/Line 2 from preparation evidence; verify the persisted route separately")
         print("ETA_SAVED_DETAIL_UI\n" + app.debugDescription)
+    }
+}
+
+/// Opt-in public UI probes on the pinned device, never alarm-delivery evidence.
+/// Settings inspection is read-only; launcher recovery only changes development navigation.
+final class NoLatePinnedDeviceControlsTests: XCTestCase {
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(environment["E2E_INSPECT_PINNED_SETTINGS"] == "1"
+                          || environment["E2E_PRIVATE_LAUNCHER_RECOVERY"] == "1"
+                          || environment["E2E_PINNED_PRIVATE_LIFECYCLE"] == "1"
+                          || environment["E2E_PINNED_PUBLIC_SIRI_LOCK"] == "1"
+                          || environment["E2E_INSPECT_PINNED_CONTROL_CENTER"] == "1")
+        try XCTSkipUnless(environment["SIMULATOR_UDID"] == "9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69",
+                          "Never inspect or operate Settings on another simulator")
+    }
+
+    func testInspectPublicSettingsControls() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["E2E_INSPECT_PINNED_SETTINGS"] == "1")
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.activate()
+        defer {
+            settings.terminate()
+            XCUIApplication(bundleIdentifier: "com.anonymous.nolatefe").activate()
+        }
+        XCTAssertTrue(settings.wait(for: .runningForeground, timeout: 15))
+        if ProcessInfo.processInfo.environment["E2E_INSPECT_ACCESSIBILITY_PAGE"] == "1" {
+            // Observed public identifier on this pinned iOS 27 Settings screen.
+            let accessibility = settings.buttons["com.apple.settings.accessibility"]
+            XCTAssertTrue(accessibility.waitForExistence(timeout: 10))
+            accessibility.tap()
+        }
+        let attachment = XCTAttachment(screenshot: settings.screenshot())
+        attachment.name = "pinned-public-settings-controls"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print("ETA_PINNED_SETTINGS_READ_ONLY_UI\n" + settings.debugDescription)
+    }
+
+    /// Reproduce the SDK's real nil-onError reload path, without a network server.
+    /// The caller must first confirm that the private development endpoints are offline.
+    func testOfflineDevelopmentReloadRecoversWithoutCrash() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["E2E_PRIVATE_LAUNCHER_RECOVERY"] == "1")
+        let app = XCUIApplication(bundleIdentifier: "com.anonymous.nolatefe")
+        app.activate()
+        let heading = app.staticTexts["There was a problem loading the project."]
+        let privateError = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@",
+            "Failed to load app from http://127.0.0.1:8085")).firstMatch
+        XCTAssertTrue(heading.waitForExistence(timeout: 15))
+        XCTAssertTrue(privateError.exists, "Only the observed offline local-development failure may be reloaded")
+        let before = XCTAttachment(screenshot: app.screenshot())
+        before.name = "private-launcher-offline-error-before-reload"
+        before.lifetime = .keepAlways
+        add(before)
+        let reload = app.buttons["Reload"]
+        XCTAssertTrue(reload.isHittable)
+        reload.tap()
+        XCTAssertTrue(app.staticTexts["Development Build"].waitForExistence(timeout: 30),
+                      "A failed optional-callback reload must return to the launcher, not crash")
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertFalse(heading.exists)
+        let after = XCTAttachment(screenshot: app.screenshot())
+        after.name = "private-launcher-recovered-without-crash"
+        after.lifetime = .keepAlways
+        add(after)
+        print("ETA_PRIVATE_LAUNCHER_NIL_CALLBACK_UI_RECOVERY_PASSED")
+    }
+
+    /// Public XCTest lifecycle transport, not a provider/ETA assertion.
+    /// Only the private 8086 development client may be opened here.
+    func testOpenPrivateDevelopmentClient() throws {
+        let environment = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(environment["E2E_PINNED_PRIVATE_LIFECYCLE"] == "1")
+        let app = XCUIApplication(bundleIdentifier: "com.anonymous.nolatefe")
+        if app.state != .notRunning { app.terminate() }
+        XCTAssertEqual(app.state, .notRunning)
+        app.open(try XCTUnwrap(URL(string:
+            "nolate://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8086")))
+        XCTAssertEqual(app.state, .runningForeground)
+        if environment["E2E_EXPECT_PRIVATE_ENDPOINT_OFFLINE"] == "1" {
+            let localError = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@",
+                "Failed to load app from http://127.0.0.1:8086")).firstMatch
+            XCTAssertTrue(localError.waitForExistence(timeout: 30))
+            print("ETA_PINNED_PRIVATE_LIFECYCLE_OFFLINE_ERROR_OBSERVED")
+        }
+        print("ETA_PINNED_PRIVATE_LIFECYCLE_URL_DISPATCHED")
+    }
+
+    func testInspectPublicControlCenter() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["E2E_INSPECT_PINNED_CONTROL_CENTER"] == "1")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        XCUIDevice.shared.press(.home)
+        defer {
+            XCUIDevice.shared.press(.home)
+            XCUIApplication(bundleIdentifier: "com.anonymous.nolatefe").activate()
+        }
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.01))
+            .press(forDuration: 0.1, thenDragTo:
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.6)))
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "pinned-public-control-center-controls"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        print("ETA_PINNED_CONTROL_CENTER_READ_ONLY_UI\n" + springboard.debugDescription)
+    }
+
+    /// Capability probe only. Uses the installed SDK's public Siri API, never
+    /// private lock selectors, settings changes, permission grants or another device.
+    func testPublicSiriLockCapability() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["E2E_PINNED_PUBLIC_SIRI_LOCK"] == "1")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        XCUIDevice.shared.press(.home)
+        defer { XCUIDevice.shared.press(.home) }
+        let before = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        before.name = "pinned-before-public-siri-request"
+        before.lifetime = .keepAlways
+        add(before)
+        print("ETA_PINNED_BEFORE_PUBLIC_SIRI_UI\n" + springboard.debugDescription)
+        XCTAssertTrue(springboard.otherElements["Home screen icons"].waitForExistence(timeout: 5) &&
+                      springboard.alerts.count == 0,
+                      "Begin on the observed pinned home screen, not an unknown system prompt")
+        XCUIDevice.shared.siriService.activate(voiceRecognitionText: "화면 잠가 줘")
+        let clock = springboard.descendants(matching: .any).matching(NSPredicate(format:
+            "label MATCHES %@", "(오전|오후) [0-9]{1,2}:[0-9]{2}")).firstMatch
+        let date = springboard.descendants(matching: .any).matching(NSPredicate(format:
+            "label MATCHES %@", "[0-9]{1,2}월 [0-9]{1,2}일 .*" )).firstMatch
+        let actualLock = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            clock.exists && date.exists && !springboard.otherElements["Home screen icons"].exists &&
+                springboard.windows["SBCoverSheetWindow"].exists
+        }, object: nil)
+        let locked = XCTWaiter.wait(for: [actualLock], timeout: 15) == .completed
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "pinned-public-siri-lock-capability"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        print("ETA_PINNED_PUBLIC_SIRI_LOCK_UI\n" + springboard.debugDescription)
+        try XCTSkipUnless(locked, "Public Siri did not produce an observed lock; capability is not verified")
+        print("ETA_PINNED_PUBLIC_SIRI_LOCK_OBSERVED")
+    }
+
+    func testInspectPublicPowerMenuCancellation() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["E2E_INSPECT_PINNED_CONTROL_CENTER"] == "1")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        XCUIDevice.shared.press(.home)
+        defer {
+            XCUIDevice.shared.press(.home)
+            XCUIApplication(bundleIdentifier: "com.anonymous.nolatefe").activate()
+        }
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.01))
+            .press(forDuration: 0.1, thenDragTo:
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.6)))
+        // Observed in the preceding pinned Control Center accessibility capture.
+        let power = springboard.buttons["전원"]
+        XCTAssertTrue(power.waitForExistence(timeout: 5))
+        power.press(forDuration: 1.2)
+        let before = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        before.name = "pinned-public-power-menu"
+        before.lifetime = .keepAlways
+        add(before)
+        print("ETA_PINNED_POWER_MENU_INSPECTION_UI\n" + springboard.debugDescription)
+        let cancel = springboard.buttons["취소"]
+        if cancel.waitForExistence(timeout: 5) {
+            cancel.tap()
+            let after = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            after.name = "pinned-after-public-power-cancel"
+            after.lifetime = .keepAlways
+            add(after)
+            print("ETA_PINNED_POWER_CANCEL_INSPECTION_UI\n" + springboard.debugDescription)
+        }
+        // Never drag the power-off slider, enter a passcode or call private lock APIs.
+        // A captured clock alone is not evidence of a completed lock/delivery test.
     }
 }

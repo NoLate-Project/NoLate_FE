@@ -458,6 +458,7 @@ function CustomDay({
                 ]}
             >
                 <Reanimated.Text
+                    allowFontScaling={false}
                     style={[
                         styles.dayText,
                         viewMode === "stack" && styles.stackDayText,
@@ -476,6 +477,7 @@ function CustomDay({
                 {lunarText && (
                     <Reanimated.Text
                         testID="calendar-lunar-date"
+                        allowFontScaling={false}
                         numberOfLines={1}
                         style={[
                             styles.lunarText,
@@ -498,6 +500,7 @@ function CustomDay({
             {hasHoliday && (
                 <Reanimated.Text
                     testID="calendar-holiday-name"
+                    allowFontScaling={false}
                     numberOfLines={1}
                     ellipsizeMode="tail"
                     style={[
@@ -566,6 +569,7 @@ function CustomDay({
                             {!hideStackEventLabels && event.showsLabel ? (
                                 <Text
                                     testID="stack-event-title"
+                                    allowFontScaling={false}
                                     numberOfLines={1}
                                     ellipsizeMode="tail"
                                     style={[styles.stackEventTitle, { color: colors.textPrimary }]}
@@ -578,6 +582,7 @@ function CustomDay({
                     {resolvedStackPresentation.overflowCount > 0 && (
                         <Text
                             testID="stack-event-overflow"
+                            allowFontScaling={false}
                             numberOfLines={1}
                             style={[styles.stackEventMore, { color: colors.textSecondary }]}
                         >

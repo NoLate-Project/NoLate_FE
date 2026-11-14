@@ -99,6 +99,17 @@ describe("getPaddedBoundsCamera", () => {
         expect(camera?.zoom).toBeLessThanOrEqual(16);
     });
 
+    it("정수 배율로 바로 이동해도 경로가 시트와 헤더 사이에 남는다", () => {
+        const bounds = { minLat: 37.55465, maxLat: 37.57225, minLng: 126.97061, maxLng: 126.97736 };
+        const camera = getPaddedBoundsCamera(bounds, viewport, { wholeZoomLevels: true });
+        expect(camera?.zoom).toBe(13);
+        if (!camera) throw new Error("camera is required");
+        const north = projectToViewport({ latitude: bounds.maxLat, longitude: bounds.minLng }, camera, viewport);
+        const south = projectToViewport({ latitude: bounds.minLat, longitude: bounds.maxLng }, camera, viewport);
+        expect(north.y).toBeGreaterThanOrEqual(viewport.padding.top);
+        expect(south.y).toBeLessThanOrEqual(viewport.height - viewport.padding.bottom);
+    });
+
     it("잘못된 화면 크기는 카메라를 만들지 않는다", () => {
         expect(getPaddedBoundsCamera(
             { minLat: 37.5, maxLat: 37.6, minLng: 126.9, maxLng: 127 },

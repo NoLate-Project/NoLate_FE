@@ -3,6 +3,11 @@ import { journeyAuthentication, requireJourneyAuthenticationIdentity, type Journ
 import { journeyJSONRequest } from './journeyJSONRequest';
 import type { JourneyRouteInput, JourneyRouteCoordinate } from './journeyRouteInput';
 
+// Static geometry matching uses the same bound as the native route normalizer.
+// Saved endpoint identity remains 1m; the fetched points are never extended.
+const WALKING_STATION_GEOMETRY_ENDPOINT_TOLERANCE_METERS = 75;
+const WALKING_USER_GEOMETRY_ENDPOINT_TOLERANCE_METERS = 30;
+
 export type WalkingSnapshotContext = { scheduleId: number; routeRevision: number; routeFingerprint: string };
 export type WalkingSnapshot = WalkingSnapshotContext & {
     snapshotId: string; memberId: number; loginGeneration: number; issuedAtMs: number; expiresAtMs: number;
@@ -30,8 +35,10 @@ export function composeServerWalkingInput(input:JourneyRouteInput,value:WalkingS
         ||input.legs.some((leg,i)=>i<input.legs.length-1&&!same(leg.end,input.legs[i+1].start))
         ||input.legs.some(leg=>leg.kind!=='WALK'&&(!same(leg.stops[0]?.coordinate,leg.start)||!same(leg.stops.at(-1)?.coordinate,leg.end)))) fail();
     for(const walk of snapshot.walks){const leg=input.legs[walk.legIndex],firstPoint=walk.points[0],lastPoint=walk.points.at(-1)!;
-        if(!leg.start||!leg.end||distance(firstPoint,{lat:leg.start.latitude,lng:leg.start.longitude})>30
-            ||distance(lastPoint,{lat:leg.end.latitude,lng:leg.end.longitude})>30) fail();}
+        const startTolerance=walk.legIndex===0?WALKING_USER_GEOMETRY_ENDPOINT_TOLERANCE_METERS:WALKING_STATION_GEOMETRY_ENDPOINT_TOLERANCE_METERS;
+        const endTolerance=walk.legIndex===input.legs.length-1?WALKING_USER_GEOMETRY_ENDPOINT_TOLERANCE_METERS:WALKING_STATION_GEOMETRY_ENDPOINT_TOLERANCE_METERS;
+        if(!leg.start||!leg.end||distance(firstPoint,{lat:leg.start.latitude,lng:leg.start.longitude})>startTolerance
+            ||distance(lastPoint,{lat:leg.end.latitude,lng:leg.end.longitude})>endTolerance) fail();}
     return {...JSON.parse(JSON.stringify(input)),routeRevision:snapshot.routeRevision,walkingSnapshot:snapshot};
 }
 /** View/session identity comparison excludes the separate snapshot, not any saved route claims. */

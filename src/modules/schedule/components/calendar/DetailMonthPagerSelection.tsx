@@ -539,6 +539,7 @@ export function DetailMonthPagerSelectionLayer({
                     >
                         <DetailMonthAnimatedTextInput
                             testID={`detail-month-selection-day-${glyph.key}`}
+                            allowFontScaling={false}
                             editable={false}
                             caretHidden
                             pointerEvents="none"
@@ -556,6 +557,7 @@ export function DetailMonthPagerSelectionLayer({
                         />
                         <DetailMonthAnimatedTextInput
                             testID={`detail-month-selection-lunar-${glyph.key}`}
+                            allowFontScaling={false}
                             editable={false}
                             caretHidden
                             pointerEvents="none"

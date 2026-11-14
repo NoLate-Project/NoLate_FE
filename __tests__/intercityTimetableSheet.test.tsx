@@ -1,3 +1,5 @@
+jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
+jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 import React from 'react';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import IntercityTimetableSheet from '../src/modules/schedule/components/route/IntercityTimetableSheet';
@@ -49,6 +51,44 @@ test('lookup and row selection do not apply a journey until station mapping is c
   await press(view, '이 운행편으로 경로 연결');
   expect(close).toHaveBeenCalledTimes(1);
   expect(select).toHaveBeenCalledWith(expect.objectContaining({ service, mappingConfirmed: true, boardingBufferMinutes: 15, alightingBufferMinutes: 5 }), expect.any(Function));
+});
+test('invalid buffers prevent a connection and returning restores the same service and buffers', async () => {
+  const select = jest.fn().mockResolvedValue(undefined);
+  const { view } = await choose(select);
+  const input = (label: string) => view.root.findAll(node =>
+    node.props.accessibilityLabel === label && typeof node.props.onChangeText === 'function')[0];
+  await act(async () => { input('하차 후 여유').props.onChangeText('121'); });
+  await press(view, '같은 승하차 장소입니다');
+  expect(get(view, '이 운행편으로 경로 연결').props.disabled).toBe(true);
+  expect(view.root.findAll(node => node.props.accessibilityRole === 'alert'
+    && [node.props.children].flat().join('') === '0~120분으로 입력해 주세요.').length).toBeGreaterThan(0);
+  await press(view, '이 운행편으로 경로 연결');
+  expect(select).not.toHaveBeenCalled();
+  await press(view, '운행편 선택 취소');
+  await press(view, '12:20 123 운행편 선택');
+  expect(input('하차 후 여유').props.value).toBe('121');
+  expect(get(view, '같은 승하차 장소입니다').props.accessibilityState.checked).toBe(false);
+  await act(async () => { input('하차 후 여유').props.onChangeText('0'); });
+  await press(view, '같은 승하차 장소입니다');
+  await press(view, '이 운행편으로 경로 연결');
+  expect(select).toHaveBeenCalledWith(expect.objectContaining({ alightingBufferMinutes: 0 }), expect.any(Function));
+});
+
+test('station lookup retry keeps the search text', async () => {
+  const search = jest.mocked(getIntercityStops);
+  search.mockReset()
+    .mockRejectedValueOnce(new Error('unavailable'))
+    .mockResolvedValueOnce({ ...page([{ id: 'NATH30000', name: '수서' }]), source: 'TAGO' as const, status: 'AVAILABLE' as const } as Awaited<ReturnType<typeof getIntercityStops>>);
+  let view!: ReactTestRenderer;
+  await act(async () => {
+    view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date()} dark={false} departureName="수서" onClose={jest.fn()} />);
+  });
+  await press(view, '출발 역·터미널 선택');
+  await press(view, '서울특별시');
+  await press(view, '역 터미널 검색');
+  await press(view, '역 터미널 검색 다시 시도');
+  expect(search).toHaveBeenNthCalledWith(2, expect.objectContaining({ query: '수서', cityCode: '11' }));
+  expect(get(view, '수서 NATH30000')).toBeTruthy();
 });
 test.each(['cancel', 'unmount'])('%s invalidates a pending connection response', async action => {
   let finish!: () => void; let current!: () => boolean;

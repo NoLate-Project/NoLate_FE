@@ -44,11 +44,47 @@ export function createRouteStyles(options: ScheduleDetailStylesOptions) {
         fontWeight: "700",
         letterSpacing: 0,
     },
-        inspectedPlanBar: {
-        minHeight: 34,
-        marginBottom: 10,
-        paddingBottom: 8,
+        routeCompanionList: {
+        paddingVertical: 4,
+    },
+        routeCompanionRow: {
+        flexDirection: "row",
+        alignItems: "center",
         borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+        routeCompanionMain: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 56,
+        flexDirection: "row",
+        alignItems: "center",
+        paddingVertical: 9,
+        gap: 10,
+    },
+        routeCompanionInitial: {
+        fontSize: 12,
+        fontWeight: "700",
+    },
+        routeCompanionName: {
+        fontSize: 14,
+        fontWeight: "700",
+    },
+        routeCompanionMeta: {
+        fontSize: 12,
+        marginTop: 2,
+        fontWeight: "500",
+    },
+        routeCompanionAction: {
+        width: 44,
+        height: 44,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+        inspectedPlanBar: {
+        minHeight: 48,
+        marginBottom: 8,
+        paddingHorizontal: 10,
+        borderRadius: 12,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
@@ -64,16 +100,24 @@ export function createRouteStyles(options: ScheduleDetailStylesOptions) {
         inspectedPlanText: {
         flex: 1,
         minWidth: 0,
-        fontSize: 11,
-        lineHeight: 15,
-        fontWeight: "900",
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "700",
         letterSpacing: 0,
     },
         inspectedPlanClose: {
-        width: 32,
-        height: 32,
+        minWidth: 44,
+        minHeight: 44,
+        flexDirection: "row",
+        gap: 5,
+        paddingLeft: 4,
         alignItems: "center",
         justifyContent: "center",
+    },
+        inspectedPlanActionText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "700",
     },
         plainTravelPlanParticipants: {
         marginTop: 8,
@@ -123,6 +167,11 @@ export function createRouteStyles(options: ScheduleDetailStylesOptions) {
         justifyContent: "space-between",
         gap: 12,
     },
+        sheetRouteTopRowLarge: {
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: 6,
+    },
         sheetRouteCopy: {
         flex: 1,
         minWidth: 0,
@@ -132,19 +181,10 @@ export function createRouteStyles(options: ScheduleDetailStylesOptions) {
         alignItems: "center",
         gap: 5,
     },
-        sheetRouteTitleRow: {
-        minHeight: 38,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 7,
-    },
         sheetRouteLiveDot: {
         width: 6,
         height: 6,
         borderRadius: 3,
-    },
-        sheetRouteLiveDotActive: {
-        backgroundColor: "#22C55E",
     },
         sheetRouteMeta: {
         flexShrink: 1,
@@ -160,11 +200,6 @@ export function createRouteStyles(options: ScheduleDetailStylesOptions) {
         fontWeight: "900",
         letterSpacing: 0,
     },
-        sheetRouteTitleInline: {
-        marginTop: 0,
-        fontSize: 16,
-        lineHeight: 22,
-    },
         sheetRouteDuration: {
         fontSize: 26,
         lineHeight: 30,
@@ -178,38 +213,30 @@ export function createRouteStyles(options: ScheduleDetailStylesOptions) {
         gap: 9,
     },
         sheetRouteMapButton: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: "center",
         justifyContent: "center",
     },
-        routeProgressSection: {
-        marginTop: 12,
-    },
-        routeDetailHeader: {
-        minHeight: 38,
-        marginTop: 12,
-        paddingHorizontal: 2,
-        paddingBottom: 8,
-        borderBottomWidth: StyleSheet.hairlineWidth,
+        sheetRouteMapButtonLabeled: {
+        width: undefined,
+        height: undefined,
+        minHeight: 44,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
         flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
+        gap: 6,
     },
-        routeDetailSectionTitle: {
+        sheetRouteMapButtonLabel: {
         fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "900",
-        letterSpacing: 0,
+        fontWeight: "700",
     },
         routeDetailBaseTimeText: {
-        flexShrink: 1,
+        marginTop: 4,
         fontSize: 10,
         fontWeight: "800",
         lineHeight: 14,
-        textAlign: "right",
     },
         sheetEmptyText: {
         fontSize: 14,

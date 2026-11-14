@@ -62,7 +62,7 @@ describe("iOS Live Activity visual contract", () => {
         expect(routeBar).toContain('case .bus: return "버스"');
         expect(routeBar).toContain('case .subway: return "지하철"');
         expect(routeBar).toContain('case .destination: return "도착지"');
-        expect(routeBar).toContain("NoLateDestinationPinShape()");
+        expect(routeBar).toContain("NoLateActivityIcons.image(62897");
         expect(routeBar).not.toContain('Image(systemName: "mappin")');
         expect(activity).toContain("usesDarkSurface: true");
         expect(activity).toContain("themeOverride: palette.tokens");

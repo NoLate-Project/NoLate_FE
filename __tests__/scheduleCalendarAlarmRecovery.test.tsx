@@ -9,12 +9,27 @@ const mockArchiveScheduleCalendar = jest.fn();
 const mockLeaveScheduleCalendar = jest.fn();
 const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
 const mockRouterReplace = jest.fn();
+const mockRouterPush = jest.fn();
+const mockCloseActiveScene = jest.fn(() => false);
+const mockRunWithTransitionShell = jest.fn((_shell: unknown, action: () => void) => action());
+
+jest.mock("../src/modules/performance/ImmediateNavigationTransition", () => ({
+    useImmediateNavigationTransition: () => ({
+        closeActiveScene: mockCloseActiveScene,
+        runWithTransitionShell: mockRunWithTransitionShell,
+    }),
+}));
 const mockParams: { id?: string } = {};
 let calendarResponse: ScheduleCalendar[];
 let mockCachedCalendarResponse: ScheduleCalendar[] | null;
+let mockScreenFocused = true;
+let mockSceneActivity: boolean | undefined;
+jest.mock("../src/modules/performance/preMountedSceneActivity", () => ({
+    usePreMountedSceneActivity: () => mockSceneActivity,
+}));
 
 // Preserve alarm-recovery assertions without importing the native ESM navigator.
-jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
+jest.mock('@react-navigation/native', () => ({ useIsFocused: () => mockScreenFocused }));
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-router", () => ({
@@ -22,6 +37,7 @@ jest.mock("expo-router", () => ({
     useRouter: () => ({
         canGoBack: () => false,
         replace: mockRouterReplace,
+        push: mockRouterPush,
     }),
 }));
 jest.mock("react-native-safe-area-context", () => ({
@@ -125,9 +141,12 @@ describe("schedule calendar departure-alarm recovery", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockCloseActiveScene.mockReturnValue(false);
         delete mockParams.id;
         calendarResponse = [ownerCalendar];
         mockCachedCalendarResponse = null;
+        mockScreenFocused = true;
+        mockSceneActivity = undefined;
         mockGetScheduleCalendarMembers.mockResolvedValue([]);
         mockRecoverDepartureAlarmsAfterMutation.mockResolvedValue(undefined);
         jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
@@ -155,6 +174,165 @@ describe("schedule calendar departure-alarm recovery", () => {
             });
         }
     }
+
+    it("returns to the previous mounted scene without resetting to the root calendar", async () => {
+        mockCloseActiveScene.mockReturnValue(true);
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "뒤로 가기" }).props.onPress();
+        });
+        expect(mockCloseActiveScene).toHaveBeenCalledTimes(1);
+        expect(mockRunWithTransitionShell).not.toHaveBeenCalled();
+        expect(mockRouterReplace).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the calendar root when opened directly without router history", async () => {
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "뒤로 가기" }).props.onPress();
+        });
+        expect(mockCloseActiveScene).toHaveBeenCalledTimes(1);
+        expect(mockRouterReplace).toHaveBeenCalledWith("/schedule");
+    });
+
+    it("keeps the selected calendar as the category screen's return destination", async () => {
+        mockSceneActivity = true;
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "가족 카테고리 관리" }).props.onPress();
+        });
+        expect(mockRouterPush).toHaveBeenCalledWith({
+            pathname: "/schedule/categories",
+            params: { calendarId: "7", calendarTitle: "가족", returnTo: "calendars" },
+        });
+    });
+
+    it("uses router history when the calendar manager is already a routed screen", async () => {
+        await renderScreen();
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "가족 카테고리 관리" }).props.onPress();
+        });
+        expect(mockRouterPush).toHaveBeenCalledWith({
+            pathname: "/schedule/categories",
+            params: { calendarId: "7", calendarTitle: "가족", returnTo: "calendar-stack" },
+        });
+    });
+
+    it("keeps a rename draft per calendar and only saves a changed name", async () => {
+        calendarResponse = [ownerCalendar, secondOwnerCalendar];
+        mockUpdateScheduleCalendar.mockResolvedValue({ ...ownerCalendar, title: "가족 모임" });
+        await renderScreen();
+        const root = renderer!.root;
+        expect(root.findAllByProps({ accessibilityLabel: "캘린더 이름" })).toHaveLength(0);
+        const edit = () => root.findByProps({ accessibilityLabel: "캘린더 이름 수정" });
+        const input = () => root.findByProps({ accessibilityLabel: "캘린더 이름" });
+        const save = () => root.findByProps({ accessibilityLabel: "캘린더 이름 저장" });
+        await act(async () => edit().props.onPress());
+        expect(save().props.disabled).toBe(true);
+        await act(async () => input().props.onChangeText("  가족 모임  "));
+        expect(save().props.disabled).toBe(false);
+
+        await act(async () => findPressableByText(root, "업무").props.onPress());
+        expect(root.findAllByProps({ accessibilityLabel: "캘린더 이름" })).toHaveLength(0);
+        await act(async () => findPressableByText(root, "가족").props.onPress());
+        expect(input().props.value).toBe("  가족 모임  ");
+        await act(async () => save().props.onPress());
+        expect(mockUpdateScheduleCalendar).toHaveBeenCalledWith(7, { title: "가족 모임" });
+        expect(root.findAllByProps({ accessibilityLabel: "캘린더 이름" })).toHaveLength(0);
+    });
+
+    it("does not load a hidden pre-mounted calendar while the underlying navigator is focused", async () => {
+        mockSceneActivity = false;
+        mockScreenFocused = true;
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleCalendarsScreen />);
+        });
+        await flushMicrotasks();
+        expect(mockGetScheduleCalendars).not.toHaveBeenCalled();
+        expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalled();
+    });
+
+    it("does not issue background calendar or member requests", async () => {
+        mockScreenFocused = false;
+        mockCachedCalendarResponse = [ownerCalendar];
+        mockGetScheduleCalendars.mockResolvedValue([ownerCalendar]);
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleCalendarsScreen />);
+        });
+        await flushMicrotasks();
+        expect(mockGetScheduleCalendars).not.toHaveBeenCalled();
+        expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalled();
+        expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
+    it("validates restored calendar ids before requesting members", async () => {
+        mockCachedCalendarResponse = [ownerCalendar];
+        const list = deferred<ScheduleCalendar[]>();
+        mockGetScheduleCalendars.mockReturnValue(list.promise);
+        mockGetScheduleCalendarMembers.mockResolvedValue([workMember]);
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleCalendarsScreen />);
+        });
+        await flushMicrotasks();
+        expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalled();
+        await act(async () => {
+            list.resolve([secondOwnerCalendar]);
+            await list.promise;
+        });
+        await flushMicrotasks();
+        expect(mockGetScheduleCalendarMembers).toHaveBeenCalledWith(secondOwnerCalendar.id);
+        expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalledWith(ownerCalendar.id);
+        expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
+    it("ignores a member failure after blur and revalidates on focus", async () => {
+        const members = deferred<ScheduleCalendarMember[]>();
+        mockGetScheduleCalendarMembers.mockReturnValue(members.promise);
+        await renderScreen();
+        expect(mockGetScheduleCalendarMembers).toHaveBeenCalledWith(ownerCalendar.id);
+        await act(async () => {
+            mockScreenFocused = false;
+            renderer!.update(<ScheduleCalendarsScreen />);
+        });
+        jest.mocked(Alert.alert).mockClear();
+        await act(async () => {
+            members.reject(new Error("공유 캘린더가 존재하지 않습니다."));
+            await members.promise.catch(() => undefined);
+        });
+        await flushMicrotasks();
+        expect(Alert.alert).not.toHaveBeenCalled();
+        mockGetScheduleCalendars.mockResolvedValue([ownerCalendar]);
+        mockGetScheduleCalendarMembers.mockResolvedValue([familyMember]);
+        await act(async () => {
+            mockScreenFocused = true;
+            renderer!.update(<ScheduleCalendarsScreen />);
+        });
+        await flushMicrotasks();
+        expect(mockGetScheduleCalendarMembers).toHaveBeenCalledTimes(2);
+        expect(getRenderedText(renderer!.root)).toContain(familyMember.name);
+    });
+
+    it("ignores a calendar-list failure after unmount", async () => {
+        const list = deferred<ScheduleCalendar[]>();
+        mockGetScheduleCalendars.mockReturnValue(list.promise);
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleCalendarsScreen />);
+        });
+        await act(async () => renderer!.unmount());
+        renderer = undefined;
+        await act(async () => {
+            list.reject(new Error("offline"));
+            await list.promise.catch(() => undefined);
+        });
+        await flushMicrotasks();
+        expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
+    it("still reports a current focused member failure", async () => {
+        mockGetScheduleCalendarMembers.mockRejectedValue(new Error("active member failure"));
+        await renderScreen();
+        expect(Alert.alert).toHaveBeenCalledWith("멤버 조회 실패", "active member failure");
+    });
 
     it("recovers once after travel sharing is downgraded", async () => {
         mockUpdateScheduleCalendar.mockResolvedValue({
@@ -478,12 +656,15 @@ function getRenderedText(node: ReactTestInstance): string {
 function deferred<T>(): {
     promise: Promise<T>;
     resolve: (value: T) => void;
+    reject: (reason: unknown) => void;
 } {
     let resolve: (value: T) => void = () => undefined;
-    const promise = new Promise<T>((next) => {
+    let reject: (reason: unknown) => void = () => undefined;
+    const promise = new Promise<T>((next, fail) => {
         resolve = next;
+        reject = fail;
     });
-    return { promise, resolve };
+    return { promise, resolve, reject };
 }
 
 async function flushMicrotasks(): Promise<void> {

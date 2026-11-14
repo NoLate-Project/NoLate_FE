@@ -18,6 +18,11 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       alignItems: 'center',
       gap: 8,
     },
+    improvedRouteIdentityCompactLarge: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      paddingBottom: 8,
+    },
     improvedRouteIdentityMain: {
       flex: 1,
       minWidth: 0,
@@ -25,6 +30,10 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+    },
+    improvedRouteIdentityMainLarge: {
+      flex: 0,
+      minHeight: 44,
     },
     improvedRouteIdentityExpanded: {
       flex: 1,
@@ -40,19 +49,6 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       alignItems: 'center',
       gap: 4,
     },
-    improvedExpandedCollapseButton: {
-      width: 44,
-      height: 44,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    improvedExpandedCollapseButtonFace: {
-      width: 30,
-      height: 30,
-      borderRadius: 15,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
     improvedRouteIdentityTitle: {
       flex: 1,
       minWidth: 0,
@@ -61,26 +57,14 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       fontWeight: '800',
       letterSpacing: 0,
     },
+    improvedRouteIdentityExpandedLarge: {
+      flexWrap: 'wrap',
+    },
     improvedRouteIdentityMeta: {
       flexShrink: 0,
       fontSize: 11,
       lineHeight: 15,
       fontWeight: '600',
-      letterSpacing: 0,
-    },
-    improvedCompactDepartureAction: {
-      height: 38,
-      paddingHorizontal: 11,
-      borderRadius: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 5,
-    },
-    improvedCompactDepartureActionText: {
-      fontSize: 11,
-      lineHeight: 15,
-      fontWeight: '800',
       letterSpacing: 0,
     },
     improvedCompactBody: {
@@ -94,6 +78,11 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       justifyContent: 'space-between',
       gap: 10,
     },
+    improvedCompactTopRowLarge: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      gap: 6,
+    },
     improvedCompactTimeCopy: {
       flex: 1,
       minWidth: 0,
@@ -104,12 +93,19 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       fontWeight: '800',
       letterSpacing: 0,
     },
+    improvedDepartureEyebrowLarge: {
+      lineHeight: undefined,
+    },
     improvedDepartureTimeRow: {
       minWidth: 0,
       marginTop: 1,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+    },
+    improvedDepartureTimeRowLarge: {
+      flexWrap: 'wrap',
+      rowGap: 4,
     },
     improvedCompactDepartureTime: {
       flexShrink: 1,
@@ -120,14 +116,61 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       letterSpacing: -0.5,
       fontVariant: ['tabular-nums'],
     },
-    improvedExpandedDepartureTime: {
-      flexShrink: 1,
+    improvedCompactDepartureTimeLarge: {
+      flexShrink: 0,
+      lineHeight: undefined,
+    },
+    expandedDepartureContext: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'baseline',
+      columnGap: 10,
+      rowGap: 2,
+    },
+    expandedDepartureHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      columnGap: 12,
+      paddingBottom: 4,
+    },
+    expandedDepartureHeaderLarge: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      rowGap: 8,
+    },
+    expandedDepartureHeaderCopy: {
+      flex: 1,
       minWidth: 0,
-      fontSize: 28,
-      lineHeight: 34,
-      fontWeight: '900',
-      letterSpacing: -0.6,
+    },
+    expandedRouteFactsFooter: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: 6,
+      paddingBottom: 12,
+    },
+    manualDepartureRow: {
+      alignSelf: 'flex-start',
+      maxWidth: '100%',
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 7,
+    },
+    manualDepartureText: {
+      flexShrink: 1,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    expandedDepartureTime: {
+      flexShrink: 1,
+      fontSize: 16,
+      fontWeight: '700',
       fontVariant: ['tabular-nums'],
+    },
+    improvedDepartureDateText: {
+        flexShrink: 1,
+        fontSize: 13,
+        fontWeight: '600',
     },
     improvedRemainingChip: {
       minHeight: 25,
@@ -142,28 +185,16 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       fontWeight: '800',
       letterSpacing: 0,
     },
+    improvedRemainingChipTextLarge: {
+      lineHeight: undefined,
+      paddingVertical: 3,
+    },
     improvedArrivalSummary: {
       marginTop: 4,
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
       letterSpacing: 0,
-    },
-    compactRouteStrip: {
-      width: '100%',
-      height: 6,
-      marginTop: 12,
-      borderRadius: 3,
-      flexDirection: 'row',
-      overflow: 'hidden',
-    },
-    compactRouteStripSegment: {
-      height: 6,
-      minWidth: 3,
-      borderRadius: 3,
-    },
-    compactRouteStripSpacing: {
-      marginLeft: 2,
     },
     improvedCompactFacts: {
       marginTop: 8,
@@ -187,45 +218,88 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       fontWeight: '800',
       letterSpacing: 0,
     },
-    improvedDepartureSharedRow: {
-      marginTop: 8,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-    },
     improvedExpandedHero: {
       paddingBottom: 6,
     },
-    improvedExpandedHeroMain: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-    },
-    improvedExpandedHeroCopy: {
-      flex: 1,
-      minWidth: 0,
-    },
-    improvedExpandedDepartureAction: {
-      minWidth: 100,
-      height: 44,
-      paddingHorizontal: 13,
-      borderRadius: 14,
+    sheetDepartureAction: {
+      alignSelf: 'flex-end',
+      maxWidth: '100%',
+      minWidth: 122,
+      minHeight: 44,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      marginBottom: 8,
+      borderRadius: 12,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
     },
-    improvedExpandedDepartureActionText: {
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '800',
-      letterSpacing: 0,
+    sheetDepartureActionLarge: {
+      alignSelf: 'stretch',
+    },
+    sheetDepartureActionInline: {
+      alignSelf: 'center',
+      marginBottom: 0,
+      maxWidth: '48%',
+    },
+    sheetDepartureActionText: {
+      flexShrink: 1,
+      fontSize: 14,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    sheetRouteSaveFeedback: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 8,
+      paddingVertical: 7,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+    },
+    sheetRouteSaveFeedbackStack: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      gap: 0,
+    },
+    sheetRouteSaveFeedbackMessage: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 1,
+      gap: 8,
+    },
+    sheetRouteSaveFeedbackIcon: {
+      width: 22,
+      height: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sheetRouteSaveFeedbackText: {
+      flexShrink: 1,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    sheetRouteRetry: {
+      minHeight: 44,
+      minWidth: 44,
+      justifyContent: 'center',
+      paddingHorizontal: 6,
+    },
+    sheetRouteRetryStack: {
+      alignSelf: 'flex-start',
+      marginLeft: 24,
     },
     improvedRouteFacts: {
       marginTop: 13,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+    },
+    improvedRouteFactsLarge: {
+      flexWrap: 'wrap',
+      columnGap: 8,
+      rowGap: 6,
     },
     improvedRouteFactDivider: {
       width: 1,
@@ -236,6 +310,13 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       lineHeight: 15,
       fontWeight: '700',
       letterSpacing: 0,
+    },
+    improvedRouteFactTextLarge: {
+      maxWidth: '100%',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
     },
     effectiveRouteCard: {
       marginTop: 10,

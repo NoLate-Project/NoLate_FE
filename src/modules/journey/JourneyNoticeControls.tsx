@@ -5,9 +5,9 @@ import { requestPushNotificationPermission } from '../notification/pushPermissio
 import { journeyNoticeAvailability } from './journeyNoticeAvailability';
 
 /** Debug screen owns explicit actions only. Rendering never requests permission or registers tokens. */
-export function JourneyNoticeControls({ running, pending, refresh, compact = false, selectedMode, permission, onPendingChange }: {
+export function JourneyNoticeControls({ running, pending, refresh, compact = false, isDark = false, selectedMode, permission, onPendingChange }: {
     running: boolean; pending: boolean; refresh: () => Promise<void>;
-    compact?: boolean; selectedMode?: string; permission?: string; onPendingChange?: (pending: boolean) => void;
+    compact?: boolean; isDark?: boolean; selectedMode?: string; permission?: string; onPendingChange?: (pending: boolean) => void;
 }) {
     const busy = useRef(false);
     const [working, setWorking] = useState(false);
@@ -20,6 +20,7 @@ export function JourneyNoticeControls({ running, pending, refresh, compact = fal
     // keep claiming denial, or infer lock-screen availability from a Boolean.
     const effectivePermission = result === 'PERMISSION_GRANTED' && permission?.startsWith('NOT_DETERMINED_') ? undefined : permission;
     const availability = journeyNoticeAvailability(selected, effectivePermission);
+    const textColor = isDark ? '#BCC8D7' : '#475569';
     if (running) return null;
     const disabled = pending || working;
     const act = async (action: () => Promise<void>) => {
@@ -42,13 +43,14 @@ export function JourneyNoticeControls({ running, pending, refresh, compact = fal
         {compact && <Pressable testID="saved-guidance-notice-expand" accessibilityRole="button"
             accessibilityLabel={`음성·알림 설정, ${label}`} accessibilityState={{ expanded, disabled }} disabled={disabled}
             onPress={() => { if (!disabled) setExpanded(value => !value); }}
-            style={{ minHeight: 48, paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={{ color: '#1264C7', fontWeight: '600' }}>음성·알림 설정</Text><Text>{label} {expanded ? '⌃' : '⌄'}</Text>
+            style={{ minHeight: 48, paddingVertical: 12, flexDirection: 'row', flexWrap: 'wrap', columnGap: 12, justifyContent: 'space-between' }}>
+            <Text style={{ color: isDark ? '#78B4FF' : '#1264C7', fontWeight: '600' }}>음성·알림 설정</Text>
+            <Text style={{ color: textColor }}>{label} {expanded ? '⌃' : '⌄'}</Text>
         </Pressable>}
-        {availability && <Text testID="saved-guidance-notice-availability" accessibilityLiveRegion="polite">{availability}</Text>}
+        {availability && <Text style={{ color: textColor }} testID="saved-guidance-notice-availability" accessibilityLiveRegion="polite">{availability}</Text>}
         {expanded && <View testID="saved-guidance-notice-options">
-        <Text>알림 권한은 아래 요청 버튼을 누를 때만 요청해요. 전경 음성은 무음을 존중하며 잠금 상태에는 알림을 사용해요. 접수/큐 수는 실제 표시·청취 증명이 아닙니다.</Text>
-        <Text testID="saved-guidance-notice-permission-result">알림 설정 결과: {result}</Text>
+        <Text style={{ color: textColor }}>알림 권한은 아래 요청 버튼을 누를 때만 요청해요. 전경 음성은 무음을 존중하며 잠금 상태에는 알림을 사용해요. 접수/큐 수는 실제 표시·청취 증명이 아닙니다.</Text>
+        <Text style={{ color: textColor }} testID="saved-guidance-notice-permission-result">알림 설정 결과: {result}</Text>
         {button('notice-permission', '시험 안내 알림 권한 요청', async () => {
             setResult(await requestPushNotificationPermission() ? 'PERMISSION_GRANTED' : 'PERMISSION_NOT_GRANTED');
         })}

@@ -42,6 +42,23 @@ final class NoLateJourneySubwayRideCoreTests: XCTestCase {
     XCTAssertTrue(core.snapshot.boardingConfirmed);XCTAssertEqual(core.snapshot.currentStopIndex,1)
     XCTAssertEqual(core.snapshot.remainingStops,1);XCTAssertEqual(core.snapshot.validUntil,1055)
   }
+  func testOutOfRangeCoordinatesCannotAliasAValidWaitingAndRidingPath() throws {
+    // Trigonometric distance wraps every 360 degrees. Malformed GPS must not
+    // reproduce an otherwise valid wait/movement/train correlation that way.
+    for (latitudeOffset, longitudeOffset) in [(0.0,360.0),(0.0,-360.0),(360.0,0.0),(-360.0,0.0)] {
+      var core = try Core(route:route(),armedAt:1000,expiresAt:1600)
+      for (meters,at,station) in [(0.0,1000.0,0),(0,1004,0),(0,1008,0),(120,1020,0),(220,1030,0),(300,1040,1)] {
+        let coordinate = point(meters)
+        let invalid = NoLateJourneyEngineCore.Observation(identity:identity,sequence:Int64(at),observedAt:at,
+          coordinate:.init(latitude:coordinate.latitude+latitudeOffset,longitude:coordinate.longitude+longitudeOffset),
+          horizontalAccuracyMeters:5,source:.realLocation)
+        core.ingest(invalid,trains:[train(station,at-1)],now:at)
+      }
+      XCTAssertFalse(core.snapshot.boardingConfirmed)
+      XCTAssertNil(core.snapshot.currentStopIndex)
+      XCTAssertEqual(core.snapshot.reason,"PASSENGER_LOCATION_UNRELIABLE")
+    }
+  }
   func testTrainClockAloneAndTunnelLossNeverAdvancePassengerPosition() throws {
     var core = try Core(route:route(),armedAt:1000,expiresAt:1600)
     wait(&core);travel(&core);core.tick(now:1055)

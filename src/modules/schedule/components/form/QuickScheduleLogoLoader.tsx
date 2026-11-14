@@ -5,10 +5,12 @@ import { Image, StyleSheet, View } from "react-native";
 import Reanimated, {
     cancelAnimation,
     Easing,
+    ReduceMotion,
     type SharedValue,
     useAnimatedStyle,
     useReducedMotion,
     useSharedValue,
+    withDelay,
     withRepeat,
     withTiming,
 } from "react-native-reanimated";
@@ -33,6 +35,8 @@ export type LogoLoaderVariant = "schedule" | "calendar" | "route" | "share" | "a
 type Props = {
     accessibilityLabel: string;
     variant?: LogoLoaderVariant;
+    settleOnly?: boolean;
+    settleDelayMs?: number;
 };
 
 type OrbitSpec = {
@@ -110,10 +114,12 @@ export function shouldAnimateLogoOrbit(reduceMotionEnabled: boolean): boolean {
 export default function QuickScheduleLogoLoader({
     accessibilityLabel,
     variant = "schedule",
+    settleOnly = false,
+    settleDelayMs = 0,
 }: Props) {
     const { mode } = useTheme();
     const reduceMotionEnabled = useReducedMotion();
-    const orbitProgress = useSharedValue(0);
+    const orbitProgress = useSharedValue(settleOnly && reduceMotionEnabled ? 1 : 0);
     const isDark = mode === "dark";
     const palette = isDark ? DARK_PALETTE : LIGHT_PALETTE;
     const satellites = SATELLITES[variant];
@@ -122,6 +128,18 @@ export default function QuickScheduleLogoLoader({
     useEffect(() => {
         cancelAnimation(orbitProgress);
 
+        if (settleOnly) {
+            orbitProgress.value = reduceMotionEnabled ? 1 : 0;
+            if (!reduceMotionEnabled) {
+                const settle = withTiming(1, {
+                    duration: 300,
+                    easing: Easing.out(Easing.cubic),
+                    reduceMotion: ReduceMotion.System,
+                });
+                orbitProgress.value = settleDelayMs > 0 ? withDelay(settleDelayMs, settle) : settle;
+            }
+            return () => cancelAnimation(orbitProgress);
+        }
         if (!shouldAnimateLogoOrbit(reduceMotionEnabled)) {
             orbitProgress.value = 0.08;
             return () => cancelAnimation(orbitProgress);
@@ -138,7 +156,7 @@ export default function QuickScheduleLogoLoader({
         );
 
         return () => cancelAnimation(orbitProgress);
-    }, [orbitProgress, reduceMotionEnabled]);
+    }, [orbitProgress, reduceMotionEnabled, settleOnly, settleDelayMs]);
 
     const haloAnimatedStyle = useAnimatedStyle(() => {
         const wave = (Math.sin(orbitProgress.value * Math.PI * 4) + 1) / 2;
@@ -148,6 +166,18 @@ export default function QuickScheduleLogoLoader({
         };
     });
     const logoFloatAnimatedStyle = useAnimatedStyle(() => {
+        if (settleOnly) {
+            const remaining = 1 - orbitProgress.value;
+            return {
+                transform: [
+                    { perspective: 480 },
+                    { translateY: 7 * remaining },
+                    { rotateY: `${-28 * remaining}deg` },
+                    { rotateX: `${17 * remaining}deg` },
+                    { scale: 1 - 0.10 * remaining },
+                ],
+            };
+        }
         const wave = Math.sin(orbitProgress.value * Math.PI * 4);
         return {
             transform: [
@@ -157,6 +187,13 @@ export default function QuickScheduleLogoLoader({
         };
     });
     const horizontalParticleStyle = useOrbitalParticleStyle(orbitProgress, HORIZONTAL_ORBIT);
+    const settleReflectionStyle = useAnimatedStyle(() => ({
+        opacity: Math.sin(Math.PI * orbitProgress.value) * 0.48,
+        transform: [
+            { translateX: 156 * orbitProgress.value - 58 },
+            { rotate: "23deg" },
+        ],
+    }));
     const verticalParticleStyle = useOrbitalParticleStyle(orbitProgress, VERTICAL_ORBIT);
     const satelliteTopLeftStyle = useFloatingStyle(orbitProgress, 0);
     const satelliteTopRightStyle = useFloatingStyle(orbitProgress, Math.PI * 0.7);
@@ -174,11 +211,14 @@ export default function QuickScheduleLogoLoader({
 
     return (
         <View
-            accessible
-            accessibilityRole="progressbar"
-            accessibilityLabel={accessibilityLabel}
-            style={styles.stage}
+            accessible={!settleOnly}
+            accessibilityElementsHidden={settleOnly}
+            importantForAccessibility={settleOnly ? "no-hide-descendants" : "auto"}
+            accessibilityRole={settleOnly ? undefined : "progressbar"}
+            accessibilityLabel={settleOnly ? undefined : accessibilityLabel}
+            style={[styles.stage, settleOnly && { height: 126 }]}
         >
+            {!settleOnly && <>
             <Reanimated.View
                 pointerEvents="none"
                 testID="quick-schedule-ambient-halo"
@@ -283,11 +323,12 @@ export default function QuickScheduleLogoLoader({
                     </View>
                 </Reanimated.View>
             ))}
+            </>}
 
             <Reanimated.View
                 testID="quick-schedule-logo-float-layer"
                 pointerEvents="none"
-                style={[styles.logoFloatLayer, logoFloatAnimatedStyle]}
+                style={[styles.logoFloatLayer, settleOnly && { top: 18 }, logoFloatAnimatedStyle]}
             >
                 <View
                     testID="quick-schedule-logo-depth-far"
@@ -354,6 +395,9 @@ export default function QuickScheduleLogoLoader({
                             testID="quick-schedule-logo-sheen"
                             style={[styles.logoSheen, { backgroundColor: palette.logoSheen }]}
                         />
+                        {settleOnly && !reduceMotionEnabled && (
+                            <Reanimated.View style={[styles.settleReflection, settleReflectionStyle]} />
+                        )}
                         <View
                             style={[
                                 styles.logoLowerBloom,
@@ -371,6 +415,7 @@ export default function QuickScheduleLogoLoader({
                 </View>
             </Reanimated.View>
 
+            {!settleOnly && <>
             <Reanimated.View
                 testID="quick-schedule-logo-orbit"
                 pointerEvents="none"
@@ -398,6 +443,7 @@ export default function QuickScheduleLogoLoader({
             >
                 <View style={styles.particleCoreSmall} />
             </Reanimated.View>
+            </>}
         </View>
     );
 }

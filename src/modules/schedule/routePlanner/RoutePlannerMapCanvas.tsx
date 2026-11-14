@@ -1,5 +1,7 @@
 import { Pressable, StatusBar, Text, View } from 'react-native';
+import Reanimated, { FadeIn, ReduceMotion } from 'react-native-reanimated';
 import TmapMapView from '../../map/TmapMapView';
+import BrandedLoader from '../../../ui/BrandedLoader';
 import styles from './styles';
 import {
   FALLBACK_LAT,
@@ -15,6 +17,7 @@ const INITIAL_CAMERA = {
   longitude: FALLBACK_LNG,
   zoom: 12,
 };
+const routeLoadingEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 
 type Props = { controller: RoutePlannerController };
 
@@ -23,6 +26,8 @@ export function RoutePlannerMapCanvas({ controller }: Props) {
   const {
     insets,
     colors,
+    detailPanelBg,
+    detailBorderColor,
     isDark,
     overlayBoxBg,
     isRouteQaBaseOnly,
@@ -84,6 +89,38 @@ export function RoutePlannerMapCanvas({ controller }: Props) {
         routeFocusMode={isRouteDetailMode}
         fallbackBackgroundColor={isDark ? '#0B1220' : '#EEF2F6'}
         fallbackTextColor={colors.textSecondary}
+        loadingContent={isRouteDetailMode ? (
+          <Reanimated.View entering={routeLoadingEntrance} style={styles.routeMapLoadingContext}>
+            <View style={styles.routeMapLoadingStatus}>
+              <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                <BrandedLoader variant="route" size="button" markMotion="settle" accessibilityLabel="지도 준비 중" />
+              </View>
+              <Text maxFontSizeMultiplier={2} style={[styles.routeMapLoadingTitle, { color: colors.textPrimary }]}>
+                지도 준비 중
+              </Text>
+            </View>
+          </Reanimated.View>
+        ) : undefined}
+        renderLoadError={isRouteDetailMode ? retry => (
+          <Reanimated.View entering={routeLoadingEntrance} style={styles.routeMapLoadingContext}>
+            <Text maxFontSizeMultiplier={2} style={[styles.routeMapLoadingTitle, { color: colors.textPrimary }]}>
+              지도를 불러오지 못했어요
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="지도 다시 불러오기"
+              onPress={retry}
+              style={({ pressed }) => [
+                styles.routeMapRetry,
+                { backgroundColor: detailPanelBg, borderColor: detailBorderColor, opacity: pressed ? 0.64 : 1 },
+              ]}
+            >
+              <Text maxFontSizeMultiplier={2} style={[styles.routeMapRetryText, { color: colors.textPrimary }]}>
+                다시 시도
+              </Text>
+            </Pressable>
+          </Reanimated.View>
+        ) : undefined}
       />
       {shouldShowZoomControls && !isRouteDetailMode && (
         <View style={styles.zoomOverlay}>

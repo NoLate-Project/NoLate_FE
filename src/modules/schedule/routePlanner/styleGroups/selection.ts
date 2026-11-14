@@ -1,49 +1,8 @@
 import { StyleSheet } from "react-native";
 
-import type { RoutePlannerStyleOptions } from "../styles";
-
 /** 경로 계획 화면의 selection 영역 정적 스타일을 생성합니다. */
-export function createSelectionStyles(options: RoutePlannerStyleOptions) {
-    const {
-        ORIGIN_COLOR,
-    } = options;
+export function createSelectionStyles() {
     return {
-        routeSelectionStageOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        justifyContent: "flex-end",
-        paddingHorizontal: 12,
-        paddingBottom: 8,
-    },
-        routeSelectionStagePanel: {
-        borderWidth: 1,
-        borderRadius: 16,
-        paddingHorizontal: 12,
-        paddingTop: 12,
-        maxHeight: "68%",
-        gap: 10,
-    },
-        routeSelectionStageTitle: {
-        fontSize: 17,
-        fontWeight: "900",
-        lineHeight: 22,
-    },
-        routeSelectionStageSubtitle: {
-        fontSize: 12,
-        fontWeight: "600",
-        lineHeight: 16,
-    },
-        routeSelectionStageListWrap: {
-        borderWidth: 1,
-        borderRadius: 12,
-        minHeight: 170,
-        maxHeight: 330,
-        overflow: "hidden",
-    },
-        routeSelectionStageList: {
-        paddingHorizontal: 10,
-        paddingVertical: 10,
-        gap: 8,
-    },
         permissionOverlay: {
         ...StyleSheet.absoluteFillObject,
         zIndex: 80,
@@ -113,36 +72,8 @@ export function createSelectionStyles(options: RoutePlannerStyleOptions) {
         fontWeight: "800",
     },
         permissionPrimaryText: {
-        color: ORIGIN_COLOR,
         fontSize: 16,
         fontWeight: "900",
-    },
-        routeSelectionStageCard: {
-        borderWidth: 1,
-        borderRadius: 10,
-        paddingHorizontal: 11,
-        paddingVertical: 10,
-        gap: 4,
-    },
-        routeSelectionStageCardTop: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 8,
-    },
-        routeSelectionStageDuration: {
-        fontSize: 17,
-        fontWeight: "900",
-        letterSpacing: -0.4,
-    },
-        routeSelectionStageSummary: {
-        fontSize: 12,
-        fontWeight: "700",
-    },
-        routeSelectionStageStep: {
-        fontSize: 11,
-        fontWeight: "600",
-        lineHeight: 15,
     },
         zoomOverlay: {
         position: "absolute",

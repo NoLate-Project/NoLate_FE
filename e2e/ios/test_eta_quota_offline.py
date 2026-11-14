@@ -13,6 +13,62 @@ spec.loader.exec_module(quota)
 
 
 class OfflineQuotaVerifierTest(unittest.TestCase):
+    def test_second_precision_optimization_can_share_the_same_wire_minute(self):
+        request = {'startX': 127.061, 'startY': 37.6551, 'endX': 126.9297, 'endY': 37.4842,
+                   'searchDttm': '202610081510'}
+        value = {'injectedFaults': ['route:OPTIMIZATION_TIMEOUT'],
+                 'routeRequests': [request, dict(request)],
+                 'epoch': '2026-10-08T06:10:00Z'}
+        quota.verify_optimization_requests(value)
+        for field, changed in (('searchDttm', '202610081511'), ('endX', 126.98)):
+            bad = copy.deepcopy(value)
+            bad['routeRequests'][1][field] = changed
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                quota.verify_optimization_requests(bad)
+        value['routeRequests'].pop()
+        with self.assertRaises(AssertionError):
+            quota.verify_optimization_requests(value)
+
+    def test_missing_train_retention_preserves_original_source_clock_and_expires_at_120_seconds(self):
+        value, baseline, previous, _ = self.sample()
+        observation = {'provider': 'seoul-openapi', 'stationName': '노원역', 'lineName': '4호선',
+                       'trainNumber': '4012', 'sourceUpdatedAt': '2026-10-08T06:00:00Z',
+                       'expectedBoardingAt': '2026-10-08T06:15:00Z', 'evaluatedAt': '2026-10-08T06:00:00Z'}
+        previous.update(effectiveSnapshot={'firstBoardingObservation': observation},
+                        predictedArrivalAt='2026-10-08T06:50:00Z')
+        value.update(scenario='quality-unobserved', injectedFaults=['arrival:UNOBSERVED'],
+                     source='LIVE_PROVIDER', stale=False, failureCode=None,
+                     predictedArrivalAt=previous['predictedArrivalAt'],
+                     effectiveSnapshot={'accepted': True,
+                         'firstBoardingObservation': dict(observation, evaluatedAt=value['evaluatedAt'])})
+        quota.verify_fresh_missing_train_retention(value, baseline, previous)
+        for change in ('renewed-clock', 'wrong-train', 'expired', 'failed-api', 'changed-alarm'):
+            bad = copy.deepcopy(value)
+            if change == 'renewed-clock':
+                bad['effectiveSnapshot']['firstBoardingObservation']['sourceUpdatedAt'] = bad['evaluatedAt']
+            elif change == 'wrong-train':
+                bad['effectiveSnapshot']['firstBoardingObservation']['trainNumber'] = '4103'
+            elif change == 'expired':
+                bad['evaluatedAt'] = '2026-10-08T06:02:01Z'
+            elif change == 'failed-api':
+                bad['injectedFaults'] = ['arrival:API_ERROR']
+            else:
+                bad['alarmStates'][0]['trigger_at'] = '2026-10-08T06:11:00Z'
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                quota.verify_fresh_missing_train_retention(bad, baseline, previous)
+        for seconds, allowed in ((120, True), (121, False)):
+            prior = copy.deepcopy(previous)
+            retained = copy.deepcopy(value)
+            at = '2026-10-08T06:02:' + ('00Z' if seconds == 120 else '01Z')
+            prior['nextCheckAt'] = retained['evaluatedAt'] = at
+            retained['nextCheckAt'] = '2026-10-08T06:03:00Z'
+            retained['effectiveSnapshot']['firstBoardingObservation']['evaluatedAt'] = at
+            if allowed:
+                quota.verify_fresh_missing_train_retention(retained, baseline, prior)
+            else:
+                with self.assertRaises(AssertionError):
+                    quota.verify_fresh_missing_train_retention(retained, baseline, prior)
+
     def test_native_cleanup_retry_replays_committed_cancel_without_running_worker_again(self):
         value = self.cleanup_sample()
         evaluate = Mock()
@@ -171,8 +227,10 @@ class OfflineQuotaVerifierTest(unittest.TestCase):
     def test_second_search_timeout_retains_only_a_verified_same_evaluation_journey(self):
         self.assertEqual(quota.suite_commands(optimization=True), ['optimization-timeout', 'quota-recovered'])
         value, baseline, previous, public = self.accepted_sample()
+        request = {'startX': 127.061, 'startY': 37.6551, 'endX': 126.9297, 'endY': 37.4842,
+                   'searchDttm': '202610081510'}
         value.update(scenario='optimization-timeout', injectedFaults=['route:OPTIMIZATION_TIMEOUT'],
-                     routeRequests=[{'searchDttm': '202610081510'}, {'searchDttm': '202610081519'}])
+                     routeRequests=[request, dict(request)])
         self.assertEqual(quota.verify_case(value, baseline, previous, public)['result'], 'PASSED')
         for key, changed in [('injectedFaults', []), ('routeRequests', value['routeRequests'][:1]),
                              ('routeRequests', value['routeRequests'] * 2), ('stale', True),

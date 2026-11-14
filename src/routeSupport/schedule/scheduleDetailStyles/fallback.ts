@@ -104,15 +104,20 @@ export function createFallbackStyles(options: ScheduleDetailStylesOptions) {
         lineHeight: 20,
         fontWeight: "600",
     },
-        currentLocationButton: {
+        mapActionStack: {
         position: "absolute",
         right: 16,
         zIndex: 20,
         elevation: 18,
-        height: 44,
+        alignItems: "flex-end",
+        gap: 8,
+    },
+        mapActionButton: {
+        minHeight: 44,
         borderRadius: 22,
         borderWidth: StyleSheet.hairlineWidth,
         paddingHorizontal: 14,
+        paddingVertical: 8,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
@@ -122,9 +127,7 @@ export function createFallbackStyles(options: ScheduleDetailStylesOptions) {
         shadowOpacity: 0.18,
         shadowRadius: 10,
     },
-        currentLocationButtonText: {
-        fontSize: 12,
-        lineHeight: 16,
+        mapActionButtonText: {
         fontWeight: "900",
         letterSpacing: 0,
     },
@@ -133,24 +136,6 @@ export function createFallbackStyles(options: ScheduleDetailStylesOptions) {
         left: 16,
         zIndex: 20,
         elevation: 18,
-        height: 44,
-        borderRadius: 22,
-        borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 14,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-        shadowColor: "#000000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.18,
-        shadowRadius: 10,
-    },
-        memoButtonText: {
-        fontSize: 12,
-        lineHeight: 16,
-        fontWeight: "900",
-        letterSpacing: 0,
     },
     });
 }

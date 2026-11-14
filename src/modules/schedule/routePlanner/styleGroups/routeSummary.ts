@@ -54,66 +54,30 @@ export function createRouteSummaryStyles(options: RoutePlannerStyleOptions) {
         fontWeight: "800",
         lineHeight: 19,
     },
+        transitDetailTimelineHeading: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignItems: "baseline",
+        columnGap: 10,
+    },
+        transitDetailTimelineDuration: {
+        fontSize: 20,
+        fontWeight: "800",
+        lineHeight: 26,
+    },
+        transitDetailTimelineMeta: {
+        flexShrink: 1,
+        fontSize: 13,
+        fontWeight: "600",
+        lineHeight: 18,
+    },
         selectedRouteDetailCard: {
         gap: 10,
-    },
-        selectedRouteSummaryHeader: {
-        flexDirection: "row",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 8,
-    },
-        selectedRouteDurationBlock: {
-        alignItems: "flex-start",
-        gap: 2,
-    },
-        selectedRouteDurationBlockCompact: {
-        flexDirection: "row",
-        alignItems: "baseline",
-        gap: 7,
-    },
-        selectedRouteOptimalText: {
-        fontSize: 12,
-        fontWeight: "900",
-        lineHeight: 16,
-    },
-        selectedRouteOptimalTextCompact: {
-        fontSize: 12,
-        lineHeight: 15,
     },
         selectedRouteSummaryText: {
         fontSize: 16,
         fontWeight: "800",
         lineHeight: 22,
-    },
-        transitReferenceMetaText: {
-        fontSize: 13,
-        fontWeight: "700",
-        lineHeight: 17,
-    },
-        transitReferenceMetaTextCompact: {
-        fontSize: 13,
-        lineHeight: 17,
-        color: "#AEB4BF",
-    },
-        transitDetailBaseTimeRow: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        marginTop: 6,
-        paddingTop: 6,
-    },
-        transitDetailBaseTimeRowCompact: {
-        marginTop: 8,
-        paddingTop: 9,
-    },
-        transitDetailBaseTimeText: {
-        fontSize: 13,
-        fontWeight: "800",
-        lineHeight: 18,
-    },
-        selectedRouteBodyText: {
-        fontSize: 12,
-        fontWeight: "600",
-        lineHeight: 18,
     },
         selectedRouteLegSection: {
         borderWidth: 1,
@@ -131,16 +95,6 @@ export function createRouteSummaryStyles(options: RoutePlannerStyleOptions) {
         paddingHorizontal: 10,
         paddingVertical: 9,
     },
-        transitDurationLarge: {
-        fontSize: 24,
-        fontWeight: "900",
-        lineHeight: 30,
-        letterSpacing: 0,
-    },
-        transitDurationLargeCompact: {
-        fontSize: 22,
-        lineHeight: 27,
-    },
         alternativeRouteLabel: {
         fontSize: 12,
         fontWeight: "800",
@@ -157,21 +111,6 @@ export function createRouteSummaryStyles(options: RoutePlannerStyleOptions) {
         paddingVertical: 2,
     },
         transitModeChipText: {
-        fontSize: 11,
-        fontWeight: "700",
-    },
-        transitMetricTagRow: {
-        flexDirection: "row",
-        flexWrap: "wrap",
-        gap: 6,
-    },
-        transitMetricTag: {
-        borderWidth: 1,
-        borderRadius: 999,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-    },
-        transitMetricTagText: {
         fontSize: 11,
         fontWeight: "700",
     },

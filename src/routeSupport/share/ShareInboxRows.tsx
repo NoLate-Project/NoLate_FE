@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import styles from './inbox.styles';
 
 import CalendarGlassSurface from '../../modules/schedule/components/calendar/CalendarGlassSurface';
@@ -57,6 +57,7 @@ export function ShareTabButton({
     >
       <View style={styles.tabLabelRow}>
         <Text
+          maxFontSizeMultiplier={1.8}
           style={[
             styles.tabLabel,
             { color: selected ? colors.textPrimary : colors.textSecondary },
@@ -104,6 +105,7 @@ export function ScheduleShareRow({
   onSafety: () => void;
   safetyPending: boolean;
 }) {
+  const largeText = useWindowDimensions().fontScale > 1.35;
   const itemColor = shareItemColor(item, accent);
   const location = scheduleLocationLabel(item.schedule);
   const dateTime = `${formatScheduleDate(
@@ -116,8 +118,6 @@ export function ScheduleShareRow({
       ? item.shareCount > 0
         ? `내가 공유 · ${item.shareCount}명`
         : `활성 링크 · ${item.activeInvitations.length}개`
-      : item.isPending
-      ? `${ownerLabel(item)}에게 받음`
       : `${ownerLabel(item)}에게 받음`;
   const departureColor =
     item.departedCount && item.departedCount > 0
@@ -182,16 +182,20 @@ export function ScheduleShareRow({
             />
             <Text
               style={[styles.cardEyebrow, { color: colors.textSecondary }]}
-              numberOfLines={1}
+              numberOfLines={largeText ? undefined : 1}
+              maxFontSizeMultiplier={2}
+              lineBreakStrategyIOS="hangul-word"
             >
               {eyebrowMeta}
             </Text>
           </View>
-          <View style={styles.scheduleTitleTimeRow}>
-            <View style={styles.scheduleTitleLine}>
+          <View style={[styles.scheduleTitleTimeRow, largeText && styles.cardStacked]}>
+            <View style={[styles.scheduleTitleLine, largeText && styles.stackedCardLine]}>
               <Text
                 style={[styles.shareCardTitle, { color: colors.textPrimary }]}
-                numberOfLines={1}
+                numberOfLines={largeText ? undefined : 1}
+                maxFontSizeMultiplier={2}
+                lineBreakStrategyIOS="hangul-word"
               >
                 {item.title}
               </Text>
@@ -203,16 +207,18 @@ export function ScheduleShareRow({
               ) : null}
             </View>
             <Text
-              style={[styles.scheduleTimeRange, { color: colors.textPrimary }]}
-              numberOfLines={1}
+              style={[styles.scheduleTimeRange, largeText && styles.stackedCardTime, { color: colors.textPrimary }]}
+              numberOfLines={largeText ? undefined : 1}
+              maxFontSizeMultiplier={2}
+              lineBreakStrategyIOS="hangul-word"
             >
               {timeRange}
             </Text>
           </View>
           {location || cardStatus ? (
-            <View style={styles.scheduleCardBottomLine}>
+            <View style={[styles.scheduleCardBottomLine, largeText && styles.cardStacked]}>
               {location ? (
-                <View style={styles.scheduleCardLocation}>
+                <View style={[styles.scheduleCardLocation, largeText && styles.stackedCardLine]}>
                   <Ionicons
                     accessible={false}
                     name="location-outline"
@@ -224,7 +230,9 @@ export function ScheduleShareRow({
                       styles.scheduleCardLocationText,
                       { color: colors.textSecondary },
                     ]}
-                    numberOfLines={1}
+                    numberOfLines={largeText ? undefined : 1}
+                    maxFontSizeMultiplier={2}
+                    lineBreakStrategyIOS="hangul-word"
                   >
                     {location}
                   </Text>
@@ -243,7 +251,9 @@ export function ScheduleShareRow({
                       styles.scheduleCardStatusText,
                       { color: cardStatus.color },
                     ]}
-                    numberOfLines={1}
+                    numberOfLines={largeText ? undefined : 1}
+                    maxFontSizeMultiplier={2}
+                    lineBreakStrategyIOS="hangul-word"
                   >
                     {cardStatus.label}
                   </Text>
@@ -275,7 +285,7 @@ export function ScheduleShareRow({
         ) : item.isPending ? (
           <ShareInboxDecoration>
             <Ionicons
-              name="chevron-forward"
+              name="chevron-forward-outline"
               size={18}
               color={colors.textDisabled}
             />
@@ -330,6 +340,7 @@ export function CalendarShareRow({
   onSafety: () => void;
   safetyPending: boolean;
 }) {
+  const largeText = useWindowDimensions().fontScale > 1.35;
   const itemColor = item.color || accent;
   const ownedMemberCount =
     item.shareCount > 0
@@ -349,7 +360,7 @@ export function CalendarShareRow({
     ? `${item.nextSchedule.title} · ${formatShortDate(
         item.nextSchedule.startAt,
       )} ${formatScheduleTimeRange(item.nextSchedule)}`
-    : '예정된 다음 일정이 없어요';
+    : null;
   const calendarMode = contentModeLabel(item.contentMode);
   const calendarModeIcon =
     item.contentMode === 'SCHEDULE_AND_TRAVEL'
@@ -373,7 +384,7 @@ export function CalendarShareRow({
         style={[styles.shareCardRail, { backgroundColor: itemColor }]}
       />
       <ShareInboxButton
-        accessibilityLabel={`${item.title}, ${relationMeta}, ${calendarMode}, ${nextMeta}, 열기`}
+        accessibilityLabel={`${item.title}, ${relationMeta}, ${calendarMode}${nextMeta ? `, ${nextMeta}` : ''}, 열기`}
         onPress={onOpen}
         style={({ pressed }) => [
           styles.shareCardOpenButton,
@@ -382,38 +393,12 @@ export function CalendarShareRow({
         ]}
       >
         <View style={styles.shareCardCopy}>
-          <View style={styles.cardEyebrowRow}>
-            <Ionicons
-              accessible={false}
-              name="people-outline"
-              size={14}
-              color={itemColor}
-            />
-            <Text
-              style={[styles.cardEyebrow, { color: colors.textSecondary }]}
-              numberOfLines={1}
-            >
-              {relationMeta}
-            </Text>
-            <View style={styles.cardTopStatus}>
-              <Ionicons
-                accessible={false}
-                name={calendarModeIcon}
-                size={13}
-                color={itemColor}
-              />
-              <Text
-                style={[styles.cardTopStatusText, { color: itemColor }]}
-                numberOfLines={1}
-              >
-                {calendarMode}
-              </Text>
-            </View>
-          </View>
           <View style={styles.titleLine}>
             <Text
               style={[styles.shareCardTitle, { color: colors.textPrimary }]}
-              numberOfLines={1}
+              numberOfLines={largeText ? undefined : 1}
+              maxFontSizeMultiplier={2}
+              lineBreakStrategyIOS="hangul-word"
             >
               {item.title}
             </Text>
@@ -424,20 +409,50 @@ export function CalendarShareRow({
               />
             ) : null}
           </View>
-          <View style={styles.cardDetailLine}>
-            <Ionicons
-              accessible={false}
-              name="time-outline"
-              size={16}
-              color={colors.textSecondary}
-            />
+          <View style={[styles.cardEyebrowRow, styles.calendarCardMeta, largeText && styles.cardStacked]}>
             <Text
-              style={[styles.cardDetailText, { color: colors.textSecondary }]}
-              numberOfLines={1}
+              style={[styles.cardEyebrow, largeText && styles.stackedCardLine, { color: colors.textSecondary }]}
+              numberOfLines={largeText ? undefined : 1}
+              maxFontSizeMultiplier={2}
+              lineBreakStrategyIOS="hangul-word"
             >
-              {nextMeta}
+              {relationMeta}
             </Text>
+            <View style={[styles.cardTopStatus, largeText && styles.stackedCardStatus]}>
+              <Ionicons
+                accessible={false}
+                name={calendarModeIcon}
+                size={13}
+                color={colors.textSecondary}
+              />
+              <Text
+                style={[styles.cardTopStatusText, { color: colors.textSecondary }]}
+                numberOfLines={largeText ? undefined : 1}
+                maxFontSizeMultiplier={2}
+                lineBreakStrategyIOS="hangul-word"
+              >
+                {calendarMode}
+              </Text>
+            </View>
           </View>
+          {nextMeta ? (
+            <View style={styles.cardDetailLine}>
+              <Ionicons
+                accessible={false}
+                name="time-outline"
+                size={16}
+                color={colors.textSecondary}
+              />
+              <Text
+                style={[styles.cardDetailText, { color: colors.textSecondary }]}
+                numberOfLines={largeText ? undefined : 1}
+                maxFontSizeMultiplier={2}
+                lineBreakStrategyIOS="hangul-word"
+              >
+                {nextMeta}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </ShareInboxButton>
 
@@ -462,7 +477,7 @@ export function CalendarShareRow({
         ) : item.isPending ? (
           <ShareInboxDecoration>
             <Ionicons
-              name="chevron-forward"
+              name="chevron-forward-outline"
               size={18}
               color={colors.textDisabled}
             />

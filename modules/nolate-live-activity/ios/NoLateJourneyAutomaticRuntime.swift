@@ -578,6 +578,10 @@ private final class NoLateJourneyNoticeDelivery {
   private func clearDelivered() {
     expiryTask?.cancel(); expiryTask = nil
     let ids = Array(identifiers); identifiers.removeAll()
+    // UserNotifications performs synchronous XPC work even for an empty list.
+    // In particular, the initial arm has nothing to revoke and must not block
+    // the main actor while the notification service is unavailable.
+    guard !ids.isEmpty else { return }
     UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
   }

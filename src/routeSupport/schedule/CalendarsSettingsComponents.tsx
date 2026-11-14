@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 
 import type {
     ScheduleCalendarMember,
@@ -51,9 +51,10 @@ export function ContentModeControl({
     disabled?: boolean;
 }) {
     const { colors, mode } = useTheme();
+    const largeText = useWindowDimensions().fontScale > 1.35;
     const accent = mode === "dark" ? "#8BB7FF" : BRAND_BLUE;
     return (
-        <View style={[styles.modeControl, { backgroundColor: colors.surface2 }]}>
+        <View style={[styles.modeControl, largeText && styles.modeControlStacked, { backgroundColor: colors.surface2 }]}>
             {([
                 ["SCHEDULE_ONLY", "일정만", "calendar-outline"],
                 ["SCHEDULE_AND_TRAVEL", "일정 + 각자 경로", "navigate-outline"],
@@ -66,10 +67,10 @@ export function ContentModeControl({
                         accessibilityState={{ selected: active, disabled }}
                         disabled={disabled}
                         onPress={() => onChange(modeValue)}
-                        style={[styles.modeOption, active && { backgroundColor: colors.surface, borderColor: colors.border }]}
+                        style={[styles.modeOption, largeText && styles.modeOptionStacked, active && { backgroundColor: colors.surface, borderColor: colors.border }]}
                     >
                         <Ionicons name={icon} size={16} color={active ? accent : colors.textSecondary} />
-                        <Text style={[styles.modeText, { color: active ? accent : colors.textSecondary }]} numberOfLines={2}>{label}</Text>
+                        <Text style={[styles.modeText, { color: active ? accent : colors.textSecondary }]} maxFontSizeMultiplier={1.8} lineBreakStrategyIOS="hangul-word">{label}</Text>
                     </Pressable>
                 );
             })}
@@ -94,21 +95,22 @@ export function MemberRow({
     onTransfer: () => void;
 }) {
     const { colors } = useTheme();
+    const largeText = useWindowDimensions().fontScale > 1.35;
     return (
-        <View style={[styles.memberRow, { borderBottomColor: colors.border }]}>
+        <View style={[styles.memberRow, largeText && styles.memberRowWrap, { borderBottomColor: colors.border }]}>
             <View style={[styles.avatar, { backgroundColor: colors.surface2 }]}>
                 <Ionicons name={member.role === "OWNER" ? "key-outline" : "person-outline"} size={17} color={colors.textSecondary} />
             </View>
             <View style={styles.rowText}>
-                <Text style={[styles.memberName, { color: colors.textPrimary }]} numberOfLines={1}>
+                <Text style={[styles.memberName, { color: colors.textPrimary }]} numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={1.8}>
                     {member.name || member.email || `회원 #${member.memberId}`}
                 </Text>
-                <Text style={[styles.rowMeta, { color: colors.textSecondary }]} numberOfLines={1}>
+                <Text style={[styles.rowMeta, { color: colors.textSecondary }]} numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={1.8}>
                     {member.email || `NoLate ID #${member.memberId}`}
                 </Text>
             </View>
             {canManage ? (
-                <View style={styles.memberActions}>
+                <View style={[styles.memberActions, largeText && styles.memberActionsWrap]}>
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`${roleLabel(member.role)} 권한 변경`}
@@ -122,7 +124,7 @@ export function MemberRow({
                         <Ionicons name="key-outline" size={17} color={colors.textSecondary} />
                     </Pressable>
                     <Pressable accessibilityRole="button" accessibilityLabel="멤버 제거" onPress={onRemove} disabled={busy} style={styles.smallIcon}>
-                        <Ionicons name="close" size={18} color="#D70015" />
+                        <Ionicons name="close-outline" size={18} color="#D70015" />
                     </Pressable>
                 </View>
             ) : (

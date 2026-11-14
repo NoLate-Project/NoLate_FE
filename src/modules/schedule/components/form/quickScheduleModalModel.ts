@@ -21,7 +21,7 @@ export type LiveSpeechCaptureStartMode = "fresh" | "rollover";
 
 export const QUICK_TEXT_LIMIT = 300;
 export const PHOTO_RECOGNITION_TIMEOUT_MILLIS = 15_000;
-export const PHOTO_PREVIEW_STAGE_HEIGHT = 164;
+export const PHOTO_PREVIEW_STAGE_HEIGHT = 152;
 const PHOTO_PREVIEW_MIN_ASPECT_RATIO = 0.55;
 const PHOTO_PREVIEW_MAX_ASPECT_RATIO = 2.2;
 export const BLUE = "#246BFE";
@@ -84,13 +84,14 @@ export const VOICE_SPECTRUM_COLORS = [
   "#3887FF",
   "#45C7A5",
 ];
+const PREVIEW_CARD_HEIGHT = 552;
 export const FLOW_CARD_HEIGHT_BY_STEP: Record<
   Exclude<FlowStep, "input">,
   number
 > = {
-  analyzing: 360,
-  analysisError: 368,
-  preview: 552,
+  analyzing: PREVIEW_CARD_HEIGHT,
+  analysisError: PREVIEW_CARD_HEIGHT,
+  preview: PREVIEW_CARD_HEIGHT,
   edit: 520,
   saving: 368,
   saved: 368,

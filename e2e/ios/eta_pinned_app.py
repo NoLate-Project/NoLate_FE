@@ -3,11 +3,55 @@
 No uninstall, data deletion, notification deletion, or other-device operation.
 Starting a fresh H2 server must not inherit mounted screens from an older H2 login.
 """
+import json
+import os
 from pathlib import Path
 import subprocess
 
 DEVICE = '9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69'
 BUNDLE = 'com.anonymous.nolatefe'
+
+
+def verify_lifecycle_summary(summary):
+    assert summary['result'] == 'Passed'
+    assert summary['passedTests'] == summary['totalTestCount'] == 1
+    assert summary['failedTests'] == summary['skippedTests'] == 0
+    assert summary['devicesAndConfigurations']
+    assert all(row['device']['deviceId'] == DEVICE for row in summary['devicesAndConfigurations'])
+
+
+def open_private_client_with_xcuitest(device, output):
+    """Use public iOS XCTest lifecycle APIs when the host simctl bridge stalls.
+
+    A passed transport test proves reset/URL dispatch only. Callers must still
+    execute their original authenticated app and ETA assertions without retries.
+    """
+    if device != DEVICE:
+        raise ValueError('Unexpected simulator; no app operation performed')
+    output = Path(output)
+    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    metadata = {'classification': 'PINNED_XCTEST_LIFECYCLE_TRANSPORT_ONLY',
+                'device': device, 'appDataDeleted': False, 'otherDevicesTouched': False,
+                'etaValidated': False}
+    (output / 'metadata.json').write_text(json.dumps(metadata, indent=2))
+    env = dict(os.environ, TEST_RUNNER_E2E_PINNED_PRIVATE_LIFECYCLE='1')
+    env.pop('TEST_RUNNER_E2E_EXPECT_PRIVATE_ENDPOINT_OFFLINE', None)
+    command = ['xcodebuild', '-project', str(Path(__file__).with_name('NoLateE2E.xcodeproj')),
+               '-scheme', 'NoLateE2E', '-destination', 'platform=iOS Simulator,id=' + device,
+               '-parallel-testing-enabled', 'NO', '-jobs', '2',
+               '-derivedDataPath', '/private/tmp/nolate-eta-xcuitest-20261003',
+               '-resultBundlePath', str(output / 'result.xcresult'),
+               '-only-testing:NoLateE2ETests/NoLatePinnedDeviceControlsTests/testOpenPrivateDevelopmentClient',
+               'test']
+    with os.fdopen(os.open(output / 'run.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as log:
+        subprocess.run(command, cwd=Path(__file__).resolve().parents[2], env=env,
+                       stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
+    summary = json.loads(subprocess.check_output(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary',
+        '--path', str(output / 'result.xcresult')], timeout=30))
+    verify_lifecycle_summary(summary)
+    assert 'ETA_PINNED_PRIVATE_LIFECYCLE_URL_DISPATCHED' in (output / 'run.log').read_text()
+    (output / 'summary.json').write_text(json.dumps(summary, indent=2))
+    return dict(metadata, result='PASSED', evidenceRoot=str(output))
 
 
 def require_private_development_client(device):

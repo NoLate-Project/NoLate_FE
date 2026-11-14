@@ -19,27 +19,33 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         previewScrollContent: {
         paddingBottom: 4,
     },
-        previewSourceStrip: {
-        minHeight: 46,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        justifyContent: "center",
-        paddingHorizontal: 2,
-        paddingVertical: 5,
+        previewSourceSection: {
+        marginHorizontal: 2,
+        borderTopWidth: StyleSheet.hairlineWidth,
     },
-        previewSourceCopy: {
-        flex: 1,
-        minWidth: 0,
+        previewSourceToggle: {
+        minHeight: 44,
+        paddingHorizontal: 2,
+        paddingVertical: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
     },
         previewSourceLabel: {
-        marginBottom: 3,
-        fontSize: 10.5,
-        lineHeight: 14,
-        fontWeight: "500",
+        flexShrink: 1,
+        fontSize: 13,
+        fontWeight: "600",
+    },
+        previewSourceBody: {
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        marginBottom: 6,
     },
         previewSourceValue: {
-        fontSize: 12,
-        lineHeight: 16,
-        fontWeight: "500",
+        fontSize: 13,
+        lineHeight: 19,
     },
         previewTitleRow: {
         minHeight: 54,
@@ -61,14 +67,9 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         flexWrap: "nowrap",
     },
         previewTitleMetaRow: {
-        minHeight: 17,
         marginBottom: 2,
         flexDirection: "row",
         alignItems: "center",
-        gap: 6,
-    },
-        previewTitleMetaLabel: {
-        marginBottom: 0,
     },
         previewTitleControlRow: {
         minHeight: 44,
@@ -76,12 +77,14 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         alignItems: "center",
         gap: 8,
     },
+        previewTitleControlRowLarge: { flexDirection: "column", alignItems: "stretch", paddingVertical: 5 },
         previewTitleAction: {
         flex: 1,
         minWidth: 0,
         minHeight: 44,
         justifyContent: "center",
     },
+        previewTitleActionLarge: { flex: 0 },
         previewCategoryInlineChip: {
         maxWidth: 128,
         minHeight: 34,
@@ -100,6 +103,7 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         borderRadius: 4,
         flexShrink: 0,
     },
+        previewCategoryInlineChipLarge: { alignSelf: "flex-start", maxWidth: "100%", minHeight: 44, paddingVertical: 7 },
         previewCategoryInlineText: {
         maxWidth: 72,
         flexShrink: 1,
@@ -107,6 +111,7 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         lineHeight: 16,
         fontWeight: "600",
     },
+        previewCategoryInlineTextLarge: { maxWidth: undefined, lineHeight: undefined, fontSize: 11 },
         previewCategoryInlineChevron: {
         width: 13,
         height: 16,
@@ -116,11 +121,12 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         previewTitleValue: {
         flex: 1,
         minWidth: 0,
-        fontSize: 18,
-        lineHeight: 23,
+        fontSize: 21,
+        lineHeight: 27,
         fontWeight: "700",
         letterSpacing: -0.35,
     },
+        previewTitleValueLarge: { lineHeight: undefined, fontSize: 16 },
         previewInfoRow: {
         minHeight: 54,
         flexDirection: "row",
@@ -165,7 +171,14 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         previewInlineFieldStacked: {
         minHeight: 32,
     },
+        previewInlineControl: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
         previewInlineContent: {
+        flexShrink: 1,
+        minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
         flexWrap: "wrap",
@@ -193,6 +206,28 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         lineHeight: 20,
         fontWeight: "600",
         flexShrink: 1,
+    },
+        previewRouteReset: {
+        marginHorizontal: 2,
+        marginVertical: 6,
+        paddingHorizontal: 12,
+        paddingTop: 9,
+        borderRadius: 12,
+    },
+        previewRouteResetText: {
+        fontSize: 12,
+    },
+        previewRouteResetAction: {
+        alignSelf: "flex-start",
+        minHeight: 44,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+        previewRouteResetActionText: {
+        flexShrink: 1,
+        fontSize: 13,
+        fontWeight: "700",
     },
         previewOptional: {
         minHeight: 92,
@@ -251,6 +286,8 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         alignItems: "center",
         gap: 8,
     },
+        previewButtonsLarge: { flexDirection: "column", alignItems: "stretch", flexShrink: 0 },
+        previewButtonLarge: { flex: 0, height: "auto", minHeight: 48, paddingVertical: 6, paddingHorizontal: 10 },
         previewSecondaryButton: {
         flex: 1,
         height: 46,

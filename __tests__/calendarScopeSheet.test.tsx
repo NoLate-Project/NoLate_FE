@@ -4,6 +4,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import CalendarScopeSheet from "../src/modules/schedule/components/calendar/CalendarScopeSheet";
 
+jest.mock("../src/modules/theme/ThemeModeSwitch", () => () => null);
 jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("react-native-safe-area-context", () => ({
     useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -63,8 +64,8 @@ describe("CalendarScopeSheet", () => {
             value: 21,
             onChange: jest.fn(),
             onShareCalendar: jest.fn(),
-            onManage: jest.fn(),
-            onOpenSettings: jest.fn(),
+            firstDay: 0,
+            onChangeFirstDay: jest.fn(),
             onClose: jest.fn(),
             ...overrides,
         };
@@ -94,21 +95,43 @@ describe("CalendarScopeSheet", () => {
         expect(props.onClose).toHaveBeenCalledTimes(1);
     });
 
-    test("관리와 보기 설정은 시트를 닫은 뒤 각 화면을 연다", async () => {
-        const props = await renderSheet();
+    test("보기 설정에서 주 시작일을 바꾸고 같은 범위로 돌아간다", async () => {
+        const props = await renderSheet({ reduceMotionEnabled: true });
 
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "캘린더 관리" }).props.onPress();
-        });
-        expect(props.onClose).toHaveBeenCalledTimes(1);
-        expect(props.onManage).toHaveBeenCalledTimes(1);
-
-        jest.clearAllMocks();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "캘린더 관리" })).toHaveLength(0);
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "캘린더 보기 설정" }).props.onPress();
         });
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "가족 캘린더 보기" })).toHaveLength(0);
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "한 주의 시작 월요일" }).props.onPress();
+        });
+        expect(props.onChangeFirstDay).toHaveBeenCalledWith(1);
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "캘린더 선택으로 돌아가기" }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "가족 캘린더 보기" }).props.accessibilityState)
+            .toEqual({ selected: true });
+        expect(props.onClose).not.toHaveBeenCalled();
+        expect(props.onChange).not.toHaveBeenCalled();
+    });
+
+    test("보기 설정에서 닫으면 시트를 닫고 다음 진입은 선택 화면이다", async () => {
+        const props = await renderSheet({ reduceMotionEnabled: true });
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "캘린더 보기 설정" }).props.onPress();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "보기 설정과 캘린더 선택 닫기" }).props.onPress();
+            renderer!.update(<CalendarScopeSheet {...props} visible={false} />);
+        });
         expect(props.onClose).toHaveBeenCalledTimes(1);
-        expect(props.onOpenSettings).toHaveBeenCalledTimes(1);
+
+        await act(async () => renderer!.update(<CalendarScopeSheet {...props} />));
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "캘린더 선택 닫기" }).length).toBeGreaterThan(0);
     });
 
     test("소유한 캘린더에는 바로 공유하기 버튼을 표시한다", async () => {

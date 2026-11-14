@@ -41,6 +41,9 @@ const styles = StyleSheet.create({
         width: "31%",
         minHeight: 130,
     },
+    monthPreviewWide: {
+        width: "48%",
+    },
     monthTitle: {
         fontSize: 20,
         fontWeight: "700",
@@ -57,6 +60,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+    dayCellWide: {
+        height: 23,
+    },
     dayBadge: {
         minWidth: 15,
         height: 15,
@@ -65,6 +71,11 @@ const styles = StyleSheet.create({
         borderColor: "transparent",
         alignItems: "center",
         justifyContent: "center",
+    },
+    dayBadgeWide: {
+        minWidth: 18,
+        height: 21,
+        borderRadius: 10.5,
     },
     dayText: {
         fontSize: 10,

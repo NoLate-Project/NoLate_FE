@@ -23,6 +23,8 @@ type RouteEndpointReselectCardProps = {
         accentRed: string;
     };
     style?: StyleProp<ViewStyle>;
+    stackLabels?: boolean;
+    footerAction?: React.ReactNode;
 };
 
 export default function RouteEndpointReselectCard({
@@ -33,15 +35,38 @@ export default function RouteEndpointReselectCard({
     onSwap,
     colors,
     style,
+    stackLabels = false,
+    footerAction,
 }: RouteEndpointReselectCardProps) {
     const resolvedOriginText = originText || "출발지 미지정";
     const resolvedDestinationText = destinationText || "도착지 미지정";
+    const endpoints = [
+        { label: "출발지", name: resolvedOriginText, color: colors.accentGreen, onEdit: onEditOrigin },
+        { label: "도착지", name: resolvedDestinationText, color: colors.accentRed, onEdit: onEditDestination },
+    ];
+    const swapButton = (
+        <Pressable
+            onPress={onSwap}
+            accessibilityRole="button"
+            accessibilityLabel="출발지와 도착지 바꾸기"
+            hitSlop={4}
+            style={({ pressed }) => [
+                styles.swapButton,
+                stackLabels && styles.stackedSwapButton,
+                { backgroundColor: colors.surface2, borderColor: colors.border },
+                pressed && styles.pressed,
+            ]}
+        >
+            <Ionicons name={stackLabels ? "swap-vertical-outline" : "swap-vertical"} size={22} color={colors.textSecondary} />
+        </Pressable>
+    );
 
     return (
         <View
             style={[
                 styles.card,
                 style,
+                stackLabels && styles.stackedCard,
                 { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
         >
@@ -50,54 +75,48 @@ export default function RouteEndpointReselectCard({
                     pointerEvents="none"
                     style={[styles.railLine, { backgroundColor: colors.border }]}
                 />
-                <Pressable
-                    onPress={onEditOrigin}
-                    accessibilityRole="button"
-                    accessibilityLabel={`출발지 재선택, 현재 ${resolvedOriginText}`}
-                    accessibilityHint="검색 또는 지도에서 출발지를 다시 선택합니다"
-                    style={({ pressed }) => [styles.endpointButton, pressed && styles.pressed]}
-                >
-                    <View pointerEvents="none" style={styles.markerCell}>
-                        <View style={[styles.dot, { borderColor: colors.accentGreen }]} />
-                    </View>
-                    <Text style={[styles.endpointLabel, { color: colors.textSecondary }]}>출발지</Text>
-                    <Text numberOfLines={1} style={[styles.endpointText, { color: colors.textPrimary }]}>
-                        {resolvedOriginText}
-                    </Text>
-                    <Text style={[styles.editText, { color: colors.textSecondary }]}>변경</Text>
-                </Pressable>
-                <View style={[styles.divider, { backgroundColor: colors.border }]} />
-                <Pressable
-                    onPress={onEditDestination}
-                    accessibilityRole="button"
-                    accessibilityLabel={`도착지 재선택, 현재 ${resolvedDestinationText}`}
-                    accessibilityHint="검색 또는 지도에서 도착지를 다시 선택합니다"
-                    style={({ pressed }) => [styles.endpointButton, pressed && styles.pressed]}
-                >
-                    <View pointerEvents="none" style={styles.markerCell}>
-                        <View style={[styles.dot, { borderColor: colors.accentRed }]} />
-                    </View>
-                    <Text style={[styles.endpointLabel, { color: colors.textSecondary }]}>도착지</Text>
-                    <Text numberOfLines={1} style={[styles.endpointText, { color: colors.textPrimary }]}>
-                        {resolvedDestinationText}
-                    </Text>
-                    <Text style={[styles.editText, { color: colors.textSecondary }]}>변경</Text>
-                </Pressable>
+                {endpoints.map(({ label, name, color, onEdit }, index) => (
+                    <React.Fragment key={label}>
+                        {index > 0 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
+                        <Pressable
+                            onPress={onEdit}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${label} 재선택, 현재 ${name}`}
+                            accessibilityHint={`검색 또는 지도에서 ${label}를 다시 선택합니다`}
+                            style={({ pressed }) => [
+                                styles.endpointButton,
+                                stackLabels && styles.stackedEndpointButton,
+                                pressed && styles.pressed,
+                            ]}
+                        >
+                            <View pointerEvents="none" style={styles.markerCell}>
+                                <View style={[styles.dot, { borderColor: color }]} />
+                            </View>
+                            {stackLabels ? (
+                                <>
+                                    <View style={styles.stackedEndpointContent}>
+                                        <Text style={[styles.stackedEndpointLabel, { color: colors.textSecondary }]}>{label}</Text>
+                                        <Text lineBreakStrategyIOS="hangul-word" style={[styles.stackedEndpointName, { color: colors.textPrimary }]}>{name}</Text>
+                                    </View>
+                                    <Ionicons name="pencil-outline" size={18} color={colors.textSecondary} />
+                                </>
+                            ) : (
+                                <>
+                                    <Text style={[styles.endpointLabel, { color: colors.textSecondary }]}>{label}</Text>
+                                    <Text numberOfLines={1} style={[styles.endpointText, { color: colors.textPrimary }]}>{name}</Text>
+                                    <Text style={[styles.editText, { color: colors.textSecondary }]}>변경</Text>
+                                </>
+                            )}
+                        </Pressable>
+                    </React.Fragment>
+                ))}
             </View>
-
-            <Pressable
-                onPress={onSwap}
-                accessibilityRole="button"
-                accessibilityLabel="출발지와 도착지 바꾸기"
-                hitSlop={4}
-                style={({ pressed }) => [
-                    styles.swapButton,
-                    { backgroundColor: colors.surface2, borderColor: colors.border },
-                    pressed && styles.pressed,
-                ]}
-            >
-                <Ionicons name="swap-vertical" size={22} color={colors.textSecondary} />
-            </Pressable>
+            {stackLabels ? (
+                <View style={[styles.stackedFooter, { borderTopColor: colors.border }]}>
+                    {swapButton}
+                    {footerAction}
+                </View>
+            ) : swapButton}
         </View>
     );
 }
@@ -114,6 +133,20 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 8,
         overflow: "hidden",
+    },
+    stackedCard: {
+        flexDirection: "column",
+        paddingRight: 14,
+    },
+    stackedFooter: {
+        alignSelf: "stretch",
+        borderTopWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        justifyContent: "flex-end",
+        alignItems: "center",
+        flexWrap: "wrap",
+        paddingTop: 8,
+        gap: 8,
     },
     railLine: {
         position: "absolute",
@@ -150,6 +183,23 @@ const styles = StyleSheet.create({
         borderRadius: 9,
         paddingHorizontal: 2,
     },
+    stackedEndpointButton: {
+        paddingVertical: 10,
+        gap: 8,
+    },
+    stackedEndpointContent: {
+        flex: 1,
+        minWidth: 0,
+        gap: 2,
+    },
+    stackedEndpointLabel: {
+        fontSize: 10,
+        fontWeight: "700",
+    },
+    stackedEndpointName: {
+        fontSize: 14,
+        fontWeight: "800",
+    },
     endpointLabel: {
         width: 35,
         fontSize: 10,
@@ -180,6 +230,10 @@ const styles = StyleSheet.create({
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
+    },
+    stackedSwapButton: {
+        width: 44,
+        height: 44,
     },
     pressed: {
         opacity: 0.72,

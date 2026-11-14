@@ -84,6 +84,7 @@ type Options = {
   qaCameraPreset?: QaCameraPreset;
   requestedTransitDepartureAt: Date;
   routeRefreshTick: number;
+  reduceMotion: boolean;
   runCameraActionAfterDirectionPrewarm: (
     actionKey: string,
     center: Coordinate,
@@ -137,6 +138,7 @@ export function useRoutePlannerCameraSync({
   qaCameraPreset,
   requestedTransitDepartureAt,
   routeRefreshTick,
+  reduceMotion,
   runCameraActionAfterDirectionPrewarm,
   selectedAlternative,
   selectedAlternativeId,
@@ -333,7 +335,7 @@ export function useRoutePlannerCameraSync({
           latitude: qaCenter.latitude,
           longitude: qaCenter.longitude,
           zoom: qaZoom,
-          duration: 450,
+          duration: reduceMotion ? 0 : 450,
           easing: 'Fly',
         }),
       );
@@ -371,7 +373,7 @@ export function useRoutePlannerCameraSync({
               latitude: shiftedCenter.lat,
               longitude: shiftedCenter.lng,
               zoom: focusZoom,
-              duration: 800,
+              duration: reduceMotion ? 0 : 800,
               easing: 'Fly',
             }),
         );
@@ -406,7 +408,7 @@ export function useRoutePlannerCameraSync({
               latitude: shiftedCenter.lat,
               longitude: shiftedCenter.lng,
               zoom: focusZoom,
-              duration: 800,
+              duration: reduceMotion ? 0 : 800,
               easing: 'Fly',
             }),
         );
@@ -434,7 +436,7 @@ export function useRoutePlannerCameraSync({
             latitude: shiftedCenter.lat,
             longitude: shiftedCenter.lng,
             zoom: focusZoom,
-            duration: 750,
+            duration: reduceMotion ? 0 : 750,
             easing: 'Fly',
           }),
       );
@@ -461,7 +463,7 @@ export function useRoutePlannerCameraSync({
             latitude: shiftedCenter.lat,
             longitude: shiftedCenter.lng,
             zoom: focusZoom,
-            duration: 750,
+            duration: reduceMotion ? 0 : 750,
             easing: 'Fly',
           }),
       );
@@ -628,6 +630,7 @@ export function useRoutePlannerCameraSync({
           maxZoom: isRouteDetailMode ? 16 : 18,
           minimumSpanMeters: minSpanMeters,
           boundsPaddingFactor,
+          wholeZoomLevels: reduceMotion,
         },
       );
       if (!overviewCamera) return;
@@ -657,8 +660,10 @@ export function useRoutePlannerCameraSync({
           longitude: overviewCamera.longitude,
         },
         overviewCamera.zoom,
-        () =>
-          map.fitToCoordinates(routePoints, { edgePadding: routeFitPadding }),
+        () => {
+          if (reduceMotion) map.animateCameraTo({ ...overviewCamera, duration: 0 });
+          else map.fitToCoordinates(routePoints, { edgePadding: routeFitPadding });
+        },
       );
     } else if (activeTarget === 'destination' && hasDest) {
       const focusKey = `focus:destination:${destinationLat.toFixed(
@@ -675,7 +680,7 @@ export function useRoutePlannerCameraSync({
             latitude: destinationLat,
             longitude: destinationLng,
             zoom: 14,
-            duration: 700,
+            duration: reduceMotion ? 0 : 700,
             easing: 'Fly',
           }),
       );
@@ -694,7 +699,7 @@ export function useRoutePlannerCameraSync({
             latitude: originLat,
             longitude: originLng,
             zoom: 14,
-            duration: 700,
+            duration: reduceMotion ? 0 : 700,
             easing: 'Fly',
           }),
       );
@@ -713,7 +718,7 @@ export function useRoutePlannerCameraSync({
             latitude: originLat,
             longitude: originLng,
             zoom: 14,
-            duration: 700,
+            duration: reduceMotion ? 0 : 700,
             easing: 'Fly',
           }),
       );
@@ -732,7 +737,7 @@ export function useRoutePlannerCameraSync({
             latitude: destinationLat,
             longitude: destinationLng,
             zoom: 14,
-            duration: 700,
+            duration: reduceMotion ? 0 : 700,
             easing: 'Fly',
           }),
       );
@@ -780,6 +785,7 @@ export function useRoutePlannerCameraSync({
     requestedTransitDepartureAt,
     transitMapBottomOcclusionHeight,
     visibleBottomSheetHeight,
+    reduceMotion,
     runCameraActionAfterDirectionPrewarm,
   ]);
 

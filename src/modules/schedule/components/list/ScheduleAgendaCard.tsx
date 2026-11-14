@@ -1,6 +1,6 @@
 import styles from './ScheduleAgendaCard.styles';
 import React, { useMemo } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { getScheduleShareBadgeLabel } from '../../../share/sharePermissionPresentation';
 import { useTheme } from '../../../theme/ThemeContext';
@@ -28,6 +28,7 @@ export type ScheduleAgendaCardProps = {
   compact?: boolean;
   groupRow?: boolean;
   showMultiDaySummary?: boolean;
+  returnHighlightOpacity?: Animated.Value;
 };
 
 function travelIcon(mode?: TravelMode): ScheduleIconName {
@@ -54,8 +55,10 @@ export default function ScheduleAgendaCard({
   compact = false,
   groupRow = false,
   showMultiDaySummary = false,
+  returnHighlightOpacity,
 }: ScheduleAgendaCardProps) {
   const { colors, mode } = useTheme();
+  const { fontScale } = useWindowDimensions();
   const isDetailCard = groupRow && !compact;
   const categoryColor = item.category?.color ?? '#8e8e93';
   const metadata = useMemo(() => getDayTimelineEventMetadata(item), [item]);
@@ -64,10 +67,8 @@ export default function ScheduleAgendaCard({
     [item],
   );
   const timeColumn = useMemo(() => formatAgendaDetailTimeColumn(item), [item]);
-  const multiDaySummary = useMemo(
-    () => (showMultiDaySummary ? getAgendaMultiDaySummary(item) : null),
-    [item, showMultiDaySummary],
-  );
+  const dateRange = useMemo(() => getAgendaMultiDaySummary(item), [item]);
+  const multiDaySummary = showMultiDaySummary ? dateRange : null;
   const departureText = formatDayTimelineDeparture(metadata.departureAt);
   const travelText = item.routeSetupRequired
     ? ''
@@ -109,6 +110,48 @@ export default function ScheduleAgendaCard({
   const hasDatedTime =
     timeColumn.startLabel.length > 10 ||
     (timeColumn.endLabel?.length ?? 0) > 10;
+  const useFullWidthTime = fontScale > 1.35 && (dateRange !== null || hasDatedTime);
+  const timeFontLimit = useFullWidthTime ? 1.7 : 1.4;
+  const timeLineLimit = useFullWidthTime ? undefined : hasDatedTime ? 2 : 1;
+  const scheduleTimes = (
+    <View
+      testID="agenda-card-time-column"
+      style={
+        useFullWidthTime
+          ? styles.fullWidthTime
+          : [
+              styles.timeColumn,
+              hasDatedTime && styles.datedTimeColumn,
+              !isDetailCard && styles.listTimeColumn,
+            ]
+      }
+    >
+      <Text
+        maxFontSizeMultiplier={timeFontLimit}
+        numberOfLines={timeLineLimit}
+        style={[
+          styles.timePrimary,
+          useFullWidthTime && styles.inlineTimeLabel,
+          { color: colors.textPrimary },
+        ]}
+      >
+        {timeColumn.startLabel}
+      </Text>
+      {timeColumn.endLabel ? (
+        <Text
+          maxFontSizeMultiplier={timeFontLimit}
+          numberOfLines={timeLineLimit}
+          style={[
+            styles.timeSecondary,
+            useFullWidthTime && styles.inlineTimeLabel,
+            { color: colors.textSecondary },
+          ]}
+        >
+          {timeColumn.endLabel}
+        </Text>
+      ) : null}
+    </View>
+  );
 
   return (
     <ScheduleSwipeActions
@@ -167,6 +210,14 @@ export default function ScheduleAgendaCard({
           },
         ]}
       >
+        {returnHighlightOpacity ? (
+          <Animated.View
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.textPrimary, opacity: returnHighlightOpacity }]}
+          />
+        ) : null}
         <View
           testID={isDetailCard ? 'selected-day-agenda-card-rail' : undefined}
           style={[styles.categoryRail, { backgroundColor: categoryColor }]}
@@ -191,6 +242,7 @@ export default function ScheduleAgendaCard({
               {item.title}
             </Text>
           </View>
+          {useFullWidthTime ? scheduleTimes : null}
           {hasContext ? (
             <View testID="agenda-card-context-row" style={styles.context}>
               {metadata.location ? (
@@ -278,31 +330,7 @@ export default function ScheduleAgendaCard({
             </View>
           ) : null}
         </View>
-        <View
-          testID="agenda-card-time-column"
-          style={[
-            styles.timeColumn,
-            hasDatedTime && styles.datedTimeColumn,
-            !isDetailCard && styles.listTimeColumn,
-          ]}
-        >
-          <Text
-            maxFontSizeMultiplier={1.4}
-            numberOfLines={hasDatedTime ? 2 : 1}
-            style={[styles.timePrimary, { color: colors.textPrimary }]}
-          >
-            {timeColumn.startLabel}
-          </Text>
-          {timeColumn.endLabel ? (
-            <Text
-              maxFontSizeMultiplier={1.4}
-              numberOfLines={hasDatedTime ? 2 : 1}
-              style={[styles.timeSecondary, { color: colors.textSecondary }]}
-            >
-              {timeColumn.endLabel}
-            </Text>
-          ) : null}
-        </View>
+        {useFullWidthTime ? null : scheduleTimes}
         {!isDetailCard ? (
           <View style={styles.chevronColumn}>
             <ScheduleIcon name="forward" color={colors.textSecondary} />

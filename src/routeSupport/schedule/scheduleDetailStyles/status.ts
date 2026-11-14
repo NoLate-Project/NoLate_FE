@@ -151,8 +151,8 @@ export function createStatusStyles(options: ScheduleDetailStylesOptions) {
     },
         sheetSharedPeopleSection: {
         width: "100%",
-        marginTop: 6,
-        paddingTop: 5,
+        marginTop: 12,
+        paddingTop: 8,
         paddingBottom: 4,
         borderTopWidth: StyleSheet.hairlineWidth,
     },
@@ -165,24 +165,34 @@ export function createStatusStyles(options: ScheduleDetailStylesOptions) {
         gap: 10,
     },
         sheetParticipantDisclosureTitle: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 7,
-    },
-        sheetParticipantDisclosureSummary: {
         flex: 1,
         minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "flex-end",
-        gap: 5,
+        gap: 7,
+    },
+        sheetParticipantTitle: {
+        flexShrink: 1,
+    },
+        sheetParticipantDisclosureCopy: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+        sheetParticipantDisclosureCopyLarge: {
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 2,
+        paddingVertical: 6,
     },
         sheetParticipantSummary: {
         flexShrink: 1,
-        textAlign: "right",
-        fontSize: 10,
-        lineHeight: 14,
-        fontWeight: "800",
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "600",
         letterSpacing: 0,
     },
         sheetParticipantExpandedContent: {
@@ -201,25 +211,6 @@ export function createStatusStyles(options: ScheduleDetailStylesOptions) {
         lineHeight: 15,
         fontWeight: "800",
         letterSpacing: 0,
-    },
-        sheetDepartureActionButton: {
-        minWidth: 96,
-        height: 44,
-        borderRadius: 14,
-        paddingHorizontal: 14,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-        sheetDepartureActionButtonText: {
-        fontSize: 12,
-        lineHeight: 16,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
-        sheetDepartureActionLoading: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
     },
     });
 }

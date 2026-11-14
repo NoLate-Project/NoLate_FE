@@ -43,6 +43,8 @@ SAVE_METHODS += ('testRescheduleNaverComparisonJourney',)
 METHODS += ('testVerifyNaturalEtaFixture',)
 METHODS += ('testSaveUnlocatedDestinationRoute',)
 METHODS += ('testVerifyUnlocatedDestinationRouteReopened',)
+METHODS += ('testVerifyIncidentCalendarDeparture',)
+METHODS += ('testVerifyIncidentStationBoard',)
 METHODS += ('testInspectIsolatedNativeAlarm', 'testObserveIsolatedNativeAlarmDelivery', 'testVerifyIsolatedNativeAlarmState')
 SAVE_METHODS += ('testSaveIsolatedEtaTarget',)
 SAVE_METHODS += ('testCreateIsolatedEtaJourney',)
@@ -102,6 +104,7 @@ if quota_ui:
         parser.error('Quota outcome does not match the expected fault or recovery')
     quota_expected = {'TEST_RUNNER_E2E_QUOTA_ACCEPTED': '1' if accepted_quota else '0',
         'TEST_RUNNER_E2E_ARRIVAL_QUALITY_SCENARIO': quota['scenario'],
+        'TEST_RUNNER_E2E_QUOTA_DEPARTURE_AT': dt.datetime.fromisoformat(quota['recommendedDepartureAt']).isoformat(),
         'TEST_RUNNER_E2E_QUOTA_DEPARTURE_CLOCK': dt.datetime.fromisoformat(quota['recommendedDepartureAt']).astimezone(
             dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
     if accepted_quota:
@@ -411,6 +414,9 @@ if args.only in native_methods:
 elif args.native_evidence is not None or args.native_mode is not None:
     parser.error('Native arguments are scoped to their explicit test methods')
 private_target_save = args.only == 'testSaveIsolatedEtaTarget'
+if args.only in ('testVerifyIncidentCalendarDeparture', 'testVerifyIncidentStationBoard') and (
+        args.api_base != 'http://127.0.0.1:5523' or args.title != 'ETA E2E calendar 1' or args.allow_save):
+    parser.error('Incident UI verification requires the read-only private H2 fixture')
 private_notice = args.only == 'testDismissPrivateSharingDisabledNotice'
 private_create = args.only == 'testCreateIsolatedEtaJourney'
 if private_create and (args.api_base != 'http://127.0.0.1:5523' or args.title != ('ETA E2E real isolated fixture' if args.real_automatic else 'ETA E2E isolated fixture') or args.schedule_id is not None):
@@ -475,6 +481,11 @@ if args.fixture_phase:
             'TEST_RUNNER_E2E_FIXTURE_MINUTES': '27' if args.fixture_phase == 'transfer-observed' else
                 '41' if args.fixture_phase in ('success', 'early-transfer') else '46',
         }
+        if args.fixture_phase == 'transfer-observed':
+            for leg, board, alight in ((1, 210, 513), (3, 960, 1441)):
+                for event, offset in (('BOARD', board), ('ALIGHT', alight)):
+                    fixture_expected[f'TEST_RUNNER_E2E_RAIL_{event}_{leg}'] = (
+                        epoch + dt.timedelta(seconds=offset)).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')
     elif args.fixture_phase == 'planned-postdeparture':
         prediction = evidence.get('provisionalPrediction') or {}
         if prediction.get('basis') != 'MATCHED_TRAIN_REALTIME' or not prediction.get('predictedArrivalAt'):

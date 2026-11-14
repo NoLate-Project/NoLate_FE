@@ -27,7 +27,6 @@ import {
     saveRecentRoutePlace,
 } from "../../modules/schedule/favoriteDeparture";
 import {
-    excludeFavoritePlacesFromRecents,
 } from "../../modules/schedule/favoritePlaceSelection";
 import type { Place, TravelMode } from "../../modules/schedule/types";
 import {
@@ -64,8 +63,16 @@ import { useRouteSelectRouteController } from "./useRouteSelectRouteController";
  */
 export function useRouteSelectController({
     sessionIdOverride,
+    placeEditor,
 }: {
     sessionIdOverride?: string;
+    placeEditor?: {
+        initial: RoutePlannerPayload;
+        target: RoutePointTarget;
+        onCancel: () => void;
+        onConfirm: (origin: Place, destination: Place) => void;
+        isFocused: boolean;
+    };
 } = {}) {
     const insets = useSafeAreaInsets();
     const { mode, colors } = useTheme();
@@ -82,9 +89,11 @@ export function useRouteSelectController({
         destinationLng?: string;
         travelMode?: string;
         editTarget?: string;
+        returnFromMap?: string;
+        entrySource?: string;
     }>();
     const sessionId = sessionIdOverride ?? readParam(params.sessionId) ?? "";
-    const editTargetParam = readParam(params.editTarget);
+    const editTargetParam = placeEditor?.target ?? readParam(params.editTarget);
     const forcedEditTarget: RoutePointTarget | undefined = editTargetParam === "origin" || editTargetParam === "destination"
         ? editTargetParam
         : undefined;
@@ -124,7 +133,7 @@ export function useRouteSelectController({
         params.originName,
         params.travelMode,
     ]);
-    const initial = sessionInitial ?? paramInitial;
+    const initial = placeEditor?.initial ?? sessionInitial ?? paramInitial;
     const initialTravelMode = SELECTABLE_TRAVEL_MODES.includes(initial?.travelMode as TravelMode)
         ? initial?.travelMode as TravelMode
         : "TRANSIT";
@@ -204,12 +213,21 @@ export function useRouteSelectController({
         goToScheduleList,
         hasTransitFilters,
         openMapForOption,
+        routeMapPending,
         openPlaceSettings,
         openRouteAttribution,
         retryRouteSearch,
+        reduceMotion,
         routeContentAnimatedStyle,
+        restoredScrollY,
+        restoredCandidateId,
+        restoredExpandedCandidateId,
+        collapsedCandidateId,
+        setCollapsedCandidateId,
         routeDepartureAt,
+        hasExplicitDeparture,
         routeError,
+        showTransitRecovery,
         routeListBottomPadding,
         routeLoading,
         routeScheduleBased,
@@ -229,6 +247,8 @@ export function useRouteSelectController({
         visibleRouteAlternatives,
     } = useRouteSelectRouteController({
         initial,
+        returnFromMap: readParam(params.returnFromMap) === "1" && !forcedEditTarget,
+        deferRouteSearch: Boolean(placeEditor),
         initialTravelMode,
         sessionId,
         origin,
@@ -375,6 +395,14 @@ export function useRouteSelectController({
             target === "origin" || (typeof originLat === "number" && typeof originLng === "number"),
             target === "destination" || (typeof destinationLat === "number" && typeof destinationLng === "number")
         );
+        const nextOrigin = target === "origin" ? place : origin;
+        const nextDestination = target === "destination" ? place : destination;
+        if (placeEditor && placeHasCoords(nextOrigin) && placeHasCoords(nextDestination)) {
+            Keyboard.dismiss();
+            clearSearch();
+            placeEditor.onConfirm(nextOrigin, nextDestination);
+            return;
+        }
         if (target === "origin") {
             originTouchedRef.current = true;
             setOriginUsesDefault(false);
@@ -392,7 +420,7 @@ export function useRouteSelectController({
         }
         setIsEditingRoutePoint(nextTarget !== null);
         clearSearch();
-    }, [clearSearch, destinationLat, destinationLng, originLat, originLng]);
+    }, [clearSearch, destination, destinationLat, destinationLng, origin, originLat, originLng, placeEditor]);
 
     const removeRecentPlace = useCallback((place: Place) => {
         removeRecentRoutePlace(place)
@@ -699,19 +727,24 @@ export function useRouteSelectController({
         currentLocationRequestGuardRef.current.invalidate();
         setCurrentLocationPending(false);
         routePointUiRevisionRef.current += 1;
+        Keyboard.dismiss();
         clearSearch();
+        if (placeEditor) {
+            placeEditor.onCancel();
+            return;
+        }
         setIsEditingRoutePoint(false);
-    }, [clearSearch]);
+    }, [clearSearch, placeEditor]);
 
     useEffect(() => {
-        if (Platform.OS !== "android" || !isEditingRoutePoint) return;
+        if (Platform.OS !== "android" || !isEditingRoutePoint || placeEditor?.isFocused === false) return;
 
         const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
             exitSearchMode();
             return true;
         });
         return () => subscription.remove();
-    }, [exitSearchMode, isEditingRoutePoint]);
+    }, [exitSearchMode, isEditingRoutePoint, placeEditor?.isFocused]);
 
     const editDefaultOrigin = useCallback(() => {
         currentLocationRequestGuardRef.current.invalidate();
@@ -723,13 +756,7 @@ export function useRouteSelectController({
         clearSearch();
     }, [clearSearch]);
 
-    const visibleRecentPlaces = useMemo(
-        () => excludeFavoritePlacesFromRecents(
-            recentPlaces,
-            favoriteController.favoritePlaces
-        ),
-        [favoriteController.favoritePlaces, recentPlaces]
-    );
+    const visibleRecentPlaces = recentPlaces;
 
     const routeUi = buildRouteSelectTheme(isDark, colors);
     const modeSelectedText = "#FFFFFF";
@@ -737,6 +764,7 @@ export function useRouteSelectController({
         ? "light-content"
         : "dark-content";
     return {
+        appliesToSchedule: Boolean(initial?.returnToScheduleDraft || initial?.appliesToExistingSchedule || readParam(params.entrySource) === "schedule-detail"),
         ...favoriteController,
         ...mapPickerController,
         modeSelectedText,
@@ -762,9 +790,11 @@ export function useRouteSelectController({
         transitRouteFilter,
         routeLoading,
         routeError,
+        showTransitRecovery,
         routeSubmitPending,
         routePointUiRevisionRef,
         routeDepartureAt,
+        hasExplicitDeparture,
         routeScheduleBased,
         routeTargetArrivalAt,
         origin,
@@ -777,6 +807,12 @@ export function useRouteSelectController({
         transitFilterCounts,
         visibleRouteAlternatives,
         routeContentAnimatedStyle,
+        reduceMotion,
+        restoredScrollY,
+        restoredCandidateId,
+        restoredExpandedCandidateId,
+        collapsedCandidateId,
+        setCollapsedCandidateId,
         selectTravelMode,
         selectTransitFilter,
         hasTransitFilters,
@@ -794,6 +830,7 @@ export function useRouteSelectController({
         retryRouteSearch,
         openRouteAttribution,
         openMapForOption,
+        routeMapPending,
         saveRouteOption,
         applyIntercityService,
         importedTicket,

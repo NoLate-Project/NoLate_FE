@@ -1,10 +1,12 @@
 import React from "react";
+import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import {
   ActivityIndicator,
   Animated,
   Pressable,
   StatusBar,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -12,7 +14,7 @@ import PlainScheduleDetailView, {
   PLAIN_SCHEDULE_DETAIL_CONTENT_GAP,
 } from "../../modules/schedule/components/detail/PlainScheduleDetailView";
 import ScheduleArrivalObservationAction from "../../modules/schedule/components/detail/ScheduleArrivalObservationAction";
-import TmapMapView from "../../modules/map/TmapMapView";
+import TmapMapView, { type TmapLoadState } from "../../modules/map/TmapMapView";
 import { SavedJourneyRoutePreview } from '../../modules/journey/SavedJourneyRoutePreview';
 import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
 import { travelPlanStatusLabel } from "../../modules/schedule/travelPlanPresentation";
@@ -28,19 +30,30 @@ import type { ScheduleDetailPresentation } from "./scheduleDetailPresentationMod
 type ScheduleDetailBackgroundProps = {
   presentation: ScheduleDetailPresentation;
   renderTravelPlanRows: () => React.ReactNode;
+  mapReady: boolean;
+  mapRevision: number;
+  onMapLoadStateChange: (state: TmapLoadState) => void;
 };
+
+const savedRouteMapEntrance = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
+const overviewButtonEntrance = FadeIn.duration(120).reduceMotion(ReduceMotion.System);
 
 /** 지도·일반 일정 배경과 현재 위치·메모 플로팅 동작을 표시한다. */
 export function ScheduleDetailBackground({
   presentation,
   renderTravelPlanRows,
+  mapReady,
+  mapRevision,
+  onMapLoadStateChange,
 }: ScheduleDetailBackgroundProps) {
+  const { fontScale } = useWindowDimensions();
   const {
     camera,
     colors,
     currentLocationPending,
     displayMarkers,
     displayPathOverlays,
+    hasFocusedMapLocation,
     handleMapMarkerPress,
     handleMapZoomChanged,
     insets,
@@ -59,17 +72,34 @@ export function ScheduleDetailBackground({
     primaryText,
     routeOption,
     routeSavePending,
+    routeSaveConfirmed,
+    canRetryRouteSave,
+    retryRouteSave,
     scheduleRangeLabel,
     secondaryText,
     setMemoSheetVisible,
     sheetBorder,
     sheetMinHeight,
+    sheetMode,
+    showWholeRoute,
     shouldRenderMap,
     showTopRouteBar,
     toggleParticipantsExpanded,
     topCardAccentText,
     travelPlanParticipants,
   } = presentation;
+  const travelPlanStatus = item.travelPlanStatus ?? 'NOT_CONFIGURED';
+  const needsFirstRoute = item.routeSetupRequired === true && travelPlanStatus === 'READY';
+  const mapActionSurface = {
+    backgroundColor: isDark ? '#20242C' : '#FFFFFF',
+    borderColor: sheetBorder,
+  };
+  const mapActionFontSize = Math.round(12 * Math.min(fontScale, 1.65));
+  const mapActionText = {
+    color: primaryText,
+    fontSize: mapActionFontSize,
+    lineHeight: Math.ceil(mapActionFontSize * 1.35),
+  };
 
   return (
     <>
@@ -79,27 +109,30 @@ export function ScheduleDetailBackground({
           walkingPaths={presentation.guidanceWalkingPaths}
           position={displayMarkers.find(marker => marker.id === 'schedule-detail-guidance-location') ?? null} />
       ) : shouldRenderMap ? (
-        <TmapMapView
-          ref={mapRef}
-          errorOverlayTop={Math.max(insets.top + 188, 236)}
-          camera={camera}
-          markers={displayMarkers}
-          pathOverlays={displayPathOverlays}
-          pathOverlayZoom={mapZoom}
-          clearRouteOverlays={displayPathOverlays.length === 0}
-          routeOverlayScope={`schedule-detail-${item.id}-${
-            routeOption?.id ?? 'route'
-          }`}
-          routeFocusMode
-          nightModeEnabled={mode === 'dark'}
-          showLocationButton={false}
-          showZoomControls={false}
-          onMarkerPress={handleMapMarkerPress}
-          onZoomChanged={handleMapZoomChanged}
-          fallbackBackgroundColor={colors.surface2}
-          fallbackTextColor={colors.textSecondary}
-          style={styles.fullMap}
-        />
+        <Reanimated.View style={styles.fullMap} entering={routeSaveConfirmed ? savedRouteMapEntrance : undefined}>
+          <TmapMapView
+            ref={mapRef}
+            key={mapRevision}
+            onLoadStateChange={onMapLoadStateChange}
+            camera={camera}
+            markers={displayMarkers}
+            pathOverlays={displayPathOverlays}
+            pathOverlayZoom={mapZoom}
+            clearRouteOverlays={displayPathOverlays.length === 0}
+            routeOverlayScope={`schedule-detail-${item.id}-${
+              routeOption?.id ?? 'route'
+            }`}
+            routeFocusMode
+            nightModeEnabled={mode === 'dark'}
+            showLocationButton={false}
+            showZoomControls={false}
+            onMarkerPress={handleMapMarkerPress}
+            onZoomChanged={handleMapZoomChanged}
+            fallbackBackgroundColor={colors.surface2}
+            fallbackTextColor={colors.textSecondary}
+            style={styles.fullMap}
+          />
+        </Reanimated.View>
       ) : isPlainSchedule ? (
         <PlainScheduleDetailView
           item={item}
@@ -108,16 +141,18 @@ export function ScheduleDetailBackground({
           }
           contentBottomInset={Math.max(insets.bottom + 32, 48)}
           travelPlan={
-            item.routeSetupRequired === true ||
+            canRetryRouteSave || routeSavePending || routeSaveConfirmed || item.routeSetupRequired === true ||
             travelPlanParticipants.length > 1
               ? {
-                  statusLabel: travelPlanStatusLabel(
-                    item.travelPlanStatus ?? 'NOT_CONFIGURED',
-                  ),
+                  statusLabel: routeSavePending ? '경로를 적용하고 있어요'
+                    : canRetryRouteSave ? '경로를 적용하지 못했어요'
+                    : routeSaveConfirmed ? '경로를 적용했어요'
+                    : travelPlanStatusLabel(needsFirstRoute ? 'NOT_CONFIGURED' : travelPlanStatus),
                   actionLabel:
-                    item.travelPlanStatus === 'READY' ? '수정' : '설정',
+                    canRetryRouteSave ? '다시 시도'
+                      : travelPlanStatus === 'READY' && !needsFirstRoute ? '수정' : '설정',
                   pending: routeSavePending,
-                  onPress: openCurrentRoutePlanner,
+                  onPress: canRetryRouteSave ? retryRouteSave : openCurrentRoutePlanner,
                   participantContent:
                     travelPlanParticipants.length > 1 ? (
                       <View
@@ -256,39 +291,56 @@ export function ScheduleDetailBackground({
         </View>
       )}
 
-      {shouldRenderMap ? (
-        <Pressable
-          onPress={moveToCurrentLocation}
-          disabled={currentLocationPending}
-          accessibilityRole="button"
-          accessibilityLabel="지도에서 내 현재 위치 보기"
-          accessibilityState={{
-            busy: currentLocationPending,
-            disabled: currentLocationPending,
-          }}
-          style={({ pressed }) => [
-            styles.currentLocationButton,
-            {
-              bottom: sheetMinHeight + 16,
-              backgroundColor: isDark ? '#20242C' : '#FFFFFF',
-              borderColor: isDark
-                ? 'rgba(255,255,255,0.16)'
-                : 'rgba(15,23,42,0.12)',
-              opacity: pressed || currentLocationPending ? 0.72 : 1,
-            },
-          ]}
-        >
-          {currentLocationPending ? (
-            <ActivityIndicator size="small" color={topCardAccentText} />
-          ) : (
-            <Ionicons name="locate" size={19} color={topCardAccentText} />
+      {mapReady ? (
+        <View pointerEvents="box-none" style={[styles.mapActionStack, { bottom: sheetMinHeight + 16 }]}>
+          {sheetMode === 'compact' && hasFocusedMapLocation && (
+            <Pressable
+              testID="schedule-route-map-overview"
+              onPress={showWholeRoute}
+              accessibilityRole="button"
+              accessibilityLabel="지도에서 전체 경로 보기"
+              style={({ pressed }) => [
+                styles.mapActionButton,
+                mapActionSurface,
+                { opacity: pressed ? 0.72 : 1 },
+              ]}
+            >
+              <Reanimated.View entering={overviewButtonEntrance} pointerEvents="none">
+                <Ionicons name="map-outline" size={18} color={topCardAccentText} />
+              </Reanimated.View>
+              <Text allowFontScaling={false} style={[styles.mapActionButtonText, mapActionText]}>
+                전체 경로
+              </Text>
+            </Pressable>
           )}
-          <Text
-            style={[styles.currentLocationButtonText, { color: primaryText }]}
+          <Pressable
+            onPress={moveToCurrentLocation}
+            disabled={currentLocationPending}
+            accessibilityRole="button"
+            accessibilityLabel="지도에서 내 현재 위치 보기"
+            accessibilityState={{
+              busy: currentLocationPending,
+              disabled: currentLocationPending,
+            }}
+            style={({ pressed }) => [
+              styles.mapActionButton,
+              mapActionSurface,
+              { opacity: pressed || currentLocationPending ? 0.72 : 1 },
+            ]}
           >
-            내 위치
-          </Text>
-        </Pressable>
+            {currentLocationPending ? (
+              <ActivityIndicator size="small" color={topCardAccentText} />
+            ) : (
+              <Ionicons name="locate-outline" size={19} color={topCardAccentText} />
+            )}
+            <Text
+              allowFontScaling={false}
+              style={[styles.mapActionButtonText, mapActionText]}
+            >
+              내 위치
+            </Text>
+          </Pressable>
+        </View>
       ) : null}
 
       {!isPlainSchedule && notesText ? (
@@ -299,13 +351,11 @@ export function ScheduleDetailBackground({
           accessibilityLabel="일정 메모 보기"
           accessibilityHint="메모 시트를 아래에서 엽니다"
           style={({ pressed }) => [
+            styles.mapActionButton,
             styles.memoButton,
+            mapActionSurface,
             {
               bottom: sheetMinHeight + 16,
-              backgroundColor: isDark ? '#20242C' : '#FFFFFF',
-              borderColor: isDark
-                ? 'rgba(255,255,255,0.16)'
-                : 'rgba(15,23,42,0.12)',
               opacity: pressed ? 0.72 : 1,
             },
           ]}
@@ -315,10 +365,10 @@ export function ScheduleDetailBackground({
             size={18}
             color={topCardAccentText}
           />
-          <Text style={[styles.memoButtonText, { color: primaryText }]}>
+          <Text allowFontScaling={false} style={[styles.mapActionButtonText, mapActionText]}>
             메모
           </Text>
-          <Ionicons name="chevron-up" size={14} color={secondaryText} />
+          <Ionicons name="chevron-up-outline" size={14} color={secondaryText} />
         </Pressable>
       ) : null}
 

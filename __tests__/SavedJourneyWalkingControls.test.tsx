@@ -29,7 +29,8 @@ test('running detail distinguishes selected voice channel from unavailable lock-
         guidanceNoticeMode:'VOICE_AND_NOTIFICATIONS',guidanceNoticePermission:'NOT_DETERMINED_LOCK_UNSUPPORTED_ALERT_UNSUPPORTED'}});
     await act(async()=>{view=TestRenderer.create(<SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule}/>);});
     const text=JSON.stringify(view.toJSON());expect(text).toContain('전경 음성 + 알림');expect(text).toContain('잠금 화면 안내를 받을 수 없어요');
-    expect(text).not.toContain('잠금·무음에서는 알림');expect(view.root.findAllByProps({testID:'saved-guidance-notice-expand'})).toHaveLength(0);
+    expect(text).not.toContain('잠금·무음에서는 알림');expect(text).not.toContain('준비는 출발이 아닙니다');
+    expect(view.root.findAllByProps({testID:'saved-guidance-notice-expand'})).toHaveLength(0);
     expect(mockPermission).not.toHaveBeenCalled();act(()=>view.unmount());
 });
 test('insufficient navigation credential lifetime is explained without claiming GPS has started',async()=>{
@@ -97,6 +98,22 @@ test('explicit connection only supplies separate paths; mount never fetches, arm
     const connected=mockTrial.mock.calls.at(-1)![0];expect(connected.routeRevision).toBe(4);expect(connected.legs).toEqual(f.input.legs);
     expect(connected.walkingSnapshot.navigationReady).toBe(false);
     expect(mockTrial.mock.results.at(-1)!.value.prepare).not.toHaveBeenCalled();
+    act(()=>view.unmount());
+});
+test('connected detail changes its copy after GPS has actually started the owned session',async()=>{
+    const f=setup();mockIssue.mockResolvedValue(f.snapshot);let view!:ReactTestRenderer;
+    const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule}/>;
+    await act(async()=>{view=TestRenderer.create(render());});
+    await act(async()=>{view.root.findByProps({testID:'saved-detail-connect-walking'}).props.onPress();});
+    expect(JSON.stringify(view.toJSON())).toContain('서버·기기 검사 필요');
+    mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
+    mockTrial.mockReturnValue({...mockTrial.mock.results.at(-1)!.value,running:true,pending:false,
+        snapshot:{status:'ACTIVE',sessionId:'synthetic',guidanceNoticeMode:'OFF'},sync:{errorCode:null}});
+    await act(async()=>view.update(render()));
+    const active=JSON.stringify(view.toJSON());
+    expect(active).toContain('서버·기기 검사 완료');
+    expect(active).not.toContain('서버·기기 검사 필요');
+    expect(active).not.toContain('준비는 출발이 아닙니다');
     act(()=>view.unmount());
 });
 test('changing route during connection discards late geometry and clears pending presentation',async()=>{

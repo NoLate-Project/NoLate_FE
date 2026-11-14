@@ -67,6 +67,7 @@ export type {
   TmapCameraState,
   TmapLatLng,
   TmapMapLayoutReport,
+  TmapLoadState,
   TmapMapSelectionSample,
   TmapMapViewHandle,
   TmapMapViewProps,
@@ -110,9 +111,12 @@ const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
       onZoomChanged,
       onCameraChanged,
       onInitialized,
+      onLoadStateChange,
       onMapLayoutReport,
       fallbackBackgroundColor = DEFAULT_FALLBACK_BACKGROUND,
       fallbackTextColor = DEFAULT_FALLBACK_TEXT,
+      loadingContent,
+      renderLoadError,
     },
     ref,
   ) {
@@ -173,6 +177,12 @@ const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
 
     const hasWebView = !!WebView;
     const canRender = hasWebView && !!appKey;
+
+    useEffect(() => {
+      onLoadStateChange?.(
+        !canRender ? 'unavailable' : runtimeErrorMessage ? 'error' : isReady ? 'ready' : 'loading',
+      );
+    }, [canRender, isReady, onLoadStateChange, runtimeErrorMessage]);
     const nativePathOverlays = useMemo(
       () =>
         expandNativeDashPathOverlays(
@@ -632,6 +642,9 @@ const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
       const missingReason = !hasWebView
         ? '이 기기에서는 지도를 표시할 수 없습니다.'
         : '지도 설정을 불러오지 못했습니다. 앱을 최신 버전으로 업데이트해 주세요.';
+      if (onLoadStateChange) {
+        return <View style={[styles.fallback, { backgroundColor: fallbackBackgroundColor }, style]} />;
+      }
       return (
         <View
           accessible
@@ -679,7 +692,7 @@ const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
           mixedContentMode="never"
           style={[styles.webview, { backgroundColor: fallbackBackgroundColor }]}
         />
-        {!isReady && !runtimeErrorMessage && (
+        {!onLoadStateChange && !isReady && !runtimeErrorMessage && (
           <View
             pointerEvents="none"
             accessibilityLiveRegion="polite"
@@ -688,13 +701,21 @@ const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
               { backgroundColor: fallbackBackgroundColor },
             ]}
           >
-            <ActivityIndicator color="#2979FF" />
-            <Text style={[styles.loadingText, { color: fallbackTextColor }]}>
-              지도를 불러오는 중…
-            </Text>
+            {loadingContent ?? (
+              <>
+                <ActivityIndicator color="#2979FF" />
+                <Text style={[styles.loadingText, { color: fallbackTextColor }]}>
+                  지도를 불러오는 중…
+                </Text>
+              </>
+            )}
           </View>
         )}
-        {!!runtimeErrorMessage && (
+        {!onLoadStateChange && runtimeErrorMessage && renderLoadError ? (
+          <View style={[styles.loadingOverlay, { backgroundColor: fallbackBackgroundColor }]} accessibilityLiveRegion="assertive">
+            {renderLoadError(retryMapLoad)}
+          </View>
+        ) : !onLoadStateChange && !!runtimeErrorMessage && (
           <View
             accessibilityLiveRegion="assertive"
             style={[
@@ -724,14 +745,25 @@ const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
 );
 const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
   function TmapMapView(props, ref) {
-    if (isNativeTMapViewAvailable()) {
+    const hasNativeMap = isNativeTMapViewAvailable();
+    const nativeMapUnavailable = !hasNativeMap && Platform.OS !== 'web' && process.env.NODE_ENV !== 'test';
+    const { onLoadStateChange } = props;
+
+    useEffect(() => {
+      if (nativeMapUnavailable) onLoadStateChange?.('unavailable');
+    }, [nativeMapUnavailable, onLoadStateChange]);
+
+    if (hasNativeMap) {
       return <TmapNativeMapView ref={ref} {...props} />;
     }
 
     // iOS/Android에서는 TMAP 네이티브 모듈이 빠진 구빌드를 Web 지도로
     // 조용히 대체하지 않는다. 그렇게 하면 Web SDK의 검은 방향 표시가
     // 네이티브 SDK 결과처럼 보여 설치 누락을 알아차리기 어렵다.
-    if (Platform.OS !== 'web' && process.env.NODE_ENV !== 'test') {
+    if (nativeMapUnavailable) {
+      if (onLoadStateChange) {
+        return <View style={[styles.fallback, { backgroundColor: props.fallbackBackgroundColor ?? DEFAULT_FALLBACK_BACKGROUND }, props.style]} />;
+      }
       const message =
         '지도를 사용할 수 없습니다. 앱을 업데이트한 뒤 다시 시도해 주세요.';
       return (

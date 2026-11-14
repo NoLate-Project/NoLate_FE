@@ -1,4 +1,4 @@
-import { isTransitRideKind, isIntercityRideKind, transitModeLabel, intercityRideColor } from "../../modules/map/transitModes";
+import { formatTransferBoardingTarget, isTransitRideKind, isIntercityRideKind, transitModeLabel, intercityRideColor } from "../../modules/map/transitModes";
 import type { RouteAlternativeOption } from "../../modules/map/routingService";
 import {
     compactTransitLineLabel as compactSharedTransitLineLabel,
@@ -8,9 +8,10 @@ import {
 import {
     getNaverLikeRoutePriority,
     getNaverLikeRouteTransferCount,
-    getNaverLikeRouteWalkMinutes,
     selectNaverLikeRouteAlternatives,
 } from "../../modules/schedule/routeAlternativeRanking";
+import { formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from "../../modules/schedule/transitRouteProgress";
+import { shouldShowTransitDurationOnly, TRANSIT_ESTIMATED_DURATION_LABEL } from "../../modules/schedule/routePlanner/presentation";
 import type { TravelMode } from "../../modules/schedule/types";
 import {
     resolveSelectedRouteTiming,
@@ -63,6 +64,13 @@ export function formatScheduleRouteNoticeTime(date: Date): string {
 
 type RouteOptionTimingContext = { targetArrivalAt?: string; routeInfo?: SelectedRouteTimingInfo };
 
+/** 모든 후보가 소요 시간 추정치만 제공하면 목록에서 한 번 안내한다. */
+export function sharesTransitDurationEstimate(options: readonly RouteAlternativeOption[]): boolean {
+    return options.length > 1 && options.every(option =>
+        !option.intercityJourney && shouldShowTransitDurationOnly(option)
+    );
+}
+
 /** 후보별 표시와 저장은 같은 시각 정책을 사용하고 다음 운행 검색의 출발 기준을 보존한다. */
 export function resolveRouteOptionTiming(
     option: RouteAlternativeOption,
@@ -100,12 +108,13 @@ export function formatRouteTimeFare(
     option: RouteAlternativeOption,
     departureAt: Date,
     timing: RouteOptionTimingContext = {},
+    showDurationEstimate = true,
 ): string | undefined {
     const chunks: string[] = [];
     if (option.intercityJourney) {
         chunks.push(`선택 편 ${option.intercityJourney.service.departureAt.slice(11, 16)} 출발 · ${formatRouteClock(new Date(option.intercityJourney.arrivalAt))} 예상 도착`);
-    } else if (option.mode === "TRANSIT" && option.transitServiceState === "unknown") {
-        chunks.push("운행 시간 확인 필요");
+    } else if (shouldShowTransitDurationOnly(option)) {
+        if (showDurationEstimate) chunks.push(TRANSIT_ESTIMATED_DURATION_LABEL);
     } else if (option.mode === "TRANSIT" && option.transitServiceState === "not_operating") {
         chunks.push("운행 종료");
     } else if (typeof option.minutes === "number") {
@@ -259,18 +268,14 @@ export function getRouteTransferCount(option: RouteAlternativeOption): number {
     return getNaverLikeRouteTransferCount(option);
 }
 
-/** 경로 전체에서 도보로 이동하는 시간을 분 단위로 계산한다. */
-export function getRouteWalkMinutes(option: RouteAlternativeOption): number {
-    return getNaverLikeRouteWalkMinutes(option);
-}
-
 /** 환승 횟수와 도보 시간을 요약 칩 모델로 구성하고 값이 없는 항목은 제외한다. */
 export function buildRouteMetricChips(option: RouteAlternativeOption): RouteMetricChip[] {
     const chips: RouteMetricChip[] = [];
 
     if (option.mode === "TRANSIT") {
         chips.push({ key: "transfer", label: `환승 ${getRouteTransferCount(option)}회` });
-        chips.push({ key: "walk", label: `도보 ${getRouteWalkMinutes(option)}분` });
+        const walk = formatTransitWalkingSummary(getTransitRouteWalkingMinutes(option.transitLegs ?? []));
+        if (walk) chips.push({ key: "walk", label: walk });
     } else {
         const distance = formatDistance(option.distanceMeters);
         if (distance) chips.push({ key: "distance", label: distance });
@@ -417,21 +422,12 @@ export function buildRouteDropdownSummaryItems(
             return { key, kind: "TRANSFER" as const, title: `${leg.label} · ${minutes}분`, subtitle: "역·터미널 여유시간" };
         }
         if (leg.kind === "WALK") {
-            const isTransferWalk = index > 0 &&
-                index < legs.length - 1 &&
-                isRideLegKind(prevLeg?.kind) &&
-                isRideLegKind(nextLeg?.kind);
-            if (isTransferWalk) {
-                const transferName = formatDropdownPlaceName(leg.startName, "TRANSFER") ??
-                    formatDropdownPlaceName(leg.endName, "TRANSFER") ??
-                    formatDropdownPlaceName(prevLeg?.endName, prevLeg?.kind) ??
-                    formatDropdownPlaceName(nextLeg?.startName, nextLeg?.kind) ??
-                    "환승 지점";
+            if (isRideLegKind(prevLeg?.kind) && nextLeg && isTransitRideKind(nextLeg.kind)) {
                 return {
                     key,
                     kind: "TRANSFER" as const,
-                    title: `환승 ${minutes}분`,
-                    subtitle: transferName,
+                    title: `환승 도보 ${minutes}분`,
+                    subtitle: formatTransferBoardingTarget(nextLeg.kind, compactLineLabel(nextLeg)),
                 };
             }
 

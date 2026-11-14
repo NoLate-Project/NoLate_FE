@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A12D11570000000000000002 /* Ionicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A12D11570000000000000001 /* Ionicons.ttf */; };
+		A12D11570000000000000003 /* Ionicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A12D11570000000000000001 /* Ionicons.ttf */; };
+		A12D11570000000000000004 /* Ionicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A12D11570000000000000001 /* Ionicons.ttf */; };
 		00E356F11AD99517003FC87E /* SharedKeychainContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E356F01AD99517003FC87E /* SharedKeychainContractTests.swift */; };
 		00E356F31AD99517003FC87E /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 00E356F21AD99517003FC87E /* XCTest.framework */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
@@ -121,6 +124,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A12D11570000000000000001 /* Ionicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "../node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf"; sourceTree = SOURCE_ROOT; };
 		00E356EE1AD99517003FC87E /* NoLateFETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NoLateFETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		00E356F01AD99517003FC87E /* SharedKeychainContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedKeychainContractTests.swift; sourceTree = "<group>"; };
 		00E356F21AD99517003FC87E /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -635,6 +639,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A12D11570000000000000002 /* Ionicons.ttf in Resources */,
 				E10000000000000000000003 /* icon.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -643,6 +648,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A12D11570000000000000003 /* Ionicons.ttf in Resources */,
 				F20000000000000000000007 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -651,6 +657,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A12D11570000000000000004 /* Ionicons.ttf in Resources */,
 				F30000000000000000000005 /* PrivacyInfo.xcprivacy in Resources */,
 				F3000000000000000000000A /* Assets.xcassets in Resources */,
 			);
@@ -1126,7 +1133,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SDKROOT)/usr/lib/swift\"$(inherited)\"";
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
@@ -1186,7 +1193,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SDKROOT)/usr/lib/swift\"$(inherited)\"";
 				MTL_ENABLE_DEBUG_INFO = NO;
-				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;

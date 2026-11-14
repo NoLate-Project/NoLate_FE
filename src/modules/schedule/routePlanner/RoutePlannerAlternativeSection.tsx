@@ -1,19 +1,19 @@
-import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { Ionicons as ExpoIonicons } from '@expo/vector-icons';
+import Reanimated, { Easing, FadeInDown, ReduceMotion } from 'react-native-reanimated';
 import BrandedLoader from '../../../ui/BrandedLoader';
 import styles from './styles';
 import {
   buildTransitLegMeta,
   formatAlternativeInfo,
   formatTransitClock,
-  formatTransitDepartureNow,
   getTransitLegKindMeta,
+  shouldShowTransitDurationOnly,
 } from './presentation';
 import { buildTransitLegAssistText } from './routeTransitMarkers';
 import { formatRouteDuration as formatRouteInfoDuration } from '../routeInfo';
 import RouteStepTimeline from '../components/route/RouteStepTimeline';
-import TransitRouteProgressBar from '../components/route/TransitRouteProgressBar';
 import type { RoutePlannerController } from './useRoutePlannerController';
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -26,24 +26,34 @@ function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
   );
 }
 
-type Props = { controller: RoutePlannerController };
+type Props = {
+  controller: RoutePlannerController;
+  onRevealFirstStop: (row: View, animated: boolean) => void;
+};
+const refreshedRouteEntrance = FadeInDown.duration(160)
+  .easing(Easing.out(Easing.cubic))
+  .withInitialValues({ opacity: 0.65, transform: [{ translateY: 4 }] })
+  .reduceMotion(ReduceMotion.System);
 
-/** 선택 가능한 경로 카드 목록과 상세 타임라인을 현재 화면 모드에 맞춰 렌더링합니다. */
-export function RoutePlannerAlternativeSection({ controller }: Props) {
+/** 선택 가능한 경로 조회 상태와 선택한 경로의 상세 타임라인을 렌더링합니다. */
+export function RoutePlannerAlternativeSection({ controller, onRevealFirstStop }: Props) {
+  const { fontScale } = useWindowDimensions();
   const {
     colors,
-    isDark,
     overlayPanelBg,
-    travelMode,
     etaLoading,
+    reduceMotion,
+    departureTimeEdited,
+    requestedTransitDepartureAt,
     alternativesError,
     routeAlternatives,
     selectedTransitMapStop,
     focusedTransitLegIndex,
     isTransitMode,
-    isRouteDetailMode,
     isTransitDetailMode,
     shouldRenderTransitDetailDark,
+    bottomSheetSnap,
+    isBottomSheetHidden,
     detailPanelBg,
     detailCardBg,
     detailPrimaryText,
@@ -52,105 +62,109 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
     transitDetailSummaryPalette,
     routeDetailSummarySurface,
     transitFocusedLegBg,
-    transitDetailControlText,
     visibleAlternatives,
     selectedAlternative,
-    selectedAlternativeMetricTags,
     selectedAlternativeTransitModeLabels,
-    selectedAlternativeStepPreview,
-    selectedRouteDepartureAt,
     selectedTransitMeta,
-    selectedTransitTimeRange,
-    selectedTransitStatusLabel,
-    selectedTransitProgressSegments,
     selectedRouteInfo,
     retryRouteSearch,
     focusMapOnTransitLeg,
+    focusTransitMapStop,
     selectedRouteStepId,
     focusRouteInfoStep,
   } = controller;
+  const showDepartureUpdate = isTransitMode && departureTimeEdited;
+  const previousRoute = useRef({ loading: etaLoading, id: selectedAlternative?.id });
+  const routeChanged = (
+    (previousRoute.current.loading && !etaLoading) ||
+    (previousRoute.current.id !== undefined && previousRoute.current.id !== selectedAlternative?.id)
+  );
+  const shouldAnimateRoute = routeChanged && !!selectedAlternative && !reduceMotion && !isBottomSheetHidden
+    && bottomSheetSnap !== 'collapsed';
+  useEffect(() => {
+    previousRoute.current = { loading: etaLoading, id: selectedAlternative?.id };
+  }, [etaLoading, selectedAlternative?.id]);
+  const isDurationEstimate = isTransitDetailMode && shouldShowTransitDurationOnly(selectedAlternative);
+  const largeRouteText = fontScale > 1.35;
+  const compactTimelineHeader = isTransitDetailMode && !!selectedRouteInfo;
+  const notOperating = selectedAlternative?.transitServiceState === 'not_operating';
+  const detailTimeMeta = compactTimelineHeader && (isDurationEstimate || notOperating)
+    ? selectedTransitMeta?.fareText
+    : selectedTransitMeta?.combinedText;
+  const departureLabel = showDepartureUpdate
+    ? `${requestedTransitDepartureAt.getMonth() + 1}월 ${requestedTransitDepartureAt.getDate()}일 ${formatTransitClock(requestedTransitDepartureAt)} 출발`
+    : undefined;
+  const getMapStop = (stepId: string, rowIndex: number) => {
+    const legIndex = Number(/^leg-(\d+)$/u.exec(stepId)?.[1]);
+    const leg = selectedAlternative?.transitLegs?.[legIndex];
+    const stopIndex = selectedRouteInfo?.steps.find(step => step.id === stepId)?.passStops?.[rowIndex]?.sourceIndex;
+    if (stopIndex === undefined || !leg?.passStops || stopIndex === 0 || stopIndex === leg.passStops.length - 1) return undefined;
+    const coord = leg.passStops[stopIndex]?.coord;
+    return coord && Number.isFinite(coord.lat) && Number.isFinite(coord.lng) ? { legIndex, stopIndex } : undefined;
+  };
+  const mapStopStepId = selectedTransitMapStop && `leg-${selectedTransitMapStop.legIndex}`;
+  const selectedStopRow = selectedRouteInfo?.steps.find(step => step.id === mapStopStepId)
+    ?.passStops?.findIndex(stop => stop.sourceIndex === selectedTransitMapStop?.stopIndex);
   return (
     <View
       style={[
         styles.alternativeSection,
-        isRouteDetailMode ? styles.alternativeSectionDetail : null,
+        styles.alternativeSectionDetail,
         {
-          borderColor: isRouteDetailMode ? 'transparent' : colors.border,
+          borderColor: 'transparent',
           backgroundColor: detailPanelBg,
         },
       ]}
     >
-      {travelMode === 'TRANSIT' &&
-        !isRouteDetailMode &&
-        !etaLoading &&
-        !alternativesError &&
-        !!routeAlternatives.length && (
-          <>
-            <View
-              style={[
-                styles.transitDepartureRow,
-                { borderBottomColor: detailBorderColor },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.transitDepartureText,
-                  { color: detailPrimaryText },
-                ]}
-              >
-                {formatTransitDepartureNow()}
-              </Text>
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.transitDepartureHint,
-                  { color: detailSecondaryText },
-                ]}
-              >
-                {selectedAlternative?.transitModeSummary ?? '대중교통 경로'}
-              </Text>
-            </View>
-          </>
-        )}
-
       {etaLoading ? (
-        <View style={styles.alternativeLoadingRow}>
-          <BrandedLoader
-            size="button"
-            variant="route"
-            accessibilityLabel="경로 옵션을 계산하고 있어요"
-          />
-          <Text
-            style={[
-              styles.alternativeLoadingText,
-              { color: colors.textSecondary },
-            ]}
-          >
-            경로 옵션 계산 중...
-          </Text>
+        <View
+          style={styles.alternativeLoadingRow}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={['경로를 찾고 있어요', departureLabel].filter(Boolean).join(', ')}
+          accessibilityLiveRegion="polite"
+        >
+          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <BrandedLoader size="button" variant="route" markMotion="settle" accessibilityLabel="경로를 찾는 중" />
+          </View>
+          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.alternativeLoadingCopy}>
+            <Text style={[styles.alternativeLoadingText, { color: detailPrimaryText }]}>
+              경로를 찾고 있어요
+            </Text>
+            {departureLabel && <Text style={[styles.alternativeLoadingText, { color: detailSecondaryText }]}>
+              {departureLabel}
+            </Text>}
+          </View>
         </View>
       ) : null}
 
       {!etaLoading && !!alternativesError ? (
-        <View style={styles.alternativeErrorWrap}>
-          <Text
-            style={[
-              styles.alternativeErrorText,
-              { color: colors.textSecondary },
-            ]}
-          >
-            {alternativesError}
-          </Text>
+        <View style={[styles.alternativeErrorWrap, showDepartureUpdate && styles.alternativeDepartureError]}>
+          {departureLabel ? (
+            <View accessibilityLiveRegion="polite" style={styles.alternativeDepartureErrorCopy}>
+              <Text maxFontSizeMultiplier={2} style={[styles.alternativeDepartureErrorTitle, { color: detailPrimaryText }]}>
+                경로를 확인하지 못했어요
+              </Text>
+              <Text maxFontSizeMultiplier={2} style={[styles.alternativeLoadingText, { color: detailSecondaryText }]}>
+                {departureLabel}
+              </Text>
+            </View>
+          ) : (
+            <Text style={[styles.alternativeErrorText, { color: colors.textSecondary }]}>
+              {alternativesError}
+            </Text>
+          )}
           <Pressable
             onPress={retryRouteSearch}
             accessibilityRole="button"
             accessibilityLabel="경로 다시 검색"
+            accessibilityHint={departureLabel ? '같은 출발 시각으로 다시 검색합니다' : undefined}
             style={[
               styles.alternativeRetryButton,
               { backgroundColor: colors.selectedDayBg },
             ]}
           >
-            <Ionicons name="refresh" size={15} color={colors.selectedDayText} />
+            <Ionicons name="refresh-outline" size={15} color={colors.selectedDayText} />
             <Text
               style={[
                 styles.alternativeRetryText,
@@ -183,10 +197,13 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
       ) : null}
 
       {!etaLoading && !alternativesError && !!visibleAlternatives.length && (
-        <View
+        <Reanimated.View
+          key={selectedAlternative?.id}
+          entering={shouldAnimateRoute ? refreshedRouteEntrance : undefined}
+          testID="route-planner-detail-content"
           style={[
             styles.selectedRouteSection,
-            isRouteDetailMode ? styles.selectedRouteSectionDetail : null,
+            styles.selectedRouteSectionDetail,
           ]}
         >
           {!!selectedAlternative && (
@@ -195,9 +212,7 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
                 isTransitMode
                   ? styles.transitReferenceSummaryCard
                   : styles.transitAlternativeCard,
-                isRouteDetailMode
-                  ? styles.transitReferenceSummaryCardDetail
-                  : null,
+                styles.transitReferenceSummaryCardDetail,
                 !isTransitMode ? styles.selectedRouteDetailCard : null,
                 {
                   borderColor: isTransitMode
@@ -209,95 +224,46 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
                 },
               ]}
             >
-              {isRouteDetailMode ? (
-                <View style={styles.transitDetailHeroSummary}>
+              <View
+                style={[
+                  styles.transitDetailHeroSummary,
+                  compactTimelineHeader && !largeRouteText && styles.transitDetailTimelineHeading,
+                ]}
+              >
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.76}
+                  style={[
+                    styles.transitDetailHeroDuration,
+                    compactTimelineHeader && styles.transitDetailTimelineDuration,
+                    { color: detailPrimaryText },
+                  ]}
+                >
+                  {notOperating
+                    ? '운행 종료'
+                    : `${compactTimelineHeader && isDurationEstimate ? '예상 ' : ''}${formatRouteInfoDuration(
+                        selectedRouteInfo?.totalDurationMinutes ??
+                          selectedAlternative.minutes,
+                      )}`}
+                </Text>
+                {!!detailTimeMeta && (
                   <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.76}
+                    numberOfLines={largeRouteText ? undefined : 1}
+                    maxFontSizeMultiplier={2}
+                    lineBreakStrategyIOS="hangul-word"
                     style={[
-                      styles.transitDetailHeroDuration,
-                      { color: detailPrimaryText },
+                      styles.transitDetailHeroMetaText,
+                      compactTimelineHeader && styles.transitDetailTimelineMeta,
+                      {
+                        color: transitDetailSummaryPalette.metaTextColor,
+                      },
                     ]}
                   >
-                    {selectedAlternative.transitServiceState === 'not_operating'
-                      ? '운행 종료'
-                      : formatRouteInfoDuration(
-                          selectedRouteInfo?.totalDurationMinutes ??
-                            selectedAlternative.minutes,
-                        )}
+                    {detailTimeMeta}
                   </Text>
-                  {!!selectedTransitMeta?.combinedText && (
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.transitDetailHeroMetaText,
-                        {
-                          color: transitDetailSummaryPalette.metaTextColor,
-                        },
-                      ]}
-                    >
-                      {selectedTransitMeta.combinedText}
-                    </Text>
-                  )}
-                </View>
-              ) : (
-                <>
-                  <View style={styles.selectedRouteSummaryHeader}>
-                    <View
-                      style={[
-                        styles.selectedRouteDurationBlock,
-                        isTransitDetailMode &&
-                          styles.selectedRouteDurationBlockCompact,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.selectedRouteOptimalText,
-                          isTransitDetailMode &&
-                            styles.selectedRouteOptimalTextCompact,
-                          {
-                            color: isTransitDetailMode
-                              ? transitDetailControlText
-                              : colors.selectedDayBg,
-                          },
-                        ]}
-                      >
-                        {selectedTransitStatusLabel}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.transitDurationLarge,
-                          isTransitDetailMode &&
-                            styles.transitDurationLargeCompact,
-                          { color: detailPrimaryText },
-                        ]}
-                      >
-                        {selectedAlternative.transitServiceState ===
-                        'not_operating'
-                          ? '운행 종료'
-                          : formatRouteInfoDuration(
-                              selectedRouteInfo?.totalDurationMinutes ??
-                                selectedAlternative.minutes,
-                            )}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {!!selectedTransitTimeRange && isTransitMode && (
-                    <Text
-                      style={[
-                        styles.transitReferenceMetaText,
-                        isTransitDetailMode &&
-                          styles.transitReferenceMetaTextCompact,
-                        { color: detailSecondaryText },
-                      ]}
-                    >
-                      {selectedTransitTimeRange}
-                    </Text>
-                  )}
-                </>
-              )}
+                )}
+              </View>
 
               {!isTransitMode && (
                 <Text
@@ -310,33 +276,6 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
                 </Text>
               )}
 
-              {isTransitMode && selectedTransitProgressSegments.length > 0 && (
-                <TransitRouteProgressBar
-                  segments={selectedTransitProgressSegments}
-                  isDark={isDark}
-                  compact={isTransitDetailMode}
-                />
-              )}
-
-              {isTransitMode && !isTransitDetailMode && (
-                <View
-                  style={[
-                    styles.transitDetailBaseTimeRow,
-                    isTransitDetailMode &&
-                      styles.transitDetailBaseTimeRowCompact,
-                    { borderTopColor: detailBorderColor },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.transitDetailBaseTimeText,
-                      { color: detailSecondaryText },
-                    ]}
-                  >
-                    {formatTransitClock(selectedRouteDepartureAt)} 기준
-                  </Text>
-                </View>
-              )}
               {!isTransitMode &&
                 selectedAlternativeTransitModeLabels.length > 0 && (
                   <View style={styles.transitModeChipRow}>
@@ -363,46 +302,6 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
                     ))}
                   </View>
                 )}
-
-              {!isTransitMode && selectedAlternativeMetricTags.length > 0 && (
-                <View style={styles.transitMetricTagRow}>
-                  {selectedAlternativeMetricTags.map(metric => (
-                    <View
-                      key={`selected-${metric}`}
-                      style={[
-                        styles.transitMetricTag,
-                        {
-                          borderColor: colors.border,
-                          backgroundColor: overlayPanelBg,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.transitMetricTagText,
-                          { color: colors.textPrimary },
-                        ]}
-                      >
-                        {metric}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {!isRouteDetailMode &&
-                !!selectedAlternativeStepPreview &&
-                (!Array.isArray(selectedAlternative.transitLegs) ||
-                  selectedAlternative.transitLegs.length === 0) && (
-                  <Text
-                    style={[
-                      styles.selectedRouteBodyText,
-                      { color: colors.textSecondary },
-                    ]}
-                  >
-                    {selectedAlternativeStepPreview}
-                  </Text>
-                )}
             </View>
           )}
 
@@ -410,27 +309,30 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
             <View
               style={[
                 styles.transitReferenceTimeline,
-                isRouteDetailMode
-                  ? styles.transitReferenceTimelineDetail
-                  : null,
+                styles.transitReferenceTimelineDetail,
               ]}
             >
               <RouteStepTimeline
+                key={selectedRouteInfo.id}
                 routeInfo={selectedRouteInfo}
                 selectedStepId={selectedRouteStepId}
-                selectedPassStop={
-                  selectedTransitMapStop
-                    ? {
-                        stepId: `leg-${selectedTransitMapStop.legIndex}`,
-                        stopIndex: selectedTransitMapStop.stopIndex,
-                      }
-                    : undefined
-                }
+                selectedPassStop={mapStopStepId && selectedStopRow !== undefined && selectedStopRow >= 0
+                  ? { stepId: mapStopStepId, stopIndex: selectedStopRow }
+                  : undefined}
+                canShowPassStopOnMap={(stepId, index) => Boolean(getMapStop(stepId, index))}
+                preserveStopDisclosureOnLegFocus
+                onRevealFirstStop={onRevealFirstStop}
+                onPassStopPress={(stepId, index) => {
+                  const stop = getMapStop(stepId, index);
+                  if (stop) focusTransitMapStop(stop);
+                }}
                 onStepPress={focusRouteInfoStep}
                 forceDark={shouldRenderTransitDetailDark}
                 primaryTextColor={detailPrimaryText}
                 secondaryTextColor={detailSecondaryText}
-                compact={isRouteDetailMode}
+                showEstimatedClockHeading={isDurationEstimate}
+                compact
+                inlineStationRail
               />
             </View>
           ) : Array.isArray(selectedAlternative?.transitLegs) &&
@@ -569,7 +471,7 @@ export function RoutePlannerAlternativeSection({ controller }: Props) {
               </View>
             </View>
           ) : null}
-        </View>
+        </Reanimated.View>
       )}
     </View>
   );

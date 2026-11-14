@@ -4,7 +4,7 @@ import type { ScheduleDetailStylesOptions } from "../schedule-detail.styles";
 
 /** sheetBase 영역의 정적 스타일을 생성합니다. */
 export function createSheetBaseStyles(options: ScheduleDetailStylesOptions) {
-    void options;
+    const { SHEET_HANDLE_HEIGHT } = options;
     return StyleSheet.create({
         routeSheet: {
         position: "absolute",
@@ -14,16 +14,13 @@ export function createSheetBaseStyles(options: ScheduleDetailStylesOptions) {
         zIndex: 28,
         elevation: 28,
     },
-        routeSheetGlass: {
+        routeSheetSurface: {
         flex: 1,
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
         paddingHorizontal: 20,
         borderTopWidth: 1,
         overflow: "hidden",
-    },
-        panelOpaqueBackdrop: {
-        opacity: 1,
     },
         panelOpaqueBackdropDark: {
         backgroundColor: "#171A20",
@@ -32,18 +29,25 @@ export function createSheetBaseStyles(options: ScheduleDetailStylesOptions) {
         backgroundColor: "#F8FAFC",
     },
         sheetHandleHitArea: {
-        height: 32,
+        height: SHEET_HANDLE_HEIGHT,
         alignItems: "center",
         justifyContent: "center",
     },
-        sheetHandle: {
-        width: 34,
-        height: 4,
-        borderRadius: 999,
+        sheetHandleButton: {
+        width: "100%",
+        height: SHEET_HANDLE_HEIGHT,
+        alignItems: "center",
+        justifyContent: "center",
     },
         sheetScroll: { flex: 1 },
         sheetScrollContent: { paddingBottom: 0 },
+        sheetContent: { flex: 1 },
         sheetQuickSummaryClip: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 1,
         overflow: "hidden",
     },
     });

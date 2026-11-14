@@ -40,12 +40,15 @@ type BrandedLoaderProps = {
     variant?: BrandedLoaderVariant;
     size?: BrandedLoaderSize;
     style?: StyleProp<ViewStyle>;
+    markMotion?: "orbit" | "settle";
 };
 
 type BrandedLoadingStateProps = BrandedLoaderProps & {
     title?: string;
     caption?: string;
     fill?: boolean;
+    settleOnly?: boolean;
+    settleDelayMs?: number;
 };
 
 /**
@@ -58,12 +61,14 @@ export default function BrandedLoader({
     variant = "schedule",
     size = "full",
     style,
+    markMotion = "orbit",
 }: BrandedLoaderProps) {
     if (size === "button") {
         return (
             <BrandedLoadingMark
                 accessibilityLabel={accessibilityLabel}
                 style={style}
+                markMotion={markMotion}
             />
         );
     }
@@ -100,6 +105,8 @@ export function BrandedLoadingState({
     title,
     caption,
     fill = false,
+    settleOnly = false,
+    settleDelayMs,
     style,
 }: BrandedLoadingStateProps) {
     const { colors } = useTheme();
@@ -119,11 +126,19 @@ export function BrandedLoadingState({
                 testID="branded-loading-state-content"
                 style={styles.stateContent}
             >
-                <BrandedLoader
-                    accessibilityLabel={accessibilityLabel}
-                    variant={variant}
-                    size={size}
-                />
+                {settleOnly ? (
+                    <QuickScheduleLogoLoader
+                        accessibilityLabel={accessibilityLabel}
+                        settleOnly
+                        settleDelayMs={settleDelayMs}
+                    />
+                ) : (
+                    <BrandedLoader
+                        accessibilityLabel={accessibilityLabel}
+                        variant={variant}
+                        size={size}
+                    />
+                )}
                 {title ? (
                     <Text style={[styles.title, { color: colors.textPrimary }]}>
                         {title}
@@ -142,10 +157,12 @@ export function BrandedLoadingState({
 function BrandedLoadingMark({
     accessibilityLabel,
     style,
-}: Pick<BrandedLoaderProps, "accessibilityLabel" | "style">) {
+    markMotion,
+}: Pick<BrandedLoaderProps, "accessibilityLabel" | "style" | "markMotion">) {
     const { mode } = useTheme();
     const reduceMotionEnabled = useReducedMotion();
-    const progress = useSharedValue(0);
+    const settle = markMotion === "settle";
+    const progress = useSharedValue(settle && reduceMotionEnabled ? 1 : 0);
     const isDark = mode === "dark";
     const logoSource = isDark ? GLASS_LOGO_DARK : GLASS_LOGO_LIGHT;
 
@@ -153,24 +170,36 @@ function BrandedLoadingMark({
         cancelAnimation(progress);
 
         if (reduceMotionEnabled) {
-            progress.value = 0.12;
+            progress.value = settle ? 1 : 0.12;
             return () => cancelAnimation(progress);
         }
 
         progress.value = 0;
-        progress.value = withRepeat(
+        progress.value = settle ? withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) }) : withRepeat(
             withTiming(1, { duration: 1_200, easing: Easing.linear }),
             -1,
             false,
         );
 
         return () => cancelAnimation(progress);
-    }, [progress, reduceMotionEnabled]);
+    }, [progress, reduceMotionEnabled, settle]);
 
     const orbitStyle = useAnimatedStyle(() => ({
         transform: [{ rotate: `${progress.value * 360}deg` }],
     }));
     const logoStyle = useAnimatedStyle(() => {
+        if (settle) {
+            const remaining = 1 - progress.value;
+            return {
+                opacity: 1,
+                transform: [
+                    { perspective: 160 },
+                    { rotateX: `${remaining * 12}deg` },
+                    { rotateY: `${remaining * -18}deg` },
+                    { scale: 1 - remaining * 0.06 },
+                ],
+            };
+        }
         const wave = (Math.sin(progress.value * Math.PI * 2) + 1) / 2;
         return {
             opacity: 0.92 + wave * 0.08,
@@ -186,23 +215,22 @@ function BrandedLoadingMark({
             testID="branded-loader-button"
             style={[styles.buttonMark, style]}
         >
-            <View
-                style={[
-                    styles.buttonRing,
-                    isDark ? styles.buttonRingDark : styles.buttonRingLight,
-                ]}
-            />
-            <Reanimated.View
-                pointerEvents="none"
-                style={[styles.buttonOrbit, orbitStyle]}
-            >
+            {!settle && <>
                 <View
                     style={[
-                        styles.buttonParticle,
-                        isDark ? styles.buttonParticleDark : styles.buttonParticleLight,
+                        styles.buttonRing,
+                        isDark ? styles.buttonRingDark : styles.buttonRingLight,
                     ]}
                 />
-            </Reanimated.View>
+                <Reanimated.View pointerEvents="none" style={[styles.buttonOrbit, orbitStyle]}>
+                    <View
+                        style={[
+                            styles.buttonParticle,
+                            isDark ? styles.buttonParticleDark : styles.buttonParticleLight,
+                        ]}
+                    />
+                </Reanimated.View>
+            </>}
             <Reanimated.View
                 pointerEvents="none"
                 style={[styles.buttonLogoMask, logoStyle]}

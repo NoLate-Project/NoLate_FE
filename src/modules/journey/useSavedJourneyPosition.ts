@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { Platform } from "react-native";
-import { automaticRecord, getAutomaticJourneySnapshot, subscribeAutomaticJourney, type AutomaticJourneyBinding, type AutomaticJourneySnapshot } from "./automaticJourney";
+import { automaticRecord, getAutomaticJourneySnapshot, isAutomaticJourneyDevelopment, subscribeAutomaticJourney, type AutomaticJourneyBinding, type AutomaticJourneySnapshot } from "./automaticJourney";
 import { getAutomaticJourneyTrialBinding, getAutomaticJourneyTrialInput, subscribeAutomaticJourneySync } from "./automaticJourneyTrial";
 import type { JourneyRouteInput } from "./journeyRouteInput";
 import { presentSavedJourneyGuidance } from "./savedJourneyGuidance";
@@ -28,7 +27,7 @@ export function useSavedJourneyMapView(input: JourneyRouteInput | null, schedule
     const [snapshot, setSnapshot] = useState<AutomaticJourneySnapshot | null>(null);
     const [now, setNow] = useState(Date.now() / 1000);
     const [, redraw] = useState(0);
-    const enabled = __DEV__ && Platform.OS === "ios" && !!input;
+    const enabled = !!input && isAutomaticJourneyDevelopment();
     useEffect(() => {
         setSnapshot(null);
         if (!enabled) return;

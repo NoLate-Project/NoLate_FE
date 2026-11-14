@@ -1,13 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { inputDesignPreviewStyles, useScheduleInputDesignPreview } from "./ScheduleInputDesignPreviewContext";
 import {
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
@@ -47,6 +46,7 @@ type QuickScheduleModalShellProps = {
   contentRevealCurtainAnimatedStyle: StyleProp<ViewStyle>;
   currentStep: React.ReactNode;
   flowStep: FlowStep;
+  presentedStep: FlowStep;
   flowTitle: string;
   inputModeDescription: string;
   isPrewarmOnly: boolean;
@@ -76,6 +76,7 @@ export function QuickScheduleModalShell({
   contentRevealCurtainAnimatedStyle,
   currentStep,
   flowStep,
+  presentedStep,
   flowTitle,
   inputModeDescription,
   isPrewarmOnly,
@@ -87,16 +88,16 @@ export function QuickScheduleModalShell({
   presentationStyle,
   submitting,
 }: QuickScheduleModalShellProps) {
-  const isTossPreview = useScheduleInputDesignPreview();
+  const largeText = useWindowDimensions().fontScale > 1.35;
+  const usePreviewHeader = presentedStep !== "input";
   return (
     <Reanimated.View
       pointerEvents={isPrewarmOnly ? "none" : "box-none"}
       style={[styles.screen, presentationStyle]}
     >
-      <KeyboardAvoidingView
+      <View
         accessibilityViewIsModal
         accessibilityElementsHidden={isPrewarmOnly}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
         importantForAccessibility={isPrewarmOnly ? "no-hide-descendants" : "auto"}
         pointerEvents={isPrewarmOnly ? "none" : "box-none"}
         style={styles.screenContent}
@@ -140,7 +141,7 @@ export function QuickScheduleModalShell({
               <View style={styles.content}>
                 {contentMounted && (
                   <>
-                    <View style={[styles.closeButton, { backgroundColor: colors.surface2 }]}>
+                    <View style={[styles.closeButton, largeText && styles.closeButtonLarge, { backgroundColor: colors.surface2 }]}>
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="빠른 일정 등록 닫기"
@@ -153,17 +154,17 @@ export function QuickScheduleModalShell({
                         hitSlop={10}
                         style={({ pressed }) => [styles.closeButtonPressable, { opacity: pressed ? 0.58 : 1 }]}
                       >
-                        <Ionicons accessible={false} name="close" size={22} color={colors.textSecondary} />
+                        <Ionicons accessible={false} name="close-outline" size={22} color={colors.textSecondary} />
                       </Pressable>
                     </View>
-                    <View style={[styles.header, flowStep !== "input" && styles.headerCentered, (flowStep === "preview" || flowStep === "edit") && styles.flowHeader]}>
-                      {flowStep === "edit" && (
+                    <View style={[styles.header, presentedStep !== "input" && styles.headerCentered, usePreviewHeader && styles.flowHeader]}>
+                      {presentedStep === "edit" && (
                         <Pressable accessibilityRole="button" accessibilityLabel="일정 미리보기로 돌아가기" onPress={onCancelEditField} hitSlop={10} style={({ pressed }) => [styles.backButton, { opacity: pressed ? 0.58 : 1 }]}>
-                          <Ionicons accessible={false} name="chevron-back" size={22} color={colors.textSecondary} />
+                          <Ionicons accessible={false} name="chevron-back-outline" size={22} color={colors.textSecondary} />
                         </Pressable>
                       )}
-                      <Text style={[styles.title, (flowStep === "preview" || flowStep === "edit") && styles.flowHeaderTitle, { color: colors.textPrimary }]}>{flowTitle}</Text>
-                      {flowStep === "input" && <Text style={[styles.headerDescription, isTossPreview && inputDesignPreviewStyles.headerDescription, { color: colors.textSecondary }]}>{isTossPreview && inputModeDescription.startsWith("날짜") ? "한 문장으로 간편하게 등록해요" : inputModeDescription}</Text>}
+                      <Text accessibilityRole="header" lineBreakStrategyIOS="hangul-word" maxFontSizeMultiplier={largeText ? 2.4 : undefined} style={[styles.title, usePreviewHeader && styles.flowHeaderTitle, largeText && styles.titleLarge, { color: colors.textPrimary }]}>{flowTitle}</Text>
+                      {presentedStep === "input" && !largeText && <Text style={[styles.headerDescription, { color: colors.textSecondary }]}>{inputModeDescription}</Text>}
                     </View>
                     {categoryError && onRetryCategories ? (
                       <CategoryLoadErrorBanner compact retrying={categoryLoading} onRetry={onRetryCategories} />
@@ -176,7 +177,7 @@ export function QuickScheduleModalShell({
             <Reanimated.View pointerEvents="none" style={[styles.contentRevealCurtain, contentRevealCurtainAnimatedStyle, { backgroundColor: cardSurfaceBackground }]} />
           </Reanimated.View>
         </Reanimated.View>
-      </KeyboardAvoidingView>
+      </View>
     </Reanimated.View>
   );
 }

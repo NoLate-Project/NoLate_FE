@@ -8,6 +8,10 @@ const detailSource = readFileSync(
   'src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx',
   'utf8',
 );
+const quickSummarySource = readFileSync(
+  'src/routeSupport/schedule/ScheduleDetailRouteQuickSummary.tsx',
+  'utf8',
+);
 const routeSummaryStart = detailSource.indexOf('styles.sheetRouteSummary');
 const routeSummaryEnd = detailSource.indexOf(
   '<SavedJourneyRouteTimeline',
@@ -19,16 +23,20 @@ const routeSummarySource = detailSource.slice(
 );
 
 describe('schedule route detail information hierarchy', () => {
-  test('detailed routes keep one summary source above the route bar', () => {
+  test('keeps the route bar in the collapsed summary and out of the detailed timeline', () => {
     expect(routeSummaryStart).toBeGreaterThanOrEqual(0);
     expect(routeSummaryEnd).toBeGreaterThan(routeSummaryStart);
     expect(routeSummarySource).toContain('{hasDetailedRoute ? (');
     expect(routeSummarySource).toContain('{!hasDetailedRoute ? (');
-    expect(routeSummarySource).toContain('<TransitRouteProgressBar');
+    expect(detailSource).not.toContain('<TransitRouteProgressBar');
+    expect(routeSummarySource).toContain('testID="schedule-route-timeline-heading"');
+    expect(routeSummarySource).not.toContain('경로 상세');
+    expect(quickSummarySource).toContain('<TransitRouteProgressBar');
+    expect(quickSummarySource).toContain("getScheduleAccessibilityVisibility(sheetMode === 'compact')");
   });
 
   test('own-route base time is delegated to the timeline while participant plans retain it', () => {
-    expect(routeSummarySource).toContain('{inspectedTravelPlan ? (');
+    expect(routeSummarySource).toContain('routeDetailInfo && inspectedTravelPlan ? (');
     expect(routeSummarySource).toMatch(
       /\{hhmmText\(fromISO\(routeDetailInfo\.departureTime\)\)\}\s+출발\s+기준/,
     );

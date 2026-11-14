@@ -5,14 +5,16 @@ export type BottomSheetSnap = "expanded" | "middle" | "collapsed" | "hidden";
 
 export const BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT = 30;
 export const TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT = 26;
+export const LARGE_TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT = 44;
 export const TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT = 72;
 export const TRANSIT_DETAIL_ACTION_BAR_TOP_PADDING = 8;
 export const TRANSIT_DETAIL_ACTION_BUTTON_HEIGHT = 46;
-export const TRANSIT_DETAIL_COLLAPSED_SUMMARY_HEIGHT = 40;
+export const TRANSIT_DETAIL_COLLAPSED_SUMMARY_HEIGHT = 44;
 
 const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT;
 const BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO = 0.2;
 const TRANSIT_DETAIL_MIDDLE_VISIBLE_RATIO = 0.5;
+const LARGE_TRANSIT_DETAIL_MIDDLE_CONTENT_HEIGHT = 260;
 const TRANSIT_DETAIL_COLLAPSED_VISIBLE_BASE_HEIGHT = 76;
 const BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION = 180;
 const BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD = 0.45;
@@ -25,6 +27,7 @@ export type RoutePlannerBottomSheetLayoutInput = {
     bottomSheetSnap: BottomSheetSnap;
     isBottomSheetHidden: boolean;
     isRouteDetailMode: boolean;
+    largeRouteText?: boolean;
     windowHeight: number;
     safeAreaTop: number;
     safeAreaBottom: number;
@@ -64,6 +67,7 @@ export function getRoutePlannerBottomSheetLayout({
     bottomSheetSnap,
     isBottomSheetHidden,
     isRouteDetailMode,
+    largeRouteText = false,
     windowHeight,
     safeAreaTop,
     safeAreaBottom,
@@ -79,9 +83,9 @@ export function getRoutePlannerBottomSheetLayout({
 
     const bottomPanelMaxHeight = isRouteDetailMode
         ? Math.min(
-            520,
+            largeRouteText ? 620 : 520,
             Math.max(300, windowHeight - Math.max(safeAreaTop + 104, 132)),
-            Math.max(340, Math.round(windowHeight * 0.56))
+            Math.max(340, Math.round(windowHeight * (largeRouteText ? 0.68 : 0.56)))
         )
         : Math.min(560, Math.max(300, windowHeight - Math.max(safeAreaTop + 104, 140)));
 
@@ -93,11 +97,6 @@ export function getRoutePlannerBottomSheetLayout({
         safeAreaBottom,
     });
     const bottomSheetCollapsedOffset = Math.max(0, bottomPanelHeight - bottomSheetCollapsedVisibleHeight);
-    const bottomSheetMiddleOffset = getMiddleOffset({
-        bottomPanelHeight,
-        bottomSheetCollapsedOffset,
-        isRouteDetailMode,
-    });
     const bottomSheetExpandedOffset = getExpandedOffset({
         bottomPanelHeight,
         bottomSheetCollapsedOffset,
@@ -116,6 +115,18 @@ export function getRoutePlannerBottomSheetLayout({
     const transitDetailActionBarReserveHeight = isRouteDetailMode
         ? Math.max(transitActionBarHeight, transitDetailActionBarEstimatedHeight)
         : 0;
+    const handleHeight = largeRouteText
+        ? LARGE_TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT
+        : TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT;
+    const bottomSheetMiddleOffset = getMiddleOffset({
+        bottomPanelHeight,
+        bottomSheetCollapsedOffset,
+        isRouteDetailMode,
+        minimumVisibleHeight: largeRouteText
+            ? transitDetailActionBarReserveHeight + handleHeight + LARGE_TRANSIT_DETAIL_MIDDLE_CONTENT_HEIGHT
+            : 0,
+        bottomSheetExpandedOffset,
+    });
 
     const visibleBottomSheetHeight = bottomPanelHeight > 0
         ? Math.max(
@@ -134,7 +145,7 @@ export function getRoutePlannerBottomSheetLayout({
         ? getTransitDetailScrollViewportHeight(
             visibleBottomSheetHeight,
             transitDetailActionBarReserveHeight,
-            TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT
+            handleHeight
         )
         : undefined;
     const bottomPanelScrollBottomPadding = isRouteDetailMode ? 34 : Math.max(safeAreaBottom + 8, 12);
@@ -192,14 +203,19 @@ function getMiddleOffset({
     bottomPanelHeight,
     bottomSheetCollapsedOffset,
     isRouteDetailMode,
+    minimumVisibleHeight,
+    bottomSheetExpandedOffset,
 }: {
     bottomPanelHeight: number;
     bottomSheetCollapsedOffset: number;
     isRouteDetailMode: boolean;
+    minimumVisibleHeight: number;
+    bottomSheetExpandedOffset: number;
 }): number {
     if (!isRouteDetailMode) return Math.round(bottomSheetCollapsedOffset * 0.52);
     if (bottomPanelHeight <= 0) return Math.round(bottomSheetCollapsedOffset * 0.45);
-    const targetOffset = Math.max(0, Math.round(bottomPanelHeight * (1 - TRANSIT_DETAIL_MIDDLE_VISIBLE_RATIO)));
+    const visibleHeight = Math.max(bottomPanelHeight * TRANSIT_DETAIL_MIDDLE_VISIBLE_RATIO, minimumVisibleHeight);
+    const targetOffset = Math.max(bottomSheetExpandedOffset, Math.round(bottomPanelHeight - visibleHeight));
     return Math.min(bottomSheetCollapsedOffset, targetOffset);
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Animated } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import type { Dispatch, SetStateAction } from 'react';
 
 import {
@@ -21,6 +22,7 @@ export function useScheduleAddPickerAnimation({
   picker,
   setDisplayPicker,
 }: Params) {
+  const reduceMotion = useReducedMotion();
   // 날짜/시간 피커의 높이와 투명도 전환을 관리한다.
   const heightAnim = useRef(new Animated.Value(0)).current;
   const outerOpacity = useRef(new Animated.Value(0)).current;
@@ -30,6 +32,13 @@ export function useScheduleAddPickerAnimation({
   useEffect(() => {
     const prev = prevPickerRef.current;
     prevPickerRef.current = picker;
+    if (reduceMotion) {
+      heightAnim.setValue(picker ? pickerTargetH(picker) : 0);
+      outerOpacity.setValue(picker ? 1 : 0);
+      contentFade.setValue(1);
+      setDisplayPicker(picker);
+      return;
+    }
 
     if (picker !== null && prev === null) {
       // 피커를 처음 열 때 높이와 투명도를 함께 올린다.
@@ -94,6 +103,6 @@ export function useScheduleAddPickerAnimation({
         setDisplayPicker(picker);
       }
     }
-  }, [picker, contentFade, heightAnim, outerOpacity, setDisplayPicker]);
+  }, [picker, contentFade, heightAnim, outerOpacity, reduceMotion, setDisplayPicker]);
   return { contentFade, heightAnim, outerOpacity };
 }

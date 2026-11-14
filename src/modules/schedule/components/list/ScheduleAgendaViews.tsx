@@ -1,10 +1,12 @@
 import styles from "./ScheduleAgendaViews.styles";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
     ActionSheetIOS,
     Alert,
     Animated,
+    Easing,
     type GestureResponderEvent,
+    type LayoutChangeEvent,
     PanResponder,
     type PanResponderGestureState,
     Platform,
@@ -13,6 +15,7 @@ import {
     Text,
     View,
 } from "react-native";
+import { useReducedMotion } from "react-native-reanimated";
 
 import { useTheme } from "../../../theme/ThemeContext";
 import {
@@ -31,7 +34,6 @@ import type { ScheduleItem } from "../../types";
 import { getFloatingActionBarClearance } from "../shared/floatingActionBarLayout";
 import ScheduleAgendaCard from "./ScheduleAgendaCard";
 import type { ScheduleSwipeActionResolver } from "../ScheduleSwipeActions";
-import { BrandedLoadingState } from "../../../../ui/BrandedLoader";
 import ScheduleIcon from "../shared/ScheduleIcon";
 
 const WEEKDAY_SHORT = ["일", "월", "화", "수", "목", "금", "토"];
@@ -77,17 +79,74 @@ type AgendaStateProps = {
     onRequestScheduleActions?: (item: ScheduleItem) => void;
     routeSetupRequiredCount?: number;
     onOpenRouteSetup?: () => void;
+    returnHighlight?: { id: string; opacity: Animated.Value };
 };
 
 type SelectedDayAgendaPanelProps = AgendaStateProps & {
     selectedDay: string;
     onRequestViewMode: (mode: MonthAgendaSteppedTarget) => void;
+    savedItemId?: string;
+    saveReturnVisible?: boolean;
+    reduceEntryMotion?: boolean;
 };
 
 type MonthAgendaListProps = AgendaStateProps & {
     visibleMonth: string;
     onRequestViewMode: (mode: MonthAgendaSteppedTarget) => void;
+    entryDate?: string;
+    savedEntry?: { itemId: string; categoryId?: string };
+    saveReturnVisible?: boolean;
+    reduceEntryMotion?: boolean;
 };
+
+function useLoadedAgendaOpacity(loading: boolean, hasVisibleResults: boolean) {
+    const reduceMotion = useReducedMotion();
+    const wasLoading = useRef(loading);
+    const opacity = useRef(new Animated.Value(1)).current;
+
+    useLayoutEffect(() => {
+        const reveal = wasLoading.current && !loading && hasVisibleResults && !reduceMotion;
+        wasLoading.current = loading;
+        opacity.setValue(reveal ? 0 : 1);
+        if (!reveal) return;
+
+        const animation = Animated.timing(opacity, {
+            toValue: 1,
+            duration: 160,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+            isInteraction: false,
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [hasVisibleResults, loading, opacity, reduceMotion]);
+
+    return opacity;
+}
+
+function useAgendaEntryHighlight(entryId: string | undefined, ready: boolean, reduceMotion: boolean) {
+    const opacity = useRef(new Animated.Value(0)).current;
+    const shownEntry = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        if (!entryId || !ready || shownEntry.current === entryId) return;
+        shownEntry.current = entryId;
+        if (reduceMotion) return;
+        opacity.setValue(0.08);
+        const fade = Animated.timing(opacity, {
+            toValue: 0,
+            duration: 240,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+            isInteraction: false,
+        });
+        fade.start();
+        return () => {
+            fade.stop();
+            opacity.setValue(0);
+        };
+    }, [entryId, opacity, ready, reduceMotion]);
+    return opacity;
+}
 
 function AgendaInlineState({
     loading,
@@ -104,12 +163,17 @@ function AgendaInlineState({
 
     if (loading) {
         return (
-            <BrandedLoadingState
-                size="section"
-                variant="schedule"
+            <View
+                accessible
+                accessibilityRole="progressbar"
+                accessibilityLiveRegion="polite"
                 accessibilityLabel="일정을 불러오는 중이에요"
-                caption="일정을 불러오는 중이에요"
-            />
+                style={[styles.emptyState, styles.loadingState]}
+            >
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    일정을 불러오는 중이에요
+                </Text>
+            </View>
         );
     }
 
@@ -379,6 +443,10 @@ export function SelectedDayAgendaPanel({
     routeSetupRequiredCount = 0,
     onOpenRouteSetup,
     onRequestViewMode,
+    returnHighlight,
+    savedItemId,
+    saveReturnVisible = true,
+    reduceEntryMotion = true,
 }: SelectedDayAgendaPanelProps) {
     const { colors, mode } = useTheme();
     const selectedItems = useMemo(
@@ -386,6 +454,9 @@ export function SelectedDayAgendaPanel({
         [items, selectedDay]
     );
     const selectedLabels = getCompactSectionLabels(selectedDay);
+    const loadedOpacity = useLoadedAgendaOpacity(loading, !error && selectedItems.length > 0);
+    const savedRowReady = saveReturnVisible && !loading && !error && selectedItems.some(item => item.id === savedItemId);
+    const savedRowHighlight = useAgendaEntryHighlight(savedItemId, savedRowReady, reduceEntryMotion);
 
     return (
         <View
@@ -403,15 +474,15 @@ export function SelectedDayAgendaPanel({
             />
             <View testID="selected-day-agenda-heading" style={styles.selectedDayHeading}>
                 <View style={styles.sectionHeading}>
-                    <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                    <Text accessibilityRole="header" maxFontSizeMultiplier={1.6} style={[styles.sectionTitle, { color: colors.textPrimary }]}>
                         {selectedLabels.dateLabel}
                     </Text>
-                    <Text style={[styles.sectionWeekday, { color: colors.textSecondary }]}>
+                    <Text maxFontSizeMultiplier={1.6} style={[styles.sectionWeekday, { color: colors.textSecondary }]}>
                         {selectedLabels.weekdayLabel}
                     </Text>
                 </View>
                 {!loading && !error ? (
-                    <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>
+                    <Text maxFontSizeMultiplier={1.6} style={[styles.sectionCount, { color: colors.textSecondary }]}>
                         {selectedItems.length}개의 일정
                     </Text>
                 ) : null}
@@ -440,7 +511,7 @@ export function SelectedDayAgendaPanel({
                         onPressRetry={onPressRetry}
                     />
                 ) : (
-                    <View
+                    <Animated.View
                         testID="selected-day-agenda-group"
                         style={[
                             styles.selectedDayGroup,
@@ -449,6 +520,7 @@ export function SelectedDayAgendaPanel({
                                     ? colors.surface
                                     : colors.surface2,
                                 borderColor: colors.border,
+                                opacity: loadedOpacity,
                             },
                         ]}
                     >
@@ -467,6 +539,9 @@ export function SelectedDayAgendaPanel({
                                     item={item}
                                     groupRow
                                     showMultiDaySummary
+                                    returnHighlightOpacity={returnHighlight?.id === item.id
+                                        ? returnHighlight.opacity
+                                        : savedItemId === item.id && !reduceEntryMotion ? savedRowHighlight : undefined}
                                     onPress={() => onOpenSchedule(item.id)}
                                     swipeActions={getScheduleSwipeActions?.(item)}
                                     onLongPress={onRequestScheduleActions
@@ -475,7 +550,7 @@ export function SelectedDayAgendaPanel({
                                 />
                             </React.Fragment>
                         ))}
-                    </View>
+                    </Animated.View>
                 )}
             </ScrollView>
         </View>
@@ -496,9 +571,23 @@ export function MonthAgendaList({
     routeSetupRequiredCount = 0,
     onOpenRouteSetup,
     onRequestViewMode,
+    entryDate,
+    savedEntry,
+    saveReturnVisible = true,
+    reduceEntryMotion = true,
+    returnHighlight,
 }: MonthAgendaListProps) {
     const { colors, mode } = useTheme();
     const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+    const [handledSavedItem, setHandledSavedItem] = useState<string>();
+    const [filterClearedFor, setFilterClearedFor] = useState<string>();
+    if (savedEntry && savedEntry.itemId !== handledSavedItem) {
+        setHandledSavedItem(savedEntry.itemId);
+        if (selectedCategoryId && selectedCategoryId !== savedEntry.categoryId) {
+            setSelectedCategoryId(null);
+            setFilterClearedFor(savedEntry.itemId);
+        }
+    }
     const monthItems = useMemo(
         () => getVisibleMonthAgendaItems(items, visibleMonth),
         [items, visibleMonth]
@@ -517,16 +606,89 @@ export function MonthAgendaList({
             : monthItems,
         [activeCategoryId, monthItems]
     );
-    const sections = useMemo(
-        () => buildMonthAgendaSections(filteredItems, visibleMonth),
-        [filteredItems, visibleMonth]
+    const { sections, entrySectionDate } = useMemo(() => {
+        const monthSections = buildMonthAgendaSections(filteredItems, visibleMonth);
+        if (!entryDate || loading || error || (activeCategoryId && !savedEntry) || monthSections.length === 0) {
+            return { sections: monthSections, entrySectionDate: undefined };
+        }
+        if (monthSections.some(section => section.dateKey === entryDate)) {
+            return { sections: monthSections, entrySectionDate: entryDate };
+        }
+        const activeItems = new Set(getSelectedDayAgendaItems(filteredItems, entryDate).map(item => item.id));
+        const continuingSection = [...monthSections].reverse().find(section =>
+            section.items.some(item => activeItems.has(item.id))
+        );
+        if (continuingSection) {
+            return { sections: monthSections, entrySectionDate: continuingSection.dateKey };
+        }
+        const emptyEntry = { dateKey: entryDate, header: '', itemCount: 0, items: [] };
+        return {
+            sections: [...monthSections, emptyEntry].sort((a, b) => a.dateKey.localeCompare(b.dateKey)),
+            entrySectionDate: entryDate,
+        };
+    }, [activeCategoryId, entryDate, error, filteredItems, loading, savedEntry, visibleMonth]);
+    const scrollRef = useRef<ScrollView>(null);
+    const entryLayout = useRef({ viewportHeight: 0, contentHeight: 0, offset: null as number | null });
+    const entryFrame = useRef<number | null>(null);
+    const entryStarted = useRef(false);
+    const [entryPositioned, setEntryPositioned] = useState(false);
+    const [entryEndSpace, setEntryEndSpace] = useState(0);
+    useLayoutEffect(() => {
+        entryLayout.current = { viewportHeight: 0, contentHeight: 0, offset: null };
+        entryStarted.current = false;
+        setEntryPositioned(false);
+        setEntryEndSpace(0);
+        return () => {
+            if (entryFrame.current !== null) cancelAnimationFrame(entryFrame.current);
+            entryFrame.current = null;
+        };
+    }, [handledSavedItem]);
+    const positionEntry = useCallback(() => {
+        if (entryStarted.current) return;
+        const { viewportHeight, contentHeight, offset } = entryLayout.current;
+        if (!viewportHeight || !contentHeight || offset === null) return;
+        const missingSpace = viewportHeight + offset - contentHeight;
+        if (missingSpace > 1) {
+            setEntryEndSpace(Math.ceil(missingSpace));
+            return;
+        }
+        entryStarted.current = true;
+        entryFrame.current = requestAnimationFrame(() => {
+            scrollRef.current?.scrollTo({ y: offset, animated: false });
+            entryFrame.current = requestAnimationFrame(() => {
+                entryFrame.current = null;
+                setEntryPositioned(true);
+            });
+        });
+    }, []);
+    const measureEntry = useCallback((event: LayoutChangeEvent) => {
+        entryLayout.current.offset = Math.max(0, event.nativeEvent.layout.y - 8);
+        positionEntry();
+    }, [positionEntry]);
+    const measureEntryViewport = useCallback((event: LayoutChangeEvent) => {
+        entryLayout.current.viewportHeight = event.nativeEvent.layout.height;
+        positionEntry();
+    }, [positionEntry]);
+    const measureEntryContent = useCallback((_width: number, height: number) => {
+        entryLayout.current.contentHeight = height;
+        positionEntry();
+    }, [positionEntry]);
+    const entryHighlight = useAgendaEntryHighlight(
+        savedEntry?.itemId ?? entrySectionDate,
+        entryPositioned && saveReturnVisible && (!savedEntry || filteredItems.some(item => item.id === savedEntry.itemId)),
+        reduceEntryMotion
+    );
+    const positioningEntry = Boolean(entrySectionDate && !entryPositioned);
+    const loadedOpacity = useLoadedAgendaOpacity(
+        loading,
+        !error && sections.length > 0 && !entrySectionDate
     );
     const visibleMonthNumber = Number(visibleMonth.slice(5, 7));
-    const selectedCategoryTitle = activeCategoryId
-        ? categoryOptions.find((option) => option.id === activeCategoryId)?.title
-            ?? "전체 일정"
-        : "전체 일정";
-    const listIdentity = `${visibleMonth.slice(0, 7)}:${activeCategoryId ?? "all"}`;
+    const allCategoriesTitle = "모든 카테고리";
+    const selectedCategoryTitle = categoryOptions.find(
+        (option) => option.id === activeCategoryId
+    )?.title ?? allCategoriesTitle;
+    const listIdentity = `${visibleMonth.slice(0, 7)}:${activeCategoryId ?? "all"}:${handledSavedItem ?? ""}`;
 
     useEffect(() => {
         if (
@@ -539,6 +701,7 @@ export function MonthAgendaList({
 
     const selectCategoryOption = useCallback((buttonIndex: number) => {
         if (buttonIndex === categoryOptions.length + 1) return;
+        setFilterClearedFor(undefined);
         setSelectedCategoryId(
             buttonIndex === 0
                 ? null
@@ -548,7 +711,7 @@ export function MonthAgendaList({
 
     const openCategoryFilter = useCallback(() => {
         const options = [
-            "전체 일정",
+            allCategoriesTitle,
             ...categoryOptions.map((option) => option.title),
             "취소",
         ];
@@ -557,7 +720,7 @@ export function MonthAgendaList({
         if (Platform.OS === "ios") {
             ActionSheetIOS.showActionSheetWithOptions(
                 {
-                    title: "표시할 일정",
+                    title: "카테고리 선택",
                     options,
                     cancelButtonIndex,
                 },
@@ -567,7 +730,7 @@ export function MonthAgendaList({
         }
 
         Alert.alert(
-            "표시할 일정",
+            "카테고리 선택",
             undefined,
             options.map((text, index) => ({
                 text,
@@ -616,6 +779,7 @@ export function MonthAgendaList({
                     ]}
                 >
                     <Text
+                        maxFontSizeMultiplier={1.5}
                         numberOfLines={1}
                         style={[
                             styles.agendaFilterText,
@@ -628,11 +792,24 @@ export function MonthAgendaList({
                 </Pressable>
             </View>
 
-            <ScrollView
+            {savedEntry && filterClearedFor === savedEntry.itemId && (
+                <Text accessibilityLiveRegion="polite" style={[styles.agendaFilterNotice, { color: colors.textSecondary }]}>
+                    저장한 일정이 보이도록 필터를 해제했어요.
+                </Text>
+            )}
+
+            <Animated.ScrollView
                 key={listIdentity}
+                ref={scrollRef}
+                onLayout={positioningEntry ? measureEntryViewport : undefined}
+                onContentSizeChange={positioningEntry ? measureEntryContent : undefined}
+                pointerEvents={positioningEntry ? 'none' : 'auto'}
+                accessibilityElementsHidden={positioningEntry}
+                importantForAccessibility={positioningEntry ? 'no-hide-descendants' : 'auto'}
                 style={[
                     styles.scroll,
                     { marginBottom: getFloatingActionBarClearance(bottomInset) },
+                    positioningEntry ? styles.unpositionedAgenda : { opacity: loadedOpacity },
                 ]}
                 contentContainerStyle={[
                     styles.monthListContent,
@@ -656,17 +833,27 @@ export function MonthAgendaList({
                 ) : (
                     sections.map((section) => {
                         const labels = getCompactSectionLabels(section.dateKey);
+                        const isEntry = section.dateKey === entrySectionDate;
 
                         return (
-                            <View key={section.dateKey} style={styles.section}>
+                            <View key={section.dateKey} style={styles.section} onLayout={isEntry && positioningEntry ? measureEntry : undefined}>
                                 <View
+                                    testID={isEntry ? 'month-agenda-entry-date' : undefined}
                                     style={[
                                         styles.sectionHeader,
                                         { borderBottomColor: colors.border },
                                     ]}
                                 >
+                                    {isEntry && !savedEntry && !reduceEntryMotion ? (
+                                        <Animated.View
+                                            pointerEvents="none"
+                                            style={[styles.entryHighlight, { backgroundColor: colors.selectedDayBg, opacity: entryHighlight }]}
+                                        />
+                                    ) : null}
                                     <View style={styles.sectionHeading}>
                                         <Text
+                                            accessibilityRole="header"
+                                            maxFontSizeMultiplier={1.6}
                                             style={[
                                                 styles.sectionTitle,
                                                 { color: colors.textPrimary },
@@ -675,6 +862,7 @@ export function MonthAgendaList({
                                             {labels.dateLabel}
                                         </Text>
                                         <Text
+                                            maxFontSizeMultiplier={1.6}
                                             style={[
                                                 styles.sectionWeekday,
                                                 { color: colors.textSecondary },
@@ -684,6 +872,7 @@ export function MonthAgendaList({
                                         </Text>
                                     </View>
                                     <Text
+                                        maxFontSizeMultiplier={1.6}
                                         style={[
                                             styles.sectionCount,
                                             { color: colors.textSecondary },
@@ -693,6 +882,9 @@ export function MonthAgendaList({
                                     </Text>
                                 </View>
 
+                                {section.itemCount === 0 ? (
+                                    <AgendaInlineState loading={false} error={null} emptyText="등록된 일정이 없어요" onPressRetry={onPressRetry} />
+                                ) : (
                                 <View
                                     testID="month-agenda-group"
                                     style={[
@@ -713,6 +905,9 @@ export function MonthAgendaList({
                                             compact
                                             groupRow
                                             showMultiDaySummary
+                                            returnHighlightOpacity={returnHighlight?.id === item.id
+                                                ? returnHighlight.opacity
+                                                : savedEntry?.itemId === item.id && !reduceEntryMotion ? entryHighlight : undefined}
                                             onPress={() => onOpenSchedule(item.id)}
                                             swipeActions={getScheduleSwipeActions?.(item)}
                                             onLongPress={onRequestScheduleActions
@@ -722,11 +917,15 @@ export function MonthAgendaList({
                                       </React.Fragment>
                                     ))}
                                 </View>
+                                )}
                             </View>
                         );
                     })
                 )}
-            </ScrollView>
+                {entrySectionDate && entryEndSpace > 0 ? (
+                    <View pointerEvents="none" style={{ height: entryEndSpace }} />
+                ) : null}
+            </Animated.ScrollView>
         </View>
     );
 }

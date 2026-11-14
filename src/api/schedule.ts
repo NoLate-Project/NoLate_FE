@@ -10,6 +10,7 @@ import {
     clearCalendarScheduleCache,
     getActiveCalendarScheduleCacheMemberId,
     getCalendarScheduleCacheServerRevision,
+    hasUnverifiedCalendarScheduleCache,
     removeCalendarScheduleCacheItem,
     setCalendarScheduleCacheServerRevision,
     upsertCalendarScheduleCacheItem,
@@ -339,7 +340,9 @@ export async function getCalendarSchedules(startAt: string, endAt: string): Prom
     return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
 }
 
-export function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
+export function synchronizeCalendarScheduleCacheRevision(
+    { force = false }: { force?: boolean } = {},
+): Promise<boolean> {
     const memberId = getActiveCalendarScheduleCacheMemberId();
     if (
         calendarCacheRevisionSyncInFlight &&
@@ -350,6 +353,7 @@ export function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
 
     const now = Date.now();
     if (
+        !force &&
         lastCalendarCacheRevisionSyncMemberId === memberId &&
         lastCalendarCacheRevisionSyncAt !== null &&
         now - lastCalendarCacheRevisionSyncAt < CALENDAR_CACHE_REVISION_COOLDOWN_MS
@@ -363,13 +367,16 @@ export function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
         if (getActiveCalendarScheduleCacheMemberId() !== memberId) return false;
         const revision = unwrapApiResponse(response).revision;
         const previousRevision = getCalendarScheduleCacheServerRevision();
-        const changed = previousRevision !== null && previousRevision !== revision;
+        const changed = (previousRevision !== null && previousRevision !== revision)
+            || hasUnverifiedCalendarScheduleCache();
+        if (changed) {
+            // A process can stop between queued storage writes. Never persist
+            // the new revision beside rows fetched under the old revision.
+            clearCalendarScheduleCache();
+        }
         setCalendarScheduleCacheServerRevision(revision);
         lastCalendarCacheRevisionSyncAt = Date.now();
         lastCalendarCacheRevisionSyncMemberId = memberId;
-        if (changed) {
-            clearCalendarScheduleCache();
-        }
         return changed;
     });
 

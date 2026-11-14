@@ -26,6 +26,8 @@ export function useQuickSchedulePhotoRecognition() {
   const [photoRecognitionAttempt, setPhotoRecognitionAttempt] = useState(0);
   const [isPhotoRecognizing, setIsPhotoRecognizing] = useState(false);
   const photoRecognitionSequenceRef = useRef(0);
+  const transcriptEdited = useRef(false);
+  const recognitionPending = useRef(false);
 
   useEffect(() => {
     const photoUri = selectedPhoto?.uri;
@@ -33,6 +35,7 @@ export function useQuickSchedulePhotoRecognition() {
     photoRecognitionSequenceRef.current = sequence;
 
     if (!photoUri) {
+      recognitionPending.current = false;
       setPhotoTranscript("");
       setPhotoTranscriptTruncated(false);
       setPhotoRecognitionConfidence(undefined);
@@ -41,16 +44,14 @@ export function useQuickSchedulePhotoRecognition() {
       return undefined;
     }
 
-    setPhotoTranscript("");
-    setPhotoTranscriptTruncated(false);
-    setPhotoRecognitionConfidence(undefined);
-    setPhotoRecognitionError("");
+    recognitionPending.current = true;
     setIsPhotoRecognizing(true);
     const requestId = `quick-photo-${Date.now()}-${sequence}`;
     let completed = false;
     const timeout = setTimeout(() => {
       if (photoRecognitionSequenceRef.current !== sequence) return;
       photoRecognitionSequenceRef.current += 1;
+      recognitionPending.current = false;
       cancelQuickSchedulePhotoRecognition(requestId).catch(() => undefined);
       setIsPhotoRecognizing(false);
       setPhotoRecognitionError(
@@ -61,6 +62,8 @@ export function useQuickSchedulePhotoRecognition() {
     recognizeQuickSchedulePhoto(photoUri, requestId)
       .then(recognition => {
         if (photoRecognitionSequenceRef.current !== sequence) return;
+        setPhotoRecognitionError("");
+        if (transcriptEdited.current) return;
         const limited = limitRecognizedText(recognition.text);
         setPhotoTranscript(limited.text);
         setPhotoTranscriptTruncated(
@@ -80,6 +83,7 @@ export function useQuickSchedulePhotoRecognition() {
         completed = true;
         clearTimeout(timeout);
         if (photoRecognitionSequenceRef.current === sequence) {
+          recognitionPending.current = false;
           setIsPhotoRecognizing(false);
         }
       });
@@ -98,35 +102,44 @@ export function useQuickSchedulePhotoRecognition() {
   /** 새 사진을 선택하거나 제거하고 OCR 재시도 번호를 올려 요청을 다시 시작한다. */
   const selectPhotoForRecognition = useCallback(
     (asset: ImagePickerAsset | null) => {
+      photoRecognitionSequenceRef.current += 1;
+      transcriptEdited.current = false;
+      recognitionPending.current = Boolean(asset?.uri);
+      setPhotoTranscript("");
+      setPhotoTranscriptTruncated(false);
+      setPhotoRecognitionConfidence(undefined);
+      setPhotoRecognitionError("");
+      setIsPhotoRecognizing(Boolean(asset?.uri));
       setSelectedPhoto(asset);
       setPhotoRecognitionAttempt(current => current + 1);
     },
     [],
   );
 
-  /** 현재 사진과 인식 결과를 즉시 비우고 진행 중 요청을 무효화한다. */
-  const clearPhotoRecognition = useCallback(() => {
-    photoRecognitionSequenceRef.current += 1;
-    setSelectedPhoto(null);
-    setPhotoTranscript("");
-    setPhotoTranscriptTruncated(false);
-    setPhotoRecognitionConfidence(undefined);
-    setPhotoRecognitionError("");
-    setIsPhotoRecognizing(false);
+  const retryPhotoRecognition = useCallback(() => {
+    if (recognitionPending.current) return;
+    recognitionPending.current = true;
+    setIsPhotoRecognizing(true);
     setPhotoRecognitionAttempt(current => current + 1);
   }, []);
 
-  /** 모달 종료 시 사진 인식 상태와 재시도 번호를 최초 상태로 되돌린다. */
-  const resetPhotoRecognition = useCallback(() => {
-    photoRecognitionSequenceRef.current += 1;
-    setSelectedPhoto(null);
-    setPhotoTranscript("");
+  const editPhotoTranscript = useCallback((value: string) => {
+    transcriptEdited.current = true;
+    setPhotoTranscript(value);
     setPhotoTranscriptTruncated(false);
     setPhotoRecognitionConfidence(undefined);
-    setPhotoRecognitionError("");
-    setIsPhotoRecognizing(false);
-    setPhotoRecognitionAttempt(0);
   }, []);
+
+  /** 현재 사진과 인식 결과를 즉시 비우고 진행 중 요청을 무효화한다. */
+  const clearPhotoRecognition = useCallback(() => {
+    selectPhotoForRecognition(null);
+  }, [selectPhotoForRecognition]);
+
+  /** 모달 종료 시 사진 인식 상태와 재시도 번호를 최초 상태로 되돌린다. */
+  const resetPhotoRecognition = useCallback(() => {
+    selectPhotoForRecognition(null);
+    setPhotoRecognitionAttempt(0);
+  }, [selectPhotoForRecognition]);
 
   return {
     isPhotoRecognizing,
@@ -138,10 +151,7 @@ export function useQuickSchedulePhotoRecognition() {
     resetPhotoRecognition,
     selectPhotoForRecognition,
     selectedPhoto,
-    setPhotoRecognitionAttempt,
-    setPhotoRecognitionConfidence,
-    setPhotoRecognitionError,
-    setPhotoTranscript,
-    setPhotoTranscriptTruncated,
+    retryPhotoRecognition,
+    editPhotoTranscript,
   };
 }

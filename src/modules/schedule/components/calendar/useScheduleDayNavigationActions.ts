@@ -22,19 +22,10 @@ import {
   getDayNavigationRetargetSettleDuration,
 } from '../../dayNavigationMotion';
 import { CALENDAR_INTERACTION_BUDGET_MS } from '../../calendarMotion';
+import { addDaysToYmd } from '../../hooks/scheduleIndexControllerModel';
 import type { ScheduleDayDisplayProps } from './useScheduleDayDisplayController';
 
 const DAY_NAVIGATION_EASING = Easing.bezier(...DAY_NAVIGATION_MOTION.bezier);
-
-/** YYYY-MM-DD 날짜에 일수를 더해 같은 형식으로 반환합니다. */
-function addDaysToYmd(ymd: string, offset: number) {
-  const date = new Date(`${ymd}T00:00:00`);
-  date.setDate(date.getDate() + offset);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
-    2,
-    '0',
-  )}-${String(date.getDate()).padStart(2, '0')}`;
-}
 
 export type DayPanelNavigation = {
   fromDay: string;

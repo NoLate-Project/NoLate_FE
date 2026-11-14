@@ -281,8 +281,15 @@ describe("NoLateCustomAlarmScreen", () => {
         expect(onCompleteDeparture).toHaveBeenCalledTimes(1);
         expect(onCompleteDeparture).toHaveBeenCalledWith("42");
         expect(Vibration.cancel).toHaveBeenCalledTimes(1);
-        expect(renderer!.root.findByProps({ accessibilityLabel: "지금 출발 완료 기록됨" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "출발을 기록했어요" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "경로 보기" })).toBeTruthy();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "지금 출발 완료" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ children: "출발 완료로 기록했어요." })).toHaveLength(0);
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "경로 보기" }).props.onPress();
+        });
+        expect(onOpenRoute).toHaveBeenCalledWith("42");
     });
 
     test("reports failure instead of success when departure completion is rejected", async () => {
@@ -308,9 +315,16 @@ describe("NoLateCustomAlarmScreen", () => {
                 children: "출발 완료를 기록하지 못했어요. 잠시 후 다시 시도해 주세요.",
             }),
         ).toBeTruthy();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "지금 출발 완료" }).props.accessibilityState).toEqual({
+        expect(renderer!.root.findByProps({ accessibilityLabel: "출발 기록 다시 시도" }).props.accessibilityState).toEqual({
             disabled: false,
         });
+
+        onCompleteDeparture.mockResolvedValueOnce({ status: "completed" });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "출발 기록 다시 시도" }).props.onPress();
+        });
+        expect(onCompleteDeparture).toHaveBeenCalledTimes(2);
+        expect(renderer!.root.findByProps({ children: "출발을 기록했어요" })).toBeTruthy();
     });
 
     test("keeps preview/test IDs non-mutating even when a real schedule id is present", async () => {

@@ -37,9 +37,13 @@ export type RoutePassStop = {
     name: string;
     sequence?: number;
     code?: string;
+    sourceIndex?: number;
 };
 
 export interface RouteStep {
+    /** Display-only timestamps from a matched server journey, never reconstructed from rounded minutes. */
+    matchedTimeline?: { startAt: string; endAt: string; movementSeconds: number };
+    alightingName?: string;
     intercityService?: IntercityRideService;
     id: string;
     type: RouteStepType;
@@ -66,6 +70,8 @@ export interface RouteStep {
 }
 
 export interface RouteInfo {
+    /** Only the schedule detail presentation sets this on an in-memory copy. */
+    matchedTimeline?: true;
     intercityJourney?: IntercityJourney;
     id: string;
     /** 시간표와 경로를 제공한 공급자. 기존 저장 데이터 호환을 위해 선택값으로 유지한다. */
@@ -284,7 +290,7 @@ function placeToRouteCoordinates(place?: Place): RouteCoordinate[] | undefined {
     return [{ latitude: place.lat, longitude: place.lng }];
 }
 
-function normalizeStopName(name?: string): string | undefined {
+export function normalizeStopName(name?: string): string | undefined {
     const normalized = name
         ?.replace(/\s+/g, " ")
         .replace(/\(.+?\)/g, "")
@@ -317,6 +323,8 @@ export function getRouteStepDirectionHint(
 
 function legDuration(leg: TransitLegDetail): number | undefined {
     if (isFiniteNumber(leg.durationMinutes)) return Math.max(1, Math.round(leg.durationMinutes));
+    const seconds = validDurationSeconds(leg.durationSeconds);
+    if (seconds !== undefined) return Math.max(1, Math.round(seconds / 60));
     if (isFiniteNumber(leg.distanceMeters) && leg.distanceMeters > 0) {
         return Math.max(1, Math.round(leg.distanceMeters / (leg.kind === "WALK" ? 67 : 350)));
     }
@@ -353,16 +361,18 @@ function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
     const stationText = isFiniteNumber(leg.stationCount) ? `${leg.stationCount}정거장` : undefined;
     const durationText = isFiniteNumber(durationMinutes) ? `${durationMinutes}분` : undefined;
     const passStops = leg.passStops
-        ?.map((stop) => ({
+        ?.map((stop, sourceIndex) => ({
             name: normalizeStopName(stop.name) ?? stop.name,
             sequence: stop.sequence,
             code: stop.code,
+            sourceIndex,
         }))
         .filter((stop) => !!stop.name);
     return {
         id: `leg-${index}`,
         type,
         title: startName ?? lineName ?? fallbackKind,
+        alightingName: endName,
         description: [destinationHint(endName), stationText, durationText, leg.intercityService && `${leg.intercityService.timingBasis === 'TICKET' ? '승차권 입력' : '시간표'} ${leg.intercityService.departureAt.slice(11, 16)} → ${leg.intercityService.arrivalAt.slice(11, 16)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · ") || undefined,
         durationMinutes,
         intercityService: leg.intercityService,

@@ -49,6 +49,18 @@ export function getMapPickedPlaceFallbackName(target: RoutePointTarget): string 
     return target === "origin" ? "지도에서 선택한 출발지" : "지도에서 선택한 도착지";
 }
 
+/** 여러 행정·지번 표기가 합쳐진 응답에서는 같은 지역의 도로명 주소를 대표 이름으로 쓴다. */
+export function getMapPickerAddressLabel(address?: string): string | undefined {
+    if (!address) return undefined;
+    const parts = address.split(",").map(part => part.trim());
+    const region = parts[0]?.match(/^(\S+(?:시|도)\s+\S+(?:시|군|구))\s/)?.[1];
+    if (!region) return address;
+    const roadAddress = parts.slice(1).find(part =>
+        part.startsWith(`${region} `) && /(?:대로|로|길)\s+\d/.test(part)
+    );
+    return roadAddress ?? address;
+}
+
 /** 지도 탐색 카메라와 사용자가 탭한 선택 좌표를 서로 독립적으로 유지한다. */
 export function createMapPickerSessionState(
     initialCoordinate?: MapPickerCoordinate,

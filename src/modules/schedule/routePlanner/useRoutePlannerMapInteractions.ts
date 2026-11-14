@@ -1,15 +1,16 @@
 import {
   useCallback,
+  useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
-import { useRouter } from 'expo-router';
 
 import type {
   RouteAlternativeOption,
 } from '../../map/routingService';
-import { parseTransitMapInteractionId } from '../../map/transitMapInteraction';
+import { buildTransitStopInteractionId, parseTransitMapInteractionId } from '../../map/transitMapInteraction';
 import type {
   TmapCameraState,
   TmapMapLayoutReport,
@@ -23,6 +24,7 @@ import {
   fitCameraToBoundsWithUiPadding,
   getSegmentFocusBounds,
   getTmapRegionCameraTarget,
+  getTransitStopCameraCenter,
 } from './routeMapCamera';
 import {
   isValidCoordinate,
@@ -58,13 +60,10 @@ type Options = {
   bottomSheetMiddleOffset: number;
   bottomSheetSnap: BottomSheetSnap;
   cameraQaStateRef: MutableRefObject<CameraQaState>;
-  etaLoading: boolean;
   focusedRouteStepId?: string;
   focusedTransitLegIndex?: number;
-  hasRouteReady: boolean;
   insetsTop: number;
   isBottomSheetHidden: boolean;
-  isRouteSelectionStage: boolean;
   isTransitMode: boolean;
   lastCameraActionKeyRef: MutableRefObject<string>;
   lastCameraQaLogSignatureRef: MutableRefObject<string>;
@@ -72,8 +71,7 @@ type Options = {
   mapMarkers: TmapMarker[];
   mapRef: MutableRefObject<TmapMapViewHandle | null>;
   mapZoom: number;
-  persistCurrentRoutePlannerInitial: (targetSessionId?: string) => void;
-  router: ReturnType<typeof useRouter>;
+  reduceMotion: boolean;
   runCameraActionAfterDirectionPrewarm: (
     actionKey: string,
     center: Coordinate,
@@ -82,8 +80,6 @@ type Options = {
   ) => void;
   selectedAlternative?: RouteAlternativeOption;
   selectedNormalizedRoute?: NormalizedRoute;
-  selectedVisibleAlternativeIndex: number;
-  sessionId: string;
   setBottomSheetSnap: SetValue<BottomSheetSnap>;
   setFocusedRouteStepId: SetValue<string | undefined>;
   setFocusedTransitLegIndex: SetValue<number | undefined>;
@@ -101,7 +97,6 @@ type Options = {
 
 /**
  * 지도 확대·카메라 보고·대중교통 구간 및 정류장 포커스 상호작용을 관리한다.
- * 상세 진입 시 선택 경로 세션을 먼저 보존해 목록에서 상세로 이동해도 초안이 유지되게 한다.
  */
 export function useRoutePlannerMapInteractions({
   bottomPanelHeight,
@@ -110,13 +105,10 @@ export function useRoutePlannerMapInteractions({
   bottomSheetMiddleOffset,
   bottomSheetSnap,
   cameraQaStateRef,
-  etaLoading,
   focusedRouteStepId,
   focusedTransitLegIndex,
-  hasRouteReady,
   insetsTop,
   isBottomSheetHidden,
-  isRouteSelectionStage,
   isTransitMode,
   lastCameraActionKeyRef,
   lastCameraQaLogSignatureRef,
@@ -124,13 +116,10 @@ export function useRoutePlannerMapInteractions({
   mapMarkers,
   mapRef,
   mapZoom,
-  persistCurrentRoutePlannerInitial,
-  router,
+  reduceMotion,
   runCameraActionAfterDirectionPrewarm,
   selectedAlternative,
   selectedNormalizedRoute,
-  selectedVisibleAlternativeIndex,
-  sessionId,
   setBottomSheetSnap,
   setFocusedRouteStepId,
   setFocusedTransitLegIndex,
@@ -245,7 +234,9 @@ export function useRoutePlannerMapInteractions({
     }
   }, [cameraQaStateRef, lastCameraQaLogSignatureRef, setMapZoom]);
 
+  const currentCameraRef = useRef<TmapCameraState | undefined>(undefined);
   const onMapCameraChanged = useCallback((nextCamera: TmapCameraState) => {
+    currentCameraRef.current = nextCamera;
     setMapCamera(previous => {
       const previousScale = previous.metersPerPixel;
       const nextScale = nextCamera.metersPerPixel;
@@ -377,7 +368,7 @@ export function useRoutePlannerMapInteractions({
         const targetRegion = {
           ...fitRegion,
           zoomOffset: 0,
-          duration: 680,
+          duration: reduceMotion ? 0 : 680,
           easing: 'Fly',
         };
         const targetCamera = getTmapRegionCameraTarget(targetRegion);
@@ -397,7 +388,7 @@ export function useRoutePlannerMapInteractions({
               latitude: cameraCenter.lat,
               longitude: cameraCenter.lng,
               zoom: focusZoom,
-              duration: 680,
+              duration: reduceMotion ? 0 : 680,
               easing: 'Fly',
             }),
         );
@@ -424,64 +415,81 @@ export function useRoutePlannerMapInteractions({
       visibleBottomSheetHeight,
       windowWidth,
       windowHeight,
+      reduceMotion,
       runCameraActionAfterDirectionPrewarm,
       setFocusedTransitLegIndex,
     ],
   );
 
-  const onMapMarkerPress = useCallback(
-    (event: { id: string; interactionId?: string }) => {
-      const interaction = parseTransitMapInteractionId(event.interactionId);
-      const legs = selectedAlternative?.transitLegs;
-      if (!interaction || !Array.isArray(legs) || !legs[interaction.legIndex])
-        return;
+  const stopFocusResize = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const clearStopFocusResize = useCallback(() => {
+    if (stopFocusResize.current === undefined) return;
+    clearTimeout(stopFocusResize.current);
+    stopFocusResize.current = undefined;
+  }, []);
+  useEffect(() => clearStopFocusResize, [clearStopFocusResize, selectedAlternative?.id, reduceMotion]);
 
-      setFocusedRouteStepId(`leg-${interaction.legIndex}`);
-      setFocusedTransitLegIndex(interaction.legIndex);
-      setIsBottomSheetHidden(false);
-      setBottomSheetSnap('middle');
-      setIsBottomSheetCollapsed(false);
-
-      if (interaction.kind === 'leg') {
-        setSelectedTransitMapStop(undefined);
-        focusMapOnTransitLeg(interaction.legIndex);
-        return;
-      }
-
-      const stop =
-        legs[interaction.legIndex].passStops?.[interaction.stopIndex];
-      if (!stop?.coord) {
-        focusMapOnTransitLeg(interaction.legIndex);
-        return;
-      }
-      setSelectedTransitMapStop({
-        legIndex: interaction.legIndex,
-        stopIndex: interaction.stopIndex,
-      });
-
-      const pressedMarker = mapMarkers.find(marker => marker.id === event.id);
+  const focusTransitMapStop = useCallback(
+    ({ legIndex, stopIndex }: SelectedTransitMapStop, markerId?: string) => {
+      const stop = selectedAlternative?.transitLegs?.[legIndex]?.passStops?.[stopIndex];
+      if (!stop?.coord) return false;
+      const interactionId = buildTransitStopInteractionId(legIndex, stopIndex);
+      const pressedMarker = mapMarkers.find(marker => markerId
+        ? marker.id === markerId
+        : marker.interactionId === interactionId);
       const markerCoord = pressedMarker
         ? { lat: pressedMarker.latitude, lng: pressedMarker.longitude }
         : stop.coord;
+      if (!isValidCoordinate({ latitude: markerCoord.lat, longitude: markerCoord.lng })) return false;
+      setFocusedRouteStepId(`leg-${legIndex}`);
+      setFocusedTransitLegIndex(legIndex);
+      setSelectedTransitMapStop({ legIndex, stopIndex });
+      const opensSheet = Boolean(markerId) && (isBottomSheetHidden || bottomSheetSnap === 'collapsed');
+      if (opensSheet) {
+        setIsBottomSheetHidden(false);
+        setBottomSheetSnap('middle');
+        setIsBottomSheetCollapsed(false);
+      }
       const focusZoom = Math.min(18, Math.max(17, mapZoom));
-      const cameraCenter = offsetCoordByMeters(markerCoord, -55, 0);
+      const middleSheetTop = bottomPanelHeight > 0
+        ? windowHeight - bottomPanelHeight + bottomSheetMiddleOffset
+        : Math.round(windowHeight * 0.56);
+      const sheetTop = opensSheet ? middleSheetTop : windowHeight - transitMapBottomOcclusionHeight;
+      const cameraCenter = getTransitStopCameraCenter(
+        markerCoord, focusZoom, windowHeight, insetsTop + 68, sheetTop - 20, currentCameraRef.current,
+      );
+      clearStopFocusResize();
       mapRef.current?.resizeMap('TRANSIT_STOP_FOCUS_BEFORE_CAMERA');
       mapRef.current?.animateCameraTo({
         latitude: cameraCenter.lat,
         longitude: cameraCenter.lng,
         zoom: focusZoom,
-        duration: 460,
+        duration: reduceMotion ? 0 : 460,
         easing: 'Fly',
       });
-      setTimeout(() => {
-        mapRef.current?.resizeMap('TRANSIT_STOP_FOCUS_AFTER_CAMERA');
-      }, 540);
+      if (!reduceMotion) {
+        const cameraAction = lastCameraActionKeyRef.current;
+        stopFocusResize.current = setTimeout(() => {
+          stopFocusResize.current = undefined;
+          if (lastCameraActionKeyRef.current === cameraAction) {
+            mapRef.current?.resizeMap('TRANSIT_STOP_FOCUS_AFTER_CAMERA');
+          }
+        }, 540);
+      }
+      return true;
     },
     [
-      focusMapOnTransitLeg,
+      bottomPanelHeight,
+      bottomSheetMiddleOffset,
+      bottomSheetSnap,
+      clearStopFocusResize,
+      insetsTop,
+      isBottomSheetHidden,
+      lastCameraActionKeyRef,
       mapMarkers,
       mapRef,
       mapZoom,
+      reduceMotion,
       selectedAlternative,
       setBottomSheetSnap,
       setFocusedRouteStepId,
@@ -489,7 +497,26 @@ export function useRoutePlannerMapInteractions({
       setIsBottomSheetCollapsed,
       setIsBottomSheetHidden,
       setSelectedTransitMapStop,
+      transitMapBottomOcclusionHeight,
+      windowHeight,
     ],
+  );
+
+  const onMapMarkerPress = useCallback(
+    (event: { id: string; interactionId?: string }) => {
+      const interaction = parseTransitMapInteractionId(event.interactionId);
+      if (!interaction || !selectedAlternative?.transitLegs?.[interaction.legIndex]) return;
+      if (interaction.kind === 'stop' && focusTransitMapStop(interaction, event.id)) return;
+      clearStopFocusResize();
+      setFocusedRouteStepId(`leg-${interaction.legIndex}`);
+      setIsBottomSheetHidden(false);
+      setBottomSheetSnap('middle');
+      setIsBottomSheetCollapsed(false);
+      setSelectedTransitMapStop(undefined);
+      focusMapOnTransitLeg(interaction.legIndex);
+    },
+    [clearStopFocusResize, focusMapOnTransitLeg, focusTransitMapStop, selectedAlternative, setBottomSheetSnap,
+      setFocusedRouteStepId, setIsBottomSheetCollapsed, setIsBottomSheetHidden, setSelectedTransitMapStop],
   );
 
   const selectedRouteStepId =
@@ -499,7 +526,9 @@ export function useRoutePlannerMapInteractions({
       : undefined);
   const focusRouteInfoStep = useCallback(
     (step: RouteStep) => {
+      clearStopFocusResize();
       setFocusedRouteStepId(step.id);
+      setSelectedTransitMapStop(undefined);
       const match = step.id.match(/^leg-(\d+)$/);
       if (match?.[1] && isTransitMode) {
         focusMapOnTransitLeg(Number(match[1]));
@@ -517,47 +546,18 @@ export function useRoutePlannerMapInteractions({
           latitude: coordinate.latitude,
           longitude: coordinate.longitude,
           zoom: Math.max(mapZoom, 16),
-          duration: 520,
+          duration: reduceMotion ? 0 : 520,
           easing: 'Fly',
         });
       }
     },
-    [focusMapOnTransitLeg, isTransitMode, mapRef, mapZoom, setFocusedRouteStepId],
+    [clearStopFocusResize, focusMapOnTransitLeg, isTransitMode, mapRef, mapZoom, reduceMotion, setFocusedRouteStepId, setSelectedTransitMapStop],
   );
 
-  const canEnterRouteDetail =
-    isRouteSelectionStage &&
-    hasRouteReady &&
-    !!selectedAlternative &&
-    !etaLoading;
-  const onEnterRouteDetailView = useCallback(() => {
-    if (!canEnterRouteDetail || !sessionId) return;
-
-    persistCurrentRoutePlannerInitial();
-    router.replace({
-      pathname: '/schedule/route-planner',
-      params: {
-        sessionId,
-        routeIndex:
-          selectedVisibleAlternativeIndex >= 0
-            ? String(selectedVisibleAlternativeIndex)
-            : '0',
-        sheetState: 'middle',
-      },
-    });
-  }, [
-    canEnterRouteDetail,
-    persistCurrentRoutePlannerInitial,
-    router,
-    selectedVisibleAlternativeIndex,
-    sessionId,
-  ]);
-
   return {
-    canEnterRouteDetail,
+    focusTransitMapStop,
     focusMapOnTransitLeg,
     focusRouteInfoStep,
-    onEnterRouteDetailView,
     onMapCameraChanged,
     onMapLayoutReport,
     onMapMarkerPress,

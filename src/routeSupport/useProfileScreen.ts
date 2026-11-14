@@ -11,6 +11,7 @@ import {
     withdrawMember,
     type MemberProfileDto,
 } from "../api/member";
+import { ApiResponseError } from "../api/response";
 import { useAuth } from "../modules/auth/AuthContext";
 import {
     getAuthMember,
@@ -33,7 +34,20 @@ import { formatLoginType } from "./profilePresentation";
 
 /** API 오류를 프로필 화면의 알림과 오류 카드에서 공통으로 사용할 문구로 변환합니다. */
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
-const PASSWORD_PATTERN = /^(?=.*[a-zA-Z])(?=.*\\d)(?=.*[!@#$%^&*])[a-zA-Z\\d!@#$%^&*]{8,16}$/;
+const PASSWORD_PATTERN = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[a-zA-Z\d!@#$%^&*]{8,16}$/;
+
+export type ProfileAccountAction = "password" | "logout" | "withdraw";
+export type ProfilePasswordField = "currentPassword" | "newPassword" | "confirmPassword";
+export type ProfileAccountError = { field?: ProfilePasswordField; message: string };
+
+export const PROFILE_PASSWORD_RULE = "영문, 숫자, 특수문자 !@#$%^&*를 포함해 8~16자로 입력해 주세요.";
+
+function getAccountActionError(error: unknown, checksPassword = false): ProfileAccountError {
+    if (checksPassword && error instanceof ApiResponseError && error.errorCode === "A003") {
+        return { field: "currentPassword", message: "현재 비밀번호를 다시 확인해 주세요." };
+    }
+    return { message: "요청을 완료하지 못했어요. 잠시 후 다시 시도해 주세요." };
+}
 
 /** 프로필 화면의 조회·편집·로그아웃·탈퇴 상태와 사용자 작업을 한곳에서 관리합니다. */
 export function useProfileScreen() {
@@ -54,19 +68,18 @@ export function useProfileScreen() {
     const [draftName, setDraftName] = useState("");
     const [memberIdCopied, setMemberIdCopied] = useState(false);
     const [profileError, setProfileError] = useState<string | null>(null);
-    const [withdrawalModalOpen, setWithdrawalModalOpen] = useState(false);
-    const [withdrawalPassword, setWithdrawalPassword] = useState("");
-    const [passwordModalOpen, setPasswordModalOpen] = useState(false);
-    const [currentPassword, setCurrentPassword] = useState("");
-    const [newPassword, setNewPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
+    const [accountAction, setAccountAction] = useState<ProfileAccountAction>();
+    const [accountActionError, setAccountActionError] = useState<ProfileAccountError>();
+    const [passwords, setPasswords] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    const [passwordChanged, setPasswordChanged] = useState(false);
     const [savingPassword, setSavingPassword] = useState(false);
     const profileLoadSequenceRef = React.useRef(0);
     const savingProfileRef = React.useRef(false);
     const savingPasswordRef = React.useRef(false);
     const signingOutRef = React.useRef(false);
     const withdrawingRef = React.useRef(false);
-    const hasOpenModal = editingProfile || passwordModalOpen || withdrawalModalOpen;
+    const withdrawalCommittedRef = React.useRef(false);
+    const hasOpenModal = editingProfile || accountAction !== undefined;
 
     const rawDisplayName = account?.name?.trim() ?? "";
     const profileName = profile?.nickname?.trim() ?? "";
@@ -218,156 +231,110 @@ export function useProfileScreen() {
         return () => clearTimeout(timer);
     }, [memberIdCopied]);
 
-    /** 사용자 확인 후 소셜 SDK 세션과 앱 인증 세션을 순서대로 종료하고 로그인 화면으로 이동합니다. */
-    const handleSignOut = useCallback(() => {
-        Alert.alert("로그아웃", "현재 계정에서 로그아웃할까요?", [
-            { text: "취소", style: "cancel" },
-            {
-                text: "로그아웃",
-                style: "destructive",
-                onPress: async () => {
-                    if (signingOutRef.current) return;
-                    signingOutRef.current = true;
-                    setSigningOut(true);
-                    try {
-                        if (isNaverAccount) {
-                            await logoutFromNaverOAuth().catch((error) => {
-                                console.warn("[naver] OAuth logout failed", error);
-                            });
-                        }
-                        if (isKakaoAccount) {
-                            await logoutFromKakaoSdk().catch((error) => {
-                                console.warn("[kakao] sdk logout failed", error);
-                            });
-                        }
-                        await signOut();
-                    } finally {
-                        signingOutRef.current = false;
-                        setSigningOut(false);
-                        router.replace("/auth/login");
-                    }
-                },
-            },
-        ]);
-    }, [isKakaoAccount, isNaverAccount, router, signOut]);
+    useEffect(() => {
+        if (!passwordChanged) return;
+        const timer = setTimeout(() => setPasswordChanged(false), 3000);
+        return () => clearTimeout(timer);
+    }, [passwordChanged]);
 
-    /** 로그인 방식에 맞는 본인 확인 절차를 선택하고 소셜 계정 연결 해제까지 포함해 탈퇴를 처리합니다. */
-    const handleWithdraw = useCallback(() => {
-        if (!account?.loginType) {
-            Alert.alert("계정 정보 확인 필요", "계정 정보를 다시 불러온 뒤 시도해 주세요.");
-            return;
-        }
+    const clearAccountAction = useCallback(() => {
+        setPasswords({ currentPassword: "", newPassword: "", confirmPassword: "" });
+        setAccountActionError(undefined);
+        setAccountAction(undefined);
+    }, []);
 
-        if (account?.loginType === "COMMON") {
-            setWithdrawalPassword("");
-            setWithdrawalModalOpen(true);
-            return;
-        }
+    const openAccountAction = useCallback((action: ProfileAccountAction) => {
+        setPasswordChanged(false);
+        setAccountAction(action);
+    }, []);
 
-        Alert.alert(
-            "회원탈퇴",
-            "NoLate 계정과 저장된 일정 정보가 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
-            [
-                { text: "취소", style: "cancel" },
-                {
-                    text: "탈퇴하기",
-                    style: "destructive",
-                    onPress: async () => {
-                        if (withdrawingRef.current) return;
-                        withdrawingRef.current = true;
-                        try {
-                            setWithdrawing(true);
-                            await runWithDepartureAlarmWithdrawalGuard(() => withdrawMember());
-                            if (isNaverAccount) {
-                                await unlinkNaverOAuth().catch((error) => {
-                                    console.warn("[naver] OAuth unlink failed", error);
-                                });
-                            }
-                            if (isKakaoAccount) {
-                                await unlinkKakaoSdk().catch((error) => {
-                                    console.warn("[kakao] sdk unlink failed", error);
-                                });
-                            }
-                            await signOut();
-                            router.replace("/auth/login");
-                        } catch (error) {
-                            Alert.alert("회원탈퇴 실패", getErrorMessage(error));
-                            setWithdrawing(false);
-                        } finally {
-                            withdrawingRef.current = false;
-                        }
-                    },
-                },
-            ],
-        );
-    }, [account?.loginType, isKakaoAccount, isNaverAccount, router, signOut]);
+    const closeAccountAction = useCallback(() => {
+        if (savingPasswordRef.current || signingOutRef.current || withdrawingRef.current || withdrawalCommittedRef.current) return;
+        clearAccountAction();
+    }, [clearAccountAction]);
 
-    /** 일반 계정 비밀번호를 확인 정보로 전달해 회원 탈퇴를 수행하고 인증 세션을 종료합니다. */
-    const confirmCommonWithdrawal = useCallback(async () => {
-        if (withdrawingRef.current) return;
-        if (!withdrawalPassword) {
-            Alert.alert("비밀번호를 입력해 주세요", "본인 확인을 위해 현재 비밀번호가 필요합니다.");
-            return;
-        }
+    const changeAccountPasswordField = useCallback((field: ProfilePasswordField, value: string) => {
+        setPasswords(previous => ({ ...previous, [field]: value }));
+        setAccountActionError(previous => previous?.field && previous.field !== field &&
+            !(previous.field === "confirmPassword" && field === "newPassword") ? previous : undefined);
+    }, []);
 
+    const confirmSignOut = useCallback(async () => {
+        if (signingOutRef.current) return;
+        signingOutRef.current = true;
+        setSigningOut(true);
+        setAccountActionError(undefined);
         try {
-            withdrawingRef.current = true;
-            setWithdrawing(true);
-            await runWithDepartureAlarmWithdrawalGuard(
-                () => withdrawMember({ password: withdrawalPassword }),
-            );
-            setWithdrawalModalOpen(false);
+            if (isNaverAccount) await logoutFromNaverOAuth().catch(error => console.warn("[naver] OAuth logout failed", error));
+            if (isKakaoAccount) await logoutFromKakaoSdk().catch(error => console.warn("[kakao] sdk logout failed", error));
             await signOut();
-            router.replace("/auth/login");
+            clearAccountAction();
         } catch (error) {
-            Alert.alert("회원탈퇴 실패", getErrorMessage(error));
+            setAccountActionError(getAccountActionError(error));
+        } finally {
+            signingOutRef.current = false;
+            setSigningOut(false);
+        }
+    }, [clearAccountAction, isKakaoAccount, isNaverAccount, signOut]);
+
+    const withdrawalNeedsPassword = account?.loginType === "COMMON";
+    const confirmWithdrawal = useCallback(async () => {
+        if (withdrawingRef.current || !account?.loginType ||
+            (withdrawalNeedsPassword && !passwords.currentPassword && !withdrawalCommittedRef.current)) return;
+        withdrawingRef.current = true;
+        setWithdrawing(true);
+        setAccountActionError(undefined);
+        try {
+            if (!withdrawalCommittedRef.current) {
+                await runWithDepartureAlarmWithdrawalGuard(() => withdrawMember(
+                    withdrawalNeedsPassword ? { password: passwords.currentPassword } : undefined,
+                ));
+                withdrawalCommittedRef.current = true;
+                setPasswords({ currentPassword: "", newPassword: "", confirmPassword: "" });
+                if (isNaverAccount) await unlinkNaverOAuth().catch(error => console.warn("[naver] OAuth unlink failed", error));
+                if (isKakaoAccount) await unlinkKakaoSdk().catch(error => console.warn("[kakao] sdk unlink failed", error));
+            }
+            await signOut();
+            clearAccountAction();
+        } catch (error) {
+            setAccountActionError(withdrawalCommittedRef.current
+                ? { message: "탈퇴가 완료됐어요. 기기에서 로그아웃을 다시 시도해 주세요." }
+                : getAccountActionError(error, withdrawalNeedsPassword));
         } finally {
             withdrawingRef.current = false;
             setWithdrawing(false);
         }
-    }, [router, signOut, withdrawalPassword]);
+    }, [account?.loginType, clearAccountAction, isKakaoAccount, isNaverAccount, passwords.currentPassword, signOut, withdrawalNeedsPassword]);
 
-    /** 비밀번호 입력값을 초기화해 이전 민감 정보가 남지 않은 상태로 변경 모달을 엽니다. */
-    const openPasswordChange = useCallback(() => {
-        setCurrentPassword("");
-        setNewPassword("");
-        setConfirmPassword("");
-        setPasswordModalOpen(true);
-    }, []);
-
-    /** 현재·새 비밀번호의 조합과 정책을 검증한 뒤 중복 요청 없이 비밀번호를 변경합니다. */
     const savePasswordChange = useCallback(async () => {
-        if (savingPasswordRef.current) return;
-        if (!currentPassword || !newPassword) {
-            Alert.alert("비밀번호 확인", "현재 비밀번호와 새 비밀번호를 모두 입력해 주세요.");
-            return;
-        }
+        const { currentPassword, newPassword, confirmPassword } = passwords;
+        if (savingPasswordRef.current || !currentPassword || !newPassword || !confirmPassword) return;
         if (!PASSWORD_PATTERN.test(newPassword)) {
-            Alert.alert("비밀번호 확인", "새 비밀번호는 영문, 숫자, !@#$%^&*를 포함한 8~16자로 입력해 주세요.");
-            return;
-        }
-        if (newPassword !== confirmPassword) {
-            Alert.alert("비밀번호 확인", "새 비밀번호가 서로 일치하지 않습니다.");
+            setAccountActionError({ field: "newPassword", message: PROFILE_PASSWORD_RULE });
             return;
         }
         if (currentPassword === newPassword) {
-            Alert.alert("비밀번호 확인", "현재 비밀번호와 다른 비밀번호를 입력해 주세요.");
+            setAccountActionError({ field: "newPassword", message: "현재 비밀번호와 다른 비밀번호를 입력해 주세요." });
             return;
         }
-
+        if (newPassword !== confirmPassword) {
+            setAccountActionError({ field: "confirmPassword", message: "새 비밀번호와 일치하지 않아요." });
+            return;
+        }
+        savingPasswordRef.current = true;
+        setSavingPassword(true);
+        setAccountActionError(undefined);
         try {
-            savingPasswordRef.current = true;
-            setSavingPassword(true);
             await changePassword({ currentPassword, newPassword });
-            setPasswordModalOpen(false);
-            Alert.alert("비밀번호 변경 완료", "새 비밀번호로 변경했어요.");
+            clearAccountAction();
+            setPasswordChanged(true);
         } catch (error) {
-            Alert.alert("비밀번호 변경 실패", getErrorMessage(error));
+            setAccountActionError(getAccountActionError(error, true));
         } finally {
             savingPasswordRef.current = false;
             setSavingPassword(false);
         }
-    }, [confirmPassword, currentPassword, newPassword]);
+    }, [clearAccountAction, passwords]);
 
     /** 이전 탐색 기록이 있으면 뒤로 이동하고, 없으면 일정 루트로 안전하게 대체 이동합니다. */
     const goBackToSchedule = useCallback(() => {
@@ -438,19 +405,16 @@ export function useProfileScreen() {
         setDraftName,
         memberIdCopied,
         profileError,
-        withdrawalModalOpen,
-        setWithdrawalModalOpen,
-        withdrawalPassword,
-        setWithdrawalPassword,
-        passwordModalOpen,
-        setPasswordModalOpen,
-        currentPassword,
-        setCurrentPassword,
-        newPassword,
-        setNewPassword,
-        confirmPassword,
-        setConfirmPassword,
+        accountAction,
+        accountActionError,
+        passwords,
+        passwordChanged,
         savingPassword,
+        withdrawalNeedsPassword,
+        withdrawalCommitted: withdrawalCommittedRef.current,
+        openAccountAction,
+        closeAccountAction,
+        changeAccountPasswordField,
         hasOpenModal,
         displayAccountName,
         isNaverAccount,
@@ -463,10 +427,8 @@ export function useProfileScreen() {
         openProfileEditor,
         copyMemberId,
         saveProfile,
-        handleSignOut,
-        handleWithdraw,
-        confirmCommonWithdrawal,
-        openPasswordChange,
+        confirmSignOut,
+        confirmWithdrawal,
         savePasswordChange,
         goBackToSchedule,
         openCalendarOnboarding,

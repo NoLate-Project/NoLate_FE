@@ -66,6 +66,24 @@ function parseValidDate(value?: string | Date): Date | undefined {
     return Number.isFinite(date.getTime()) ? date : undefined;
 }
 
+/** Saved metro/bus estimates are not booked services. An earlier valid estimate is safe to keep. */
+export function resolveSavedDepartureAt({ startAt, departAt, travelMinutes, travelMode, fixedService }: {
+    startAt: string;
+    departAt?: string;
+    travelMinutes?: number;
+    travelMode?: string;
+    fixedService?: boolean;
+}): Date | undefined {
+    const stored = parseValidDate(departAt);
+    const start = parseValidDate(startAt);
+    if (!start) return stored;
+    const minutes = normalizeSelectedTravelMinutes(travelMinutes);
+    const estimate = minutes === undefined ? undefined : parseValidDate(new Date(start.getTime() - minutes * 60_000));
+    if (travelMode === "TRANSIT" && !fixedService && stored &&
+        (stored >= start || (estimate && stored > estimate))) return estimate;
+    return stored ?? estimate;
+}
+
 function normalizeSelectedTravelMinutes(value?: number): number | undefined {
     if (!Number.isFinite(value) || !value || value <= 0) return undefined;
     return Math.round(value);

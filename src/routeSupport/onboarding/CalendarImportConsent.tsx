@@ -182,6 +182,9 @@ export function CurationProgress({ step }: { step: OnboardingStep }) {
           ]}
         />
       ))}
+      <Text style={styles.curationProgressCount}>
+        {current}/{CURATION_PROGRESS_SEGMENT_COUNT}
+      </Text>
     </View>
   );
 }

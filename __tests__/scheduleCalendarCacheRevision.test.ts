@@ -14,6 +14,7 @@ function loadScheduleApi() {
             clearCalendarScheduleCache: jest.fn(),
             getActiveCalendarScheduleCacheMemberId: jest.fn(() => 7),
             getCalendarScheduleCacheServerRevision: jest.fn(() => revision),
+            hasUnverifiedCalendarScheduleCache: jest.fn(() => false),
             removeCalendarScheduleCacheItem: jest.fn(),
             setCalendarScheduleCacheServerRevision: jest.fn((nextRevision: number) => {
                 revision = nextRevision;
@@ -90,5 +91,35 @@ describe("calendar schedule cache revision synchronization", () => {
         await expect(synchronize()).rejects.toThrow("network unavailable");
         await expect(synchronize()).resolves.toBe(false);
         expect(apiGet).toHaveBeenCalledTimes(2);
+    });
+
+    test("외부 공유 후 전경으로 돌아오면 cooldown 안에서도 서버 변경을 확인한다", async () => {
+        let now = Date.parse("2026-08-01T00:00:00Z");
+        jest.spyOn(Date, "now").mockImplementation(() => now);
+        const { apiGet, clearCalendarScheduleCache, synchronize } = loadScheduleApi();
+        apiGet
+            .mockResolvedValueOnce({ success: true, data: { revision: 7 } })
+            .mockResolvedValueOnce({ success: true, data: { revision: 8 } });
+
+        await expect(synchronize()).resolves.toBe(false);
+        now += 1_000;
+        await expect(synchronize({ force: true })).resolves.toBe(true);
+        expect(apiGet).toHaveBeenCalledTimes(2);
+        expect(clearCalendarScheduleCache).toHaveBeenCalledTimes(1);
+    });
+
+    test("전경 강제 확인도 진행 중인 같은 계정 요청을 공유한다", async () => {
+        const { apiGet, synchronize } = loadScheduleApi();
+        let resolveRevision: ((value: unknown) => void) | undefined;
+        apiGet.mockReturnValue(new Promise((resolve) => {
+            resolveRevision = resolve;
+        }));
+
+        const first = synchronize();
+        const foreground = synchronize({ force: true });
+        expect(foreground).toBe(first);
+        expect(apiGet).toHaveBeenCalledTimes(1);
+        resolveRevision?.({ success: true, data: { revision: 7 } });
+        await expect(foreground).resolves.toBe(false);
     });
 });

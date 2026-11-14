@@ -114,6 +114,10 @@ export function createBottomPanelStyles(options: RoutePlannerStyleOptions) {
         lineHeight: 17,
         letterSpacing: 0,
     },
+        routeQualityWarningTextExpanded: {
+        fontSize: 11.5,
+        lineHeight: 16,
+    },
         routeAttributionLink: {
         minHeight: 30,
         flexDirection: "row",
@@ -153,22 +157,6 @@ export function createBottomPanelStyles(options: RoutePlannerStyleOptions) {
         fontSize: 14,
         fontWeight: "800",
     },
-        transitDepartureRow: {
-        paddingHorizontal: 10,
-        paddingTop: 8,
-        paddingBottom: 10,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        gap: 3,
-    },
-        transitDepartureText: {
-        fontSize: 17,
-        fontWeight: "800",
-    },
-        transitDepartureHint: {
-        fontSize: 13,
-        fontWeight: "600",
-        lineHeight: 18,
-    },
         alternativeLoadingRow: {
         flexDirection: "row",
         alignItems: "center",
@@ -177,7 +165,12 @@ export function createBottomPanelStyles(options: RoutePlannerStyleOptions) {
         paddingVertical: 12,
     },
         alternativeLoadingText: {
-        fontSize: 12,
+        fontSize: 13,
+    },
+        alternativeLoadingCopy: {
+        flex: 1,
+        minWidth: 0,
+        gap: 2,
     },
         alternativeErrorText: {
         fontSize: 12,
@@ -189,8 +182,21 @@ export function createBottomPanelStyles(options: RoutePlannerStyleOptions) {
         alignItems: "center",
         paddingBottom: 12,
     },
+        alternativeDepartureError: {
+        alignItems: "flex-start",
+        gap: 10,
+        paddingHorizontal: 12,
+        paddingTop: 8,
+    },
+        alternativeDepartureErrorCopy: {
+        gap: 2,
+    },
+        alternativeDepartureErrorTitle: {
+        fontSize: 16,
+        fontWeight: "700",
+    },
         alternativeRetryButton: {
-        minHeight: 36,
+        minHeight: 44,
         borderRadius: 8,
         paddingHorizontal: 14,
         flexDirection: "row",

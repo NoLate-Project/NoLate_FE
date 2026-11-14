@@ -1,6 +1,6 @@
 import ImportedTicketSummary from './ImportedTicketSummary';
 import React, { useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 
 import { useTheme } from "../../../theme/ThemeContext";
@@ -38,7 +38,7 @@ type DetailInfoRowProps = {
     value: string;
     secondaryValue?: string;
     badge?: string;
-    muted?: boolean;
+    featured?: boolean;
     last?: boolean;
 };
 
@@ -49,10 +49,11 @@ function DetailInfoRow({
     value,
     secondaryValue,
     badge,
-    muted = false,
+    featured = false,
     last = false,
 }: DetailInfoRowProps) {
     const { colors, mode } = useTheme();
+    const largeText = useWindowDimensions().fontScale > 1.35;
     const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
     const iconBackground = mode === "dark"
         ? "rgba(75,157,255,0.12)"
@@ -63,30 +64,56 @@ function DetailInfoRow({
             testID={testID}
             accessible
             accessibilityLabel={[label, value, secondaryValue, badge].filter(Boolean).join(" ")}
-            style={styles.infoRow}
+            style={[styles.infoRow, featured && styles.featuredInfoRow]}
         >
             <View
                 testID={`${testID}-icon`}
-                style={[styles.infoIcon, { backgroundColor: iconBackground }]}
+                style={[styles.infoIcon, featured && { backgroundColor: iconBackground }]}
             >
-                <Ionicons name={icon} size={16} color={accent} />
+                <Ionicons name={icon} size={18} color={featured ? accent : colors.textSecondary} />
             </View>
             <View style={styles.infoCopy}>
-                <Text style={[styles.infoKicker, { color: colors.textSecondary }]}>{label}</Text>
+                {!featured && (
+                    <Text
+                        allowFontScaling={!largeText}
+                        style={[styles.infoLabel, largeText && styles.largeInfoLabel, { color: colors.textSecondary }]}
+                    >
+                        {label}
+                    </Text>
+                )}
                 <Text
-                    numberOfLines={2}
-                    style={[styles.infoValue, { color: muted ? colors.textSecondary : colors.textPrimary }]}
+                    numberOfLines={largeText ? undefined : 2}
+                    allowFontScaling={!largeText}
+                    lineBreakStrategyIOS="hangul-word"
+                    style={[
+                        styles.infoValue,
+                        largeText && styles.scaledInfoValue,
+                        { color: featured ? colors.textSecondary : colors.textPrimary },
+                    ]}
                 >
                     {value}
                 </Text>
                 {secondaryValue ? (
-                    <View style={styles.infoSecondaryRow}>
-                        <Text style={[styles.infoSecondaryValue, { color: colors.textPrimary }]}>
+                    <View style={[styles.infoSecondaryRow, largeText && styles.infoSecondaryRowLarge]}>
+                        <Text
+                            allowFontScaling={!largeText}
+                            lineBreakStrategyIOS="hangul-word"
+                            style={[
+                                styles.infoSecondaryValue,
+                                largeText && styles.infoSecondaryValueLarge,
+                                { color: colors.textPrimary },
+                            ]}
+                        >
                             {secondaryValue}
                         </Text>
                         {badge ? (
                             <View style={[styles.infoBadge, { backgroundColor: colors.border }]}>
-                                <Text style={[styles.infoBadgeText, { color: colors.textSecondary }]}>{badge}</Text>
+                                <Text
+                                    allowFontScaling={!largeText}
+                                    style={[styles.infoBadgeText, largeText && styles.scaledBadgeText, { color: colors.textSecondary }]}
+                                >
+                                    {badge}
+                                </Text>
                             </View>
                         ) : null}
                     </View>
@@ -120,7 +147,7 @@ function ScheduleHero({ presentation }: { presentation: PlainScheduleDetailPrese
             </View>
             <Text
                 accessibilityRole="header"
-                numberOfLines={3}
+                lineBreakStrategyIOS="hangul-word"
                 style={[styles.heroTitle, { color: colors.textPrimary }]}
             >
                 {presentation.title}
@@ -136,12 +163,14 @@ export default function PlainScheduleDetailView({
     travelPlan,
     arrivalObservation,
 }: Props) {
+    const largeTravelPlanText = useWindowDimensions().fontScale > 1.35;
     const { colors, mode } = useTheme();
     const presentation = useMemo(
         () => buildPlainScheduleDetailPresentation(item),
         [item]
     );
     const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
+    const hasNotification = item.notificationEnabled === true;
 
     return (
         <ScrollView
@@ -159,7 +188,6 @@ export default function PlainScheduleDetailView({
             <View testID="plain-schedule-detail-page" style={styles.pageContent}>
                 <ScheduleHero presentation={presentation} />
 
-                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>일정 정보</Text>
                 <View
                     testID="plain-schedule-detail-info-group"
                     style={[
@@ -177,23 +205,32 @@ export default function PlainScheduleDetailView({
                         value={presentation.dateLabel}
                         secondaryValue={presentation.timeRangeLabel}
                         badge={presentation.durationLabel}
-                    />
-                    <DetailInfoRow
-                        testID="plain-schedule-detail-location"
-                        icon="location-outline"
-                        label="장소"
-                        value={presentation.location ?? "없음"}
-                        muted={!presentation.location}
-                    />
-                    <DetailInfoRow
-                        testID="plain-schedule-detail-notification"
-                        icon="notifications-outline"
-                        label="알림"
-                        value={presentation.notificationLabel}
-                        muted={presentation.notificationLabel === "없음"}
+                        featured
                         last
                     />
                 </View>
+                {(presentation.location || hasNotification) ? (
+                    <View style={styles.additionalInfo}>
+                        {presentation.location ? (
+                            <DetailInfoRow
+                                testID="plain-schedule-detail-location"
+                                icon="location-outline"
+                                label="장소"
+                                value={presentation.location}
+                                last={!hasNotification}
+                            />
+                        ) : null}
+                        {hasNotification ? (
+                            <DetailInfoRow
+                                testID="plain-schedule-detail-notification"
+                                icon="notifications-outline"
+                                label="알림"
+                                value={presentation.notificationLabel}
+                                last
+                            />
+                        ) : null}
+                    </View>
+                ) : null}
 
                 <ImportedTicketSummary route={item.route} />
 
@@ -203,6 +240,7 @@ export default function PlainScheduleDetailView({
                         <View
                             style={[
                                 styles.travelPlanRow,
+                                largeTravelPlanText && styles.travelPlanRowLarge,
                                 {
                                     borderColor: colors.border,
                                     backgroundColor: colors.surface2,
@@ -212,10 +250,11 @@ export default function PlainScheduleDetailView({
                             <View style={[styles.travelPlanIcon, { backgroundColor: `${accent}1F` }]}>
                                 <Ionicons name="navigate-outline" size={18} color={accent} />
                             </View>
-                            <View style={styles.travelPlanCopy}>
+                            <View style={[styles.travelPlanCopy, largeTravelPlanText && styles.travelPlanCopyLarge]}>
                                 <Text style={[styles.travelPlanTitle, { color: colors.textPrimary }]}>내 이동 경로</Text>
                                 <Text
-                                    numberOfLines={1}
+                                    accessibilityLiveRegion="polite"
+                                    lineBreakStrategyIOS="hangul-word"
                                     style={[styles.travelPlanStatus, { color: colors.textSecondary }]}
                                 >
                                     {travelPlan.statusLabel}
@@ -229,6 +268,7 @@ export default function PlainScheduleDetailView({
                                 accessibilityState={{ busy: travelPlan.pending, disabled: travelPlan.pending }}
                                 style={({ pressed }) => [
                                     styles.travelPlanButton,
+                                    largeTravelPlanText && styles.travelPlanButtonLarge,
                                     {
                                         backgroundColor: accent,
                                         opacity: pressed || travelPlan.pending ? 0.62 : 1,
@@ -236,9 +276,11 @@ export default function PlainScheduleDetailView({
                                 ]}
                             >
                                 {travelPlan.pending ? (
-                                    <ActivityIndicator size="small" color="#FFFFFF" />
+                                    <ActivityIndicator size="small" color="#FFFFFF" style={styles.travelPlanActionIcon} />
                                 ) : (
-                                    <Ionicons name="map-outline" size={16} color="#FFFFFF" />
+                                    <View style={styles.travelPlanActionIcon}>
+                                        <Ionicons name="map-outline" size={16} color="#FFFFFF" />
+                                    </View>
                                 )}
                                 <Text style={styles.travelPlanButtonText}>{travelPlan.actionLabel}</Text>
                             </Pressable>
@@ -253,23 +295,16 @@ export default function PlainScheduleDetailView({
                     </View>
                 ) : null}
 
-                <View
+                {presentation.notes ? <View
                     testID="plain-schedule-detail-memo"
                     accessible
-                    accessibilityLabel={presentation.notes ? `메모 ${presentation.notes}` : "메모 없음"}
+                    accessibilityLabel={`메모 ${presentation.notes}`}
                     style={styles.memoSection}
                 >
-                    <Text style={[styles.sectionTitle, styles.memoTitle, { color: colors.textSecondary }]}>메모</Text>
                     <View style={[styles.memoDivider, { backgroundColor: colors.border }]} />
-                    <Text
-                        style={[
-                            styles.notesText,
-                            { color: presentation.notes ? colors.textPrimary : colors.textSecondary },
-                        ]}
-                    >
-                        {presentation.notes ?? "메모 없음"}
-                    </Text>
-                </View>
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>메모</Text>
+                    <Text style={[styles.notesText, { color: colors.textPrimary }]}>{presentation.notes}</Text>
+                </View> : null}
             </View>
         </ScrollView>
     );
@@ -288,7 +323,7 @@ const styles = StyleSheet.create({
         alignSelf: "center",
     },
     hero: {
-        marginBottom: 14,
+        marginBottom: 18,
     },
     heroTitle: {
         marginTop: 8,
@@ -336,18 +371,26 @@ const styles = StyleSheet.create({
         marginBottom: 14,
         overflow: "hidden",
     },
+    additionalInfo: {
+        marginBottom: 14,
+    },
     infoRow: {
         position: "relative",
-        minHeight: 64,
-        paddingHorizontal: 14,
+        minHeight: 54,
+        paddingHorizontal: 0,
         paddingVertical: 10,
         flexDirection: "row",
         alignItems: "flex-start",
         gap: 10,
     },
+    featuredInfoRow: {
+        minHeight: 70,
+        paddingHorizontal: 14,
+        paddingVertical: 13,
+    },
     infoDivider: {
         position: "absolute",
-        left: 54,
+        left: 40,
         right: 0,
         bottom: 0,
         height: StyleSheet.hairlineWidth,
@@ -363,16 +406,24 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
     },
-    infoKicker: {
-        fontSize: 11,
-        lineHeight: 15,
+    infoLabel: {
+        fontSize: 12,
+        lineHeight: 17,
         fontWeight: "600",
+    },
+    largeInfoLabel: {
+        fontSize: 20,
+        lineHeight: 26,
     },
     infoValue: {
         marginTop: 2,
         fontSize: 14,
         lineHeight: 19,
         fontWeight: "600",
+    },
+    scaledInfoValue: {
+        fontSize: 25,
+        lineHeight: 34,
     },
     infoSecondaryRow: {
         marginTop: 6,
@@ -381,16 +432,28 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         gap: 10,
     },
+    infoSecondaryRowLarge: {
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 6,
+    },
     infoSecondaryValue: {
         flex: 1,
         minWidth: 0,
-        fontSize: 17,
-        lineHeight: 22,
+        fontSize: 19,
+        lineHeight: 25,
         fontWeight: "700",
         fontVariant: ["tabular-nums"],
     },
+    infoSecondaryValueLarge: {
+        flex: 0,
+        maxWidth: "100%",
+        fontSize: 34,
+        lineHeight: 42,
+    },
     infoBadge: {
         minHeight: 24,
+        paddingVertical: 3,
         borderRadius: 999,
         paddingHorizontal: 9,
         alignItems: "center",
@@ -400,6 +463,10 @@ const styles = StyleSheet.create({
         fontSize: 10.5,
         lineHeight: 15,
         fontWeight: "600",
+    },
+    scaledBadgeText: {
+        fontSize: 18,
+        lineHeight: 24,
     },
     travelPlanSection: {
         marginBottom: 14,
@@ -417,6 +484,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 10,
     },
+    travelPlanRowLarge: {
+        flexWrap: "wrap",
+    },
     travelPlanIcon: {
         width: 36,
         height: 36,
@@ -427,6 +497,9 @@ const styles = StyleSheet.create({
     travelPlanCopy: {
         flex: 1,
         minWidth: 0,
+    },
+    travelPlanCopyLarge: {
+        flexBasis: "75%",
     },
     travelPlanTitle: {
         fontSize: 13,
@@ -443,13 +516,23 @@ const styles = StyleSheet.create({
     },
     travelPlanButton: {
         minWidth: 76,
-        height: 38,
+        minHeight: 44,
         borderRadius: 8,
         paddingHorizontal: 11,
+        paddingVertical: 7,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 6,
+    },
+    travelPlanButtonLarge: {
+        marginLeft: 46,
+    },
+    travelPlanActionIcon: {
+        width: 20,
+        height: 20,
+        alignItems: "center",
+        justifyContent: "center",
     },
     travelPlanButtonText: {
         color: "#FFFFFF",
@@ -459,17 +542,13 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     memoSection: {
-        minHeight: 82,
-    },
-    memoTitle: {
-        marginBottom: 8,
+        paddingBottom: 12,
     },
     memoDivider: {
         height: StyleSheet.hairlineWidth,
+        marginBottom: 12,
     },
     notesText: {
-        paddingTop: 12,
-        paddingHorizontal: 1,
         fontSize: 14,
         lineHeight: 21,
         fontWeight: "500",

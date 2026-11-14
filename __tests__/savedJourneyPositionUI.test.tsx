@@ -9,7 +9,8 @@ import * as journeyAuthentication from '../src/modules/journey/automaticJourneyA
 import { savedJourneyProviderFixture, savedJourneySubwayProviderFixture } from '../test-support/savedJourneyProviderFixture';
 const mockRead = jest.fn(), mockDetach = jest.fn(), mockSyncDetach = jest.fn();
 const mockBinding = jest.fn(), mockTrial = jest.fn();
-jest.mock('../src/api/env', () => ({ getEnv: () => { throw new Error('NO_NETWORK_KEYS'); } }));
+const mockGetEnv = jest.fn((_: string): string | undefined => undefined);
+jest.mock('../src/api/env', () => ({ getEnv: (key: string) => mockGetEnv(key) }));
 let mockEvent: (value: AutomaticJourneySnapshot) => void;
 jest.mock('../src/modules/journey/automaticJourney', () => ({ ...jest.requireActual('../src/modules/journey/automaticJourney'),
     getAutomaticJourneySnapshot: () => mockRead(), subscribeAutomaticJourney: (callback: typeof mockEvent) => { mockEvent = callback; return mockDetach; } }));
@@ -43,6 +44,21 @@ it('updates with native GPS, hides on original TTL and unmount releases only rea
     expect(view.root.findByProps({ testID: 'position' }).props.children).toBe('unknown');
     act(() => view.unmount()); expect(mockDetach).toHaveBeenCalledTimes(1); expect(mockSyncDetach).toHaveBeenCalledTimes(1);
     expect(jest.getTimerCount()).toBe(0);
+});
+it('reads verified position in the explicitly enabled iOS release build', async () => {
+    const runtime = globalThis as typeof globalThis & { __DEV__: boolean };
+    const previousDev = runtime.__DEV__;
+    runtime.__DEV__ = false;
+    mockGetEnv.mockImplementation(key => key === 'EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED' ? 'true' : undefined);
+    let view: ReactTestRenderer | undefined;
+    try {
+        await act(async () => { view = TestRenderer.create(<Location />); });
+        expect(view!.root.findByProps({ testID: 'position' }).props.children).toContain('37.5');
+    } finally {
+        act(() => view?.unmount());
+        mockGetEnv.mockReset();
+        runtime.__DEV__ = previousDev;
+    }
 });
 it('never displays another schedule and ignores a late read after a newer native event', async () => {
     let finish!: (value: AutomaticJourneySnapshot) => void;

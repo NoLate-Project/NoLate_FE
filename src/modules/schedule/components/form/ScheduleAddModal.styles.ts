@@ -71,13 +71,15 @@ const styles = StyleSheet.create({
     },
     handleWrap:    { alignItems: "center", paddingTop: 8, paddingBottom: 8 },
     handle:        { width: 36, height: 4, borderRadius: 2, opacity: 0.24 },
-    scrollView: { maxHeight: "100%" },
-    scrollContent: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 14 },
-    morphScrollContent: { paddingTop: 14 },
+    scrollView: { maxHeight: "100%", flexShrink: 1 },
+    scrollContent: { paddingHorizontal: 20, paddingBottom: 14 },
     headerRow: {
         flexDirection: "row", alignItems: "center",
         justifyContent: "flex-end", minHeight: 36, marginBottom: 12,
     },
+    fixedHeader: { paddingTop: 6, paddingHorizontal: 20, flexShrink: 0 },
+    morphHeader: { paddingTop: 14 },
+    fixedHeaderLarge: { paddingTop: 12 },
     headerTitleGroup: {
         flex: 1,
         flexDirection: "row",
@@ -93,6 +95,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+    closeBtnLarge: { width: 44, height: 44, borderRadius: 22 },
     previewCard: {
         borderWidth: 1,
         borderRadius: 18,
@@ -165,12 +168,27 @@ const styles = StyleSheet.create({
     titleInputWrapEmphasized: {
         borderWidth: 1,
     },
+    titleInputWrapLarge: {
+        borderWidth: 0,
+        paddingHorizontal: 0,
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: 8,
+    },
     titleInput: {
         flex: 1,
         minWidth: 0,
         paddingVertical: 14,
         fontSize: 16,
         fontWeight: "600",
+    },
+    titleInputLarge: {
+        flex: 0,
+        minHeight: 58,
+        maxHeight: 212,
+        paddingHorizontal: 14,
+        borderRadius: 14,
+        textAlignVertical: "top",
     },
     categoryInlineChip: {
         maxWidth: 128,
@@ -188,11 +206,19 @@ const styles = StyleSheet.create({
         height: 8,
         borderRadius: 4,
     },
+    categoryInlineChipLarge: {
+        alignSelf: "flex-start",
+        maxWidth: "100%",
+        minHeight: 44,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+    },
     categoryInlineText: {
         flexShrink: 1,
         fontSize: 12,
         fontWeight: "600",
     },
+    categoryInlineTextLarge: { fontSize: 11 },
     categoryInlineChevron: {
         width: 13,
         height: 16,
@@ -220,6 +246,7 @@ const styles = StyleSheet.create({
         alignItems: "stretch",
         gap: 10,
     },
+    compactDateTimeRowLarge: { flexDirection: "column", gap: 0, paddingBottom: 6 },
     compactDatePressable: {
         flex: 1,
         minWidth: 0,
@@ -228,6 +255,7 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderRadius: 10,
     },
+    compactDatePressableLarge: { flex: 0 },
     compactValuePressable: {
         minHeight: 48,
         maxWidth: "52%",
@@ -238,6 +266,7 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderRadius: 10,
     },
+    compactValuePressableLarge: { maxWidth: "100%", flexWrap: "wrap", justifyContent: "flex-start", gap: 6 },
     compactRowTitle: {
         fontSize: 14,
         fontWeight: "600",
@@ -253,6 +282,7 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         textAlign: "right",
     },
+    compactRowValueLarge: { textAlign: "left" },
     compactValueCaption: {
         fontSize: 11,
         fontWeight: "600",
@@ -304,6 +334,8 @@ const styles = StyleSheet.create({
         alignItems: "center", justifyContent: "center",
         borderWidth: StyleSheet.hairlineWidth,
     },
+    saveBtnLarge: { height: "auto", minHeight: 50, paddingVertical: 8, paddingHorizontal: 14 },
+    saveFooter: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 20, paddingVertical: 10 },
     saveBtnText: { fontWeight: "700", fontSize: 15 },
 });
 

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -21,12 +22,23 @@ import type { NormalizedRoute } from './routeMapTypesAndStyle';
 import type { RouteInfo } from '../routeInfo';
 import type { Place, TravelMode } from '../types';
 import {
+  clearRouteCandidateListSnapshot,
+  getRouteCandidateListSnapshot,
+  setRouteCandidateListSnapshot,
   setRoutePlannerInitial,
   setRoutePlannerResult,
+  type RoutePlannerPayload,
 } from '../routePlannerSession';
+import { getImportedTicket } from '../importedTicket';
 import type { RoutePlannerBackAction } from '../routePlannerNavigation';
 
 type SetValue<T> = Dispatch<SetStateAction<T>>;
+
+export type RoutePlannerPlaceEditor = {
+  sessionId: string;
+  target: RoutePointTarget;
+  initial: RoutePlannerPayload;
+};
 
 type Options = {
   bottomSheetSnap: BottomSheetSnap;
@@ -44,6 +56,9 @@ type Options = {
   hasOriginCoords: boolean;
   hasRouteReady: boolean;
   initialTargetArrivalAt?: string;
+  initialRequestedDepartureAt?: string;
+  returnToScheduleDraft?: boolean;
+  appliesToExistingSchedule?: boolean;
   isBottomSheetHidden: boolean;
   isRouteDetailMode: boolean;
   locationPromptTarget: RoutePointTarget | null;
@@ -55,6 +70,8 @@ type Options = {
   requestedTransitDepartureAt: Date;
   routePathCoords?: RoutePathCoord[];
   routePlannerBackAction: RoutePlannerBackAction;
+  routeAlternatives: RouteAlternativeOption[];
+  departureTimeEdited: boolean;
   routeSubmitPendingRef: MutableRefObject<boolean>;
   routeSubmitResetTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>;
   router: ReturnType<typeof useRouter>;
@@ -76,6 +93,8 @@ type Options = {
  * 저장 중복 방지와 세션 복원 데이터를 함께 처리해 화면 이동 중 경로 초안이 유실되지 않게 한다.
  */
 export function useRoutePlannerSubmissionActions({
+  returnToScheduleDraft,
+  appliesToExistingSchedule,
   bottomSheetSnap,
   buildCanSubmitRoute: canSubmitRoute,
   closeLocationPrompt,
@@ -91,6 +110,7 @@ export function useRoutePlannerSubmissionActions({
   hasOriginCoords,
   hasRouteReady,
   initialTargetArrivalAt,
+  initialRequestedDepartureAt,
   isBottomSheetHidden,
   isRouteDetailMode,
   locationPromptTarget,
@@ -102,6 +122,8 @@ export function useRoutePlannerSubmissionActions({
   requestedTransitDepartureAt,
   routePathCoords,
   routePlannerBackAction,
+  routeAlternatives,
+  departureTimeEdited,
   routeSubmitPendingRef,
   routeSubmitResetTimerRef,
   router,
@@ -117,7 +139,10 @@ export function useRoutePlannerSubmissionActions({
   setRouteSubmitPending,
   travelMode,
 }: Options) {
+  const [placeEditor, setPlaceEditor] = useState<RoutePlannerPlaceEditor>();
   const initial = { targetArrivalAt: initialTargetArrivalAt };
+  const requestedDeparture = departureTimeEdited ? requestedTransitDepartureAt.toISOString() : initialRequestedDepartureAt;
+  const travelMinutes = selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative?.minutes ?? etaMinutes;
   const buildPersistableSelectedRoute = useCallback(() => {
     if (!selectedAlternative) return undefined;
 
@@ -199,10 +224,8 @@ export function useRoutePlannerSubmissionActions({
     selectedRouteInfo,
   ]);
 
-  const persistCurrentRoutePlannerInitial = useCallback(
-    (targetSessionId = sessionId) => {
-      if (!targetSessionId) return;
-
+  const buildCurrentRoutePlannerInitial = useCallback(
+    (): RoutePlannerPayload => {
       const normalizedOriginName = originName.trim();
       const normalizedDestinationName = destinationName.trim();
       const normalizedOriginAddress = originAddress.trim();
@@ -231,19 +254,22 @@ export function useRoutePlannerSubmissionActions({
             }
           : undefined;
 
-      setRoutePlannerInitial(targetSessionId, {
+      return {
+        returnToScheduleDraft,
+        appliesToExistingSchedule,
         origin: nextOrigin,
         destination: nextDestination,
         travelMode,
-        travelMinutes: etaMinutes,
+        travelMinutes,
         locationName:
           nextOrigin?.name && nextDestination?.name
             ? `${nextOrigin.name} → ${nextDestination.name}`
             : nextDestination?.name || nextOrigin?.name,
         targetArrivalAt: initial?.targetArrivalAt,
         departureAt: finalSelectedRouteDepartureTime,
+        requestedDepartureAt: travelMode === 'TRANSIT' ? requestedDeparture : undefined,
         route: buildPersistableSelectedRoute(),
-      });
+      };
     },
     [
       buildPersistableSelectedRoute,
@@ -251,16 +277,18 @@ export function useRoutePlannerSubmissionActions({
       destinationLat,
       destinationLng,
       destinationName,
-      etaMinutes,
+      travelMinutes,
       finalSelectedRouteDepartureTime,
+      requestedDeparture,
       hasDestinationCoords,
       hasOriginCoords,
+      returnToScheduleDraft,
+      appliesToExistingSchedule,
       initial?.targetArrivalAt,
       originAddress,
       originLat,
       originLng,
       originName,
-      sessionId,
       travelMode,
     ],
   );
@@ -270,17 +298,32 @@ export function useRoutePlannerSubmissionActions({
       const targetSessionId =
         sessionId ||
         `route-reset-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      persistCurrentRoutePlannerInitial(targetSessionId);
-      router.replace({
-        pathname: '/schedule/route-select',
-        params: {
-          sessionId: targetSessionId,
-          editTarget: target,
-        },
-      });
+      setPlaceEditor({ sessionId: targetSessionId, target, initial: buildCurrentRoutePlannerInitial() });
     },
-    [persistCurrentRoutePlannerInitial, router, sessionId],
+    [buildCurrentRoutePlannerInitial, sessionId],
   );
+
+  const closePlaceEditor = useCallback(() => setPlaceEditor(undefined), []);
+
+  const confirmRoutePoints = useCallback((origin: Place, destination: Place) => {
+    if (!placeEditor) return;
+    const { initial: previous, sessionId: targetSessionId } = placeEditor;
+    const pointsChanged = previous.origin?.lat !== origin.lat || previous.origin?.lng !== origin.lng ||
+      previous.destination?.lat !== destination.lat || previous.destination?.lng !== destination.lng;
+    const importedTicket = getImportedTicket(previous.route);
+    if (pointsChanged) clearRouteCandidateListSnapshot(targetSessionId);
+    setRoutePlannerInitial(targetSessionId, {
+      ...previous,
+      origin,
+      destination,
+      locationName: `${origin.name} → ${destination.name}`,
+      ...(pointsChanged && {
+        travelMinutes: undefined, departureAt: undefined, requestedDepartureAt: undefined,
+        route: importedTicket ? { importedTicket } : undefined,
+      }),
+    });
+    router.replace({ pathname: '/schedule/route-select', params: { sessionId: targetSessionId } });
+  }, [placeEditor, router]);
 
   const closePlanner = useCallback(() => {
     if (router.canGoBack()) {
@@ -304,21 +347,40 @@ export function useRoutePlannerSubmissionActions({
     const targetSessionId =
       sessionId ||
       `route-reset-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    persistCurrentRoutePlannerInitial(targetSessionId);
+    setRoutePlannerInitial(targetSessionId, buildCurrentRoutePlannerInitial());
+    const previousCandidates = getRouteCandidateListSnapshot(targetSessionId);
+    if (previousCandidates && departureTimeEdited) {
+      clearRouteCandidateListSnapshot(targetSessionId);
+      if (!etaLoading && selectedAlternative) {
+        setRouteCandidateListSnapshot(targetSessionId, {
+          alternatives: routeAlternatives,
+          selectedRouteId: selectedAlternative.id,
+          transitFilter: previousCandidates.transitFilter,
+          scrollY: undefined,
+          departureAt: requestedTransitDepartureAt,
+        });
+      }
+    }
+    const resumeCandidates = getRouteCandidateListSnapshot(targetSessionId);
     router.replace({
       pathname: '/schedule/route-select',
-      params: { sessionId: targetSessionId },
+      params: { sessionId: targetSessionId, ...(resumeCandidates && { returnFromMap: '1' }) },
     });
   }, [
     closePlanner,
-    persistCurrentRoutePlannerInitial,
+    buildCurrentRoutePlannerInitial,
+    departureTimeEdited,
+    etaLoading,
+    requestedTransitDepartureAt,
+    routeAlternatives,
+    selectedAlternative,
     routePlannerBackAction,
     router,
     sessionId,
   ]);
 
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
+    if (Platform.OS !== 'android' || placeEditor) return;
     const subscription = BackHandler.addEventListener(
       'hardwareBackPress',
       () => {
@@ -349,6 +411,7 @@ export function useRoutePlannerSubmissionActions({
     isBottomSheetHidden,
     isRouteDetailMode,
     locationPromptTarget,
+    placeEditor,
     routePlannerBackAction,
     snapBottomSheetTo,
   ]);
@@ -390,6 +453,7 @@ export function useRoutePlannerSubmissionActions({
               }
               setRequestedTransitDepartureAt(nextDepartureAt);
               setRouteRefreshTick(current => current + 1);
+              if (isRouteDetailMode && bottomSheetSnap === 'collapsed') snapBottomSheetTo('middle');
             },
           });
         },
@@ -400,6 +464,9 @@ export function useRoutePlannerSubmissionActions({
     setDraftTransitDepartureAt(initialValue);
     setIsTransitDeparturePickerOpen(true);
   }, [
+    bottomSheetSnap,
+    isRouteDetailMode,
+    snapBottomSheetTo,
     requestedTransitDepartureAt,
     selectedAlternative?.transitDepartureAt,
     setDraftTransitDepartureAt,
@@ -421,7 +488,11 @@ export function useRoutePlannerSubmissionActions({
     setRequestedTransitDepartureAt(nextDepartureAt);
     setIsTransitDeparturePickerOpen(false);
     setRouteRefreshTick(current => current + 1);
+    if (isRouteDetailMode && bottomSheetSnap === 'collapsed') snapBottomSheetTo('middle');
   }, [
+    bottomSheetSnap,
+    isRouteDetailMode,
+    snapBottomSheetTo,
     draftTransitDepartureAt,
     setIsTransitDeparturePickerOpen,
     setRequestedTransitDepartureAt,
@@ -498,7 +569,7 @@ export function useRoutePlannerSubmissionActions({
         origin: nextOrigin,
         destination: nextDestination,
         travelMode,
-        travelMinutes: selectedRouteInfo?.totalDurationMinutes ?? etaMinutes,
+        travelMinutes,
         locationName: `${nextOrigin.name} → ${nextDestination.name}`,
         targetArrivalAt: initial?.targetArrivalAt,
         departureAt: finalSelectedRouteDepartureTime,
@@ -525,8 +596,10 @@ export function useRoutePlannerSubmissionActions({
     goBack,
     goToScheduleList,
     openRoutePointEditorFromHeader,
+    placeEditor,
+    closePlaceEditor,
+    confirmRoutePoints,
     openTransitDeparturePicker,
-    persistCurrentRoutePlannerInitial,
     submit,
   };
 }

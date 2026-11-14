@@ -37,14 +37,14 @@ function detail(overrides: Partial<ScheduleDetailController> = {}) {
 }
 
 describe('schedule detail timing trust', () => {
-  it('keeps the expanded route metadata consistent with the unverified ETA warning', () => {
+  it('shows an estimate without repeating an unverified-time warning or claiming an arrival', () => {
     const presentation = detail();
 
     expect(presentation.departureTimeLabel).toBe('예상 출발');
     expect(presentation.routeSummaryTitle).toBe('저장한 경로');
-    expect(presentation.routeDetailMeta).toBe('운행시각 미확인 · 저장 경로 기준 · 환승 1회');
+    expect(presentation.routeDetailMeta).toBe('환승 1회');
     expect(presentation.routeDetailMeta).not.toContain('02:45 도착');
-    expect(presentation.routeArrivalSummary).toBe('운행시각 미확인 · 저장 경로 기준');
+    expect(presentation.routeArrivalSummary).toBeUndefined();
   });
 
   it('keeps confirmed late-arrival diagnostics visible in the expanded route metadata', () => {

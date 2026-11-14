@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import Animated, { FadeIn, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -22,6 +23,8 @@ import {
 import { useTheme } from '../../src/modules/theme/ThemeContext';
 import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
 import { useImmediateNavigationTransition } from '../../src/modules/performance/ImmediateNavigationTransition';
+
+const reportDetailsIn = FadeIn.duration(200).reduceMotion(ReduceMotion.System);
 
 const REASON_LABEL: Record<SharingReportReason, string> = {
   UNWANTED_SHARING: '원치 않는 공유',
@@ -62,25 +65,30 @@ export default function SharingReportHistoryScreen() {
   const { closeActiveScene } = useImmediateNavigationTransition();
   const insets = useSafeAreaInsets();
   const { colors, mode } = useTheme();
-  const mountedRef = useRef(true);
+  const requestId = useRef(0);
   const [reports, setReports] = useState<SharingReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (refresh = false) => {
+    const request = ++requestId.current;
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
       const next = await getMySharingReports();
-      if (mountedRef.current) setReports(next);
+      if (request === requestId.current) {
+        setReports(next);
+        setExpandedId(id => next.some(report => report.id === id) ? id : null);
+      }
     } catch (loadError) {
-      if (mountedRef.current) {
+      if (request === requestId.current) {
         setError(loadError instanceof Error ? loadError.message : '신고 내역을 불러오지 못했습니다.');
       }
     } finally {
-      if (mountedRef.current) {
+      if (request === requestId.current) {
         setLoading(false);
         setRefreshing(false);
       }
@@ -88,10 +96,9 @@ export default function SharingReportHistoryScreen() {
   }, []);
 
   useEffect(() => {
-    mountedRef.current = true;
     load().catch(() => undefined);
     return () => {
-      mountedRef.current = false;
+      requestId.current += 1;
     };
   }, [load]);
 
@@ -109,10 +116,14 @@ export default function SharingReportHistoryScreen() {
           }}
           style={styles.headerButton}
         >
-          <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+          <Ionicons name="chevron-back-outline" size={24} color={colors.textPrimary} />
         </Pressable>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>내 신고 내역</Text>
-        <View style={styles.headerButton} />
+        <Text accessibilityRole="header" style={[styles.title, { color: colors.textPrimary }]}>내 신고 내역</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="신고 내역 새로고침"
+          accessibilityState={{ disabled: loading || refreshing, busy: refreshing }}
+          disabled={loading || refreshing} onPress={() => load(true)} style={styles.headerButton}>
+          <Ionicons accessible={false} name="refresh-outline" size={22} color={colors.textPrimary} />
+        </Pressable>
       </View>
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />}
@@ -124,7 +135,7 @@ export default function SharingReportHistoryScreen() {
             <ActivityIndicator color={colors.textSecondary} />
             <Text style={[styles.stateText, { color: colors.textSecondary }]}>신고 내역을 확인하고 있어요</Text>
           </View>
-        ) : error ? (
+        ) : error && reports.length === 0 ? (
           <View accessibilityRole="alert" style={styles.state}>
             <Ionicons name="alert-circle-outline" size={25} color={colors.textSecondary} />
             <Text style={[styles.stateText, { color: colors.textSecondary }]}>{error}</Text>
@@ -139,19 +150,57 @@ export default function SharingReportHistoryScreen() {
           </View>
         ) : (
           <View style={styles.list}>
+            {error && (
+              <View accessibilityLiveRegion="polite" style={styles.refreshError}>
+                <Text style={[styles.stateText, { color: colors.textSecondary }]}>{error}</Text>
+                <Pressable accessibilityRole="button" onPress={() => load(true)} style={styles.retry}>
+                  <Text style={[styles.retryText, { color: colors.textPrimary }]}>다시 시도</Text>
+                </Pressable>
+              </View>
+            )}
+            <Text style={[styles.meta, { color: colors.textSecondary }]}>신고 {reports.length}건</Text>
             {reports.map(report => {
-              const accent = report.status === 'RESOLVED' ? '#18A558' : report.status === 'DISMISSED' ? colors.textSecondary : '#2F80FF';
+              const accent = report.status === 'RESOLVED'
+                ? (mode === 'dark' ? '#6CDBA2' : '#0F7B43')
+                : report.status === 'DISMISSED' ? colors.textSecondary
+                  : (mode === 'dark' ? '#75B5FF' : '#1E5CC6');
+              const expanded = expandedId === report.id;
+              const reason = REASON_LABEL[report.reason];
+              const status = STATUS_LABEL[report.status];
+              const target = resourceLabel(report);
+              const received = formatDate(report.createdAt);
               return (
-                <View key={report.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardTop}>
-                    <Text style={[styles.reason, { color: colors.textPrimary }]}>{REASON_LABEL[report.reason]}</Text>
-                    <View style={[styles.status, { backgroundColor: `${accent}18` }]}>
-                      <Text style={[styles.statusText, { color: accent }]}>{STATUS_LABEL[report.status]}</Text>
+                <View key={report.id} style={[styles.card, { borderColor: colors.border }]}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${reason}, ${status}, ${target}, 접수 ${received}`}
+                    accessibilityState={{ expanded }}
+                    accessibilityHint={expanded ? '신고 상세 접기' : '신고 상세 펼치기'}
+                    onPress={() => setExpandedId(current => current === report.id ? null : report.id)}
+                    style={({ pressed }) => [styles.reportButton, pressed && { opacity: 0.7 }]}
+                  >
+                    <View style={styles.reportCopy}>
+                      <Text style={[styles.reason, { color: colors.textPrimary }]}>{reason}</Text>
+                      <Text style={[styles.meta, { color: colors.textSecondary }]}>{target}</Text>
+                      <Text style={[styles.meta, { color: colors.textSecondary }]}>접수 {received}</Text>
                     </View>
-                  </View>
-                  <Text style={[styles.meta, { color: colors.textSecondary }]}>{resourceLabel(report)} · {formatDate(report.createdAt)}</Text>
-                  {report.details ? <Text style={[styles.details, { color: colors.textPrimary }]}>{report.details}</Text> : null}
-                  {report.resolvedAt ? <Text style={[styles.resolved, { color: colors.textSecondary }]}>처리 시각 {formatDate(report.resolvedAt)}</Text> : null}
+                    <View style={[styles.status, { backgroundColor: `${accent}18` }]}>
+                      <Text style={[styles.statusText, { color: accent }]}>{status}</Text>
+                    </View>
+                    <Ionicons accessible={false} name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+                      size={16} color={colors.textSecondary} />
+                  </Pressable>
+                  {expanded && (
+                    <Animated.View entering={reportDetailsIn} style={[styles.detailPanel, { backgroundColor: colors.surface2 }]}>
+                      <Text style={[styles.reason, { color: colors.textPrimary }]}>신고 내용</Text>
+                      <Text style={[styles.details, { color: colors.textPrimary }]}>
+                        {report.details?.trim() || '추가로 남긴 내용이 없어요.'}
+                      </Text>
+                      {report.resolvedAt && (
+                        <Text style={[styles.meta, { color: colors.textSecondary }]}>처리 시각 {formatDate(report.resolvedAt)}</Text>
+                      )}
+                    </Animated.View>
+                  )}
                 </View>
               );
             })}
@@ -166,20 +215,22 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   header: { minHeight: 64, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
   headerButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  title: { flex: 1, textAlign: 'center', fontSize: 21, lineHeight: 28, fontWeight: '900' },
+  title: { flex: 1, fontSize: 21, lineHeight: 28, fontWeight: '700' },
   content: { paddingHorizontal: 18, paddingTop: 10 },
-  description: { fontSize: 13, lineHeight: 20, fontWeight: '600' },
+  description: { fontSize: 14, lineHeight: 21, fontWeight: '400' },
   state: { minHeight: 260, alignItems: 'center', justifyContent: 'center', gap: 10 },
-  stateText: { fontSize: 14, lineHeight: 20, fontWeight: '700', textAlign: 'center' },
-  retry: { minHeight: 40, paddingHorizontal: 16, justifyContent: 'center' },
-  retryText: { fontWeight: '800' },
-  list: { marginTop: 18, gap: 11 },
-  card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, padding: 15 },
-  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  reason: { flex: 1, fontSize: 15, lineHeight: 21, fontWeight: '800' },
+  stateText: { fontSize: 14, lineHeight: 21, fontWeight: '500', textAlign: 'center' },
+  retry: { minHeight: 44, paddingHorizontal: 16, justifyContent: 'center' },
+  retryText: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  list: { marginTop: 18 },
+  refreshError: { alignItems: 'flex-start', paddingBottom: 12 },
+  card: { borderBottomWidth: StyleSheet.hairlineWidth },
+  reportButton: { minHeight: 72, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  reportCopy: { flex: 1, flexBasis: '45%', minWidth: 0, gap: 2 },
+  reason: { fontSize: 15, lineHeight: 21, fontWeight: '600' },
   status: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 },
-  statusText: { fontSize: 11, lineHeight: 14, fontWeight: '800' },
-  meta: { marginTop: 7, fontSize: 11, lineHeight: 16, fontWeight: '600' },
-  details: { marginTop: 12, fontSize: 13, lineHeight: 19, fontWeight: '600' },
-  resolved: { marginTop: 10, fontSize: 11, lineHeight: 15, fontWeight: '600' },
+  statusText: { fontSize: 12, lineHeight: 17, fontWeight: '600' },
+  meta: { fontSize: 12, lineHeight: 18, fontWeight: '400' },
+  detailPanel: { borderRadius: 12, marginBottom: 12, padding: 12, gap: 6 },
+  details: { fontSize: 14, lineHeight: 21, fontWeight: '400' },
 });

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated } from "react-native";
+import { Animated, Easing } from "react-native";
+import { useReducedMotion } from "react-native-reanimated";
 
 import { CATEGORY_PICKER_MARGIN, isDateType, pickerTargetH, type PickerType } from "./scheduleEditPresentation";
 
 /** 카테고리 선택 영역의 열림·닫힘 상태와 여백·화살표 애니메이션을 함께 관리합니다. */
 export function useCategoryPickerAnimation(initialOpen: boolean) {
+    const reduceMotion = useReducedMotion();
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(initialOpen);
     const [categoryPickerClosing, setCategoryPickerClosing] = useState(false);
     const categoryPickerOpenRef = useRef(initialOpen);
-    const categoryPickerSpacingAnim = useRef(new Animated.Value(0)).current;
+    const categoryPickerSpacingAnim = useRef(new Animated.Value(initialOpen ? 1 : 0)).current;
 
     /** 선택 영역 상태를 갱신하고 닫힘 애니메이션 동안 콘텐츠가 유지되도록 종료 상태를 표시합니다. */
     const setCategoryPickerExpanded = useCallback((expanded: boolean) => {
@@ -28,16 +30,22 @@ export function useCategoryPickerAnimation(initialOpen: boolean) {
     }, [setCategoryPickerExpanded]);
 
     useEffect(() => {
-        const animation = categoryPickerOpen
-            ? Animated.spring(categoryPickerSpacingAnim, {
-                toValue: 1, useNativeDriver: false, damping: 18, stiffness: 160, mass: 0.8,
-            })
-            : Animated.timing(categoryPickerSpacingAnim, { toValue: 0, duration: 200, useNativeDriver: false });
+        if (reduceMotion) {
+            categoryPickerSpacingAnim.setValue(categoryPickerOpen ? 1 : 0);
+            setCategoryPickerClosing(false);
+            return;
+        }
+        const animation = Animated.timing(categoryPickerSpacingAnim, {
+            toValue: categoryPickerOpen ? 1 : 0,
+            duration: categoryPickerOpen ? 200 : 160,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        });
         animation.start(({ finished }) => {
             if (finished && !categoryPickerOpen) setCategoryPickerClosing(false);
         });
         return () => animation.stop();
-    }, [categoryPickerOpen, categoryPickerSpacingAnim]);
+    }, [categoryPickerOpen, categoryPickerSpacingAnim, reduceMotion]);
 
     return {
         categoryPickerOpen,

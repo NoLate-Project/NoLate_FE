@@ -1,6 +1,7 @@
 import React from "react";
 import {
     ActionSheetIOS,
+    Animated,
     PanResponder,
     ScrollView,
     StyleSheet,
@@ -824,7 +825,7 @@ describe("schedule agenda presentation", () => {
         });
 
         const text = renderedText(renderer!);
-        expect(text).toContain("전체 일정");
+        expect(text).toContain("모든 카테고리");
         expect(text).toMatch(/7월 10일[^\d]*금요일/);
         expect(text).toMatch(/7월 14일[^\d]*화요일/);
         expect(text).toMatch(/1\s*개의 일정/);
@@ -877,7 +878,7 @@ describe("schedule agenda presentation", () => {
         });
 
         const filterPill = renderer!.root.findByProps({
-            accessibilityLabel: "일정 필터, 전체 일정",
+            accessibilityLabel: "일정 필터, 모든 카테고리",
         });
         expect(filterPill.props.accessibilityState).toEqual({ disabled: false });
 
@@ -885,12 +886,107 @@ describe("schedule agenda presentation", () => {
 
         expect(showActionSheet).toHaveBeenCalledWith(
             expect.objectContaining({
-                title: "표시할 일정",
-                options: ["전체 일정", "취소"],
+                title: "카테고리 선택",
+                options: ["모든 카테고리", "취소"],
                 cancelButtonIndex: 1,
             }),
             expect.any(Function)
         );
+    });
+
+    test.each([true, false])("빠른 저장 뒤 일정이 필터에 포함되는지 확인한다 (%s)", async (matchesFilter) => {
+        const personal = { ...category, id: "personal", title: "개인" };
+        const items = [schedule("old", 14, 9, "기존 일정"), schedule("personal", 14, 12, "개인 일정", personal)];
+        const saved = schedule("saved", 19, 14, "저장한 일정", matchesFilter ? category : personal);
+        const showOptions = jest.spyOn(ActionSheetIOS, "showActionSheetWithOptions").mockImplementation(() => undefined);
+        const renderList = (afterSave: boolean) => (
+            <ThemeProvider>
+                <MonthAgendaList visibleMonth="2026-07-14" items={afterSave ? [...items, saved] : items}
+                    entryDate={afterSave ? "2026-07-19" : undefined}
+                    savedEntry={afterSave ? { itemId: saved.id, categoryId: saved.category.id } : undefined}
+                    loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                    onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+            </ThemeProvider>
+        );
+        await act(async () => { renderer = TestRenderer.create(renderList(false)); });
+        act(() => renderer!.root.findByProps({ accessibilityLabel: "일정 필터, 모든 카테고리" }).props.onPress());
+        const [options, select] = showOptions.mock.calls.at(-1)!;
+        act(() => select(options.options.indexOf("업무")));
+        await act(async () => { renderer!.update(renderList(true)); });
+        expect(renderedText(renderer!)).toContain("저장한 일정");
+        expect(renderer!.root.findByProps({ accessibilityLabel: `일정 필터, ${matchesFilter ? "업무" : "모든 카테고리"}` })).toBeDefined();
+        expect(renderedText(renderer!).includes("필터를 해제했어요")).toBe(!matchesFilter);
+    });
+
+    test("저장한 일정만 작성 창이 닫힌 뒤 한 번 강조한다", async () => {
+        jest.useFakeTimers();
+        const timing = jest.spyOn(Animated, "timing");
+        try {
+            const saved = schedule("saved", 19, 14);
+            const other = schedule("other", 19, 10);
+            const renderList = (saveReturnVisible: boolean, reduceEntryMotion = false) => (
+                <ThemeProvider>
+                    <MonthAgendaList visibleMonth="2026-07-19" items={[other, saved]}
+                        entryDate="2026-07-19" savedEntry={{ itemId: saved.id }}
+                        saveReturnVisible={saveReturnVisible} reduceEntryMotion={reduceEntryMotion}
+                        loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+                </ThemeProvider>
+            );
+            await act(async () => { renderer = TestRenderer.create(renderList(false)); });
+            const scroll = renderer!.root.findByType(ScrollView);
+            const section = renderer!.root.findByProps({ testID: "month-agenda-entry-date" }).parent!;
+            await act(async () => {
+                scroll.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+                scroll.props.onContentSizeChange(350, 700);
+                section.props.onLayout({ nativeEvent: { layout: { y: 80 } } });
+                jest.advanceTimersByTime(80);
+            });
+            const cards = renderer!.root.findAllByType(ScheduleAgendaCard);
+            expect(cards.find(card => card.props.item.id === "other")?.props.returnHighlightOpacity).toBeUndefined();
+            expect(cards.find(card => card.props.item.id === "saved")?.props.returnHighlightOpacity).toBeDefined();
+            const fades = () => timing.mock.calls.filter(([, config]) => config.duration === 240);
+            expect(fades()).toHaveLength(0);
+            await act(async () => { renderer!.update(renderList(true)); });
+            expect(fades()).toHaveLength(1);
+            await act(async () => { renderer!.update(renderList(false)); });
+            await act(async () => { renderer!.update(renderList(true)); });
+            expect(fades()).toHaveLength(1);
+            await act(async () => { renderer!.update(renderList(true, true)); });
+            expect(renderer!.root.findAllByType(ScheduleAgendaCard).every(card => !card.props.returnHighlightOpacity)).toBe(true);
+        } finally {
+            timing.mockRestore();
+            jest.useRealTimers();
+        }
+    });
+
+    test("상세형은 작성 창이 닫히고 저장한 일정이 표시되면 해당 행만 강조한다", async () => {
+        const timing = jest.spyOn(Animated, "timing");
+        try {
+            const saved = schedule("saved", 19, 14);
+            const other = schedule("other", 19, 10);
+            const renderPanel = (saveReturnVisible: boolean, items: ScheduleItem[], reduceEntryMotion = false) => (
+                <ThemeProvider>
+                    <SelectedDayAgendaPanel selectedDay="2026-07-19" items={items}
+                        savedItemId={saved.id} saveReturnVisible={saveReturnVisible} reduceEntryMotion={reduceEntryMotion}
+                        loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+                </ThemeProvider>
+            );
+            const fades = () => timing.mock.calls.filter(([, config]) => config.duration === 240);
+            await act(async () => { renderer = TestRenderer.create(renderPanel(false, [other])); });
+            await act(async () => { renderer!.update(renderPanel(true, [other])); });
+            expect(fades()).toHaveLength(0);
+            await act(async () => { renderer!.update(renderPanel(true, [other, saved])); });
+            expect(fades()).toHaveLength(1);
+            const cards = renderer!.root.findAllByType(ScheduleAgendaCard);
+            expect(cards.find(card => card.props.item.id === other.id)?.props.returnHighlightOpacity).toBeUndefined();
+            expect(cards.find(card => card.props.item.id === saved.id)?.props.returnHighlightOpacity).toBeDefined();
+            await act(async () => { renderer!.update(renderPanel(true, [other, saved], true)); });
+            expect(renderer!.root.findAllByType(ScheduleAgendaCard).every(card => !card.props.returnHighlightOpacity)).toBe(true);
+        } finally {
+            timing.mockRestore();
+        }
     });
 
     test("목록형은 월이 바뀌면 스크롤을 맨 위로 되돌린다", async () => {

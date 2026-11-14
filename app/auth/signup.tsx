@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
     Alert,
     BackHandler,
+    Keyboard,
     Platform,
     Pressable,
     StyleSheet,
+    TextInput,
     Text,
     View,
 } from "react-native";
@@ -16,6 +18,7 @@ import { loginMember, signUpMember, type SignupConsentsPayload } from "../../src
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import { clearAuthTokens, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import { useAuthFormDrafts } from "../../src/modules/auth/AuthFormDrafts";
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import { getAuthErrorPresentation } from "../../src/modules/auth/authErrorMessage";
@@ -34,6 +37,7 @@ import {
 } from "../../src/modules/auth/signupNavigation";
 
 const PASSWORD_PATTERN = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[a-zA-Z\d!@#$%^&*]{8,16}$/;
+type SignupField = "name" | "email" | "password" | "confirmation";
 type SignUpStep = "details" | "agreements";
 
 export default function SignUp() {
@@ -44,12 +48,20 @@ export default function SignUp() {
     const { colors, mode } = useTheme();
     const styles = createStyles(colors, mode);
 
-    const [name, setName] = useState("");
-    const [email, setEmail] = useState("");
-    const [pwd, setPwd] = useState("");
-    const [confirmPwd, setConfirmPwd] = useState("");
+    const { signup: { name, email, password: pwd, confirmation: confirmPwd }, setSignup, clear: clearDrafts } = useAuthFormDrafts();
     const [step, setStep] = useState<SignUpStep>("details");
     const [submitting, setSubmitting] = useState(false);
+    const [fieldError, setFieldError] = useState<{ field: SignupField; message: string }>();
+    const nameInput = useRef<TextInput>(null);
+    const emailInput = useRef<TextInput>(null);
+    const passwordInput = useRef<TextInput>(null);
+    const confirmationInput = useRef<TextInput>(null);
+
+    useEffect(() => {
+        if (!fieldError || step !== "details") return;
+        const fields = { name: nameInput, email: emailInput, password: passwordInput, confirmation: confirmationInput };
+        fields[fieldError.field].current?.focus();
+    }, [fieldError, step]);
     const pendingShareToken = normalizeShareToken(shareToken);
     const loginRoute = pendingShareToken
         ? { pathname: "/auth/login" as const, params: { shareToken: pendingShareToken } }
@@ -78,36 +90,31 @@ export default function SignUp() {
         const normalizedName = name.trim();
         const normalizedEmail = normalizeSignupEmail(email);
 
-        if (!normalizedName || !normalizedEmail || !pwd || !confirmPwd) {
-            Alert.alert("입력 확인", "모든 항목을 입력해 주세요.");
+        const invalid = (field: SignupField, message: string) => {
+            setFieldError({ field, message });
             return false;
-        }
+        };
 
+        if (!normalizedName) return invalid("name", "이름을 입력해 주세요.");
         if (!isValidSignupName(normalizedName)) {
-            Alert.alert("입력 확인", `이름은 ${MAX_SIGNUP_NAME_LENGTH}자 이하로 입력해 주세요.`);
-            return false;
+            return invalid("name", `이름은 ${MAX_SIGNUP_NAME_LENGTH}자 이하로 입력해 주세요.`);
         }
-
         if (!isValidSignupEmail(normalizedEmail)) {
-            Alert.alert("입력 확인", "올바른 이메일 주소를 입력해 주세요.");
-            return false;
+            return invalid("email", "올바른 이메일 주소를 입력해 주세요.");
         }
-
-        if (pwd !== confirmPwd) {
-            Alert.alert("입력 확인", "비밀번호가 일치하지 않습니다.");
-            return false;
-        }
-
         if (!PASSWORD_PATTERN.test(pwd)) {
-            Alert.alert("입력 확인", "비밀번호는 영문, 숫자, !@#$%^&* 조합으로 8~16자여야 합니다.");
-            return false;
+            return invalid("password", "영문, 숫자, !@#$%^&* 조합으로 8~16자를 입력해 주세요.");
         }
+        if (pwd !== confirmPwd) return invalid("confirmation", "비밀번호가 일치하지 않아요.");
 
+        setFieldError(undefined);
         return true;
     };
 
     const onContinue = () => {
-        if (validateDetails()) setStep("agreements");
+        if (!validateDetails()) return;
+        Keyboard.dismiss();
+        setStep("agreements");
     };
 
     const onSignUp = async (consents: SignupConsentsPayload) => {
@@ -126,6 +133,7 @@ export default function SignUp() {
                 consents,
             });
             accountCreated = true;
+            clearDrafts();
 
             const member = requireAuthenticatedMember(await loginMember({
                 email: normalizedEmail,
@@ -184,8 +192,10 @@ export default function SignUp() {
         return (
             <AuthScreen
                 title="가입 전 확인"
-                subtitle="일반 계정을 만들기 전에 필요한 항목입니다."
+                subtitle="계정을 만들려면 아래 두 항목에 동의해 주세요."
+                signupStep={2}
                 onBack={() => setStep("details")}
+                backLabel="가입 정보로 돌아가기"
                 backDisabled={submitting}
                 density="compact"
             >
@@ -202,15 +212,26 @@ export default function SignUp() {
 
     return (
         <AuthScreen
-            subtitle="새 계정으로 오늘의 이동을 준비하세요."
-            onBack={() => router.replace(loginRoute)}
+            title="계정을 만들어요"
+            subtitle="기본 정보와 비밀번호를 설정해 주세요."
+            signupStep={1}
+            backLabel="로그인으로 돌아가기"
+            onBack={() => {
+                Keyboard.dismiss();
+                router.dismissTo(loginRoute);
+            }}
             density="compact"
         >
             <AuthInput
                 label="이름"
                 icon="person-outline"
                 value={name}
-                onChangeText={setName}
+                inputRef={nameInput}
+                errorMessage={fieldError?.field === "name" ? fieldError.message : undefined}
+                onChangeText={value => {
+                    setSignup(current => ({ ...current, name: value }));
+                    if (fieldError?.field === "name") setFieldError(undefined);
+                }}
                 maxLength={MAX_SIGNUP_NAME_LENGTH}
                 placeholder="홍길동"
                 autoComplete="name"
@@ -220,7 +241,12 @@ export default function SignUp() {
                 label="이메일"
                 icon="mail-outline"
                 value={email}
-                onChangeText={setEmail}
+                inputRef={emailInput}
+                errorMessage={fieldError?.field === "email" ? fieldError.message : undefined}
+                onChangeText={value => {
+                    setSignup(current => ({ ...current, email: value }));
+                    if (fieldError?.field === "email") setFieldError(undefined);
+                }}
                 maxLength={MAX_EMAIL_LENGTH}
                 placeholder="you@example.com"
                 autoCapitalize="none"
@@ -232,34 +258,45 @@ export default function SignUp() {
                 label="비밀번호"
                 icon="lock-closed-outline"
                 value={pwd}
-                onChangeText={setPwd}
+                inputRef={passwordInput}
+                errorMessage={fieldError?.field === "password" ? fieldError.message : undefined}
+                onChangeText={value => {
+                    setSignup(current => ({ ...current, password: value }));
+                    if (fieldError?.field === "password") setFieldError(undefined);
+                }}
                 placeholder="8~16자"
                 secureTextEntry
                 autoComplete="new-password"
                 textContentType="newPassword"
             />
+            {fieldError?.field !== "password" ? (
+                <View style={styles.passwordRule}>
+                    <View
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
+                    >
+                        <Ionicons name="information-circle-outline" size={17} color={colors.textSecondary} />
+                    </View>
+                    <Text style={styles.passwordRuleText}>
+                        영문, 숫자, !@#$%^&* 조합으로 8~16자
+                    </Text>
+                </View>
+            ) : null}
             <AuthInput
                 label="비밀번호 확인"
                 icon="checkmark-circle-outline"
                 value={confirmPwd}
-                onChangeText={setConfirmPwd}
+                inputRef={confirmationInput}
+                errorMessage={fieldError?.field === "confirmation" ? fieldError.message : undefined}
+                onChangeText={value => {
+                    setSignup(current => ({ ...current, confirmation: value }));
+                    if (fieldError?.field === "confirmation") setFieldError(undefined);
+                }}
                 placeholder="한 번 더 입력"
                 secureTextEntry
                 autoComplete="new-password"
                 textContentType="newPassword"
             />
-
-            <View style={styles.passwordRule}>
-                <View
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                >
-                    <Ionicons name="information-circle-outline" size={17} color={colors.textSecondary} />
-                </View>
-                <Text style={styles.passwordRuleText}>
-                    영문, 숫자, !@#$%^&* 조합으로 8~16자
-                </Text>
-            </View>
 
             <AuthPrimaryButton
                 disabled={submitting}
@@ -269,7 +306,10 @@ export default function SignUp() {
 
             <Pressable
                 accessibilityRole="button"
-                onPress={() => router.replace(loginRoute)}
+                onPress={() => {
+                    Keyboard.dismiss();
+                    router.dismissTo(loginRoute);
+                }}
                 style={({ pressed }) => [
                     styles.loginLink,
                     {
@@ -307,8 +347,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             minWidth: 0,
             color: colors.textSecondary,
             fontSize: 12,
-            lineHeight: 17,
-            fontWeight: "800",
+            lineHeight: 18,
+            fontWeight: "400",
         },
         loginLink: {
             minHeight: 50,

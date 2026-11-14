@@ -42,11 +42,6 @@ export function createActionsStyles(options: QuickScheduleModalStylesOptions) {
         lineHeight: 17,
         fontWeight: "700",
     },
-        savedButtonStack: {
-        alignSelf: "stretch",
-        gap: 8,
-        marginTop: 18,
-    },
         submitButton: {
         height: 50,
         borderRadius: 13,
@@ -65,5 +60,6 @@ export function createActionsStyles(options: QuickScheduleModalStylesOptions) {
         fontSize: 15,
         fontWeight: "800",
     },
+        submitButtonLarge: { height: "auto", minHeight: 52, flexShrink: 0, paddingHorizontal: 8, paddingVertical: 8 },
     });
 }

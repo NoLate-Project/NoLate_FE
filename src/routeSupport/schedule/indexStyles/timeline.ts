@@ -50,6 +50,19 @@ export function createTimelineStyles(options: ScheduleIndexStylesOptions) {
         dayTimelineCanvas: {
         height: DAY_MINUTES / 60 * DAY_TIMELINE_HOUR_HEIGHT + DAY_TIMELINE_END_PADDING,
     },
+        multiDayDateHeadings: {
+        flexDirection: "row",
+        paddingLeft: DAY_TIMELINE_GUTTER + 18,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+        multiDayDateHeading: {
+        flex: 1,
+        borderLeftWidth: StyleSheet.hairlineWidth,
+        paddingVertical: 5,
+        textAlign: "center",
+        fontSize: 12,
+        fontWeight: "700",
+    },
         multiDayTimelineCanvas: {
         height: DAY_MINUTES / 60 * DAY_TIMELINE_HOUR_HEIGHT + DAY_TIMELINE_END_PADDING,
         borderTopWidth: StyleSheet.hairlineWidth,
@@ -71,9 +84,11 @@ export function createTimelineStyles(options: ScheduleIndexStylesOptions) {
         position: "absolute",
         borderRadius: 8,
         borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 6,
-        paddingVertical: 6,
+        borderLeftWidth: 2,
+        paddingHorizontal: 5,
+        paddingVertical: 4,
         overflow: "hidden",
+        justifyContent: "center",
     },
         multiDayNowLine: {
         position: "absolute",
@@ -101,9 +116,15 @@ export function createTimelineStyles(options: ScheduleIndexStylesOptions) {
         borderRadius: 1,
     },
         multiDayEventTitle: {
-        fontSize: 10.5,
+        fontSize: 11,
+        lineHeight: 14,
         fontWeight: "800",
         letterSpacing: 0,
+    },
+        multiDayEventTime: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "600",
     },
         dayHourRow: {
         position: "absolute",

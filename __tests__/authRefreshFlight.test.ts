@@ -43,6 +43,17 @@ it("normal 401 recovery joins the proactive refresh flight", async () => {
     expect(axios.post).toHaveBeenCalledTimes(1);
     expect(apiClient).toHaveBeenCalledTimes(2);
 });
+it.each(["/api/member/password", "/api/member/withdraw"])(
+    "returns a rejected confirmation password on %s without rotating the session",
+    async url => {
+        await expect(recover401({
+            response: { status: 401, data: { errorCode: "A003" } },
+            config: { url, headers: { Authorization: "Bearer old-access" } },
+        })).rejects.toMatchObject({ errorCode: "A003", status: 401 });
+        expect(axios.post).not.toHaveBeenCalled();
+        expect(apiClient).not.toHaveBeenCalled();
+    },
+);
 it("debug native exchange joins the same guarded rotation commit, without axios fallback", async () => {
     jest.mocked(refreshAutomaticJourneyCredentials).mockResolvedValue(response.data);
     await expect(refreshCurrentAuthTokens()).resolves.toMatchObject({ kind: "refreshed" });

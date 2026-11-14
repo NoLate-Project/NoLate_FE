@@ -1,6 +1,4 @@
 import React from "react";
-import ScheduleIcon from "../shared/ScheduleIcon";
-import { INPUT_DESIGN_ACCENT, inputDesignPreviewStyles, useScheduleInputDesignPreview } from "./ScheduleInputDesignPreviewContext";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
@@ -16,6 +14,8 @@ type Props = {
     routeInfo?: RouteInfo;
     onPress: () => void;
     onClear?: () => void;
+    wrapTitle?: boolean;
+    footer?: React.ReactNode;
 };
 
 // 일정 폼에서 이동 경로 입력 상태를 한 줄 카드로 보여준다.
@@ -27,9 +27,10 @@ export default function LocationInputRow({
     routeInfo,
     onPress,
     onClear,
+    wrapTitle = false,
+    footer,
 }: Props) {
-    const { colors, mode } = useTheme();
-    const isTossPreview = useScheduleInputDesignPreview();
+    const { colors } = useTheme();
 
     const hasRoute = !!routeInfo || !!originValue || !!destinationValue;
     const routeText =
@@ -60,7 +61,7 @@ export default function LocationInputRow({
                         testID="location-input-pressable"
                         accessibilityRole="button"
                         accessibilityLabel={hasRoute ? `이동 경로 수정, ${routeText}` : "출발지와 도착지 추가"}
-                        accessibilityHint="경로 선택 화면을 엽니다"
+                        accessibilityHint={hasRoute ? `${routeMeta}. 경로 선택 화면을 엽니다` : "경로 선택 화면을 엽니다"}
                         onPress={onPress}
                         style={({ pressed }) => [
                             styles.routeButton,
@@ -70,27 +71,24 @@ export default function LocationInputRow({
                             pressed && { backgroundColor: colors.surface },
                         ]}
                     >
-                        {isTossPreview && <View style={[inputDesignPreviewStyles.iconTile, { backgroundColor: mode === "dark" ? "rgba(36,107,254,0.18)" : "#E8F3FF" }]}>
-                            <ScheduleIcon name="location" role="formControl" color={mode === "dark" ? "#72ADFF" : INPUT_DESIGN_ACCENT} />
-                        </View>}
                         <View style={styles.textGroup}>
-                            <Text numberOfLines={1} style={[styles.routeTitle, { color: colors.textPrimary }]}>
-                                {isTossPreview && !hasRoute ? "장소와 경로 추가" : routeText}
+                            <Text numberOfLines={wrapTitle ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.routeTitle, { color: colors.textPrimary }]}>
+                                {routeText}
                             </Text>
                             {hasRoute ? (
                                 <Text style={[styles.routeMeta, { color: colors.textSecondary }]}>
                                     {routeMeta}
                                 </Text>
                             ) : (
-                                <Text style={[styles.routeMeta, isTossPreview && inputDesignPreviewStyles.routeMeta, { color: colors.textSecondary }]}>
-                                    {isTossPreview ? "이동 시간에 맞춰 출발 알림을 받아요" : "경로와 출발 알림 설정"}
+                                <Text style={[styles.routeMeta, { color: colors.textSecondary }]}>
+                                    경로와 출발 알림 설정
                                 </Text>
                             )}
                         </View>
                         <View style={styles.chevronIcon}>
                             <Ionicons
                                 accessible={false}
-                                name="chevron-forward"
+                                name="chevron-forward-outline"
                                 size={16}
                                 color={colors.textSecondary}
                             />
@@ -111,12 +109,13 @@ export default function LocationInputRow({
                                     { backgroundColor: colors.surface },
                                 ]}
                             >
-                                <Ionicons accessible={false} name="close" size={14} color={colors.textSecondary} />
+                                <Ionicons accessible={false} name="close-outline" size={14} color={colors.textSecondary} />
                             </View>
                         </Pressable>
                     ) : null}
                 </View>
             </View>
+            {footer}
         </View>
     );
 }

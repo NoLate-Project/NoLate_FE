@@ -1,4 +1,5 @@
 import { StyleProp, ViewStyle } from 'react-native';
+import type { ReactNode } from 'react';
 
 export type TmapLatLng = {
   latitude: number;
@@ -199,6 +200,8 @@ export function isValidWgs84Coordinate(
   );
 }
 
+export type TmapLoadState = "loading" | "ready" | "error" | "unavailable";
+
 export type TmapMapViewProps = {
   style?: StyleProp<ViewStyle>;
   /**
@@ -231,9 +234,13 @@ export type TmapMapViewProps = {
   onZoomChanged?: (zoom: number) => void;
   onCameraChanged?: (camera: TmapCameraState) => void;
   onInitialized?: () => void;
+  /** Report map status to a screen that presents its own loading and recovery UI. */
+  onLoadStateChange?: (state: TmapLoadState) => void;
   onMapLayoutReport?: (report: TmapMapLayoutReport) => void;
   fallbackBackgroundColor?: string;
   fallbackTextColor?: string;
+  loadingContent?: ReactNode;
+  renderLoadError?: (retry: () => void) => ReactNode;
 };
 
 const tmapWebviewModule = (() => {

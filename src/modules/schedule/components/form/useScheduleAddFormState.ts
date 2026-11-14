@@ -1,6 +1,8 @@
 import { SCHEDULE_NOTIFICATION_POLICY } from "../../scheduleNotificationPolicy";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, TextInput } from 'react-native';
+import type { ScheduleRouteDraftChange } from './ScheduleRouteDraftNotice';
+import { Animated, Easing, TextInput } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import { searchAddressByKeyword } from '../../../map/tmapApi';
 import { getWritableScheduleCategories } from '../../categoryPermissions';
 import { getRouteInfoFromRoute } from '../../routeInfo';
@@ -53,6 +55,7 @@ export function useScheduleAddFormState({
     writableCategories[0]?.id ?? '',
   );
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
   const categoryPickerSpacingAnim = useRef(new Animated.Value(0)).current;
   const [originText, setOriginText] = useState('');
   const [destinationText, setDestinationText] = useState('');
@@ -68,6 +71,7 @@ export function useScheduleAddFormState({
   const [travelMinutes, setTravelMinutes] = useState<number | undefined>();
   const [departAt, setDepartAt] = useState<string | undefined>();
   const [route, setRoute] = useState<unknown>();
+  const [routeDraftChange, setRouteDraftChange] = useState<ScheduleRouteDraftChange>();
   const [allDay, setAllDay] = useState(false);
   const [hasEndTime, setHasEndTime] = useState(false);
   const [notificationEnabled, setNotificationEnabled] = useState(false);
@@ -110,23 +114,20 @@ export function useScheduleAddFormState({
   }, []);
 
   useEffect(() => {
-    const animation = categoryPickerOpen
-      ? Animated.spring(categoryPickerSpacingAnim, {
-          toValue: 1,
-          useNativeDriver: false,
-          damping: 18,
-          stiffness: 160,
-          mass: 0.8,
-        })
-      : Animated.timing(categoryPickerSpacingAnim, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: false,
-        });
+    if (reduceMotion) {
+      categoryPickerSpacingAnim.setValue(categoryPickerOpen ? 1 : 0);
+      return;
+    }
+    const animation = Animated.timing(categoryPickerSpacingAnim, {
+      toValue: categoryPickerOpen ? 1 : 0,
+      duration: categoryPickerOpen ? 200 : 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    });
 
     animation.start();
     return () => animation.stop();
-  }, [categoryPickerOpen, categoryPickerSpacingAnim]);
+  }, [categoryPickerOpen, categoryPickerSpacingAnim, reduceMotion]);
 
   const categoryPickerMarginBottom = categoryPickerSpacingAnim.interpolate({
     inputRange: [0, 1],
@@ -179,6 +180,7 @@ export function useScheduleAddFormState({
     setTravelMinutes(undefined);
     setDepartAt(undefined);
     setRoute(undefined);
+    setRouteDraftChange(undefined);
     routeTimingTargetArrivalRef.current = undefined;
     pendingRouteTimingTargetArrivalRef.current = undefined;
     setAllDay(false);
@@ -298,6 +300,7 @@ export function useScheduleAddFormState({
     setTravelMode(initialValues.travelMode ?? 'CAR');
     setDepartAt(undefined);
     setRoute(initialValues.route);
+    setRouteDraftChange(undefined);
     setNotificationEnabled(Boolean(initialValues.notificationEnabled));
     setAlertMode(normalizeScheduleAlertMode(initialValues.alertMode));
     if (typeof initialValues.notificationLeadMinutes === 'number') {
@@ -486,6 +489,8 @@ export function useScheduleAddFormState({
     setDepartAt,
     route,
     setRoute,
+    routeDraftChange,
+    setRouteDraftChange,
     allDay,
     hasEndTime,
     setHasEndTime,

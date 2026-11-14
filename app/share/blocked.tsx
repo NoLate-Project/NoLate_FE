@@ -3,7 +3,9 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  AccessibilityInfo,
+  Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,7 +13,9 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
+import Animated, { FadeIn, LinearTransition, ReduceMotion, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -20,9 +24,14 @@ import {
   type BlockedSharingMember,
 } from '../../src/api/sharingSafety';
 import { recoverDepartureAlarmsAfterMutation } from '../../src/modules/notification/departureAlarmMutationRecovery';
+import { useSystemReduceMotion } from '../../src/modules/performance/useSystemReduceMotion';
 import { useTheme } from '../../src/modules/theme/ThemeContext';
 import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
 import { useImmediateNavigationTransition } from '../../src/modules/performance/ImmediateNavigationTransition';
+
+const rowChange = LinearTransition.duration(180).reduceMotion(ReduceMotion.System);
+const confirmationIn = SlideInDown.duration(200).reduceMotion(ReduceMotion.System);
+const backdropIn = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : '차단 목록을 불러오지 못했습니다.';
@@ -40,11 +49,23 @@ export default function BlockedSharingMembersScreen() {
   const { closeActiveScene } = useImmediateNavigationTransition();
   const insets = useSafeAreaInsets();
   const { colors, mode } = useTheme();
+  const { fontScale } = useWindowDimensions();
+  const reduceMotion = useSystemReduceMotion();
+  const largeText = fontScale > 1.35;
+  const accent = mode === 'dark' ? '#9FC5FF' : '#205CC6';
+  const actionInk = mode === 'dark' ? '#102344' : '#FFFFFF';
   const mountedRef = useRef(true);
+  const requestId = useRef(0);
+  const applying = useRef(false);
+  const focusTarget = useRef<number | null>(null);
+  const rowButtons = useRef(new Map<number, React.ElementRef<typeof Pressable>>());
+  const emptyHeading = useRef<React.ElementRef<typeof Text>>(null);
   const [members, setMembers] = useState<BlockedSharingMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [pendingMemberId, setPendingMemberId] = useState<number | null>(null);
+  const [confirmation, setConfirmation] = useState<BlockedSharingMember | null>(null);
+  const [pending, setPending] = useState(false);
+  const [unblockFailure, setUnblockFailure] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const goBack = useCallback(() => {
@@ -54,16 +75,18 @@ export default function BlockedSharingMembersScreen() {
   }, [closeActiveScene, router]);
 
   const load = useCallback(async (refresh = false) => {
+    if (applying.current) return;
+    const request = ++requestId.current;
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
       const next = await getBlockedSharingMembers();
-      if (mountedRef.current) setMembers(next);
+      if (mountedRef.current && request === requestId.current) setMembers(next);
     } catch (loadError) {
-      if (mountedRef.current) setError(errorMessage(loadError));
+      if (mountedRef.current && request === requestId.current) setError(errorMessage(loadError));
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && request === requestId.current) {
         setLoading(false);
         setRefreshing(false);
       }
@@ -75,36 +98,51 @@ export default function BlockedSharingMembersScreen() {
     load().catch(() => undefined);
     return () => {
       mountedRef.current = false;
+      requestId.current += 1;
     };
   }, [load]);
 
-  const confirmUnblock = useCallback((member: BlockedSharingMember) => {
-    if (pendingMemberId !== null) return;
-    Alert.alert(
-      '차단 해제',
-      `${blockedMemberLabel(member)} 사용자의 공유를 다시 받을 수 있게 할까요?`,
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '차단 해제',
-          onPress: async () => {
-            setPendingMemberId(member.memberId);
-            try {
-              await unblockSharingMember(member.memberId);
-              await recoverDepartureAlarmsAfterMutation();
-              if (mountedRef.current) {
-                setMembers(current => current.filter(item => item.memberId !== member.memberId));
-              }
-            } catch (unblockError) {
-              Alert.alert('차단 해제 실패', errorMessage(unblockError));
-            } finally {
-              if (mountedRef.current) setPendingMemberId(null);
-            }
-          },
-        },
-      ],
-    );
-  }, [pendingMemberId]);
+  const restoreFocus = useCallback(() => {
+    const target = focusTarget.current;
+    focusTarget.current = null;
+    if (target === null) return;
+    requestAnimationFrame(() => {
+      const element = rowButtons.current.get(target) ?? emptyHeading.current;
+      if (element && mountedRef.current) AccessibilityInfo.sendAccessibilityEvent?.(element, 'focus');
+    });
+  }, []);
+
+  const dismissConfirmation = () => {
+    if (applying.current || !confirmation) return;
+    focusTarget.current = confirmation.memberId;
+    setConfirmation(null);
+    if (Platform.OS !== 'ios') restoreFocus();
+  };
+
+  const applyUnblock = async () => {
+    if (!confirmation || applying.current) return;
+    const memberId = confirmation.memberId;
+    applying.current = true;
+    requestId.current += 1;
+    setRefreshing(false);
+    setPending(true);
+    setUnblockFailure(null);
+    try {
+      await unblockSharingMember(memberId);
+      if (!mountedRef.current) return;
+      const index = members.findIndex(member => member.memberId === memberId);
+      focusTarget.current = members[index + 1]?.memberId ?? members[index - 1]?.memberId ?? memberId;
+      setMembers(current => current.filter(member => member.memberId !== memberId));
+      setConfirmation(null);
+      if (Platform.OS !== 'ios') restoreFocus();
+      void recoverDepartureAlarmsAfterMutation().catch(() => undefined);
+    } catch (unblockError) {
+      if (mountedRef.current) setUnblockFailure(errorMessage(unblockError));
+    } finally {
+      applying.current = false;
+      if (mountedRef.current) setPending(false);
+    }
+  };
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
@@ -116,20 +154,25 @@ export default function BlockedSharingMembersScreen() {
           onPress={goBack}
           style={({ pressed }) => [styles.headerButton, { opacity: pressed ? 0.6 : 1 }]}
         >
-          <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+          <Ionicons name="chevron-back-outline" size={24} color={colors.textPrimary} />
         </Pressable>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>차단한 사용자</Text>
-        <View style={styles.headerSpacer} />
+        <Text accessibilityRole="header" style={[styles.title, { color: colors.textPrimary }]}>차단한 사용자</Text>
+        {!loading && !error ? (
+          <Text accessibilityLabel={`차단한 사용자 ${members.length}명`}
+            style={[styles.count, { backgroundColor: colors.surface2, color: colors.textSecondary }]}>
+            {members.length}명
+          </Text>
+        ) : <View style={styles.headerSpacer} />}
       </View>
 
       <ScrollView
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => { if (!confirmation) void load(true); }} />
         }
         contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, 20) + 20 }]}
       >
-        <Text style={[styles.description, { color: colors.textSecondary }]}>
-          차단한 사용자의 기존 공유는 숨겨지고 새로운 직접 공유와 링크 초대도 거절됩니다.
+        <Text lineBreakStrategyIOS="hangul-word" style={[styles.description, { color: colors.textSecondary }]}>
+          차단한 사용자의 공유는 숨겨지고, 새 공유도 받지 않아요.
         </Text>
 
         {loading ? (
@@ -147,54 +190,103 @@ export default function BlockedSharingMembersScreen() {
           </View>
         ) : members.length === 0 ? (
           <View style={styles.state}>
-            <Ionicons name="shield-checkmark-outline" size={30} color={colors.textSecondary} />
-            <Text style={[styles.stateText, { color: colors.textSecondary }]}>차단한 사용자가 없어요</Text>
+            <View style={[styles.emptyIcon, { backgroundColor: colors.surface2 }]}>
+              <Ionicons accessible={false} name="shield-checkmark-outline" size={25} color={accent} />
+            </View>
+            <Text ref={emptyHeading} accessible style={[styles.stateText, { color: colors.textPrimary }]}>차단한 사용자가 없어요</Text>
           </View>
         ) : (
-          <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+          <View style={styles.list}>
             {members.map((member, index) => {
-              const pending = pendingMemberId === member.memberId;
+
               return (
-                <View
+                <Animated.View
                   key={member.memberId}
-                  style={[styles.row, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
+                  layout={rowChange}
+                  style={[styles.row, largeText && styles.rowLarge, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
                 >
                   <View style={[styles.avatar, { backgroundColor: colors.surface2 }]}>
                     <Ionicons name="person-outline" size={19} color={colors.textSecondary} />
                   </View>
                   <View style={styles.copy}>
-                    <Text numberOfLines={1} style={[styles.memberName, { color: colors.textPrimary }]}>
+                    <Text lineBreakStrategyIOS="hangul-word" style={[styles.memberName, { color: colors.textPrimary }]}>
                       {blockedMemberLabel(member)}
                     </Text>
                     {member.email && member.name ? (
-                      <Text numberOfLines={1} style={[styles.memberMeta, { color: colors.textSecondary }]}>
+                      <Text lineBreakStrategyIOS="hangul-word" style={[styles.memberMeta, { color: colors.textSecondary }]}>
                         {member.email}
                       </Text>
                     ) : null}
                   </View>
                   <Pressable
+                    ref={element => {
+                      if (element) rowButtons.current.set(member.memberId, element);
+                      else rowButtons.current.delete(member.memberId);
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel={`${blockedMemberLabel(member)} 차단 해제`}
-                    accessibilityState={{ busy: pending, disabled: pendingMemberId !== null }}
-                    disabled={pendingMemberId !== null}
-                    onPress={() => confirmUnblock(member)}
+                    onPress={() => {
+                      setUnblockFailure(null);
+                      setConfirmation(member);
+                    }}
                     style={({ pressed }) => [
                       styles.unblockButton,
-                      { borderColor: colors.border, opacity: pressed || pendingMemberId !== null ? 0.5 : 1 },
+                      { borderColor: colors.border, opacity: pressed ? 0.65 : 1 },
                     ]}
                   >
-                    {pending ? (
-                      <ActivityIndicator size="small" color={colors.textSecondary} />
-                    ) : (
-                      <Text style={[styles.unblockText, { color: colors.textPrimary }]}>차단 해제</Text>
-                    )}
+                    <Text style={[styles.unblockText, { color: accent }]}>차단 해제</Text>
                   </Pressable>
-                </View>
+                </Animated.View>
               );
             })}
           </View>
         )}
       </ScrollView>
+      <Modal visible={confirmation !== null} transparent animationType="none" presentationStyle="overFullScreen"
+        onRequestClose={dismissConfirmation} onDismiss={restoreFocus}>
+        {confirmation && (
+          <View style={styles.modalOverlay}>
+            <Animated.View entering={reduceMotion ? undefined : backdropIn} style={StyleSheet.absoluteFill}>
+              <Pressable accessible={false} importantForAccessibility="no" disabled={pending}
+                onPress={dismissConfirmation} style={styles.backdrop} />
+            </Animated.View>
+            <Animated.View entering={reduceMotion ? undefined : confirmationIn} accessibilityViewIsModal
+              onAccessibilityEscape={dismissConfirmation}
+              style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: Math.max(18, insets.bottom) }]}>
+              <ScrollView bounces={false} contentContainerStyle={styles.confirmationContent}>
+                <Text accessibilityRole="header" style={[styles.sheetTitle, { color: colors.textPrimary }]}>차단을 해제할까요?</Text>
+                <View style={[styles.confirmationMember, { backgroundColor: colors.surface2 }]}>
+                  <Ionicons accessible={false} name="person-outline" size={20} color={colors.textSecondary} />
+                  <View style={styles.copy}>
+                    <Text style={[styles.memberName, { color: colors.textPrimary }]}>{blockedMemberLabel(confirmation)}</Text>
+                    {!!confirmation.name && !!confirmation.email && (
+                      <Text style={[styles.memberMeta, { color: colors.textSecondary }]}>{confirmation.email}</Text>
+                    )}
+                  </View>
+                </View>
+                <Text style={[styles.description, { color: colors.textSecondary }]}>
+                  이 사용자가 보낸 공유를 다시 받을 수 있어요.
+                </Text>
+                {!!unblockFailure && <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+                  style={[styles.description, { color: colors.textPrimary }]}>{unblockFailure}</Text>}
+              </ScrollView>
+              <View style={[styles.sheetActions, largeText && styles.sheetActionsLarge]}>
+                <Pressable accessibilityRole="button" disabled={pending} onPress={dismissConfirmation}
+                  style={[styles.sheetButton, { backgroundColor: colors.surface2 }]}>
+                  <Text style={[styles.unblockText, { color: colors.textPrimary }]}>취소</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="차단 해제 확인"
+                  accessibilityState={{ disabled: pending, busy: pending }} disabled={pending} onPress={applyUnblock}
+                  style={[styles.sheetButton, { backgroundColor: accent }]}>
+                  {pending ? <ActivityIndicator color={actionInk} />
+                    : <Text style={[styles.unblockText, { color: actionInk }]}>{unblockFailure ? '다시 시도' : '차단 해제'}</Text>}
+                </Pressable>
+              </View>
+            </Animated.View>
+          </View>
+        )}
+      </Modal>
+
     </View>
   );
 }
@@ -204,19 +296,31 @@ const styles = StyleSheet.create({
   header: { minHeight: 64, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
   headerButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerSpacer: { width: 44 },
-  title: { flex: 1, textAlign: 'center', fontSize: 21, lineHeight: 28, fontWeight: '900' },
+  title: { flex: 1, fontSize: 21, lineHeight: 28, fontWeight: '700' },
   content: { paddingHorizontal: 18, paddingTop: 10 },
-  description: { fontSize: 13, lineHeight: 20, fontWeight: '600' },
+  description: { fontSize: 14, lineHeight: 21, fontWeight: '400' },
   state: { minHeight: 260, alignItems: 'center', justifyContent: 'center', gap: 10 },
-  stateText: { fontSize: 14, lineHeight: 20, fontWeight: '700', textAlign: 'center' },
-  retryButton: { minHeight: 40, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
-  retryText: { fontWeight: '800' },
-  list: { marginTop: 18, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, overflow: 'hidden' },
-  row: { minHeight: 76, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  stateText: { fontSize: 14, lineHeight: 21, fontWeight: '500', textAlign: 'center' },
+  retryButton: { minHeight: 44, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  retryText: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  list: { marginTop: 18 },
+  count: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5, fontSize: 12, fontWeight: '600' },
+  emptyIcon: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  row: { minHeight: 76, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  rowLarge: { flexWrap: 'wrap' },
   avatar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   copy: { flex: 1, minWidth: 0 },
-  memberName: { fontSize: 14, lineHeight: 19, fontWeight: '800' },
-  memberMeta: { marginTop: 2, fontSize: 11, lineHeight: 15, fontWeight: '600' },
-  unblockButton: { minWidth: 76, height: 38, borderWidth: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  unblockText: { fontSize: 12, lineHeight: 16, fontWeight: '800' },
+  memberName: { fontSize: 15, lineHeight: 21, fontWeight: '600' },
+  memberMeta: { marginTop: 2, fontSize: 13, lineHeight: 18, fontWeight: '400' },
+  unblockButton: { minWidth: 76, minHeight: 44, paddingHorizontal: 12, borderWidth: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  unblockText: { fontSize: 14, lineHeight: 20, fontWeight: '700', textAlign: 'center' },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.42)' },
+  sheet: { maxHeight: '80%', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 18, paddingHorizontal: 18, gap: 12 },
+  confirmationContent: { gap: 12 },
+  sheetTitle: { fontSize: 21, fontWeight: '700' },
+  confirmationMember: { borderRadius: 12, flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
+  sheetActions: { flexDirection: 'row', gap: 10 },
+  sheetActionsLarge: { flexDirection: 'column' },
+  sheetButton: { flexGrow: 1, flexBasis: 0, minHeight: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', padding: 10 },
 });

@@ -5,8 +5,8 @@ import type {
   TravelMode,
 } from "../../modules/schedule/types";
 import { fromISO } from "../../../lib/util/data";
+import { getDayTimelineEventMetadata } from "../../modules/schedule/dayTimelineLayout";
 import {
-  MINUTE_MS,
   SECOND_MS,
   hhmmText,
   pad2,
@@ -29,6 +29,21 @@ export function getDepartureRemainingLabel(
   const minutes = remainingMinutes % 60;
   return minutes > 0 ? `${hours}시간 ${minutes}분 남음` : `${hours}시간 남음`;
 }
+/** Keep the local departure date explicit when the time is on another day. */
+export function getDepartureDateLabel(departureAt: Date | undefined, nowMs: number): string | undefined {
+  if (!departureAt || !Number.isFinite(departureAt.getTime()) || !Number.isFinite(nowMs)) return undefined;
+
+  const now = new Date(nowMs);
+  if (ymdText(departureAt) === ymdText(now)) return undefined;
+
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: departureAt.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(departureAt);
+}
+
 export type SheetSnapMode = 'compact' | 'expanded';
 
 export type ScheduleDetailPreviewProps = {
@@ -131,18 +146,10 @@ export function routeNumberText(
   return typeof minutes === 'number' ? `${minutes}분` : '경로';
 }
 
-/** 명시된 출발 시각을 우선하고 없으면 일정 시작 시각에서 이동 시간을 빼 권장 출발 시각을 계산한다. */
+/** Keep saved departure timing identical in the calendar and detail fallback. */
 export function getRecommendedDepartureAt(item: ScheduleItem): Date | undefined {
-  if (item.departAt) {
-    return fromISO(item.departAt);
-  }
-
-  if (typeof item.travelMinutes !== 'number') {
-    return undefined;
-  }
-
-  const startAt = fromISO(item.startAt);
-  return new Date(startAt.getTime() - item.travelMinutes * MINUTE_MS);
+  const departureAt = getDayTimelineEventMetadata(item).departureAt;
+  return departureAt ? new Date(departureAt) : undefined;
 }
 
 /** 출발 완료, 카운트다운, 알림 대기, 기한 경과 상태를 현재 시각에 맞는 단일 표시 모델로 결정한다. */
@@ -183,4 +190,19 @@ export function getDepartureDisplayState(
     text: '출발해야 할 시간이 지났어요',
     tone: 'disabled',
   };
+}
+/** Reveals the first stop with the smallest downward move, retaining its heading when both fit. */
+export function getRouteDisclosureScrollDelta(
+  rowBottom: number,
+  visibleBottom: number,
+  boardingTop?: number,
+  visibleTop = 0,
+): number {
+  const needed = Math.max(0, Math.ceil(rowBottom + 8 - visibleBottom));
+  if (boardingTop === undefined || boardingTop < visibleTop ||
+    rowBottom + 12 - boardingTop > visibleBottom - visibleTop) {
+    return needed;
+  }
+  const maximum = Math.max(0, Math.floor(boardingTop - visibleTop - 4));
+  return Math.min(needed, maximum);
 }

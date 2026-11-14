@@ -106,7 +106,7 @@ export function ShareInboxScreen() {
   const router = useRouter();
   const { runWithTransitionShell } = useImmediateNavigationTransition();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ tab?: string }>();
+  const params = useLocalSearchParams<{ tab?: string; from?: string }>();
   const { colors, mode } = useTheme();
   const accent = mode === 'dark' ? '#8BB7FF' : BRAND_BLUE;
   const searchInputRef = useRef<TextInput>(null);
@@ -147,6 +147,10 @@ export function ShareInboxScreen() {
   const [reportItem, setReportItem] = useState<ShareLibraryItem | null>(null);
 
   const goBack = useCallback(() => {
+    if (params.from === 'notifications' && router.canGoBack()) {
+      router.back();
+      return;
+    }
     runWithTransitionShell(
       { route: '/schedule', title: '일정', showBack: false },
       () => {
@@ -154,7 +158,7 @@ export function ShareInboxScreen() {
         else router.replace('/schedule');
       },
     );
-  }, [router, runWithTransitionShell]);
+  }, [params.from, router, runWithTransitionShell]);
 
   const openSharedResource = useCallback(
     (item: ShareLibraryItem) => {
@@ -174,7 +178,7 @@ export function ShareInboxScreen() {
       } else if (item.resourceType === 'CALENDAR') {
         router.push({
           pathname: '/schedule/calendars',
-          params: { id: item.resourceId },
+          params: { id: item.resourceId, from: "share-inbox", view: "calendar" },
         });
       } else {
         router.push('/schedule/categories');
@@ -184,12 +188,12 @@ export function ShareInboxScreen() {
   );
 
   const loadShares = useCallback(
-    async (loadMode: 'initial' | 'refresh' = 'initial') => {
+    async (loadMode: 'initial' | 'refresh' | 'return' = 'initial') => {
       if (!mountedRef.current) return;
       const ticket = loadRequestGuardRef.current.begin();
 
-      if (loadMode === 'refresh') setRefreshing(true);
-      else setLoading(true);
+      setRefreshing(loadMode === 'refresh');
+      if (loadMode === 'initial') setLoading(true);
       setError(null);
 
       try {
@@ -256,7 +260,7 @@ export function ShareInboxScreen() {
       let task: ScreenTransitionTask | null = null;
       if (hasBlurredRef.current) {
         task = runAfterScreenTransition(() => {
-          loadShares('refresh').catch(() => undefined);
+          loadShares('return').catch(() => undefined);
         });
       }
       return () => {
@@ -701,7 +705,7 @@ export function ShareInboxScreen() {
           { route: '/share/blocked', title: '차단한 사용자' },
           () => router.push('/share/blocked'),
         )}
-        onOpenCalendarManager={() => router.push('/schedule/calendars')}
+        onOpenCalendarManager={() => router.push({ pathname: '/schedule/calendars', params: { from: 'share-inbox' } })}
         onRefresh={() => loadShares('refresh')}
         onSelectTab={setSelectedTab}
         onUpdateQuery={updateQuery}

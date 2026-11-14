@@ -25,13 +25,15 @@ enum NoLateTMapMarkerRenderer {
 
   private static func pinArtwork(_ item: [String: Any]) -> NoLateTMapMarkerArtwork {
     let scale = markerScale(item)
-    let size = CGSize(width: 38 * scale, height: 46 * scale)
+    let label = pinLabel(item)
+    let font = UIFont.systemFont(ofSize: 13 * scale, weight: .bold)
+    let labelSize = (label as NSString).size(withAttributes: [.font: font])
+    let radius = max(14 * scale, ceil(labelSize.width / 2 + 4 * scale))
+    let size = CGSize(width: ceil(2 * radius + 10 * scale), height: 46 * scale)
     let tipBottomInset = 2 * scale
     let tint = UIColor.noLateMapColor(item["tintColor"], fallback: pinFallbackColor(item))
-    let label = pinLabel(item)
     let image = render(size: size) { _ in
       let center = CGPoint(x: size.width / 2, y: 17 * scale)
-      let radius = 14 * scale
       let path = UIBezierPath()
       path.move(to: CGPoint(x: center.x, y: size.height - tipBottomInset))
       path.addCurve(
@@ -39,12 +41,13 @@ enum NoLateTMapMarkerRenderer {
         controlPoint1: CGPoint(x: center.x - 3 * scale, y: 34 * scale),
         controlPoint2: CGPoint(x: center.x - radius, y: 25 * scale)
       )
-      path.addArc(
-        withCenter: center,
-        radius: radius,
-        startAngle: .pi,
-        endAngle: 0,
-        clockwise: true
+      path.addQuadCurve(
+        to: CGPoint(x: center.x, y: 3 * scale),
+        controlPoint: CGPoint(x: center.x - radius, y: 3 * scale)
+      )
+      path.addQuadCurve(
+        to: CGPoint(x: center.x + radius, y: center.y),
+        controlPoint: CGPoint(x: center.x + radius, y: 3 * scale)
       )
       path.addCurve(
         to: CGPoint(x: center.x, y: size.height - tipBottomInset),
@@ -63,11 +66,9 @@ enum NoLateTMapMarkerRenderer {
       path.lineWidth = 1.5 * scale
       path.stroke()
 
-      drawCenteredText(
-        label,
-        in: CGRect(x: center.x - radius, y: center.y - 9 * scale, width: radius * 2, height: 18 * scale),
-        font: .systemFont(ofSize: 13 * scale, weight: .bold),
-        color: .white
+      (label as NSString).draw(
+        at: CGPoint(x: center.x - labelSize.width / 2, y: center.y - labelSize.height / 2),
+        withAttributes: [.font: font, .foregroundColor: UIColor.white]
       )
     }
     return NoLateTMapMarkerArtwork(

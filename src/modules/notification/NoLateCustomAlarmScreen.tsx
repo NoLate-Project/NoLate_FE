@@ -4,6 +4,7 @@ import styles, {
     TEXT_PRIMARY,
     TEXT_SECONDARY,
 } from "./NoLateCustomAlarmScreen.styles";
+import Reanimated, { Keyframe, ReduceMotion } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
 import { useKeepAwake } from "expo-keep-awake";
 import { useFocusEffect } from "expo-router";
@@ -18,6 +19,7 @@ import {
     Text,
     Vibration,
     View,
+    useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -28,6 +30,19 @@ import {
     formatNoLateAlarmTime,
     type NoLateCustomAlarmPresentation,
 } from "./customAlarmPresentation";
+
+const alarmMarkIn = new Keyframe({
+    0: { transform: [{ scale: 1 }] },
+    26: { transform: [{ scale: 1.05 }] },
+    50: { transform: [{ scale: 1 }] },
+    76: { transform: [{ scale: 1.05 }] },
+    100: { transform: [{ scale: 1 }] },
+}).duration(1800).reduceMotion(ReduceMotion.System);
+
+const completionMarkIn = new Keyframe({
+    0: { opacity: 0, transform: [{ perspective: 480 }, { rotateX: "-24deg" }, { scale: 0.84 }] },
+    100: { opacity: 1, transform: [{ perspective: 480 }, { rotateX: "0deg" }, { scale: 1 }] },
+}).duration(280).reduceMotion(ReduceMotion.System);
 
 type AlarmAction = "close" | "route" | "depart" | null;
 
@@ -54,6 +69,7 @@ function KeepNoLateAlarmAwake() {
 
 export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenRoute, onCompleteDeparture }: Props) {
     const insets = useSafeAreaInsets();
+    const largeText = useWindowDimensions().fontScale > 1.35;
     const audioSessionRef = useRef<NoLateCustomAlarmAudioSession | null>(null);
     const playbackAllowedRef = useRef(false);
     const mountedRef = useRef(false);
@@ -72,9 +88,8 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
     const [alarmEngaged, setAlarmEngaged] = useState(false);
     const [pendingAction, setPendingAction] = useState<AlarmAction>(null);
     const [currentTime, setCurrentTime] = useState(() => new Date());
-    const [errorMessage, setErrorMessage] = useState<string | null>(
-        presentation.hasValidAlarmIdentity ? null : "알람 정보를 불러오지 못했어요.",
-    );
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [departureFailed, setDepartureFailed] = useState(false);
 
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(new Date()), 30_000);
@@ -250,17 +265,20 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
         actionPendingRef.current = true;
         setPendingAction("depart");
         setErrorMessage(null);
+        setDepartureFailed(false);
         await stopPlayback();
         try {
             const result = await onCompleteDeparture(presentation.scheduleId);
             if (!mountedRef.current) return;
             if (result.status !== "completed") {
+                setDepartureFailed(true);
                 setErrorMessage("출발 완료를 기록하지 못했어요. 잠시 후 다시 시도해 주세요.");
                 return;
             }
             setCompleted(true);
         } catch {
             if (!mountedRef.current) return;
+            setDepartureFailed(true);
             setErrorMessage("출발 완료를 기록하지 못했어요. 잠시 후 다시 시도해 주세요.");
         } finally {
             actionPendingRef.current = false;
@@ -274,6 +292,20 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
     const [period, clockTime] = formattedTime.split(" ");
     const showDepartureAction = !presentation.isPreview && presentation.canCompleteDeparture;
     const showRouteAction = presentation.canOpenRoute;
+    const alarmStatus = stopped ? "알람을 껐어요"
+        : presentation.isPreview ? "출발 알람 미리보기"
+        : muted ? "소리를 껐어요 · 진동으로 알리는 중"
+        : audioLoading ? "알람을 준비하고 있어요"
+        : "출발 알람이 울리고 있어요";
+    const unavailable = !presentation.hasValidAlarmIdentity;
+    const showsPlayback = !completed && !unavailable;
+    const heading = (
+        <View style={styles.headingBlock}>
+            <Text testID="nolate-custom-alarm-schedule-title" accessibilityRole="header"
+                style={styles.title}>{presentation.title}</Text>
+            <Text accessibilityLiveRegion="polite" style={styles.statusText}>{alarmStatus}</Text>
+        </View>
+    );
 
     return (
         <View testID="nolate-custom-alarm-screen" style={styles.screen}>
@@ -288,7 +320,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
             <StatusBar barStyle="light-content" backgroundColor={BACKGROUND} />
             <View style={[styles.contentWidth, { paddingTop: Math.max(insets.top, 14) }]}>
                 <View style={styles.topBar}>
-                    <Pressable
+                    {showsPlayback && <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={stopped ? "알람이 꺼짐" : muted ? "소리 모드로 전환" : "무음 모드로 전환"}
                         accessibilityHint={stopped
@@ -315,12 +347,12 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                         ) : (
                             <Ionicons
                                 accessible={false}
-                                name={stopped || muted ? "volume-mute" : "volume-high"}
+                                name={stopped || muted ? "volume-mute-outline" : "volume-high-outline"}
                                 size={22}
                                 color={TEXT_PRIMARY}
                             />
                         )}
-                    </Pressable>
+                    </Pressable>}
                 </View>
 
                 <ScrollView
@@ -329,31 +361,39 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                     contentContainerStyle={styles.scrollContent}
                     showsVerticalScrollIndicator={false}
                 >
-                    <Image
-                        accessible
-                        accessibilityLabel="NoLate"
-                        source={require("../../../assets/icon.png")}
-                        style={styles.logo}
-                    />
+                    {unavailable ? (
+                        <View accessibilityRole="alert" style={styles.stateContent}>
+                            <View style={styles.unavailableMark}>
+                                <Ionicons accessible={false} name="notifications-off-outline" size={30} color={TEXT_SECONDARY} />
+                            </View>
+                            <Text accessibilityRole="header" style={styles.title}>알람을 열 수 없어요</Text>
+                            <Text style={styles.stateDetail}>일정에서 출발 시각과 경로를 확인해 주세요.</Text>
+                        </View>
+                    ) : completed ? (
+                        <View style={styles.stateContent}>
+                            <Reanimated.View entering={completionMarkIn} style={styles.completionMark}>
+                                <Ionicons accessible={false} name="checkmark-outline" size={36} color="#0A5A43" />
+                            </Reanimated.View>
+                            <Text accessibilityRole="header" accessibilityLiveRegion="polite" style={styles.title}>출발을 기록했어요</Text>
+                            <Text style={styles.stateDetail}>{presentation.title}</Text>
+                        </View>
+                    ) : (
+                        <>
+                            {largeText && heading}
+                            <View style={styles.logoFrame}>
+                                {!stopped && !muted && <Reanimated.View pointerEvents="none" entering={alarmMarkIn} style={styles.alarmRing} />}
+                                <Image accessible accessibilityLabel="NoLate" source={require("../../../assets/icon.png")} style={styles.logo} />
+                            </View>
+                            <View accessible accessibilityLabel={`현재 시각 ${formattedTime}`} style={styles.clockRow}>
+                                <Text style={styles.period}>현재 시각 · {period}</Text>
+                                <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.currentTime}>{clockTime}</Text>
+                            </View>
+                            {!largeText && heading}
+                        </>
+                    )}
+                </ScrollView>
 
-                    <View accessible accessibilityLabel={`현재 시각 ${formattedTime}`} style={styles.clockRow}>
-                        <Text style={styles.period}>{period}</Text>
-                        <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.currentTime}>
-                            {clockTime}
-                        </Text>
-                    </View>
-
-                    <View style={styles.headingBlock}>
-                        <Text
-                            testID="nolate-custom-alarm-schedule-title"
-                            accessibilityRole="header"
-                            numberOfLines={2}
-                            style={styles.title}
-                        >
-                            {presentation.title}
-                        </Text>
-                    </View>
-
+                <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                     {errorMessage ? (
                         <View
                             testID="nolate-custom-alarm-error"
@@ -370,13 +410,22 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                             <Text style={styles.errorText}>{errorMessage}</Text>
                         </View>
                     ) : null}
-                </ScrollView>
-
-                <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-                    {showDepartureAction ? (
+                    {unavailable || completed ? (
                         <Pressable
                             accessibilityRole="button"
-                            accessibilityLabel={completed ? "지금 출발 완료 기록됨" : "지금 출발 완료"}
+                            accessibilityLabel={completed && showRouteAction ? "경로 보기" : "알람 화면 닫기"}
+                            accessibilityState={{ disabled: pendingAction !== null }}
+                            disabled={pendingAction !== null}
+                            onPress={() => void (completed && showRouteAction ? openRoute() : close())}
+                            style={({ pressed }) => [styles.departButton, pressed && styles.pressed]}
+                        >
+                            {completed && showRouteAction && <Ionicons accessible={false} name="map-outline" size={21} color={PRIMARY_BUTTON_FOREGROUND} />}
+                            <Text style={styles.primaryButtonText}>{completed && showRouteAction ? "경로 보기" : "닫기"}</Text>
+                        </Pressable>
+                    ) : showDepartureAction ? (
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={departureFailed ? "출발 기록 다시 시도" : "지금 출발 완료"}
                             accessibilityHint="현재 일정에 출발 완료를 기록합니다"
                             accessibilityState={{ disabled: departDisabled }}
                             disabled={departDisabled}
@@ -397,13 +446,13 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                             ) : (
                                 <Ionicons
                                     accessible={false}
-                                    name={completed ? "checkmark-circle" : "walk"}
+                                    name={departureFailed ? "refresh-outline" : "walk-outline"}
                                     size={22}
                                     color={PRIMARY_BUTTON_FOREGROUND}
                                 />
                             )}
                             <Text style={styles.primaryButtonText}>
-                                {completed ? "출발 완료" : "지금 출발"}
+                                {departureFailed ? "다시 시도" : "출발했어요"}
                             </Text>
                         </Pressable>
                     ) : (
@@ -423,13 +472,13 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                                 pressed && styles.pressed,
                             ]}
                         >
-                            <Ionicons accessible={false} name="stop" size={20} color={PRIMARY_BUTTON_FOREGROUND} />
+                            <Ionicons accessible={false} name="stop-outline" size={20} color={PRIMARY_BUTTON_FOREGROUND} />
                             <Text style={styles.primaryButtonText}>{stopped ? "알람 꺼짐" : "알람 끄기"}</Text>
                         </Pressable>
                     )}
 
-                    {showRouteAction || showDepartureAction ? (
-                        <View style={styles.secondaryActions}>
+                    {showsPlayback && (showRouteAction || showDepartureAction) ? (
+                        <View style={[styles.secondaryActions, largeText && styles.secondaryActionsLarge]}>
                             {showRouteAction ? (
                                 <Pressable
                                     accessibilityRole="button"
@@ -457,7 +506,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                                     {pendingAction === "route" ? (
                                         <ActivityIndicator color={TEXT_PRIMARY} size="small" />
                                     ) : (
-                                        <Ionicons accessible={false} name="map" size={21} color={TEXT_PRIMARY} />
+                                        <Ionicons accessible={false} name="map-outline" size={21} color={TEXT_PRIMARY} />
                                     )}
                                     <Text style={styles.secondaryButtonText}>경로 보기</Text>
                                 </Pressable>
@@ -489,7 +538,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                         </View>
                     ) : null}
 
-                    <Pressable
+                    {!unavailable && (!completed || showRouteAction) && <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="알람 화면 닫기"
                         disabled={pendingAction !== null}
@@ -503,7 +552,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                         ]}
                     >
                         <Text style={styles.closeButtonText}>닫기</Text>
-                    </Pressable>
+                    </Pressable>}
                 </View>
             </View>
         </View>

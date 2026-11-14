@@ -53,7 +53,12 @@ struct NoLateServerWalkingSnapshot: Codable, Equatable, Sendable {
       let points=walk.coordinates
       try require(points.allSatisfy { $0.latitude.isFinite && $0.longitude.isFinite && abs($0.latitude)<=90 && abs($0.longitude)<=180 })
       guard let start=input.legs[walk.legIndex].start,let end=input.legs[walk.legIndex].end else { throw NoLateJourneyRouteNormalizer.ValidationError.schema }
-      try require(distance(start,points[0])<=30 && distance(end,points[points.count-1])<=30)
+      // Station representative points can differ from the routed footway.
+      // User-selected endpoints retain the stricter bound; no point is added.
+      let stationTolerance=NoLateJourneyRouteNormalizer.staticGeometryEndpointToleranceMeters
+      let startTolerance=walk.legIndex==0 ? 30.0 : stationTolerance
+      let endTolerance=walk.legIndex==input.legs.count-1 ? 30.0 : stationTolerance
+      try require(distance(start,points[0])<=startTolerance && distance(end,points[points.count-1])<=endTolerance)
       for (a,b) in zip(points,points.dropFirst()) { let d=distance(a,b); try require(d>0 && d<=150) }
     }
   }

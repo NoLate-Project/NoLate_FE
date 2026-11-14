@@ -30,6 +30,8 @@ type Props = {
     transitionActive?: boolean;
     reduceMotionEnabled?: boolean;
     todayFocusTarget?: TodayFocusTarget | null;
+    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean };
+    onSavedStackPositionReady?: (itemId: string) => void;
     onTodayFocusReady?: (day: string) => void;
     onRegisterDetailMonthMotionCancel?: (
         cancel: (() => void) | null
@@ -64,6 +66,8 @@ function CalendarWrapper({
     transitionActive = false,
     reduceMotionEnabled = false,
     todayFocusTarget,
+    savedDateTarget,
+    onSavedStackPositionReady,
     onTodayFocusReady,
     onRegisterDetailMonthMotionCancel,
     onRegisterDetailMonthMotionShift,
@@ -97,6 +101,8 @@ function CalendarWrapper({
                 transitionActive={transitionActive}
                 reduceMotionEnabled={reduceMotionEnabled}
                 todayFocusTarget={todayFocusTarget}
+                savedDateTarget={savedDateTarget}
+                onSavedStackPositionReady={onSavedStackPositionReady}
                 onTodayFocusReady={onTodayFocusReady}
                 onRegisterDetailMonthMotionCancel={onRegisterDetailMonthMotionCancel}
                 onRegisterDetailMonthMotionShift={onRegisterDetailMonthMotionShift}

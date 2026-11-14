@@ -4,6 +4,7 @@ import { Alert } from "react-native";
 import { reverseGeocodeToAddress } from "../../modules/map/routingService";
 import {
   createMapPickerSessionState,
+  getMapPickerAddressLabel,
   resolveMapPickerCommit,
   resolveMapPickerPostCommitTransition,
   selectMapPickerSessionCoordinate,
@@ -54,7 +55,11 @@ export function useRouteSelectMapPickerController({
   const [mapPickerName, setMapPickerName] = useState<string>();
   const [mapPickerAddress, setMapPickerAddress] = useState<string>();
   const [mapPickerResolving, setMapPickerResolving] = useState(false);
+  const [mapPickerAddressUnavailable, setMapPickerAddressUnavailable] = useState(false);
   const mapPickerRequestIdRef = useRef(0);
+  const mapPickerResolvingRef = useRef(false);
+  const mapPickerCommittedRef = useRef(false);
+  const mapPickerOpenRef = useRef(false);
 
   /** 대상 지점, 반대편 지점, 기본 좌표 순서로 지도 모달의 최초 카메라 위치를 고른다. */
   const getMapPickerInitialCoord = useCallback(
@@ -82,6 +87,10 @@ export function useRouteSelectMapPickerController({
   /** 현재 편집 대상과 기존 좌표를 기준으로 지도 선택 세션을 만들고 모달을 연다. */
   const openMapForPointSelection = useCallback(() => {
     onOpenMapPicker();
+    mapPickerRequestIdRef.current += 1;
+    mapPickerResolvingRef.current = false;
+    mapPickerCommittedRef.current = false;
+    mapPickerOpenRef.current = true;
     const targetPlace = activeTarget === "origin" ? origin : destination;
     const targetHasCoordinates = placeHasCoords(targetPlace);
     const initialCoord = getMapPickerInitialCoord(activeTarget);
@@ -90,6 +99,8 @@ export function useRouteSelectMapPickerController({
     );
     setMapPickerName(targetHasCoordinates ? targetPlace.name : undefined);
     setMapPickerAddress(targetHasCoordinates ? targetPlace.address : undefined);
+    setMapPickerResolving(false);
+    setMapPickerAddressUnavailable(false);
     setMapPickerVisible(true);
   }, [
     activeTarget,
@@ -102,6 +113,9 @@ export function useRouteSelectMapPickerController({
   /** 진행 중인 주소 확인 요청을 무효화하고 지도 선택 모달의 임시 상태를 비운다. */
   const closeMapPicker = useCallback(() => {
     mapPickerRequestIdRef.current += 1;
+    mapPickerResolvingRef.current = false;
+    mapPickerCommittedRef.current = true;
+    mapPickerOpenRef.current = false;
     setMapPickerVisible(false);
     setMapPickerSession(current =>
       createMapPickerSessionState(current.cameraCoordinate),
@@ -109,28 +123,35 @@ export function useRouteSelectMapPickerController({
     setMapPickerName(undefined);
     setMapPickerAddress(undefined);
     setMapPickerResolving(false);
+    setMapPickerAddressUnavailable(false);
   }, []);
 
   /** 사용자가 누른 좌표를 세션에 기록하고 최신 요청에 한해 사람이 읽을 수 있는 주소를 반영한다. */
   const selectMapPickerCoord = useCallback(
     async ({ latitude, longitude }: { latitude: number; longitude: number }) => {
+      if (!mapPickerOpenRef.current) return;
       const requestId = mapPickerRequestIdRef.current + 1;
       mapPickerRequestIdRef.current = requestId;
+      mapPickerResolvingRef.current = true;
+      mapPickerCommittedRef.current = false;
       setMapPickerSession(current =>
         selectMapPickerSessionCoordinate(current, { latitude, longitude }),
       );
       setMapPickerName(undefined);
       setMapPickerAddress(undefined);
       setMapPickerResolving(true);
+      setMapPickerAddressUnavailable(false);
       try {
         const address = await reverseGeocodeToAddress(latitude, longitude);
         if (mapPickerRequestIdRef.current !== requestId) return;
-        setMapPickerAddress(address);
+        setMapPickerAddress(address?.trim() || undefined);
+        setMapPickerAddressUnavailable(!address?.trim());
       } catch {
         if (mapPickerRequestIdRef.current !== requestId) return;
-        setMapPickerAddress(undefined);
+        setMapPickerAddressUnavailable(true);
       } finally {
         if (mapPickerRequestIdRef.current === requestId) {
+          mapPickerResolvingRef.current = false;
           setMapPickerResolving(false);
         }
       }
@@ -141,6 +162,7 @@ export function useRouteSelectMapPickerController({
   /** 선택 좌표를 장소로 확정하고, 남은 지점이 있으면 같은 모달에서 다음 선택을 이어간다. */
   const confirmMapPickerSelection = useCallback(
     (target: RoutePointTarget) => {
+      if (mapPickerResolvingRef.current || mapPickerCommittedRef.current) return;
       const commit = resolveMapPickerCommit(
         mapPickerSession,
         target,
@@ -161,7 +183,7 @@ export function useRouteSelectMapPickerController({
       const label =
         target === "origin" ? "지도 선택 출발지" : "지도 선택 도착지";
       const place: Place = {
-        name: mapPickerName || mapPickerAddress || label,
+        name: mapPickerName || getMapPickerAddressLabel(mapPickerAddress) || label,
         address: mapPickerAddress,
         lat: commit.coordinate.latitude,
         lng: commit.coordinate.longitude,
@@ -174,6 +196,7 @@ export function useRouteSelectMapPickerController({
       );
 
       mapPickerRequestIdRef.current += 1;
+      mapPickerCommittedRef.current = true;
       rememberRecentPlace(place);
       applyPlaceToTarget(commit.target, place);
       setMapPickerResolving(false);
@@ -181,8 +204,10 @@ export function useRouteSelectMapPickerController({
         setMapPickerSession(transition.nextSession);
         setMapPickerName(undefined);
         setMapPickerAddress(undefined);
+        setMapPickerAddressUnavailable(false);
         return;
       }
+      mapPickerOpenRef.current = false;
       setMapPickerVisible(false);
     },
     [
@@ -203,6 +228,7 @@ export function useRouteSelectMapPickerController({
     closeMapPicker,
     confirmMapPickerSelection,
     mapPickerAddress,
+    mapPickerAddressUnavailable,
     mapPickerCoord,
     mapPickerHasSelection,
     mapPickerName,

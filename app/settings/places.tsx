@@ -1,7 +1,9 @@
 import styles from "../../src/routeSupport/settings/places.styles";
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+    AccessibilityInfo,
     ActivityIndicator,
+    Platform,
     Animated,
     Modal,
     Pressable,
@@ -10,8 +12,11 @@ import {
     StatusBar,
     Text,
     View,
+    useWindowDimensions,
 } from "react-native";
+import Reanimated, { FadeIn, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams } from "expo-router";
 import {
     DEFAULT_ADDRESS_FAVORITE_TAB_ID,
     UNCATEGORIZED_FAVORITE_TAB_ID,
@@ -29,10 +34,23 @@ import {
 import { usePlacesSettings } from "../../src/routeSupport/settings/usePlacesSettings";
 import { useScreenFirstPaintPerformance } from "../../src/modules/performance/useScreenFirstPaintPerformance";
 import { useImmediateNavigationTransition } from "../../src/modules/performance/ImmediateNavigationTransition";
+import { usePreMountedSceneActivity } from "../../src/modules/performance/preMountedSceneActivity";
+
+const placeActionsEntry = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+const placeReorder = LinearTransition.duration(180).reduceMotion(ReduceMotion.System);
 
 export default function PlacesSettingsScreen() {
     useScreenFirstPaintPerformance('/settings/places');
-    const { closeActiveScene, runWithTransitionShell } = useImmediateNavigationTransition();
+    const largeText = useWindowDimensions().fontScale > 1.35;
+    const [expandedPlaceKey, setExpandedPlaceKey] = useState<string | null>(null);
+    const placeOptions = useRef(new Map<string, React.ElementRef<typeof Pressable>>());
+    const returnPlaceKey = useRef<string | null>(null);
+    const { closeActiveScene, getPreviousSceneRoute, runWithTransitionShell } = useImmediateNavigationTransition();
+    const { from } = useLocalSearchParams<{ from?: string }>();
+    const sceneActive = usePreMountedSceneActivity();
+    const returnsToSearch = sceneActive === undefined
+        ? from === "route-search"
+        : sceneActive && getPreviousSceneRoute() === "/schedule/route-select";
     const {
         router,
         insets,
@@ -75,33 +93,32 @@ export default function PlacesSettingsScreen() {
         deleteCategory,
         moveCategory,
     } = usePlacesSettings();
+    const restorePlaceFocus = useCallback(() => {
+        const key = returnPlaceKey.current;
+        returnPlaceKey.current = null;
+        const node = key ? placeOptions.current.get(key) : null;
+        if (node) AccessibilityInfo.sendAccessibilityEvent?.(node, "focus");
+    }, []);
+    useEffect(() => {
+        if (sheet || Platform.OS === "ios") return;
+        const frame = requestAnimationFrame(restorePlaceFocus);
+        return () => cancelAnimationFrame(frame);
+    }, [restorePlaceFocus, sheet]);
     const goBack = useCallback(() => {
         if (closeActiveScene()) return;
+        if (returnsToSearch && router.canGoBack()) {
+            router.back();
+            return;
+        }
         runWithTransitionShell(
             {
                 route: "/profile",
                 title: "프로필",
                 backAccessibilityLabel: "일정 목록으로 돌아가기",
             },
-            () => router.back(),
+            () => router.canGoBack() ? router.back() : router.replace("/profile"),
         );
-    }, [closeActiveScene, router, runWithTransitionShell]);
-
-    if (loading) {
-        return (
-            <View style={[styles.root, { backgroundColor: colors.background }]}>
-                <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
-                <BrandedLoadingState
-                    fill
-                    size="full"
-                    variant="auth"
-                    title="내 장소를 불러오고 있어요"
-                    caption="기본주소와 즐겨찾기를 확인하고 있어요"
-                    accessibilityLabel="내 장소를 불러오고 있어요"
-                />
-            </View>
-        );
-    }
+    }, [closeActiveScene, returnsToSearch, router, runWithTransitionShell]);
 
     const anyBusy = busyKey !== null;
     const selectedCategoryIndex = selectedCategory
@@ -129,16 +146,16 @@ export default function PlacesSettingsScreen() {
                 >
                     <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="프로필로 돌아가기"
+                        accessibilityLabel={returnsToSearch ? "장소 검색으로 돌아가기" : "프로필로 돌아가기"}
                         onPress={goBack}
                         style={({ pressed }) => [styles.headerButton, { opacity: pressed ? 0.55 : 1 }]}
                     >
-                        <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+                        <Ionicons name="chevron-back-outline" size={22} color={colors.textPrimary} />
                     </Pressable>
                 </CalendarGlassSurface>
                 <View style={styles.headerTitleWrap}>
-                    <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>내 장소</Text>
-                    <Text style={[styles.headerCaption, { color: colors.textSecondary }]}>즐겨찾기를 카테고리별로 관리해요</Text>
+                    <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.headerTitle, { color: colors.textPrimary }]}>내 장소</Text>
+                    <Text maxFontSizeMultiplier={1.65} style={[styles.headerCaption, { color: colors.textSecondary }]}>즐겨찾기를 카테고리별로 관리해요</Text>
                 </View>
                 <CalendarGlassSurface
                     interactive
@@ -148,19 +165,27 @@ export default function PlacesSettingsScreen() {
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="내 장소 새로고침"
-                        accessibilityState={{ disabled: refreshing }}
-                        disabled={refreshing}
+                        accessibilityState={{ disabled: loading || refreshing }}
+                        disabled={loading || refreshing}
                         onPress={refresh}
-                        style={({ pressed }) => [styles.headerButton, { opacity: pressed || refreshing ? 0.5 : 1 }]}
+                        style={({ pressed }) => [styles.headerButton, { opacity: pressed || loading || refreshing ? 0.5 : 1 }]}
                     >
                         {refreshing
                             ? <ActivityIndicator size="small" color={colors.textPrimary} />
-                            : <Ionicons name="refresh" size={20} color={colors.textPrimary} />}
+                            : <Ionicons name="refresh-outline" size={20} color={colors.textPrimary} />}
                     </Pressable>
                 </CalendarGlassSurface>
             </View>
 
-            <ScrollView
+            {loading ? (
+                <BrandedLoadingState
+                    fill
+                    size="section"
+                    variant="auth"
+                    title="내 장소를 불러오고 있어요"
+                    accessibilityLabel="내 장소를 불러오고 있어요"
+                />
+            ) : <ScrollView
                 showsVerticalScrollIndicator={false}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
                 contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, 18) + 28 }]}
@@ -183,8 +208,7 @@ export default function PlacesSettingsScreen() {
                 <View style={styles.section}>
                     <View style={styles.sectionHeader}>
                         <View style={styles.flexText}>
-                            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>즐겨찾기 카테고리</Text>
-                            <Text style={[styles.sectionCaption, { color: colors.textSecondary }]}>카테고리를 선택하면 저장한 장소만 모아 보여요</Text>
+                            <Text maxFontSizeMultiplier={1.8} style={[styles.sectionTitle, { color: colors.textSecondary }]}>즐겨찾기 카테고리</Text>
                         </View>
                     </View>
                     <ScrollView
@@ -200,14 +224,17 @@ export default function PlacesSettingsScreen() {
                                 selected={selectedCategoryKey === tab.id}
                                 color={tab.color ?? (tab.kind === "default-address" ? "#2563EB" : "#64748B")}
                                 icon={tab.kind === "default-address"
-                                    ? "home"
+                                    ? "home-outline"
                                     : tab.kind === "uncategorized"
                                         ? "albums-outline"
                                         : undefined}
                                 colors={colors}
                                 disabled={anyBusy}
                                 reduceMotionEnabled={reduceMotionEnabled}
-                                onPress={() => selectCategoryKey(tab.id)}
+                                onPress={() => {
+                                    if (tab.id !== selectedCategoryKey) setExpandedPlaceKey(null);
+                                    selectCategoryKey(tab.id);
+                                }}
                             />
                         ))}
                         <Pressable
@@ -243,8 +270,8 @@ export default function PlacesSettingsScreen() {
                 >
                     <View style={styles.sectionHeader}>
                         <View style={styles.flexText}>
-                            <Text style={[styles.selectedCategoryTitle, { color: colors.textPrimary }]}>{selectedCategoryTitle}</Text>
-                            <Text style={[styles.sectionCaption, { color: colors.textSecondary }]}>{selectedCategoryCaption}</Text>
+                            <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.selectedCategoryTitle, { color: colors.textPrimary }]}>{selectedCategoryTitle}</Text>
+                            <Text maxFontSizeMultiplier={1.8} style={[styles.sectionCaption, { color: colors.textSecondary }]}>{selectedCategoryCaption}</Text>
                         </View>
                         {selectedCategoryKey !== DEFAULT_ADDRESS_FAVORITE_TAB_ID ? (
                             <Pressable
@@ -255,7 +282,7 @@ export default function PlacesSettingsScreen() {
                                 style={({ pressed }) => [styles.smallAddButton, { opacity: pressed || anyBusy ? 0.55 : 1 }]}
                             >
                                 <Ionicons name="add" size={17} color="#2563EB" />
-                                <Text style={styles.smallAddButtonText}>새 장소</Text>
+                                <Text maxFontSizeMultiplier={1.65} style={styles.smallAddButtonText}>새 장소</Text>
                             </Pressable>
                         ) : null}
                     </View>
@@ -267,14 +294,14 @@ export default function PlacesSettingsScreen() {
                             <View style={styles.categoryActions}>
                                 <IconAction
                                     label={`${selectedCategoryTitle} 카테고리 왼쪽으로 이동`}
-                                    icon="arrow-back"
+                                    icon="arrow-back-outline"
                                     disabled={selectedCategoryIndex <= 0 || anyBusy}
                                     colors={colors}
                                     onPress={() => void moveCategory(selectedCategoryIndex, -1)}
                                 />
                                 <IconAction
                                     label={`${selectedCategoryTitle} 카테고리 오른쪽으로 이동`}
-                                    icon="arrow-forward"
+                                    icon="arrow-forward-outline"
                                     disabled={selectedCategoryIndex < 0 || selectedCategoryIndex === categories.length - 1 || anyBusy}
                                     colors={colors}
                                     onPress={() => void moveCategory(selectedCategoryIndex, 1)}
@@ -318,14 +345,14 @@ export default function PlacesSettingsScreen() {
                                         </View>
                                         <View style={styles.flexText}>
                                             <View style={styles.badgeRow}>
-                                                <Text numberOfLines={1} style={[styles.defaultName, { color: colors.textPrimary }]}>
+                                                <Text numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.defaultName, { color: colors.textPrimary }]}>
                                                     {defaultOrigin.name ?? "기본주소"}
                                                 </Text>
                                                 <View style={styles.defaultBadge}>
                                                     <Text style={styles.defaultBadgeText}>사용 중</Text>
                                                 </View>
                                             </View>
-                                            <Text numberOfLines={2} style={[styles.cardCaption, { color: colors.textSecondary }]}>
+                                            <Text numberOfLines={largeText ? undefined : 2} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.cardCaption, { color: colors.textSecondary }]}>
                                                 {defaultOrigin.address ?? "주소 정보 없음"}
                                             </Text>
                                         </View>
@@ -414,72 +441,103 @@ export default function PlacesSettingsScreen() {
                             <Text style={[styles.emptyListTitle, { color: colors.textPrimary }]}>{selectedCategoryTitle}에 저장한 장소가 없어요</Text>
                             <Text style={[styles.cardCaption, { color: colors.textSecondary }]}>별표한 장소를 이 카테고리에서 빠르게 찾아보세요.</Text>
                         </Pressable>
-                    ) : selectedFavorites.map((favorite, index) => (
-                        <CalendarGlassSurface
-                            key={favorite.id ?? `${favorite.name}-${index}`}
-                            variant="card"
-                            tone="solidCard"
-                            style={[styles.placeCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
-                        >
-                            <View style={styles.placeMainRow}>
-                                <View style={[styles.placeIcon, { backgroundColor: colors.surface2 }]}>
-                                    <Ionicons name="location-outline" size={21} color={colors.textSecondary} />
+                    ) : selectedFavorites.map((favorite, index) => {
+                        const key = favorite.id ?? `${favorite.name}-${index}`;
+                        const expanded = expandedPlaceKey === key;
+                        const name = favorite.name ?? "즐겨찾기 장소";
+                        return (
+                            <Reanimated.View
+                                key={key}
+                                layout={reduceMotionEnabled ? undefined : placeReorder}
+                                style={[styles.placeCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                            >
+                                <View style={[styles.placeMainRow, styles.placeDisclosure]}>
+                                    <View style={[styles.placeIcon, { backgroundColor: colors.surface2 }]}>
+                                        <Ionicons name="location-outline" size={21} color={colors.textSecondary} />
+                                    </View>
+                                    <View style={styles.flexText}>
+                                        <Text numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.cardTitle, { color: colors.textPrimary }]}>
+                                            {name}
+                                        </Text>
+                                        <Text numberOfLines={largeText ? undefined : 2} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.cardCaption, { color: colors.textSecondary }]}>
+                                            {favorite.address ?? "주소 정보 없음"}
+                                        </Text>
+                                    </View>
+                                    <Pressable
+                                        ref={node => {
+                                            if (node) placeOptions.current.set(key, node);
+                                            else placeOptions.current.delete(key);
+                                        }}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`${name} 장소 옵션`}
+                                        accessibilityState={{ expanded }}
+                                        onPress={() => setExpandedPlaceKey(expanded ? null : key)}
+                                        style={({ pressed }) => [styles.iconAction, {
+                                            backgroundColor: expanded ? "rgba(37,99,235,0.12)" : colors.surface2,
+                                            opacity: pressed ? 0.65 : 1,
+                                        }]}
+                                    >
+                                        <Ionicons accessible={false} name="ellipsis-horizontal-outline" size={21} color={expanded ? "#2563EB" : colors.textSecondary} />
+                                    </Pressable>
                                 </View>
-                                <View style={styles.flexText}>
-                                    <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.textPrimary }]}>
-                                        {favorite.name ?? "즐겨찾기 장소"}
-                                    </Text>
-                                    <Text numberOfLines={2} style={[styles.cardCaption, { color: colors.textSecondary }]}>
-                                        {favorite.address ?? "주소 정보 없음"}
-                                    </Text>
-                                </View>
-                            </View>
-                            <View style={[styles.cardToolbar, { borderTopColor: colors.border }]}>
-                                <View style={styles.reorderButtons}>
-                                    <IconAction
-                                        label={`${favorite.name ?? "장소"} 위로 이동`}
-                                        icon="arrow-up"
-                                        disabled={index === 0 || anyBusy}
-                                        colors={colors}
-                                        onPress={() => void moveFavorite(selectedFavorites, index, -1)}
-                                    />
-                                    <IconAction
-                                        label={`${favorite.name ?? "장소"} 아래로 이동`}
-                                        icon="arrow-down"
-                                        disabled={index === selectedFavorites.length - 1 || anyBusy}
-                                        colors={colors}
-                                        onPress={() => void moveFavorite(selectedFavorites, index, 1)}
-                                    />
-                                </View>
-                                <View style={styles.cardActions}>
-                                    <IconAction
-                                        label={`${favorite.name ?? "장소"}을 기본주소로 설정`}
-                                        icon="home-outline"
-                                        disabled={!favorite.id || anyBusy}
-                                        colors={colors}
-                                        onPress={() => chooseFavoriteAsDefault(favorite)}
-                                    />
-                                    <IconAction
-                                        label={`${favorite.name ?? "장소"} 수정`}
-                                        icon="pencil-outline"
-                                        disabled={!favorite.id || anyBusy}
-                                        colors={colors}
-                                        onPress={() => openFavoriteEditor(favorite)}
-                                    />
-                                    <IconAction
-                                        label={`${favorite.name ?? "장소"} 삭제`}
-                                        icon="trash-outline"
-                                        destructive
-                                        disabled={!favorite.id || anyBusy}
-                                        colors={colors}
-                                        onPress={() => deleteFavorite(favorite)}
-                                    />
-                                </View>
-                            </View>
-                        </CalendarGlassSurface>
-                    ))}
+                                {expanded ? (
+                                    <Reanimated.View entering={reduceMotionEnabled ? undefined : placeActionsEntry} style={[styles.expandedPlaceActions, { borderTopColor: colors.border }]}>
+                                        <View style={styles.cardActions}>
+                                            <IconAction
+                                                label={`${name} 기본주소 설정`}
+                                                visibleLabel="기본주소 설정"
+                                                icon="home-outline"
+                                                disabled={!favorite.id || anyBusy}
+                                                colors={colors}
+                                                onPress={() => chooseFavoriteAsDefault(favorite)}
+                                            />
+                                            <IconAction
+                                                label={`${name} 수정`}
+                                                visibleLabel="수정"
+                                                icon="pencil-outline"
+                                                disabled={!favorite.id || anyBusy}
+                                                colors={colors}
+                                                onPress={() => {
+                                                    returnPlaceKey.current = key;
+                                                    openFavoriteEditor(favorite);
+                                                }}
+                                            />
+                                            <IconAction
+                                                label={`${name} 삭제`}
+                                                visibleLabel="삭제"
+                                                icon="trash-outline"
+                                                destructive
+                                                disabled={!favorite.id || anyBusy}
+                                                colors={colors}
+                                                onPress={() => deleteFavorite(favorite)}
+                                            />
+                                        </View>
+                                        <View style={styles.placeReorderRow}>
+                                            <Text style={[styles.placeReorderLabel, { color: colors.textSecondary }]}>목록 순서</Text>
+                                            <View style={styles.reorderButtons}>
+                                                <IconAction
+                                                    label={`${favorite.name ?? "장소"} 위로 이동`}
+                                                    icon="arrow-up-outline"
+                                                    disabled={index === 0 || anyBusy}
+                                                    colors={colors}
+                                                    onPress={() => void moveFavorite(selectedFavorites, index, -1)}
+                                                />
+                                                <IconAction
+                                                    label={`${favorite.name ?? "장소"} 아래로 이동`}
+                                                    icon="arrow-down-outline"
+                                                    disabled={index === selectedFavorites.length - 1 || anyBusy}
+                                                    colors={colors}
+                                                    onPress={() => void moveFavorite(selectedFavorites, index, 1)}
+                                                />
+                                            </View>
+                                        </View>
+                                    </Reanimated.View>
+                                ) : null}
+                            </Reanimated.View>
+                        );
+                    })}
                 </Animated.View>
-            </ScrollView>
+            </ScrollView>}
 
             {busyKey ? (
                 <View pointerEvents="none" style={styles.busyOverlay}>
@@ -492,8 +550,9 @@ export default function PlacesSettingsScreen() {
 
             <Modal
                 visible={sheet !== null}
-                animationType="slide"
+                animationType={reduceMotionEnabled ? "none" : "slide"}
                 presentationStyle="pageSheet"
+                onDismiss={restorePlaceFocus}
                 onRequestClose={() => busyKey ? undefined : setSheet(null)}
             >
                 <View style={[styles.sheetRoot, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 14) }]}>

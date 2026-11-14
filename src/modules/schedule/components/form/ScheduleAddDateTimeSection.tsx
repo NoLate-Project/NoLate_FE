@@ -20,6 +20,7 @@ import type { ScheduleAddModalController } from './useScheduleAddModalController
 type Props = {
   /** 상위 훅이 관리하는 날짜, 시간, 피커 애니메이션 상태와 변경 이벤트입니다. */
   controller: ScheduleAddModalController;
+  largeText?: boolean;
 };
 
 /**
@@ -29,7 +30,7 @@ type Props = {
  * 사용자 입력을 해당 이벤트로 전달하고 현재 선택 상태를 접근성 속성과 시각 강조에
  * 일관되게 반영합니다.
  */
-export default function ScheduleAddDateTimeSection({ controller }: Props) {
+export default function ScheduleAddDateTimeSection({ controller, largeText = false }: Props) {
   const {
     allDay,
     calendarSelected,
@@ -86,7 +87,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
         <View
           style={[styles.compactDivider, { backgroundColor: colors.border }]}
         />
-        <View style={styles.compactDateTimeRow}>
+        <View style={[styles.compactDateTimeRow, largeText && styles.compactDateTimeRowLarge]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
@@ -94,6 +95,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
             onPress={() => togglePicker('startDate')}
             style={({ pressed }) => [
               styles.compactDatePressable,
+              largeText && styles.compactDatePressableLarge,
               {
                 backgroundColor:
                   picker === 'startDate'
@@ -115,7 +117,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
             >
               시작
             </Text>
-            <Text
+            <Text lineBreakStrategyIOS="hangul-word"
               style={[styles.compactRowSub, { color: colors.textSecondary }]}
             >
               {formDateText(startDay)}
@@ -134,6 +136,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
             onPress={() => togglePicker(allDay ? 'endDate' : 'startTime')}
             style={({ pressed }) => [
               styles.compactValuePressable,
+              largeText && styles.compactValuePressableLarge,
               {
                 backgroundColor:
                   picker === (allDay ? 'endDate' : 'startTime')
@@ -157,6 +160,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
             <Text
               style={[
                 styles.compactRowValue,
+                largeText && styles.compactRowValueLarge,
                 {
                   color:
                     picker === (allDay ? 'endDate' : 'startTime')
@@ -213,7 +217,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
                 { backgroundColor: colors.border },
               ]}
             />
-            <View style={styles.compactDateTimeRow}>
+            <View style={[styles.compactDateTimeRow, largeText && styles.compactDateTimeRowLarge]}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(
@@ -223,6 +227,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
                 onPress={() => togglePicker('endDate')}
                 style={({ pressed }) => [
                   styles.compactDatePressable,
+                  largeText && styles.compactDatePressableLarge,
                   {
                     backgroundColor:
                       picker === 'endDate'
@@ -242,9 +247,9 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
                     },
                   ]}
                 >
-                  종료 일시
+                  {largeText ? '날짜' : '종료 일시'}
                 </Text>
-                <Text
+                <Text lineBreakStrategyIOS="hangul-word"
                   style={[
                     styles.compactRowSub,
                     { color: colors.textSecondary },
@@ -260,6 +265,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
                 onPress={() => togglePicker('endTime')}
                 style={({ pressed }) => [
                   styles.compactValuePressable,
+                  largeText && styles.compactValuePressableLarge,
                   {
                     backgroundColor:
                       picker === 'endTime'
@@ -273,6 +279,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
                 <Text
                   style={[
                     styles.compactRowValue,
+                    largeText && styles.compactRowValueLarge,
                     {
                       color:
                         picker === 'endTime' ? FORM_ACCENT : colors.textPrimary,

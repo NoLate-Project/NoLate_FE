@@ -132,6 +132,14 @@ export function createQuickScheduleLogoLoaderStyles({
         borderRadius: 24,
         transform: [{ rotate: "-10deg" }],
     },
+    settleReflection: {
+        position: "absolute",
+        top: -15,
+        width: 14,
+        height: LOGO_SIZE + 30,
+        borderRadius: 7,
+        backgroundColor: "rgba(255,255,255,0.55)",
+    },
     logoLowerBloom: {
         position: "absolute",
         right: -18,

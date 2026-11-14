@@ -12,6 +12,7 @@ import {
 } from "react-native";
 
 import { getScheduleDetailSheetHeights } from "../../modules/schedule/detailPresentation";
+import { useSystemReduceMotion } from "../../modules/performance/useSystemReduceMotion";
 import {
   IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT,
   SHEET_HANDLE_HEIGHT,
@@ -41,15 +42,25 @@ export function useScheduleDetailSheetController({
   initialParticipantsExpanded,
 }: ScheduleDetailSheetControllerOptions) {
   const sheetScrollRef = useRef<ScrollView>(null);
+  const reduceMotion = useSystemReduceMotion();
   const sheetStartOffsetRef = useRef(0);
   const sheetSnapModeRef = useRef<SheetSnapMode>(
     previewEnabled ? initialSheetMode : "compact",
   );
   const baseSheetHeights = getScheduleDetailSheetHeights(windowHeight);
   const { fontScale } = useWindowDimensions();
-  const sheetMaxHeight = baseSheetHeights.maxHeight;
+  const [routeHeaderHeight, setRouteHeaderHeight] = useState(0);
+  const largeRouteHeader = fontScale > 1.35;
+  const sheetMaxHeight = routeHeaderHeight > 0
+    ? Math.min(baseSheetHeights.maxHeight, Math.max(160, windowHeight - routeHeaderHeight - 32))
+    : baseSheetHeights.maxHeight;
+  const handleHeight = SHEET_HANDLE_HEIGHT;
+  const [sheetHeaderHeight, setSheetHeaderHeight] = useState(handleHeight);
+  const handleSheetHeaderLayout = useCallback((event: LayoutChangeEvent) => {
+    setSheetHeaderHeight(Math.ceil(event.nativeEvent.layout.height));
+  }, []);
   const sheetMinHeight = Math.min(
-    sheetMaxHeight - 1,
+    sheetMaxHeight - (largeRouteHeader ? Math.min(80, Math.round(sheetMaxHeight * 0.22)) : 1),
     Math.max(
       baseSheetHeights.minHeight,
       Math.ceil(IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT * Math.max(1, fontScale)) + bottomInset,
@@ -59,7 +70,7 @@ export function useScheduleDetailSheetController({
   const [expandedContentHeight, setExpandedContentHeight] = useState(0);
   const desiredExpandedHeight =
     expandedContentHeight > 0
-      ? SHEET_HANDLE_HEIGHT + expandedContentHeight + sheetBottomPadding
+      ? sheetHeaderHeight + expandedContentHeight + sheetBottomPadding
       : sheetMaxHeight;
   const expandedVisibleHeight = clamp(
     desiredExpandedHeight,
@@ -73,7 +84,7 @@ export function useScheduleDetailSheetController({
   );
   const sheetCompactContentHeight = Math.max(
     92,
-    sheetMinHeight - SHEET_HANDLE_HEIGHT,
+    sheetMinHeight - sheetHeaderHeight,
   );
   const sheetTranslateY = useRef(
     new Animated.Value(
@@ -104,20 +115,47 @@ export function useScheduleDetailSheetController({
     }
   }, []);
 
-  const sheetQuickSummaryAnimatedStyle = useMemo(
-    () => ({
-      height: sheetTranslateY.interpolate({
-        inputRange: [sheetExpandedOffset, sheetCollapsedOffset],
-        outputRange: [0, sheetCompactContentHeight],
-        extrapolate: "clamp",
-      }),
+  const sheetContentStyles = useMemo(() => {
+    const travel = sheetCollapsedOffset - sheetExpandedOffset;
+    const handoffOffset = sheetCollapsedOffset - travel * 0.26;
+    const detailFadeEnd = sheetCollapsedOffset - travel * 0.60;
+    const quickSummary = {
+      height: sheetCompactContentHeight,
       opacity: sheetTranslateY.interpolate({
-        inputRange: [sheetExpandedOffset, sheetCollapsedOffset],
+        inputRange: [handoffOffset, sheetCollapsedOffset],
         outputRange: [0, 1],
         extrapolate: "clamp",
       }),
-    }),
+    };
+    const detailProgress = sheetTranslateY.interpolate({
+      inputRange: [detailFadeEnd, handoffOffset],
+      outputRange: [1, 0],
+      extrapolate: "clamp",
+    });
+    const expanded = {
+      opacity: detailProgress,
+      ...(reduceMotion ? {} : {
+        transform: [{
+          translateY: detailProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [8, 0],
+          }),
+        }],
+      }),
+    };
+    const handle = reduceMotion ? undefined : {
+      transform: [{
+        rotate: sheetTranslateY.interpolate({
+          inputRange: [sheetExpandedOffset, sheetCollapsedOffset],
+          outputRange: ["180deg", "0deg"],
+          extrapolate: "clamp",
+        }),
+      }],
+    };
+    return { quickSummary, expanded, handle };
+  },
     [
+      reduceMotion,
       sheetCollapsedOffset,
       sheetCompactContentHeight,
       sheetExpandedOffset,
@@ -133,7 +171,7 @@ export function useScheduleDetailSheetController({
           : sheetCollapsedOffset;
       sheetTranslateY.setValue(nextOffset);
     });
-  }, [sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY]);
+  }, [reduceMotion, sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY]);
 
   /** 드래그 종료 위치와 속도를 투영해 가장 가까운 시트 스냅 모드를 결정한다. */
   const getSheetSnapMode = useCallback(
@@ -151,19 +189,27 @@ export function useScheduleDetailSheetController({
     [sheetCollapsedOffset, sheetExpandedOffset],
   );
 
-  /** 지정한 모드로 시트를 스프링 이동하고 축소 시 내부 스크롤과 참여자 펼침을 초기화한다. */
+  /** 요약과 상세의 위치만 바꿔 상세 스크롤과 펼침 상태를 유지한다. */
   const snapSheet = useCallback(
     (nextMode: SheetSnapMode) => {
       sheetSnapModeRef.current = nextMode;
       setSheetMode(nextMode);
-      if (nextMode === "compact") {
-        setParticipantsExpanded(false);
-        participantDisclosureProgress.setValue(0);
-        sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
+      const toValue = nextMode === "expanded" ? sheetExpandedOffset : sheetCollapsedOffset;
+      if (reduceMotion) {
+        sheetTranslateY.setValue(toValue);
+        return;
+      }
+      if (previewEnabled) {
+        Animated.timing(sheetTranslateY, {
+          toValue,
+          duration: nextMode === "expanded" ? 300 : 240,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }).start();
+        return;
       }
       Animated.spring(sheetTranslateY, {
-        toValue:
-          nextMode === "expanded" ? sheetExpandedOffset : sheetCollapsedOffset,
+        toValue,
         damping: 26,
         stiffness: 210,
         mass: 0.92,
@@ -173,7 +219,8 @@ export function useScheduleDetailSheetController({
       }).start();
     },
     [
-      participantDisclosureProgress,
+      previewEnabled,
+      reduceMotion,
       sheetCollapsedOffset,
       sheetExpandedOffset,
       sheetTranslateY,
@@ -197,6 +244,11 @@ export function useScheduleDetailSheetController({
   /** 참여자 목록의 펼침 상태와 화살표 회전을 같은 타이밍으로 전환한다. */
   const toggleParticipantsExpanded = useCallback(() => {
     const nextExpanded = !participantsExpanded;
+    if (reduceMotion) {
+      participantDisclosureProgress.setValue(nextExpanded ? 1 : 0);
+      setParticipantsExpanded(nextExpanded);
+      return;
+    }
     configureParticipantDisclosureAnimation(nextExpanded);
     participantDisclosureProgress.stopAnimation();
     Animated.timing(participantDisclosureProgress, {
@@ -208,7 +260,7 @@ export function useScheduleDetailSheetController({
       useNativeDriver: true,
     }).start();
     setParticipantsExpanded(nextExpanded);
-  }, [participantDisclosureProgress, participantsExpanded]);
+  }, [participantDisclosureProgress, participantsExpanded, reduceMotion]);
 
   useEffect(() => {
     if (Platform.OS !== "android") return;
@@ -237,7 +289,6 @@ export function useScheduleDetailSheetController({
   const sheetPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_event, gesture) =>
           Math.abs(gesture.dy) > 2 &&
           Math.abs(gesture.dy) > Math.abs(gesture.dx),
@@ -257,6 +308,12 @@ export function useScheduleDetailSheetController({
           );
         },
         onPanResponderRelease: (_event, gesture) => {
+          if (previewEnabled) {
+            const nextMode = gesture.dy <= -36 ? "expanded"
+              : gesture.dy >= 36 ? "compact" : sheetSnapModeRef.current;
+            snapSheet(nextMode);
+            return;
+          }
           const currentOffset = clamp(
             sheetStartOffsetRef.current + gesture.dy,
             sheetExpandedOffset,
@@ -265,6 +322,10 @@ export function useScheduleDetailSheetController({
           snapSheet(getSheetSnapMode(currentOffset, gesture.vy));
         },
         onPanResponderTerminate: (_event, gesture) => {
+          if (previewEnabled) {
+            snapSheet(sheetSnapModeRef.current);
+            return;
+          }
           const currentOffset = clamp(
             sheetStartOffsetRef.current + gesture.dy,
             sheetExpandedOffset,
@@ -275,6 +336,7 @@ export function useScheduleDetailSheetController({
       }),
     [
       getSheetSnapMode,
+      previewEnabled,
       sheetCollapsedOffset,
       sheetExpandedOffset,
       sheetTranslateY,
@@ -284,18 +346,24 @@ export function useScheduleDetailSheetController({
 
   return {
     handleExpandedContentLayout,
+    handleSheetHeaderLayout,
+    largeRouteHeader,
     participantDisclosureAnimatedStyle,
     participantDisclosureProgress,
     participantsExpanded,
     previewParticipantsExpanded,
+    reduceMotion,
     setExpandedContentHeight,
     setParticipantsExpanded,
+    setRouteHeaderHeight,
     sheetBottomPadding,
     sheetMaxHeight,
     sheetMinHeight,
     sheetMode,
     sheetPanResponder,
-    sheetQuickSummaryAnimatedStyle,
+    sheetQuickSummaryAnimatedStyle: sheetContentStyles.quickSummary,
+    sheetExpandedContentAnimatedStyle: sheetContentStyles.expanded,
+    sheetHandleAnimatedStyle: sheetContentStyles.handle,
     sheetScrollRef,
     sheetTranslateY,
     snapSheet,

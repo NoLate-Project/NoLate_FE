@@ -78,6 +78,14 @@ const styles = StyleSheet.create({
   },
   datedTimeColumn: { width: 126 },
   listTimeColumn: { paddingRight: 0 },
+  fullWidthTime: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    columnGap: 12,
+    rowGap: 2,
+  },
   timePrimary: {
     width: '100%',
     fontSize: 12,
@@ -93,6 +101,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
     textAlign: 'right',
+  },
+  inlineTimeLabel: {
+    width: 'auto',
+    maxWidth: '100%',
+    textAlign: 'left',
   },
   chevronColumn: {
     width: 28,

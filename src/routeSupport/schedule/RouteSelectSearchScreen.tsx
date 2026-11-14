@@ -1,13 +1,24 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+    AccessibilityInfo,
     Animated,
+    Keyboard,
     Pressable,
     ScrollView,
     StatusBar,
     Text,
     TextInput,
+    useWindowDimensions,
     View,
 } from "react-native";
+import Reanimated, {
+    Easing,
+    FadeIn,
+    ReduceMotion,
+    useAnimatedStyle,
+    useSharedValue,
+    withTiming,
+} from "react-native-reanimated";
 
 import BrandedLoader from "../../ui/BrandedLoader";
 import {
@@ -34,6 +45,39 @@ type RouteSelectSearchScreenProps = {
     controller: RouteSelectController;
 };
 
+const searchResultsEntrance = FadeIn.duration(120).reduceMotion(ReduceMotion.System);
+const targetTabInset = 3;
+
+function SearchFavoriteButton({
+    name, saved, saving, disabled, color, onOpen,
+}: {
+    name: string;
+    saved: boolean;
+    saving: boolean;
+    disabled: boolean;
+    color: string;
+    onOpen: (restoreFocus: () => void) => void;
+}) {
+    const button = useRef<React.ElementRef<typeof Pressable>>(null);
+    return (
+        <Pressable
+            ref={button}
+            onPress={() => onOpen(() => {
+                if (button.current) AccessibilityInfo.sendAccessibilityEvent?.(button.current, "focus");
+            })}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel={saved ? `${name} 즐겨찾기 수정` : `${name} 즐겨찾기에 저장`}
+            accessibilityState={{ disabled, busy: saving }}
+            style={({ pressed }) => [styles.searchModeFavoriteButton, pressed && { opacity: 0.55 }]}
+        >
+            {saving
+                ? <BrandedLoader size="button" variant="route" accessibilityLabel="즐겨찾기를 저장하고 있어요" />
+                : <Ionicons accessible={false} name={saved ? "checkmark-circle-outline" : "star-outline"} size={21} color={color} />}
+        </Pressable>
+    );
+}
+
 /** 출발지·도착지 검색과 최근 장소·즐겨찾기 선택 화면을 표시한다. */
 export function RouteSelectSearchScreen({
     controller,
@@ -45,7 +89,6 @@ export function RouteSelectSearchScreen({
         activeTarget,
         isEditingRoutePoint,
         originUsesDefault,
-        recentPlaces,
         favoritePlaces,
         favoritePlacesLoaded,
         favoritePlacesError,
@@ -72,6 +115,7 @@ export function RouteSelectSearchScreen({
         applyCurrentLocationToActiveTarget,
         applyRecentPlaceToActiveTarget,
         openMapForPointSelection,
+        openRoutePointEditor,
         openFavoriteSaveSheet,
         removePlaceFromFavorites,
         setFavoriteAsDefaultOrigin,
@@ -83,71 +127,25 @@ export function RouteSelectSearchScreen({
         hasConfiguredDefaultOrigin,
         routeUi,
     } = controller;
+    const { fontScale } = useWindowDimensions();
+    const searchHeight = Math.max(48, Math.ceil(22 * fontScale + 14));
+    const stackLocationActions = fontScale > 1.35;
+    const targetWithObjectParticle = activeTarget === "origin" ? "출발지를" : "도착지를";
+    const [targetTabsWidth, setTargetTabsWidth] = useState(0);
+    const targetTabProgress = useSharedValue(activeTarget === "destination" ? 1 : 0);
+    const targetTabWidth = Math.max(0, (targetTabsWidth - targetTabInset * 2) / 2);
+    useEffect(() => {
+        targetTabProgress.value = withTiming(activeTarget === "destination" ? 1 : 0, {
+            duration: 160,
+            easing: Easing.out(Easing.cubic),
+            reduceMotion: ReduceMotion.System,
+        });
+    }, [activeTarget, targetTabProgress]);
+    const targetTabIndicator = useAnimatedStyle(() => ({
+        transform: [{ translateX: targetTabProgress.value * targetTabWidth }],
+    }));
     if (isEditingRoutePoint) {
-        return (
-            <View style={[styles.screen, { backgroundColor: routeUi.background, paddingTop: insets.top + 10 }]}>
-                <StatusBar barStyle={statusBarStyle} />
-                <View style={styles.searchModeHeader}>
-                    <Pressable
-                        onPress={exitSearchMode}
-                        accessibilityRole="button"
-                        accessibilityLabel="장소 검색 닫기"
-                        style={styles.searchModeBackButton}
-                    >
-                        <Text style={[styles.searchModeBackText, { color: routeUi.textPrimary }]}>‹</Text>
-                    </Pressable>
-                    <View style={[styles.searchModeSearchBox, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
-                        <View style={styles.searchModeTargetContext} accessible={false}>
-                            <View
-                                style={[
-                                    styles.searchModeTargetDot,
-                                    {
-                                        borderColor: activeTarget === "origin"
-                                            ? routeUi.accentGreen
-                                            : routeUi.accentRed,
-                                    },
-                                ]}
-                            />
-                            <Text style={[styles.searchModeTargetText, { color: routeUi.textSecondary }]}>
-                                {activeTargetLabel}
-                            </Text>
-                        </View>
-                        <TextInput
-                            autoFocus
-                            value={activeSearchText}
-                            onChangeText={(text) => handleSearchChange(activeTarget, text)}
-                            accessibilityLabel={`${activeTargetLabel} 검색`}
-                            accessibilityHint="장소 이름이나 주소를 입력하세요"
-                            placeholder="장소명 또는 주소를 검색하세요"
-                            placeholderTextColor={routeUi.inputPlaceholder}
-                            selectionColor={routeUi.accentBlue}
-                            returnKeyType="search"
-                            textContentType="none"
-                            autoComplete="off"
-                            secureTextEntry={false}
-                            style={[styles.searchModeInput, { color: routeUi.textPrimary }]}
-                        />
-                        {!!activeSearchText.trim() && (
-                            <Pressable
-                                onPress={() => handleSearchChange(activeTarget, "")}
-                                accessibilityRole="button"
-                                accessibilityLabel={`${activeTargetLabel} 검색어 지우기`}
-                                style={[styles.searchModeClearButton, { backgroundColor: routeUi.clearButtonBg }]}
-                            >
-                                <Text style={[styles.searchModeClearText, { color: routeUi.clearButtonText }]}>×</Text>
-                            </Pressable>
-                        )}
-                    </View>
-                    <Pressable
-                        onPress={goToScheduleList}
-                        accessibilityRole="button"
-                        accessibilityLabel="일정 목록으로 이동"
-                        style={[styles.scheduleListIconButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
-                    >
-                        <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
-                    </Pressable>
-                </View>
-
+        const originContext = !showingSearchResults && <>
                 {originUsesDefault && activeTarget === "destination" && (
                     <Pressable
                         onPress={editDefaultOrigin}
@@ -155,17 +153,18 @@ export function RouteSelectSearchScreen({
                         accessibilityLabel={`기본 출발지 ${originText}, 변경`}
                         style={[
                             styles.defaultOriginBar,
+                            stackLocationActions && styles.defaultOriginStacked,
                             { backgroundColor: routeUi.surface2, borderColor: routeUi.border },
                         ]}
                     >
                         <Ionicons name="location-outline" size={19} color={routeUi.accentBlue} />
                         <View style={styles.defaultOriginCopy}>
                             <Text style={[styles.defaultOriginLabel, { color: routeUi.textSecondary }]}>기본 출발지</Text>
-                            <Text numberOfLines={1} style={[styles.defaultOriginName, { color: routeUi.textPrimary }]}>
+                            <Text numberOfLines={stackLocationActions ? undefined : 1} style={[styles.defaultOriginName, { color: routeUi.textPrimary }]}>
                                 {originText}
                             </Text>
                         </View>
-                        <Text style={[styles.defaultOriginAction, { color: routeUi.accentBlue }]}>변경</Text>
+                        <Text style={[styles.defaultOriginAction, stackLocationActions && styles.defaultOriginActionStacked, { color: routeUi.accentBlue }]}>변경</Text>
                     </Pressable>
                 )}
 
@@ -177,7 +176,8 @@ export function RouteSelectSearchScreen({
                         accessibilityHint="내 장소 관리 화면에서 기본 출발지를 설정합니다"
                         style={[
                             styles.defaultOriginSetupBar,
-                            { backgroundColor: routeUi.selectedModeBg, borderColor: routeUi.selectedBorder },
+                            stackLocationActions && styles.defaultOriginStacked,
+                            { backgroundColor: routeUi.surface2, borderColor: routeUi.border },
                         ]}
                     >
                         <View style={[styles.defaultOriginSetupIcon, { backgroundColor: routeUi.surface }]}>
@@ -185,25 +185,120 @@ export function RouteSelectSearchScreen({
                         </View>
                         <View style={styles.defaultOriginCopy}>
                             <Text style={[styles.defaultOriginSetupTitle, { color: routeUi.textPrimary }]}>기본 출발지가 없어요</Text>
-                            <Text numberOfLines={2} style={[styles.defaultOriginSetupDescription, { color: routeUi.textSecondary }]}>
-                                자주 출발하는 장소를 설정하면 다음부터 자동으로 입력돼요
+                            <Text numberOfLines={stackLocationActions ? undefined : 2} style={[styles.defaultOriginSetupDescription, { color: routeUi.textSecondary }]}>
+                                자주 출발하는 곳을 저장해요
                             </Text>
                         </View>
-                        <Text style={[styles.defaultOriginAction, { color: routeUi.accentBlue }]}>설정</Text>
+                        <Text style={[styles.defaultOriginAction, stackLocationActions && styles.defaultOriginActionStacked, { color: routeUi.accentBlue }]}>설정</Text>
                     </Pressable>
                 )}
 
-                <View style={styles.searchModeActionRow}>
+        </>;
+        return (
+            <View style={[styles.screen, { backgroundColor: routeUi.background, paddingTop: insets.top + 10 }]}>
+                <StatusBar barStyle={statusBarStyle} />
+                <View
+                    style={[styles.searchTargetTabs, { backgroundColor: routeUi.surface2, padding: targetTabInset }]}
+                    onLayout={({ nativeEvent }) => setTargetTabsWidth(nativeEvent.layout.width)}
+                    accessibilityRole="tablist"
+                >
+                    {targetTabWidth > 0 && (
+                        <Reanimated.View
+                            pointerEvents="none"
+                            accessible={false}
+                            style={[
+                                styles.searchTargetIndicator,
+                                { left: targetTabInset, top: targetTabInset, bottom: targetTabInset, width: targetTabWidth,
+                                    backgroundColor: routeUi.selectedSurface, borderColor: routeUi.borderStrong },
+                                targetTabIndicator,
+                            ]}
+                        />
+                    )}
+                    {(["origin", "destination"] as const).map(target => {
+                        const selected = activeTarget === target;
+                        const label = target === "origin" ? "출발지" : "도착지";
+                        return (
+                            <Pressable
+                                key={target}
+                                accessibilityRole="tab"
+                                accessibilityState={{ selected }}
+                                accessibilityLabel={label}
+                                onPress={() => { if (!selected) openRoutePointEditor(target); }}
+                                style={[
+                                    styles.searchTargetTab,
+                                    selected && targetTabWidth === 0 && { backgroundColor: routeUi.selectedSurface },
+                                ]}
+                            >
+                                <Text style={[styles.searchTargetTabText, { color: selected ? routeUi.textPrimary : routeUi.textSecondary }]}>{label}</Text>
+                            </Pressable>
+                        );
+                    })}
+                </View>
+                <View style={styles.searchModeHeader}>
+                    <Pressable
+                        onPress={exitSearchMode}
+                        accessibilityRole="button"
+                        accessibilityLabel="장소 검색 닫기"
+                        style={styles.searchModeBackButton}
+                    >
+                        <Ionicons name="chevron-back-outline" size={22} color={routeUi.textPrimary} />
+                    </Pressable>
+                    <View style={[styles.searchModeSearchBox, { backgroundColor: routeUi.surface, borderColor: routeUi.border, height: searchHeight }]}>
+                        <TextInput
+                            value={activeSearchText}
+                            onChangeText={(text) => handleSearchChange(activeTarget, text)}
+                            accessibilityLabel={`${activeTargetLabel} 검색`}
+                            accessibilityHint="장소 이름이나 주소를 입력하세요"
+                            selectionColor={routeUi.accentBlue}
+                            returnKeyType="search"
+                            onSubmitEditing={() => Keyboard.dismiss()}
+                            textContentType="none"
+                            autoComplete="off"
+                            secureTextEntry={false}
+                            style={[styles.searchModeInput, { color: routeUi.textPrimary, height: searchHeight }]}
+                        />
+                        {!activeSearchText && (
+                            <View pointerEvents="none" style={styles.searchModePlaceholder}>
+                                <Text accessible={false} numberOfLines={1} style={[styles.searchModePlaceholderText, { color: routeUi.textSecondary }]}>
+                                    {stackLocationActions ? `${activeTargetLabel} 검색` : `${activeTargetLabel} 이름 또는 주소`}
+                                </Text>
+                            </View>
+                        )}
+                        {!!activeSearchText.trim() && (
+                            <Pressable
+                                onPress={() => handleSearchChange(activeTarget, "")}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${activeTargetLabel} 검색어 지우기`}
+                                hitSlop={10}
+                                style={[styles.searchModeClearButton, { backgroundColor: routeUi.clearButtonBg }]}
+                            >
+                                <Ionicons name="close-outline" size={17} color={routeUi.clearButtonText} />
+                            </Pressable>
+                        )}
+                    </View>
+                    <Pressable
+                        onPress={goToScheduleList}
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 목록으로 이동"
+                        style={[styles.scheduleListIconButton,
+                            { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
+                    >
+                        <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
+                    </Pressable>
+                </View>
+
+                <View style={[styles.searchModeActionRow, stackLocationActions && styles.searchModeActionRowStacked]}>
                     <Pressable
                         onPress={applyCurrentLocationToActiveTarget}
                         accessibilityRole="button"
-                        accessibilityLabel={`${activeTargetLabel}를 현재 위치로 설정`}
+                        accessibilityLabel={`${targetWithObjectParticle} 현재 위치로 설정`}
                         accessibilityState={{
                             busy: currentLocationPending,
                             disabled: currentLocationPending,
                         }}
                         disabled={currentLocationPending}
-                        style={[styles.searchModeActionButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
+                        style={({ pressed }) => [styles.searchModeActionButton, stackLocationActions && styles.searchModeActionStacked,
+                            { backgroundColor: pressed ? routeUi.surface2 : routeUi.surface, borderColor: routeUi.border }]}
                     >
                         {currentLocationPending ? (
                             <BrandedLoader
@@ -212,32 +307,48 @@ export function RouteSelectSearchScreen({
                                 accessibilityLabel="현재 위치를 확인하고 있어요"
                             />
                         ) : (
-                            <Ionicons name="navigate-outline" size={22} color={routeUi.accentBlue} />
+                            <Ionicons name="locate-outline" size={22} color={routeUi.accentBlue} />
                         )}
-                        <Text style={[styles.searchModeActionText, { color: routeUi.accentBlue }]}>내 위치</Text>
+                        <Text style={[styles.searchModeActionText, { color: routeUi.textPrimary }]}>내 위치</Text>
                     </Pressable>
                     <Pressable
                         onPress={openMapForPointSelection}
                         accessibilityRole="button"
-                        accessibilityLabel="지도에서 출발지 또는 도착지 선택"
-                        style={[styles.searchModeActionButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
+                        accessibilityLabel={`${targetWithObjectParticle} 지도에서 선택`}
+                        style={({ pressed }) => [styles.searchModeActionButton, stackLocationActions && styles.searchModeActionStacked,
+                            { backgroundColor: pressed ? routeUi.surface2 : routeUi.surface, borderColor: routeUi.border }]}
                     >
-                        <Ionicons name="map-outline" size={23} color={routeUi.textSecondary} />
-                        <Text style={[styles.searchModeActionText, { color: routeUi.textSecondary }]}>지도에서 선택</Text>
+                        <Ionicons name="map-outline" size={22} color={routeUi.accentBlue} />
+                        <Text style={[styles.searchModeActionText, { color: routeUi.textPrimary }]}>지도에서 선택</Text>
                     </Pressable>
                 </View>
 
+                {!stackLocationActions && originContext}
+
                 <ScrollView
                     directionalLockEnabled
+                    keyboardDismissMode="on-drag"
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={[styles.searchModeContent, { paddingBottom: Math.max(insets.bottom + 24, 36) }]}
                 >
+                    {stackLocationActions && originContext}
+                    <View style={[styles.searchModeSectionHeader, stackLocationActions && styles.searchModeSectionHeaderStacked, { borderBottomColor: routeUi.border }]}>
+                        <Text maxFontSizeMultiplier={1.8} style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>
+                            {showingSearchResults ? "검색 결과" : "즐겨찾기"}
+                        </Text>
+                        {!showingSearchResults && <Pressable
+                            onPress={openPlaceSettings}
+                            accessibilityRole="button"
+                            accessibilityLabel="내 장소 관리"
+                            style={[styles.favoriteManageButton, stackLocationActions && styles.favoriteManageButtonStacked]}
+                        >
+                            <Ionicons name="options-outline" size={15} color={routeUi.accentBlue} />
+                            <Text maxFontSizeMultiplier={1.8} style={[styles.searchModeEditText, { color: routeUi.accentBlue }]}>내 장소 관리</Text>
+                        </Pressable>}
+                    </View>
                     {showingSearchResults ? (
                         <View style={styles.searchModePanel}>
-                            <View style={[styles.searchModeSectionHeader, { borderBottomColor: routeUi.border }]}>
-                                <Text style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>검색 결과</Text>
-                            </View>
                             {searching && (
                                 <View style={styles.searchingRow}>
                                     <BrandedLoader
@@ -271,88 +382,61 @@ export function RouteSelectSearchScreen({
                                     </Text>
                                 </View>
                             )}
-                            {searchResults.slice(0, 10).map((item, index) => {
-                                const resultPlace = buildPlaceFromSearchItem(item);
-                                const resultIcon = resolvePlaceListIcon({ ...resultPlace, category: item.category });
-                                const savingKey = getPlaceActionKey(resultPlace);
-                                const isSaving = favoriteSavingKey === savingKey;
-                                const savedFavorite = findMatchingFavoritePlace(resultPlace, favoritePlaces);
+                            {searchResults.length > 0 && (
+                                <Reanimated.View entering={searchResultsEntrance}>
+                                    {searchResults.slice(0, 10).map((item, index) => {
+                                        const resultPlace = buildPlaceFromSearchItem(item);
+                                        const resultIcon = resolvePlaceListIcon({ ...resultPlace, category: item.category });
+                                        const savingKey = getPlaceActionKey(resultPlace);
+                                        const isSaving = favoriteSavingKey === savingKey;
+                                        const savedFavorite = findMatchingFavoritePlace(resultPlace, favoritePlaces);
+                                        const distance = formatSearchResultDistance(item.distanceMeters);
+                                        const address = item.address?.trim();
+                                        const category = item.category?.split(/[>＞]/).map(part => part.trim()).filter(Boolean).at(-1);
+                                        const description = address || category || "주소 정보 없음";
 
-                                return (
-                                    <View
-                                        key={`${item.lat}:${item.lng}:${index}`}
-                                        style={[
-                                            styles.searchModeResultRow,
-                                            { borderColor: routeUi.border, backgroundColor: routeUi.surface },
-                                        ]}
-                                    >
-                                        <Pressable
-                                            onPress={() => applyPlace(activeTarget, item)}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={`${item.name}, ${item.address || "주소 정보 없음"}`}
-                                            style={styles.searchModeResultMain}
-                                        >
-                                            <View style={[styles.searchModeListIcon, { backgroundColor: routeUi.surface2 }]}>
-                                                <Ionicons name={resultIcon} size={18} color={routeUi.textSecondary} />
-                                            </View>
-                                            <View style={styles.searchModeResultTextWrap}>
-                                                <Text numberOfLines={1} style={[styles.searchResultTitle, { color: routeUi.textPrimary }]}>
-                                                    {item.name}
-                                                </Text>
-                                                {!!(item.category || formatSearchResultDistance(item.distanceMeters)) && (
-                                                    <Text numberOfLines={1} style={styles.searchResultCategory}>
-                                                        {[item.category, formatSearchResultDistance(item.distanceMeters)].filter(Boolean).join(" · ")}
-                                                    </Text>
-                                                )}
-                                                <Text numberOfLines={1} style={[styles.searchResultAddress, { color: routeUi.textSecondary }]}>
-                                                    {item.address}
-                                                </Text>
-                                            </View>
-                                        </Pressable>
-                                        <Pressable
-                                            onPress={() => savedFavorite
-                                                ? removePlaceFromFavorites(savedFavorite, resultPlace)
-                                                : openFavoriteSaveSheet(resultPlace)}
-                                            disabled={Boolean(favoriteSavingKey)}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={savedFavorite
-                                                ? `${item.name} 즐겨찾기 해제`
-                                                : `${item.name} 즐겨찾기에 저장`}
-                                            accessibilityState={{ disabled: Boolean(favoriteSavingKey) }}
-                                            style={styles.searchModeFavoriteButton}
-                                        >
-                                            {isSaving ? (
-                                                <BrandedLoader
-                                                    size="button"
-                                                    variant="route"
-                                                    accessibilityLabel="즐겨찾기를 저장하고 있어요"
-                                                />
-                                            ) : (
-                                                <Ionicons
-                                                    name={savedFavorite ? "star" : "star-outline"}
-                                                    size={21}
+                                        return (
+                                            <View
+                                                key={`${item.lat}:${item.lng}:${index}`}
+                                                style={[
+                                                    styles.searchModeResultRow,
+                                                    { borderColor: routeUi.border },
+                                                ]}
+                                            >
+                                                <Pressable
+                                                    onPress={() => applyPlace(activeTarget, item)}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={[item.name, description, distance].filter(Boolean).join(", ")}
+                                                    style={({ pressed }) => [styles.searchModeResultMain, pressed && { backgroundColor: routeUi.surface2 }]}
+                                                >
+                                                    <View style={[styles.searchModeListIcon, { backgroundColor: routeUi.surface2 }]}>
+                                                        <Ionicons name={resultIcon} size={18} color={routeUi.textSecondary} />
+                                                    </View>
+                                                    <View style={styles.searchModeResultTextWrap}>
+                                                        <Text numberOfLines={stackLocationActions ? undefined : 2} style={[styles.searchResultTitle, { color: routeUi.textPrimary }]}>
+                                                            {item.name}
+                                                        </Text>
+                                                    <Text numberOfLines={stackLocationActions ? undefined : 2} style={[styles.searchResultAddress, { color: routeUi.textSecondary }]}>
+                                                        {[description, stackLocationActions ? undefined : distance].filter(Boolean).join(" · ")}
+                                                        </Text>
+                                                    </View>
+                                                </Pressable>
+                                                <SearchFavoriteButton
+                                                    name={item.name}
+                                                    saved={!!savedFavorite}
+                                                    saving={isSaving}
+                                                    disabled={!!favoriteSavingKey}
                                                     color={savedFavorite ? routeUi.accentBlue : routeUi.textSecondary}
+                                                    onOpen={restoreFocus => openFavoriteSaveSheet(resultPlace, savedFavorite, restoreFocus)}
                                                 />
-                                            )}
-                                        </Pressable>
-                                    </View>
-                                );
-                            })}
+                                            </View>
+                                        );
+                                    })}
+                                </Reanimated.View>
+                            )}
                         </View>
                     ) : (
                         <View style={styles.searchModePanel}>
-                            <View style={[styles.searchModeSectionHeader, { borderBottomColor: routeUi.border }]}>
-                                <Text style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>즐겨찾기</Text>
-                                <Pressable
-                                    onPress={openPlaceSettings}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="내 장소 관리"
-                                    style={styles.favoriteManageButton}
-                                >
-                                    <Ionicons name="options-outline" size={15} color={routeUi.accentBlue} />
-                                    <Text style={[styles.searchModeEditText, { color: routeUi.accentBlue }]}>관리</Text>
-                                </Pressable>
-                            </View>
                             {!!favoritePlacesError && (
                                 <View
                                     style={[
@@ -615,6 +699,7 @@ export function RouteSelectSearchScreen({
                             {visibleRecentPlaces.length > 0 ? (
                                 visibleRecentPlaces.map((place, index) => {
                                     const recentIcon = resolvePlaceListIcon(place);
+                                    const savedFavorite = findMatchingFavoritePlace(place, favoritePlaces);
                                     const savingKey = getPlaceActionKey(place);
                                     const isSaving = favoriteSavingKey === savingKey;
 
@@ -646,28 +731,14 @@ export function RouteSelectSearchScreen({
                                                     )}
                                                 </View>
                                             </Pressable>
-                                            <Pressable
-                                                onPress={() => openFavoriteSaveSheet(place)}
-                                                disabled={Boolean(favoriteSavingKey)}
-                                                accessibilityRole="button"
-                                                accessibilityLabel={`${getPlaceDisplayText(place)} 즐겨찾기에 저장`}
-                                                accessibilityState={{ disabled: Boolean(favoriteSavingKey) }}
-                                                style={styles.searchModeFavoriteButton}
-                                            >
-                                                {isSaving ? (
-                                                    <BrandedLoader
-                                                        size="button"
-                                                        variant="route"
-                                                        accessibilityLabel="즐겨찾기를 저장하고 있어요"
-                                                    />
-                                                ) : (
-                                                    <Ionicons
-                                                        name="star-outline"
-                                                        size={21}
-                                                        color={routeUi.textSecondary}
-                                                    />
-                                                )}
-                                            </Pressable>
+                                            <SearchFavoriteButton
+                                                name={getPlaceDisplayText(place)}
+                                                saved={!!savedFavorite}
+                                                saving={isSaving}
+                                                disabled={!!favoriteSavingKey}
+                                                color={savedFavorite ? routeUi.accentBlue : routeUi.textSecondary}
+                                                onOpen={restoreFocus => openFavoriteSaveSheet(place, savedFavorite, restoreFocus)}
+                                            />
                                             <Pressable
                                                 onPress={() => removeRecentPlace(place)}
                                                 accessibilityRole="button"
@@ -682,9 +753,7 @@ export function RouteSelectSearchScreen({
                             ) : (
                                 <View style={styles.searchModeEmptyRow}>
                                     <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
-                                        {recentPlaces.length > 0
-                                            ? "즐겨찾기에 저장된 장소를 제외한 최근 검색이 없습니다."
-                                            : "최근 검색 내역이 없습니다."}
+                                        최근 검색 내역이 없습니다.
                                     </Text>
                                 </View>
                             )}

@@ -8,7 +8,7 @@ import {
   getNaverLikeTransitRouteCategory,
   selectNaverLikeRouteAlternatives,
 } from '../routeAlternativeRanking';
-import { compactTransitLineLabel } from '../routeInfo';
+import { compactTransitLineLabel, formatRouteDistance, formatRouteDuration } from '../routeInfo';
 import type { TravelMode } from '../types';
 import type { TransitRouteFilter } from './params';
 
@@ -34,6 +34,32 @@ export type TransitRouteTimeMeta = {
   fareText?: string;
   combinedText: string;
 };
+
+/** Shows the access walk only when it is the first actual route leg. */
+export function getRouteOverviewAccessWalk(option?: RouteAlternativeOption) {
+  if (option?.mode !== 'TRANSIT' || option.transitServiceState === 'not_operating') return undefined;
+  const first = option.transitLegs?.[0];
+  if (!first || first.kind !== 'WALK' || !option.transitLegs?.some(leg => isTransitRideKind(leg.kind))) return undefined;
+
+  const distance = typeof first.distanceMeters === 'number' && first.distanceMeters > 0
+    ? formatRouteDistance(first.distanceMeters)
+    : undefined;
+  const seconds = first.durationSeconds;
+  const minutes = typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+    ? seconds / 60
+    : first.durationMinutes;
+  const duration = typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0
+    ? formatRouteDuration(Math.max(1, minutes))
+    : undefined;
+  if (!distance && !duration) return undefined;
+
+  const from = first.startName?.trim();
+  const to = first.endName?.trim();
+  return {
+    destination: to && to !== from ? to : undefined,
+    walking: `도보 ${[distance, duration].filter(Boolean).join(' · ')}`,
+  };
+}
 
 type CameraCoord = { latitude: number; longitude: number };
 
@@ -121,41 +147,6 @@ export function formatAlternativeInfo(option: RouteAlternativeOption): string {
 }
 
 /**
- * 선택된 경로 상단에 chip으로 노출할 지표 목록을 만듭니다.
- *
- * 한 줄 요약과 달리 각 항목을 배열로 유지해 화면 폭에 따라 chip을 줄바꿈할 수 있습니다.
- * 경로 형상이 의심스러운 경우에는 다른 수치보다 먼저 경고 tag를 배치합니다.
- */
-export function getAlternativeMetricTags(
-  option: RouteAlternativeOption,
-): string[] {
-  const metrics: string[] = [];
-  if (option.routePlausibility === 'geometry_suspected') {
-    metrics.push('경로 확인 필요');
-  }
-  if (typeof option.transferCount === 'number') {
-    metrics.push(`환승 ${option.transferCount}회`);
-  }
-
-  const walkText = formatDistance(option.walkMeters);
-  if (walkText) metrics.push(`도보 ${walkText}`);
-
-  if (typeof option.fareWon === 'number') {
-    metrics.push(`요금 ${option.fareWon.toLocaleString()}원`);
-  }
-  if (typeof option.tollFareWon === 'number' && option.tollFareWon > 0) {
-    metrics.push(`통행료 ${option.tollFareWon.toLocaleString()}원`);
-  }
-  if (typeof option.taxiFareWon === 'number' && option.taxiFareWon > 0) {
-    metrics.push(`택시 예상 ${option.taxiFareWon.toLocaleString()}원`);
-  }
-
-  const distanceText = formatDistance(option.distanceMeters);
-  if (distanceText) metrics.push(`총 ${distanceText}`);
-  return metrics;
-}
-
-/**
  * 대중교통 legs에 실제 포함된 이동 수단을 고정된 순서의 한국어 label로 반환합니다.
  *
  * API leg 순서가 달라져도 범례와 요약 chip의 순서는 지하철·버스·도보·기타로 유지됩니다.
@@ -182,24 +173,6 @@ export function getTransitModeLabels(legs?: TransitLegDetail[]): string[] {
     .map(kind => labelsByKind[kind]);
 }
 
-/**
- * 경로 후보 카드에 표시할 짧은 이동 순서 미리보기를 만듭니다.
- *
- * 빈 label을 제거하고 처음 세 단계만 연결해 카드가 지나치게 길어지는 것을 막습니다.
- */
-export function buildTransitLegPreview(
-  legs?: TransitLegDetail[],
-): string | undefined {
-  if (!Array.isArray(legs) || !legs.length) return undefined;
-  const labels = legs
-    .map(leg => leg.label?.trim())
-    .filter(
-      (value): value is string => typeof value === 'string' && value.length > 0,
-    );
-  if (!labels.length) return undefined;
-  return labels.slice(0, 3).join(' → ');
-}
-
 /** 이동 수단 종류에 대응하는 긴 이름, 배지 한 글자, 기본 색상을 한 번에 반환합니다. */
 export function getTransitLegKindMeta(
   kind: TransitLegDetail['kind'],
@@ -220,6 +193,32 @@ export function getTransitRouteCategory(
   option: RouteAlternativeOption,
 ): TransitRouteFilter {
   return getNaverLikeTransitRouteCategory(option) as TransitRouteFilter;
+}
+
+/** Distinguish equal-duration alternatives by their first different ride. */
+export function getMapRouteChoiceLabels(options: RouteAlternativeOption[]): string[] {
+  const choices = options.map(option => ({
+    category: getTransitRouteCategory(option),
+    duration: option.transitServiceState === 'not_operating' ? '운행 종료' : formatRouteDuration(option.minutes),
+    lines: (option.transitLegs ?? [])
+      .filter(leg => isTransitRideKind(leg.kind))
+      .map(leg => compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label)),
+  }));
+  return choices.map(({ category, duration, lines }, index) => {
+    const peers = choices.filter((choice, peerIndex) =>
+      index !== peerIndex && choice.category === category && choice.duration === duration);
+    const distinguishingLine = peers.length
+      ? lines.find((line, legIndex) => line && peers.every(peer => peer.lines[legIndex] !== line))
+      : undefined;
+    const mode = category === 'BUS' ? '버스'
+      : category === 'SUBWAY' ? '지하철'
+      : category === 'MIXED' ? '버스+지하철'
+      : '대중교통';
+    const title = index === 0
+      ? ['추천', distinguishingLine].filter(Boolean).join(' · ')
+      : distinguishingLine ?? mode;
+    return `${title} · ${duration}`;
+  });
 }
 
 /** 네이버형 추천 규칙과 동일한 기준으로 경로의 환승 횟수를 계산합니다. */
@@ -306,13 +305,6 @@ export function compactTransitStopLabel(
     : normalized;
 }
 
-/** 현재 시각을 출발 시각 picker의 빠른 선택 문구로 표시합니다. */
-export function formatTransitDepartureNow(date = new Date()): string {
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  return `오늘 ${hh}:${mm} 출발`;
-}
-
 /** `Date`를 오전·오후가 포함된 12시간제 한국어 시각으로 변환합니다. */
 export function formatTransitClock(date: Date): string {
   const hours = date.getHours();
@@ -351,12 +343,39 @@ export function formatTransitClockWithDayContext(
   return `${date.getMonth() + 1}/${date.getDate()} ${formatTransitClock(date)}`;
 }
 
-/** 목록에서 상세로 이동해도 미확인/운행 종료 상태를 같은 문구로 설명한다. */
-export function getTransitServiceNotice(option?: RouteAlternativeOption): string | undefined {
-  if (option?.mode !== 'TRANSIT') return undefined;
-  if (option.transitServiceState === 'unknown') return '운행 시간 확인 필요';
-  if (option.transitServiceState === 'not_operating') return '운행 종료';
-  return undefined;
+export const TRANSIT_ESTIMATED_DURATION_LABEL = '예상 소요 시간';
+
+/** Some saved itineraries have ride legs but no provider verified departure. */
+export function isSavedTransitDurationEstimate(option?: RouteAlternativeOption): boolean {
+  return option?.mode === 'TRANSIT' &&
+    option.source === 'fallback' &&
+    option.fallbackKind === undefined &&
+    option.transitServiceState !== 'operating' &&
+    option.transitServiceState !== 'not_operating' &&
+    option.providerTimeBasis !== 'timetable' &&
+    !option.intercityJourney &&
+    Boolean(option.transitLegs?.some(leg => isTransitRideKind(leg.kind)));
+}
+
+export function shouldShowTransitDurationOnly(option?: RouteAlternativeOption): boolean {
+  return option?.mode === 'TRANSIT' &&
+    (option.transitServiceState === 'unknown' || isSavedTransitDurationEstimate(option));
+}
+
+/** Keep map discrepancies and unavailable service distinct from a duration estimate. */
+export function getRoutePlannerQualityNotice(
+  option: RouteAlternativeOption | undefined,
+  qualityNotice: string | undefined,
+  isRouteDetailMode: boolean,
+): string | undefined {
+  if (option?.routePlausibility === 'geometry_suspected') {
+    return '지도에 표시된 경로가 실제 도로와 다를 수 있어요.';
+  }
+  if (option?.source === 'fallback' && option.fallbackKind === 'straight') {
+    return qualityNotice;
+  }
+  if (isRouteDetailMode && shouldShowTransitDurationOnly(option)) return undefined;
+  return qualityNotice;
 }
 
 /** 운행 미확인 시각은 숨기고, 검증된 시간표 또는 출발 기준의 예상시각과 요금을 조립한다. */
@@ -368,19 +387,18 @@ export function buildTransitRouteTimeMeta(
     typeof option.fareWon === 'number'
       ? `${option.fareWon.toLocaleString()}원`
       : undefined;
-  if (option.transitServiceState === 'unknown') {
-    const notice = '운행 시간 확인 필요';
-    return {
-      departureText: notice,
-      fareText,
-      combinedText: [notice, fareText].filter(Boolean).join(' | '),
-    };
-  }
   if (option.transitServiceState === 'not_operating') {
     return {
       departureText: '운행 종료',
       fareText,
       combinedText: ['현재 운행 종료', fareText].filter(Boolean).join(' | '),
+    };
+  }
+  if (shouldShowTransitDurationOnly(option)) {
+    return {
+      departureText: TRANSIT_ESTIMATED_DURATION_LABEL,
+      fareText,
+      combinedText: [TRANSIT_ESTIMATED_DURATION_LABEL, fareText].filter(Boolean).join(' · '),
     };
   }
 

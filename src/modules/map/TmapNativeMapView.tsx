@@ -151,9 +151,12 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
         onZoomChanged,
         onCameraChanged,
         onInitialized,
+        onLoadStateChange,
         onMapLayoutReport,
         fallbackBackgroundColor = "#E5E7EB",
         fallbackTextColor = "#6B7280",
+        loadingContent,
+        renderLoadError,
     },
     ref
 ) {
@@ -276,6 +279,12 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
         onInitialized?.();
     }, [appKey, onInitialized]);
 
+    useEffect(() => {
+        onLoadStateChange?.(
+            !NativeTMapView || !appKey ? "unavailable" : runtimeErrorMessage ? "error" : isReady ? "ready" : "loading",
+        );
+    }, [appKey, isReady, onLoadStateChange, runtimeErrorMessage]);
+
     const handleMapReady = useCallback(() => {
         setIsReady(true);
         setRuntimeErrorMessage(undefined);
@@ -358,6 +367,9 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
     }, [camera.zoom, issueCommand]);
 
     if (!NativeTMapView || !appKey) {
+        if (onLoadStateChange) {
+            return <View style={[nativeStyles.fallback, { backgroundColor: fallbackBackgroundColor }, style]} />;
+        }
         const message = !NativeTMapView
             ? "이 기기에서는 지도를 사용할 수 없어요."
             : "지도 설정을 불러오지 못했습니다. 앱을 최신 버전으로 업데이트해 주세요.";
@@ -373,6 +385,15 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
         );
     }
 
+    // Keep native controls out of the Web fallback's module initialization.
+    const { Ionicons } = require("@expo/vector-icons") as typeof import("@expo/vector-icons");
+    const controlsSurface = nightModeEnabled ? nativeStyles.controlSurfaceDark : nativeStyles.controlSurfaceLight;
+    const controlsDivider = nightModeEnabled ? nativeStyles.controlDividerDark : nativeStyles.controlDividerLight;
+    const controlsIconColor = nightModeEnabled ? "#F1F5F9" : "#182230";
+    const hidesMapAccessibility = Boolean(
+        (onLoadStateChange && !isReady) || ((onLoadStateChange || renderLoadError) && runtimeErrorMessage)
+    );
+
     return (
         <View
             style={[nativeStyles.container, { backgroundColor: fallbackBackgroundColor }, style]}
@@ -381,6 +402,8 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
             <NativeTMapView
                 key={`tmap-native-${nativeRevision}`}
                 accessibilityLabel="지도"
+                accessibilityElementsHidden={hidesMapAccessibility}
+                importantForAccessibility={hidesMapAccessibility ? "no-hide-descendants" : "auto"}
                 style={StyleSheet.absoluteFill}
                 appKey={appKey}
                 data={data}
@@ -404,23 +427,23 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
                 />
             ) : null}
             {showZoomControls ? (
-                <View style={nativeStyles.zoomControls}>
+                <View style={[nativeStyles.zoomControls, controlsSurface]}>
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="지도 확대"
                         onPress={() => issueCommand("zoomBy", { delta: 1 })}
-                        style={nativeStyles.controlButton}
+                        style={({ pressed }) => [nativeStyles.controlButton, pressed && nativeStyles.controlPressed]}
                     >
-                        <Text style={nativeStyles.controlText}>＋</Text>
+                        <Ionicons name="add-outline" size={22} color={controlsIconColor} allowFontScaling={false} accessible={false} />
                     </Pressable>
-                    <View style={nativeStyles.controlDivider} />
+                    <View style={[nativeStyles.controlDivider, controlsDivider]} />
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="지도 축소"
                         onPress={() => issueCommand("zoomBy", { delta: -1 })}
-                        style={nativeStyles.controlButton}
+                        style={({ pressed }) => [nativeStyles.controlButton, pressed && nativeStyles.controlPressed]}
                     >
-                        <Text style={nativeStyles.controlText}>−</Text>
+                        <Ionicons name="remove-outline" size={22} color={controlsIconColor} allowFontScaling={false} accessible={false} />
                     </Pressable>
                 </View>
             ) : null}
@@ -429,22 +452,30 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
                     accessibilityRole="button"
                     accessibilityLabel="내 위치로 이동"
                     onPress={moveToCurrentLocation}
-                    style={nativeStyles.locationButton}
+                    style={({ pressed }) => [nativeStyles.locationButton, controlsSurface, pressed && nativeStyles.controlPressed]}
                 >
-                    <Text style={nativeStyles.locationText}>◎</Text>
+                    <Ionicons name="locate-outline" size={22} color={controlsIconColor} allowFontScaling={false} accessible={false} />
                 </Pressable>
             ) : null}
-            {!isReady && !runtimeErrorMessage ? (
+            {!onLoadStateChange && !isReady && !runtimeErrorMessage ? (
                 <View
                     pointerEvents="none"
                     accessibilityLiveRegion="polite"
                     style={[nativeStyles.loadingOverlay, { backgroundColor: fallbackBackgroundColor }]}
                 >
-                    <ActivityIndicator color="#2979FF" />
-                    <Text style={[nativeStyles.loadingText, { color: fallbackTextColor }]}>지도를 불러오는 중…</Text>
+                    {loadingContent ?? (
+                        <>
+                            <ActivityIndicator color="#2979FF" />
+                            <Text style={[nativeStyles.loadingText, { color: fallbackTextColor }]}>지도를 불러오는 중…</Text>
+                        </>
+                    )}
                 </View>
             ) : null}
-            {runtimeErrorMessage ? (
+            {!onLoadStateChange && runtimeErrorMessage && renderLoadError ? (
+                <View style={[nativeStyles.loadingOverlay, { backgroundColor: fallbackBackgroundColor }]} accessibilityLiveRegion="assertive">
+                    {renderLoadError(() => setNativeRevision(current => current + 1))}
+                </View>
+            ) : !onLoadStateChange && runtimeErrorMessage ? (
                 <View
                     accessibilityLiveRegion="assertive"
                     style={[

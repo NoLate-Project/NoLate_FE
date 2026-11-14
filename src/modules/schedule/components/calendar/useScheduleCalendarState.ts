@@ -41,6 +41,7 @@ import {
 type UseScheduleCalendarStateParams = {
     selectedDay: string;
     focusedMonth?: string;
+    savedStackDay?: string;
     calendarDaysByDate?: Readonly<Record<string, CalendarDayMetadata>>;
     onSelectDay: (day: string) => void;
     onOpenDay: (day: string) => void;
@@ -67,6 +68,7 @@ type UseScheduleCalendarStateParams = {
 export function useScheduleCalendarState({
     selectedDay,
     focusedMonth,
+    savedStackDay,
     calendarDaysByDate = EMPTY_CALENDAR_DAYS_BY_DATE,
     onSelectDay,
     onOpenDay,
@@ -102,7 +104,8 @@ export function useScheduleCalendarState({
     const visibleMonth = normalizeMonthCandidate(transitionMonthKey)
         ?? normalizeMonthCandidate(focusedMonth)
         ?? selectedDay.slice(0, 7);
-    const stackTargetMonthKey = normalizeMonthCandidate(transitionMonthKey)
+    const stackTargetMonthKey = normalizeMonthCandidate(savedStackDay)
+        ?? normalizeMonthCandidate(transitionMonthKey)
         ?? normalizeMonthCandidate(focusedMonth)
         ?? selectedDay.slice(0, 7);
     const initialDate = resolveDetailMonthAnchor(selectedDay, visibleMonth);

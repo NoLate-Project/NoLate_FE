@@ -1,12 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar, Text, TextInput, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar, Text, TextInput, View } from "react-native";
 
 import CalendarGlassSurface from "../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import ProfileRouteAccessibilityRoot from "../src/modules/profile/ProfileRouteAccessibilityRoot";
 import ThemeModeSwitch from "../src/modules/theme/ThemeModeSwitch";
 import BrandedLoader from "../src/ui/BrandedLoader";
 import { AccountInfoRow, CalendarConnectionStat, ProfileLoadingView } from "../src/routeSupport/ProfileComponents";
+import ProfileAccountSheet from "../src/routeSupport/ProfileAccountSheet";
 import styles from "../src/routeSupport/profile.styles";
 import { formatConnectionDate } from "../src/routeSupport/profilePresentation";
 import { useProfileScreen } from "../src/routeSupport/useProfileScreen";
@@ -32,8 +33,32 @@ export default function ProfileRoute() {
 
 export function ProfileScreen() {
     const {
-        insets, colors, mode, profile, account, calendarConnection, calendarConnectionError, signingOut, withdrawing, loadingProfile, editingProfile, setEditingProfile, savingProfile, draftName, setDraftName, memberIdCopied, profileError, withdrawalModalOpen, setWithdrawalModalOpen, withdrawalPassword, setWithdrawalPassword, passwordModalOpen, setPasswordModalOpen, currentPassword, setCurrentPassword, newPassword, setNewPassword, confirmPassword, setConfirmPassword, savingPassword, hasOpenModal, displayAccountName, isNaverAccount, displayEmail, displayLoginType, displayMemberId, profileSummary, avatarInitial, loadProfile, openProfileEditor, copyMemberId, saveProfile, handleSignOut, handleWithdraw, confirmCommonWithdrawal, openPasswordChange, savePasswordChange, goBackToSchedule, openCalendarOnboarding, openPlacesSettings, openPrivacyPolicy, openTermsOfService,
+        insets, colors, mode, profile, account, calendarConnection, calendarConnectionError, signingOut, withdrawing,
+        loadingProfile, editingProfile, setEditingProfile, savingProfile, draftName, setDraftName, memberIdCopied, profileError,
+        accountAction, accountActionError, passwords, passwordChanged, savingPassword, withdrawalNeedsPassword, withdrawalCommitted,
+        openAccountAction, closeAccountAction, changeAccountPasswordField, confirmSignOut, confirmWithdrawal, savePasswordChange,
+        hasOpenModal, displayAccountName, isNaverAccount, displayEmail, displayLoginType, displayMemberId, profileSummary, avatarInitial,
+        loadProfile, openProfileEditor, copyMemberId, saveProfile, goBackToSchedule, openCalendarOnboarding, openPlacesSettings,
+        openPrivacyPolicy, openTermsOfService,
     } = useProfileScreen();
+    const [importHistoryExpanded, setImportHistoryExpanded] = React.useState(false);
+    const passwordButton = React.useRef<React.ElementRef<typeof Pressable>>(null);
+    const signOutButton = React.useRef<React.ElementRef<typeof Pressable>>(null);
+    const withdrawalButton = React.useRef<React.ElementRef<typeof Pressable>>(null);
+    const accountEntry = React.useRef<typeof passwordButton | undefined>(undefined);
+    const restoreAccountFocus = React.useCallback(() => {
+        const button = accountEntry.current?.current;
+        if (button) AccessibilityInfo.sendAccessibilityEvent?.(button, "focus");
+        accountEntry.current = undefined;
+    }, []);
+    React.useEffect(() => {
+        if (accountAction || Platform.OS === "ios" || !accountEntry.current) return;
+        const frame = requestAnimationFrame(restoreAccountFocus);
+        return () => cancelAnimationFrame(frame);
+    }, [accountAction, restoreAccountFocus]);
+    React.useEffect(() => {
+        if (passwordChanged) AccessibilityInfo.announceForAccessibility("비밀번호를 변경했어요.");
+    }, [passwordChanged]);
     if (loadingProfile && !account && !profile) {
         return <ProfileLoadingView colors={colors} dark={mode === "dark"} />;
     }
@@ -58,7 +83,7 @@ export function ProfileScreen() {
                         onPress={goBackToSchedule}
                         style={({ pressed }) => [styles.backButton, { opacity: pressed ? 0.55 : 1 }]}
                     >
-                        <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+                        <Ionicons name="chevron-back-outline" size={22} color={colors.textPrimary} />
                     </Pressable>
                 </CalendarGlassSurface>
 
@@ -80,7 +105,7 @@ export function ProfileScreen() {
                             { opacity: !profile?.memberId ? 0.38 : pressed ? 0.55 : 1 },
                         ]}
                     >
-                        <Ionicons name="pencil" size={19} color={colors.textPrimary} />
+                        <Ionicons name="pencil-outline" size={19} color={colors.textPrimary} />
                     </Pressable>
                 </CalendarGlassSurface>
 
@@ -196,7 +221,7 @@ export function ProfileScreen() {
                                     onPress={() => setEditingProfile(false)}
                                     style={styles.modalCloseButton}
                                 >
-                                    <Ionicons name="close" size={22} color={colors.textPrimary} />
+                                    <Ionicons name="close-outline" size={22} color={colors.textPrimary} />
                                 </Pressable>
                             </View>
 
@@ -224,12 +249,12 @@ export function ProfileScreen() {
 
                             <Pressable
                                 accessibilityRole="button"
-                                accessibilityState={{ disabled: savingProfile, busy: savingProfile }}
-                                disabled={savingProfile}
+                                accessibilityState={{ disabled: savingProfile || !draftName.trim(), busy: savingProfile }}
+                                disabled={savingProfile || !draftName.trim()}
                                 onPress={saveProfile}
                                 style={({ pressed }) => [
                                     styles.saveButton,
-                                    { opacity: savingProfile || pressed ? 0.65 : 1 },
+                                    { opacity: savingProfile || !draftName.trim() || pressed ? 0.65 : 1 },
                                 ]}
                             >
                                 {savingProfile ? (
@@ -237,179 +262,6 @@ export function ProfileScreen() {
                                 ) : (
                                     <Text style={styles.saveButtonText}>저장</Text>
                                 )}
-                            </Pressable>
-                        </ScrollView>
-                    </KeyboardAvoidingView>
-                </Modal>
-
-                <Modal
-                    animationType="fade"
-                    transparent
-                    visible={passwordModalOpen}
-                    onRequestClose={() => !savingPassword && setPasswordModalOpen(false)}
-                    accessibilityViewIsModal
-                >
-                    <KeyboardAvoidingView
-                        behavior={Platform.OS === "ios" ? "padding" : "height"}
-                        style={styles.modalRoot}
-                    >
-                        <Pressable
-                            accessible={false}
-                            accessibilityElementsHidden
-                            importantForAccessibility="no-hide-descendants"
-                            disabled={savingPassword}
-                            onPress={() => setPasswordModalOpen(false)}
-                            style={styles.modalBackdrop}
-                        />
-                        <ScrollView
-                            bounces={false}
-                            keyboardShouldPersistTaps="handled"
-                            showsVerticalScrollIndicator={false}
-                            style={[
-                                styles.editSheetScroll,
-                                { backgroundColor: colors.background, borderColor: colors.border },
-                            ]}
-                            contentContainerStyle={styles.editSheetScrollContent}
-                        >
-                            <View style={styles.editSheetHeader}>
-                                <View>
-                                    <Text style={[styles.editSheetTitle, { color: colors.textPrimary }]}>비밀번호 변경</Text>
-                                    <Text style={[styles.editSheetCaption, { color: colors.textSecondary }]}>영문, 숫자, 특수문자를 포함한 8~16자로 입력해 주세요.</Text>
-                                </View>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel="닫기"
-                                    disabled={savingPassword}
-                                    onPress={() => setPasswordModalOpen(false)}
-                                    style={styles.modalCloseButton}
-                                >
-                                    <Ionicons name="close" size={22} color={colors.textPrimary} />
-                                </Pressable>
-                            </View>
-                            {[
-                                {
-                                    label: "현재 비밀번호",
-                                    value: currentPassword,
-                                    setter: setCurrentPassword,
-                                    autoComplete: "current-password" as const,
-                                    textContentType: "password" as const,
-                                },
-                                {
-                                    label: "새 비밀번호",
-                                    value: newPassword,
-                                    setter: setNewPassword,
-                                    autoComplete: "new-password" as const,
-                                    textContentType: "newPassword" as const,
-                                },
-                                {
-                                    label: "새 비밀번호 확인",
-                                    value: confirmPassword,
-                                    setter: setConfirmPassword,
-                                    autoComplete: "new-password" as const,
-                                    textContentType: "newPassword" as const,
-                                },
-                            ].map((field) => (
-                                <View key={field.label}>
-                                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>{field.label}</Text>
-                                    <TextInput
-                                        accessibilityLabel={field.label}
-                                        autoCapitalize="none"
-                                        autoComplete={field.autoComplete}
-                                        autoCorrect={false}
-                                        editable={!savingPassword}
-                                        onChangeText={field.setter}
-                                        secureTextEntry
-                                        textContentType={field.textContentType}
-                                        style={[styles.nameInput, { color: colors.textPrimary, borderColor: colors.border }]}
-                                        value={field.value}
-                                    />
-                                </View>
-                            ))}
-                            <Pressable
-                                accessibilityRole="button"
-                                accessibilityState={{ disabled: savingPassword, busy: savingPassword }}
-                                disabled={savingPassword}
-                                onPress={savePasswordChange}
-                                style={({ pressed }) => [styles.saveButton, { opacity: savingPassword || pressed ? 0.65 : 1 }]}
-                            >
-                                {savingPassword ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.saveButtonText}>변경하기</Text>}
-                            </Pressable>
-                        </ScrollView>
-                    </KeyboardAvoidingView>
-                </Modal>
-
-                <Modal
-                    animationType="fade"
-                    transparent
-                    visible={withdrawalModalOpen}
-                    onRequestClose={() => !withdrawing && setWithdrawalModalOpen(false)}
-                    accessibilityViewIsModal
-                >
-                    <KeyboardAvoidingView
-                        behavior={Platform.OS === "ios" ? "padding" : "height"}
-                        style={styles.modalRoot}
-                    >
-                        <Pressable
-                            accessible={false}
-                            accessibilityElementsHidden
-                            importantForAccessibility="no-hide-descendants"
-                            disabled={withdrawing}
-                            onPress={() => setWithdrawalModalOpen(false)}
-                            style={styles.modalBackdrop}
-                        />
-                        <ScrollView
-                            bounces={false}
-                            keyboardShouldPersistTaps="handled"
-                            showsVerticalScrollIndicator={false}
-                            style={[
-                                styles.editSheetScroll,
-                                { backgroundColor: colors.background, borderColor: colors.border },
-                            ]}
-                            contentContainerStyle={styles.editSheetScrollContent}
-                        >
-                            <View style={styles.editSheetHeader}>
-                                <View style={styles.destructiveHeaderText}>
-                                    <Text style={[styles.editSheetTitle, { color: colors.textPrimary }]}>회원탈퇴</Text>
-                                    <Text style={[styles.editSheetCaption, { color: colors.textSecondary }]}>계정과 저장된 일정이 삭제되며 되돌릴 수 없습니다.</Text>
-                                </View>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel="닫기"
-                                    disabled={withdrawing}
-                                    onPress={() => setWithdrawalModalOpen(false)}
-                                    style={styles.modalCloseButton}
-                                >
-                                    <Ionicons name="close" size={22} color={colors.textPrimary} />
-                                </Pressable>
-                            </View>
-                            <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>현재 비밀번호</Text>
-                            <TextInput
-                                accessibilityLabel="회원탈퇴 확인 비밀번호"
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                editable={!withdrawing}
-                                onChangeText={setWithdrawalPassword}
-                                placeholder="비밀번호 입력"
-                                placeholderTextColor={colors.textSecondary}
-                                secureTextEntry
-                                textContentType="password"
-                                style={[styles.nameInput, { color: colors.textPrimary, borderColor: colors.border }]}
-                                value={withdrawalPassword}
-                            />
-                            <Pressable
-                                accessibilityRole="button"
-                                accessibilityState={{
-                                    disabled: withdrawing || !withdrawalPassword,
-                                    busy: withdrawing,
-                                }}
-                                disabled={withdrawing || !withdrawalPassword}
-                                onPress={confirmCommonWithdrawal}
-                                style={({ pressed }) => [
-                                    styles.destructiveButton,
-                                    { opacity: withdrawing || !withdrawalPassword || pressed ? 0.55 : 1 },
-                                ]}
-                            >
-                                {withdrawing ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.saveButtonText}>확인하고 탈퇴하기</Text>}
                             </Pressable>
                         </ScrollView>
                     </KeyboardAvoidingView>
@@ -458,7 +310,11 @@ export function ProfileScreen() {
                                 value="안전하게 변경"
                                 colors={colors}
                                 showDivider={false}
-                                onPress={openPasswordChange}
+                                buttonRef={passwordButton}
+                                onPress={() => {
+                                    accountEntry.current = passwordButton;
+                                    openAccountAction("password");
+                                }}
                                 actionLabel="변경"
                                 actionIcon="chevron-forward"
                             />
@@ -532,7 +388,17 @@ export function ProfileScreen() {
                                         value={`${calendarConnection.importedCount}개`}
                                     />
                                 </View>
-                                {calendarConnection.calendarNames.length > 0 ? (
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityState={{ expanded: importHistoryExpanded }}
+                                    onPress={() => setImportHistoryExpanded(expanded => !expanded)}
+                                    style={[styles.calendarManageButton, { borderColor: colors.border }]}
+                                >
+                                    <Ionicons name="time-outline" size={17} color={colors.textSecondary} />
+                                    <Text style={[styles.calendarManageButtonText, { color: colors.textPrimary }]}>가져오기 기록</Text>
+                                    <Ionicons name={importHistoryExpanded ? "chevron-up-outline" : "chevron-down-outline"} size={17} color={colors.textSecondary} />
+                                </Pressable>
+                                {importHistoryExpanded && calendarConnection.calendarNames.length > 0 ? (
                                     <View style={styles.syncedCalendarList}>
                                         {calendarConnection.calendarNames.map((name) => (
                                             <View key={name} style={[styles.syncedCalendarPill, { borderColor: colors.border }]}>
@@ -547,12 +413,12 @@ export function ProfileScreen() {
                                         ))}
                                     </View>
                                 ) : null}
-                                <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
+                                {importHistoryExpanded && <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
                                     마지막 확인 {formatConnectionDate(calendarConnection.lastScannedAt)}
                                     {calendarConnection.lastImportedAt
                                         ? ` · 마지막 추가 ${formatConnectionDate(calendarConnection.lastImportedAt)}`
                                         : ""}
-                                </Text>
+                                </Text>}
                                 <Pressable
                                     accessibilityRole="button"
                                     accessibilityLabel="캘린더 연동 관리"
@@ -569,7 +435,7 @@ export function ProfileScreen() {
                                 >
                                     <Ionicons name="settings-outline" size={17} color={colors.textPrimary} />
                                     <Text style={[styles.calendarManageButtonText, { color: colors.textPrimary }]}>연동 관리</Text>
-                                    <Ionicons name="chevron-forward" size={17} color={colors.textSecondary} />
+                                    <Ionicons name="chevron-forward-outline" size={17} color={colors.textSecondary} />
                                 </Pressable>
                             </View>
                         ) : (
@@ -601,7 +467,7 @@ export function ProfileScreen() {
                                             : "휴대폰 캘린더나 Google Calendar의 일정을 추가할 수 있어요"}
                                     </Text>
                                 </View>
-                                <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                                <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                             </Pressable>
                         )}
                     </CalendarGlassSurface>
@@ -639,7 +505,7 @@ export function ProfileScreen() {
                                     accessibilityElementsHidden
                                     importantForAccessibility="no-hide-descendants"
                                 >
-                                    <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                                    <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                                 </View>
                             </Pressable>
                         </CalendarGlassSurface>
@@ -686,7 +552,7 @@ export function ProfileScreen() {
                                     accessibilityElementsHidden
                                     importantForAccessibility="no-hide-descendants"
                                 >
-                                    <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                                    <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                                 </View>
                             </Pressable>
                         </CalendarGlassSurface>
@@ -723,7 +589,7 @@ export function ProfileScreen() {
                                     accessibilityElementsHidden
                                     importantForAccessibility="no-hide-descendants"
                                 >
-                                    <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                                    <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                                 </View>
                             </Pressable>
                         </CalendarGlassSurface>
@@ -741,7 +607,11 @@ export function ProfileScreen() {
                         accessibilityLabel={signingOut ? "로그아웃하고 있어요" : "로그아웃"}
                         accessibilityState={{ disabled: signingOut, busy: signingOut }}
                         disabled={signingOut}
-                        onPress={handleSignOut}
+                        ref={signOutButton}
+                        onPress={() => {
+                            accountEntry.current = signOutButton;
+                            openAccountAction("logout");
+                        }}
                         style={({ pressed }) => [
                             styles.signOutButton,
                             {
@@ -775,7 +645,11 @@ export function ProfileScreen() {
                         accessibilityLabel={withdrawing ? "회원탈퇴를 처리하고 있어요" : "회원탈퇴"}
                         accessibilityState={{ disabled: withdrawing || signingOut || !account?.loginType }}
                         disabled={withdrawing || signingOut || !account?.loginType}
-                        onPress={handleWithdraw}
+                        ref={withdrawalButton}
+                        onPress={() => {
+                            accountEntry.current = withdrawalButton;
+                            openAccountAction("withdraw");
+                        }}
                         style={({ pressed }) => [
                             styles.signOutButton,
                             { opacity: pressed || withdrawing || signingOut || !account?.loginType ? 0.58 : 1 },
@@ -792,6 +666,24 @@ export function ProfileScreen() {
                     </Pressable>
                 </CalendarGlassSurface>
             </ScrollView>
+            {passwordChanged && (
+                <View pointerEvents="none" style={[styles.accountNotice, { bottom: Math.max(insets.bottom, 16), backgroundColor: colors.surface2 }]}>
+                    <Ionicons name="checkmark-circle-outline" size={19} color={colors.textPrimary} />
+                    <Text style={[styles.accountNoticeText, { color: colors.textPrimary }]}>비밀번호를 변경했어요.</Text>
+                </View>
+            )}
+            <ProfileAccountSheet
+                action={accountAction}
+                passwords={passwords}
+                error={accountActionError}
+                busy={savingPassword || signingOut || withdrawing}
+                withdrawalNeedsPassword={withdrawalNeedsPassword}
+                withdrawalCommitted={withdrawalCommitted}
+                onChangeField={changeAccountPasswordField}
+                onClose={closeAccountAction}
+                onDismiss={restoreAccountFocus}
+                onConfirm={accountAction === "password" ? savePasswordChange : accountAction === "logout" ? confirmSignOut : confirmWithdrawal}
+            />
         </ProfileRouteAccessibilityRoot>
     );
 }

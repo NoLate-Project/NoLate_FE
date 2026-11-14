@@ -63,6 +63,7 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         alignItems: "center",
         justifyContent: "center",
     },
+        closeButtonLarge: { width: 44, height: 44, borderRadius: 22, top: 13, right: 14 },
         handoffBody: {
         flex: 1,
     },
@@ -110,6 +111,7 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         fontWeight: "800",
         letterSpacing: -0.3,
     },
+        titleLarge: { lineHeight: undefined },
         flowHeaderTitle: {
         fontSize: 19,
         lineHeight: 24,
@@ -140,6 +142,7 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         borderRadius: 10,
         borderWidth: StyleSheet.hairlineWidth,
     },
+        modeSelectorLarge: { height: 68, flexShrink: 0, marginBottom: 12 },
         modeButton: {
         flex: 1,
         minWidth: 0,
@@ -154,6 +157,7 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         modeButtonSelected: {
         shadowColor: "transparent",
     },
+        modeButtonLarge: { flexDirection: "column", gap: 2, paddingHorizontal: 2 },
         modeText: {
         fontSize: 13,
         fontWeight: "700",
@@ -192,6 +196,8 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         textAlignVertical: "top",
         padding: 0,
     },
+        inputWrapLarge: { paddingBottom: 10 },
+        inputLarge: { flex: 0, minHeight: 148, maxHeight: 258, lineHeight: undefined },
         counterPill: {
         position: "absolute",
         right: 14,
@@ -201,5 +207,6 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         fontSize: 11,
         fontWeight: "600",
     },
+        counterPillLarge: { position: "relative", alignSelf: "flex-end", right: 0, bottom: 0, marginTop: 6 },
     });
 }

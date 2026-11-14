@@ -46,7 +46,7 @@ const options: RoutePlannerStyleOptions = {
 const styles = StyleSheet.create({
     ...createReferenceStyles(options),
     ...createMapSearchStyles(options),
-    ...createSelectionStyles(options),
+    ...createSelectionStyles(),
     ...createBottomPanelStyles(options),
     ...createRouteSummaryStyles(options),
     ...createTransitDetailStyles(options),

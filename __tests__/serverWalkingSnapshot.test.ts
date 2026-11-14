@@ -114,6 +114,32 @@ test('separate server paths connect missing saved walking geometry without chang
     expect(savedJourneyProviderPreflight(input,f.route).canAssess).toBe(true);
     expect(savedWalkingBaseJSON({...f.input,routeRevision:2})).not.toBe(savedWalkingBaseJSON(input));
 });
+test.each([35.8,74.9])('keeps road-snapped server geometry within the native 75m static endpoint bound (%sm)',offsetMeters=>{
+    const f=mixedFixture(),before=JSON.stringify(f.input),saved=JSON.stringify(f.route);
+    const delta=offsetMeters/6371000*180/Math.PI;
+    for(const walk of f.snapshot.walks){
+        const first=walk.points[0],last=walk.points.at(-1)!;
+        walk.points.splice(1,0,{lat:(first.lat+last.lat)/2,lng:(first.lng+last.lng)/2});
+        (walk.legIndex===0?walk.points.at(-1)!:walk.points[0]).lat+=delta;
+    }
+    const originalPoints=JSON.parse(JSON.stringify(f.snapshot.walks));
+    const composed=composeServerWalkingInput(f.input,f.snapshot,now);
+    expect(composed.walkingSnapshot?.walks).toEqual(originalPoints);
+    expect(composed.legs).toEqual(f.input.legs);
+    expect(JSON.stringify(f.input)).toBe(before);expect(JSON.stringify(f.route)).toBe(saved);
+    expect(composed.walkingSnapshot?.navigationReady).toBe(false);
+});
+test('server geometry beyond the native static endpoint bound is rejected without inserting a connector',()=>{
+    const f=mixedFixture();
+    f.snapshot.walks[0].points.at(-1)!.lat+=75.1/6371000*180/Math.PI;
+    expect(()=>composeServerWalkingInput(f.input,f.snapshot,now)).toThrow('INVALID_WALKING_SNAPSHOT');
+});
+test.each(['origin','destination'])('user-selected %s keeps the stricter 30m geometry bound',endpoint=>{
+    const f=mixedFixture(),walk=endpoint==='origin'?f.snapshot.walks[0]:f.snapshot.walks.at(-1)!;
+    const point=endpoint==='origin'?walk.points[0]:walk.points.at(-1)!;
+    point.lat+=35.8/6371000*180/Math.PI;
+    expect(()=>composeServerWalkingInput(f.input,f.snapshot,now)).toThrow('INVALID_WALKING_SNAPSHOT');
+});
 test('unverified ODsay service can receive walking geometry without gaining navigation admission',()=>{
     const f=mixedFixture();
     f.input.serviceState='UNKNOWN';

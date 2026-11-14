@@ -19,6 +19,21 @@ H2/합성 시간표·차량 관측을 실제 Worker → API → 지정 시뮬레
 
 ## 준비
 
+합성 격리 실행기(`run-eta-early-transfer.py`, `run-eta-quota-offline.py`,
+`run-eta-native-delivery.py`)는 아래 일반 서버 준비 절차와 달리 H2/5523과 Metro/8086을
+직접 소유한다. 지정 UDID `9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69`의 앱 기동은 공개
+XCTest `terminate()`/`open(URL)`로 수행하며, `ui-private-lifecycle/result.xcresult`에서
+실제 기기 일치·1 pass·0 skip을 확인한다. 이 결과는 탐색 초기화와 URL 전달만 증명한다.
+이어지는 로그인·Worker/API·설치 앱 검증을 대체하지 않는다. 데이터 삭제나 다른 기기/전역
+CoreSimulator 재시작은 수행하지 않는다. Metro 작업자는 2개로 제한한다.
+
+실운행 및 OS 전달 실행기의 `--java`는 서버뿐 아니라 Gradle 준비에도 적용한다.
+준비 빌드는 Java 경로의 JDK, 단일 사용 데몬, 작업자 2개를 사용하며 공유 데몬을 중지하지 않는다.
+
+Worker 증거 파일은 Jackson이 기록을 마치기 전에도 존재할 수 있다. 격리 실행기는 이전
+파일과 다른 revision의 **완성된 JSON 객체**만 최대 60초 동안 기다리며, 부분 JSON이나
+서버 종료를 통과로 취급하지 않는다. 기다리는 동안 Worker/API를 다시 실행하지 않는다.
+
 - Xcode 및 iOS Simulator 런타임.
 - **전용** 시뮬레이터에 `com.anonymous.nolatefe` 앱 설치. 기존 사용자 시뮬레이터를 초기화하지 않는다.
 - 기존 개발 서버가 `http://127.0.0.1:5522`에서 실행 중이어야 한다. 테스트가 별도의 서버를 실행하거나 포트를 점유하지 않는다.
@@ -47,6 +62,34 @@ python3 e2e/ios/run.py --device '<UDID>' \
 
 자격증명은 권한 0600 파일에서 읽어 `TEST_RUNNER_` 환경변수로 전달한다. 결과 폴더는 권한 0700으로 생성한다. 결과에는 테스트 계정 이메일과 앱 스크린샷이 포함될 수 있다.
 
+동일 계정으로 API에 다시 로그인하면 서버 세션 세대가 바뀌어 기존 앱 세션이 무효화된다.
+일정 저장 뒤 재실행·인증 복원을 확인하는 동안에는 API 검증용으로 재로그인하지 않는다.
+`testNewMemberScheduleJourney`의 `SYNTHETIC_SCHEDULE_EDITED_TITLE` 로그에서 합성 제목을
+확인하고, `TEST_RUNNER_E2E_EXPECTED_SCHEDULE_TITLE`에 전달해
+`testSavedCalendarScheduleAfterProcessRestart`를 실행한다. 이 검사는 재로그인 없이
+달력과 저장 제목이 복원돼야 통과한다. API 저장값 대조는 해당 계정의 화면 검증을 마친 뒤 수행한다.
+서버 세션을 의도적으로 교체한 경우에는 `testExistingSyntheticMemberLogin`으로 먼저 앱에
+명시적으로 로그인한다. 재실행 검사 안에서 자동으로 재로그인해 인증 유실을 감추지 않는다.
+
+외부 공유 뒤 달력 갱신은 두 경우를 나눠 검사한다. `testExistingBusTicketAfterProcessRestart`는
+이미 저장된 버스 승차권이 있는 합성 계정에서 재로그인·재등록 없이 프로세스를 재실행하고,
+다음 날 달력과 상세 화면을 확인한다. `testTrainTicketTextShareWarmReturn`은 버스 표만 있는
+합성 계정에서 다음 날 달력을 먼저 표시하고 기차 텍스트를 공유한 뒤, **앱을 종료하지 않고**
+60초 안에 복귀해 새 표가 보이는지 확인한다. 기차 fixture를 이미 가져온 계정에서는 실행하지 않는다.
+`testBusTicketPDFDuplicateExistingShare`는 기존 PDF 표의 중복 거절만 독립적으로 확인한다.
+공유 확장 확인 버튼은 전체가 보이도록 스크롤한 뒤 한 번 누르고 저장 버튼 활성화를 기다린다.
+부분 노출 상태의 `isHittable`만으로 탭 성공을 판단하지 않는다.
+
+`testTicketShareCancelAndInvalidInputs`는 온보딩이 끝난 합성 계정에서 확인 전 가져오기 취소,
+취소 완료로 표시된 표의 저장 거절, 여러 페이지 PDF 거절, 예매처 링크만 공유한 경우의 거절을
+검증한다. 최신 `TicketShareFixture.swift`의 취소된 표·여러 페이지·링크 버튼을 사용한다.
+실행 전후 같은 정상 앱 세션으로 일정 목록을 대조하고 생성 요청이 없었는지도 확인한다.
+API 확인 때문에 재로그인해서 앱 세션을 교체하지 않는다.
+
+2026-11-04의 캐시 복구·오프라인 유지·전경 복귀 검증 기록은
+[검증 JSON](../../docs/qa/2026-11-04-ticket-cache-validation.json)에 있다.
+이 기록의 개별 통과를 전체 길찾기·알림·실기기 검증 완료로 집계하지 않는다.
+
 이미 온보딩까지 완료된 테스트 계정의 달력 화면에서는 `--only testCalendarCreateAndEdit`로 일정 생성 → 길게 누르기 → 수정 → 상세 화면 확인 → 달력 반영 확인을 실행할 수 있다. 이 테스트는 `XCUITest <timestamp>` 제목의 종일 일정을 실제 서버에 저장하며, 알림은 켜지 않는다. 실행 후 해당 테스트 계정의 생성 일정만 정리한다.
 
 화면을 직접 보려면 Device Hub 기기 목록에서 테스트에 사용한 시뮬레이터를 선택한다. 다른 기기 창에는 테스트 동작이 표시되지 않는다.
@@ -54,6 +97,39 @@ python3 e2e/ios/run.py --device '<UDID>' \
 `result.xcresult`는 Xcode에서 열어 단계별 로그와 첨부 화면을 볼 수 있다. `run.log`와 프로세스 종료 코드가 성공 여부의 기준이다. 화면이 보이거나 API 단독 요청이 성공한 것만으로 UI 시나리오 통과로 간주하지 않는다.
 
 ## 격리 ETA의 실제 OS 알림 전달
+
+### 좌표 없는 기존 도착지의 첫 경로 저장
+
+```sh
+python3 e2e/ios/run-eta-unlocated-route.py --java '<JDK 21 java 경로>'
+python3 e2e/ios/run-eta-unlocated-route.py --java '<JDK 21 java 경로>' --initial-destination located
+```
+
+새 H2에 이름만 있는 도착지와 경로 없는 일정 하나를 준비한다. 지정 시뮬레이터의 정상
+길찾기 화면에서 최근 장소 → 합성 maasRP 경로 검색 → 선택 → 개인 경로 저장을 수행한다.
+공통 도착지가 선택한 신림역 좌표로 바뀌고 4호선·2호선 개인 경로가 DB에 저장되는지,
+재로그인 없이 앱을 종료·재실행한 뒤 같은 내용이 표시되는지 확인한다. 저장 API를
+실행기에서 대신 호출하거나 실패 팝업을 닫아 통과시키지 않는다. 알림은 꺼진 채 유지한다.
+준비 데이터는 실제 `ROUTE` 일정이며 서버의 `RouteSetupReminderPolicy`로 설정 필요를
+먼저 확인한다. 이름만 있는 legacy `ScheduleRoute` row를 `READY`로 잘못 표시하면
+UI의 준비 상태/설정 버튼 검사에서 실패한다. 저장된 flag 하나로 화면 상태를 강제하지 않는다.
+운영 DB·기존5522/8085·다른 시뮬레이터는 변경하지 않으며 실제 지도 정확도 검증은 아니다.
+`located`는 기존 공통 도착지에 강남역 좌표까지 있으나 경로가 없는 조건이다. 정상 검색
+화면에서 신림역을 선택하고 첫 경로를 저장하면 오래된 강남역 좌표를 그대로 강제하지
+않는지 같은 DB/재실행 검사를 수행한다. 다른 회원의 확정 계획이나 기존 상세 경로를
+덮어쓰는 시험이 아니다.
+
+모바일 대중교통은 현재 ODsay 고정이므로 `EXPO_PUBLIC_TRANSIT_PROVIDER=tmap`만으로
+격리되지 않는다. 이 실행기는 실제 모바일 키를 비우고 `.env` 로드를 끈 별도 Metro에서
+`EXPO_PUBLIC_ODSAY_ISOLATED_SIMULATOR_FIXTURE=1`을 사용한다. iOS Simulator·Debug·정확한
+5523 주소·실제 H2 readiness 표식을 모두 확인한 경우에만 고정 loopback maasRP fixture를
+호출하며 실제 키를 읽거나 전달하지 않는다. 조건이 맞지 않으면 실제 공급자로 fallback하지
+않고 실패한다. Release·실기기에서는 이 전송을 사용할 수 없고 정상 ODsay 경계는 유지한다.
+
+`--trace-cold-start` 진단은 종료 상태 알림 시험에서만 사용한다. 지정 기기의 `launchctl`
+출력으로 앱 PID를 식별하고 실제 OS 관측 시각 후6~15초 안에서만 읽기 전용 stack을
+수집한다. 늦게 도착한 로그는 따뜻한 프로세스를 cold start로 오인하지 않도록 제외한다.
+샘플 없음·시간 초과는 진단 미확보이지 cold-start 원인 확인이나 성능 통과가 아니다.
 
 ### 실제 자동 재조회부터 OS 전달까지 연결 검증
 
@@ -117,6 +193,10 @@ OS 알림만 다시 터치한다. 실패는 보존하며 권한 요청·암호 �
 미래인 각 알림에 대해 시각·세대·물리 ID가 일치하고 정확히 1건씩 존재해야 한다. M15/M10/M5
 준비 알림은 중복이 아니며, 같은 스냅샷을 두 번 동기화한 뒤 OS 목록이 그대로인지 검사한다.
 취소는 기존 예약 시각 이전에 네이티브 저장소와 OS 대기 목록 모두에서 사라져야 한다.
+OS 배너가 접근성 트리에 먼저 나타나는 경우 최초 관측 시각은 그대로 유지하고, 같은
+배너가 터치 가능해질 때까지만 최대 3초 기다린다. 전달 허용 지연 25초는 늘리지 않는다.
+앱 종료 회차 뒤의 취소 검사는 private 8086 프로젝트를 공개 XCTest URL 동작으로 다시
+연 뒤 수행한다. 개발 런처 기동 자체를 취소 성공으로 취급하지 않고 실제 목록 0건을 요구한다.
 `verify-eta-native-state.py`는 별도 보존한 회차별 서버 증거와 실제 UI 결과 묶음을 대조한다.
 앞당김·늦추기 합성 단계는 목표시각을 바꾸고 격리 작업의 이전 출발값을 초기화하므로,
 그 결과를 같은 운영 일정의 불확실한 ETA에서 알람을 늦추는 정책 검증으로 해석하지 않는다.

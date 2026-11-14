@@ -2,6 +2,7 @@ import { assertTicketService, getImportedTicket, type IntercityRideService } fro
 import type { RouteAlternativeOption, TransitLegDetail, RoutePathCoord } from '../map/tmapApiCore';
 import { isIntercityRideKind, transitModeLabel } from '../map/transitModes';
 import type { Place } from './types';
+import { isIntercityBufferMinutes } from './intercityTimetableModel';
 
 /** Only the chosen ride uses a public timetable. Connections remain estimates, not a reservation. */
 export type IntercityJourney = {
@@ -70,7 +71,7 @@ export async function buildIntercityJourney({ option, legIndex, origin, destinat
     if (original.kind !== service.kind && !(original.kind === 'COACH' && service.kind !== 'TRAIN')) fail('현재 경로와 같은 교통수단의 운행편을 선택해 주세요.');
     if (!selection.mappingConfirmed) fail('선택한 역·터미널이 현재 경로의 승하차 지점과 같은 곳인지 확인해 주세요.');
     if (!validCoord(original.startCoord) || !validCoord(original.endCoord) || !validCoord(asCoord(origin)) || !validCoord(asCoord(destination))) fail('승하차 지점의 지도 좌표가 없어 연결할 수 없습니다.');
-    if (!Number.isInteger(selection.boardingBufferMinutes) || selection.boardingBufferMinutes < 5 || selection.boardingBufferMinutes > 120 || !Number.isInteger(selection.alightingBufferMinutes) || selection.alightingBufferMinutes < 0 || selection.alightingBufferMinutes > 120) fail('탑승 준비는 5~120분, 하차 후 여유는 0~120분으로 입력해 주세요.');
+    if (!isIntercityBufferMinutes(selection.boardingBufferMinutes, 5) || !isIntercityBufferMinutes(selection.alightingBufferMinutes, 0)) fail('탑승 준비는 5~120분, 하차 후 여유는 0~120분으로 입력해 주세요.');
     const ticket = getImportedTicket(option);
     if (ticket) assertTicketService(ticket, service);
     else if (service.timingBasis === 'TICKET') fail('확인한 승차권 정보가 없습니다.');
