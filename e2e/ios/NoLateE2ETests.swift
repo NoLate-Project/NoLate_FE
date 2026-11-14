@@ -389,6 +389,11 @@ final class NoLateE2ETests: XCTestCase {
                 }
             }
         }
+        // The independent simulator may have been locked while the native
+        // journey continued. Unlock/foreground the app before the stop tap;
+        // a tap used to activate SpringBoard is not an app button press.
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         let stop = app.buttons["saved-detail-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10), "The isolated test must leave no armed session behind")
         try reveal(stop)

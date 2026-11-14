@@ -52,6 +52,7 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
     const assessmentRevision = useRef(0);
     const assessedInput = useRef<JourneyRouteInput | null>(null);
     const busy = useRef(false);
+    const stopping = useRef(false);
     const refreshing = useRef(false);
     // A bounded input snapshot prevents a mutable selection from changing an in-flight request.
     const selectedInput = useMemo(() => input ? JSON.parse(JSON.stringify(input)) as JourneyRouteInput : null, [input]);
@@ -69,7 +70,9 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
     }, [selectedInput, scope, savedScheduleId]);
 
     const refresh = useCallback(async () => {
-        if (busy.current || refreshing.current) return;
+        // A server stop can remain in flight after native location collection is
+        // revoked. Keep reading native state so the screen shows the local stop.
+        if ((busy.current && !stopping.current) || refreshing.current) return;
         refreshing.current = true;
         const request = ++nativeRevision.current;
         try {
@@ -203,7 +206,11 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
             if (canOptIn && selectedInput && snapshot?.checkpointAvailable) await runNative(() => restoreAutomaticJourneyTrial(selectedInput, authSource));
         },
         stop: async () => {
-            if (snapshot?.enabled && !pending) await runNative(stopAutomaticJourneyTrial);
+            if (snapshot?.enabled && !pending) {
+                stopping.current = true;
+                try { await runNative(stopAutomaticJourneyTrial); }
+                finally { stopping.current = false; await refresh(); }
+            }
         },
         retrySync: async () => {
             if (scope !== "SANDBOX" || snapshot?.enabled !== true || snapshot.syncScope !== "SANDBOX" || pending) return;

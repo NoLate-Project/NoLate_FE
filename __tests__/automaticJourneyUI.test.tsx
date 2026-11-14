@@ -193,6 +193,33 @@ describe("P1-3 explicit automatic preparation UI", () => {
             expect(mockGet).toHaveBeenCalledTimes(reads);expect(current.snapshot?.status).toBe('STOPPED');
         } finally {if(descriptor)Object.defineProperty(AppState,'currentState',descriptor);}
     });
+    it('shows native stop while remote stop delivery is still pending after foreground return', async () => {
+        const descriptor = Object.getOwnPropertyDescriptor(AppState, 'currentState');
+        Object.defineProperty(AppState, 'currentState', { configurable: true, writable: true, value: 'active' });
+        const intervals = jest.spyOn(globalThis, 'setInterval');
+        try {
+            await render(<Probe input={mockInput()} />);
+            await act(async () => emit({ ...ready, status: 'ACTIVE', sessionId: 'trial-one' }));
+            let finish!: (snapshot: AutomaticJourneySnapshot) => void;
+            mockStop.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+            let stop!: Promise<void>;
+            await act(async () => { stop = current.stop(); await Promise.resolve(); });
+            expect(current.pending).toBe(true);
+
+            // The durable server stop outbox may still be sending, but native
+            // collection has already stopped and must be reflected on screen.
+            mockGet.mockResolvedValue({ ...ready, status: 'STOPPED', sessionId: 'trial-one' });
+            const poll = intervals.mock.calls.find(call => call[1] === 2000)![0] as () => void;
+            await act(async () => poll());
+            expect(current.snapshot?.status).toBe('STOPPED');
+            expect(current.running).toBe(false);
+            expect(current.pending).toBe(true);
+
+            await act(async () => finish({ ...ready, status: 'STOPPED', sessionId: 'trial-one' }));
+            await act(async () => stop);
+            expect(current.pending).toBe(false);
+        } finally { if (descriptor) Object.defineProperty(AppState, 'currentState', descriptor); }
+    });
     it("mounts with snapshot reads and subscriptions only, without assessing or preparing", async () => {
         await render(<Probe input={mockInput()} />);
         expect(mockGet).toHaveBeenCalledTimes(1);
