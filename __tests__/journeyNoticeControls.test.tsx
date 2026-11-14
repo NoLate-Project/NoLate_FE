@@ -64,7 +64,7 @@ it('hides actions during an active journey and disables them while another actio
 it.each([true, false])('permission is an explicit action separate from channel and token registration: %s', async granted => {
     mockPermission.mockResolvedValue(granted); await render(); await click('notice-permission');
     expect(mockPermission).toHaveBeenCalledTimes(1); expect(mockConfigure).not.toHaveBeenCalled(); expect(refresh).not.toHaveBeenCalled();
-    expect(JSON.stringify(view.toJSON())).toContain(granted ? 'PERMISSION_GRANTED' : 'PERMISSION_NOT_GRANTED');
+    expect(JSON.stringify(view.toJSON())).toContain(granted ? '알림을 사용할 수 있어요.' : '알림 권한이 꺼져 있어요.');
 });
 it('opens only the app settings through the platform API after the explicit tap', async () => {
     const settings = jest.spyOn(Linking, 'openSettings').mockResolvedValue();
@@ -80,5 +80,5 @@ it('redacts failure and prevents concurrent permission requests', async () => {
     await render(); await click('notice-permission'); await click('notice-permission');
     expect(mockPermission).toHaveBeenCalledTimes(1);
     await act(async () => { reject(new Error('private raw transport value')); });
-    const text = JSON.stringify(view.toJSON()); expect(text).toContain('NOTICE_ACTION_UNAVAILABLE'); expect(text).not.toContain('private raw');
+    const text = JSON.stringify(view.toJSON()); expect(text).toContain('알림 설정을 열지 못했어요.'); expect(text).not.toContain('private raw');
 });

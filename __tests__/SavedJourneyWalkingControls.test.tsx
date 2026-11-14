@@ -105,14 +105,14 @@ test('connected detail changes its copy after GPS has actually started the owned
     const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule}/>;
     await act(async()=>{view=TestRenderer.create(render());});
     await act(async()=>{view.root.findByProps({testID:'saved-detail-connect-walking'}).props.onPress();});
-    expect(JSON.stringify(view.toJSON())).toContain('서버·기기 검사 필요');
+    expect(JSON.stringify(view.toJSON())).toContain('도보 경로가 준비됐어요');
     mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
     mockTrial.mockReturnValue({...mockTrial.mock.results.at(-1)!.value,running:true,pending:false,
         snapshot:{status:'ACTIVE',sessionId:'synthetic',guidanceNoticeMode:'OFF'},sync:{errorCode:null}});
     await act(async()=>view.update(render()));
     const active=JSON.stringify(view.toJSON());
-    expect(active).toContain('서버·기기 검사 완료');
-    expect(active).not.toContain('서버·기기 검사 필요');
+    expect(active).toContain('도보 경로가 준비되어 길안내 중이에요');
+    expect(active).not.toContain('도보 경로가 준비됐어요');
     expect(active).not.toContain('준비는 출발이 아닙니다');
     act(()=>view.unmount());
 });
@@ -122,7 +122,7 @@ test('changing route during connection discards late geometry and clears pending
     await act(async()=>{view=TestRenderer.create(render(f.input));});
     await act(async()=>{view.root.findByProps({testID:'saved-detail-connect-walking'}).props.onPress();});
     const changed={...f.input,routeRevision:2};await act(async()=>view.update(render(changed)));
-    expect(view.root.findByProps({testID:'saved-detail-connect-walking'}).props.accessibilityLabel).toBe('서버 도보 경로 연결');
+    expect(view.root.findByProps({testID:'saved-detail-connect-walking'}).props.accessibilityLabel).toBe('도보 경로 준비');
     await act(async()=>resolve(f.snapshot));
     expect(view.root.findAllByProps({testID:'saved-detail-walking-connected'})).toHaveLength(0);
     expect(mockTrial.mock.calls.at(-1)![0]).toBe(changed);act(()=>view.unmount());

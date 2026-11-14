@@ -92,7 +92,7 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         style={[styles.button, disabled && styles.disabled]}><Text style={styles.label}>{label}</Text></Pressable>;
     const diagnosticCode=(value:unknown)=>typeof value==='string'&&/^[A-Z][A-Z0-9_]{0,95}$/.test(value)?value:'UNAVAILABLE';
     const count=(value:unknown,max=1000)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=max?value:0;
-    const consentLabel=connected?.walkingSnapshot?.schemaVersion===4?'최대 2시간 위치 안내 시험 동의':'최대 10분 위치 안내 시험 동의';
+    const consentLabel=connected?.walkingSnapshot?.schemaVersion===4?'최대 2시간 위치 사용에 동의합니다':'최대 10분 위치 사용에 동의합니다';
     const previous = lastOwnedSession.current;
     const endedHere = !trial.running && previous?.scheduleId === scheduleId
         && previous.route === baseRouteIdentity && previous.memberId === memberId
@@ -113,14 +113,14 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         {endedHere && snapshot?.status === 'EXPIRED' && <Text style={descriptionStyle}>이용 시간이 끝났어요. 다시 안내받으려면 경로를 새로 연결해 주세요.</Text>}
         {!trial.running&&authenticatedSchedule&&baseInput?.provider==='odsay'&&baseInput.legs.length>=3&&baseInput.legs.length<=31
             &&baseInput.legs.length%2===1&&baseInput.legs.every((leg,i)=>leg.index===i&&(i%2===0?leg.kind==='WALK':leg.kind==='BUS'||subwayTrial&&baseInput.legs.length===3&&leg.kind==='SUBWAY'))&&
-            action('connect-walking',connecting?'도보 경로 연결 중':'서버 도보 경로 연결',connecting||trial.pending,connectWalking)}
-        {connected&&<Text testID="saved-detail-walking-connected">TMAP 도보 연결됨 · 저장된 ODsay 대중교통 경로 유지 · {ownRunning?'서버·기기 검사 완료':'서버·기기 검사 필요'}</Text>}
+            action('connect-walking',connecting?'도보 경로 준비 중':'도보 경로 준비',connecting||trial.pending,connectWalking)}
+        {connected&&<Text testID="saved-detail-walking-connected">{ownRunning?'도보 경로가 준비되어 길안내 중이에요':'도보 경로가 준비됐어요'}</Text>}
         {connected&&<Text>{connected.walkingSnapshot?.schemaVersion===4
-            ?'경로 연결 후 5분 안에 준비해야 합니다. 준비된 안내는 최대 2시간이며 위치·차량 신선도와 서버 재검증·취소·경로 변경 검사는 그대로 유지합니다.'
+            ?'5분 안에 길안내를 준비해 주세요. 안내는 최대 2시간 동안 제공되며 이동 중 위치와 교통정보를 확인해요.'
             :connected.walkingSnapshot?.schemaVersion===3
-            ?'경로 연결 후 5분 안에 준비해야 합니다. 준비된 시험 안내는 최대 10분이며 서버 재검증·취소·경로 변경을 계속 확인합니다.'
-            :'이번 서버 도보 계약은 발급 후 최대 5분입니다. 준비 대기 시간도 포함하며 계약 만료 시 안내를 종료합니다.'}</Text>}
-        {connectionError&&<Text accessibilityLiveRegion="polite">도보 경로를 연결하지 못했어요. 이전 경로로 안내를 시작하지 않아요.</Text>}
+            ?'5분 안에 길안내를 준비해 주세요. 이 경로의 안내는 최대 10분 동안 제공돼요.'
+            :'5분 안에 길안내를 준비해 주세요. 시간이 지나면 도보 경로를 다시 준비해야 해요.'}</Text>}
+        {connectionError&&<Text accessibilityLiveRegion="polite">도보 경로를 준비하지 못했어요. 다시 시도해 주세요.</Text>}
         {/* Admission preflight is not the lifetime of an already prepared session.
             Runtime rejection remains visible below and is enforced by server/native. */}
         {!trial.running && issue && <Text style={descriptionStyle} testID="saved-detail-unsupported">{issue}</Text>}
@@ -128,7 +128,7 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         {!trial.running && !issue && !connecting && <>
             <JourneyNoticeControls compact isDark={isDark} running={trial.running} pending={trial.pending} refresh={trial.refresh}
                 selectedMode={trial.snapshot?.guidanceNoticeMode} permission={trial.snapshot?.guidanceNoticePermission} onPendingChange={noticePendingChanged}/>
-            {action('assess', '안내 경로 검사', !trial.canAssess, trial.assess)}
+            {action('assess', '경로 확인', !trial.canAssess, trial.assess)}
             <Pressable testID="saved-detail-consent" accessibilityRole="checkbox" accessibilityLabel={consentLabel}
                 disabled={trial.pending || noticePending || !trial.eligible} accessibilityState={{ checked: trial.consented, disabled: trial.pending || noticePending || !trial.eligible }}
                 onPress={() => {if(!noticeBusy.current&&!trial.pending&&trial.eligible)trial.setConsented(!trial.consented);}} style={styles.consent}><Text style={descriptionStyle}>{trial.consented ? '☑' : '☐'} {consentLabel}</Text></Pressable>

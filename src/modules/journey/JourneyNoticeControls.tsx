@@ -49,12 +49,17 @@ export function JourneyNoticeControls({ running, pending, refresh, compact = fal
         </Pressable>}
         {availability && <Text style={{ color: textColor }} testID="saved-guidance-notice-availability" accessibilityLiveRegion="polite">{availability}</Text>}
         {expanded && <View testID="saved-guidance-notice-options">
-        <Text style={{ color: textColor }}>알림 권한은 아래 요청 버튼을 누를 때만 요청해요. 전경 음성은 무음을 존중하며 잠금 상태에는 알림을 사용해요. 접수/큐 수는 실제 표시·청취 증명이 아닙니다.</Text>
-        <Text style={{ color: textColor }} testID="saved-guidance-notice-permission-result">알림 설정 결과: {result}</Text>
-        {button('notice-permission', '시험 안내 알림 권한 요청', async () => {
+        <Text style={{ color: textColor }}>알림 권한은 요청 버튼을 누르면 확인해요. 음성 안내는 무음 모드를 존중하고, 화면이 잠겨 있으면 알림으로 안내해요.</Text>
+        {result && <Text style={{ color: textColor }} testID="saved-guidance-notice-permission-result">
+            {result === 'PERMISSION_GRANTED' ? '알림을 사용할 수 있어요.'
+                : result === 'PERMISSION_NOT_GRANTED' ? '알림 권한이 꺼져 있어요. 시스템 설정에서 켜주세요.'
+                : result === 'NOTICE_ACTION_UNAVAILABLE' ? '알림 설정을 열지 못했어요. 다시 시도해 주세요.'
+                : '안내 방식을 선택했어요.'}
+        </Text>}
+        {button('notice-permission', '길안내 알림 허용', async () => {
             setResult(await requestPushNotificationPermission() ? 'PERMISSION_GRANTED' : 'PERMISSION_NOT_GRANTED');
         })}
-        {button('notice-settings', '이 시험 앱의 시스템 설정 열기', async () => { await Linking.openSettings(); })}
+        {button('notice-settings', '시스템 알림 설정 열기', async () => { await Linking.openSettings(); })}
         {button('notice-notifications', '알림 안내 선택', () => mode('NOTIFICATIONS'), 'NOTIFICATIONS')}
         {button('notice-voice', '전경 음성 + 알림 안내 선택', () => mode('VOICE_AND_NOTIFICATIONS'), 'VOICE_AND_NOTIFICATIONS')}
         {button('notice-off', '안내 알림·음성 끄기', () => mode('OFF'), 'OFF')}
