@@ -4,7 +4,7 @@ jest.mock("../src/modules/journey/JourneyBusArrivalTrial", () => ({ JourneyBusAr
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { Platform } from "react-native";
 
-import JourneyBusRoute from "../app/internal/journey-bus";
+import JourneyBusRoute from "../__test_screens__/journey/journey-bus";
 import { JourneyAutomaticTrialPanel } from "../src/modules/journey/JourneySelectedRouteTrial";
 import { journeyBusFixtures } from "../src/modules/journey/journeyBusFixtures";
 import { normalizeAutomaticJourneySnapshot, type AutomaticJourneySnapshot } from "../src/modules/journey/automaticJourney";

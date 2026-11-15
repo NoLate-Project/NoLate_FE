@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { Platform } from 'react-native';
-import JourneyReadinessRoute from '../app/internal/journey-readiness';
+import JourneyReadinessRoute from '../__test_screens__/journey/journey-readiness';
 const mockGet = jest.fn(); const mockProbe = jest.fn(); const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ Redirect: 'Redirect', useRouter: () => ({ back: mockBack }) }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));

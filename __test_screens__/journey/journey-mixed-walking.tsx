@@ -1,7 +1,7 @@
 import React,{useRef,useState,useEffect,useMemo,useCallback} from 'react';
 import {Redirect} from 'expo-router';
 import {Platform,Pressable,ScrollView,Text,View} from 'react-native';
-import {ScheduleDetail} from '../schedule/[id]';
+import {ScheduleDetail} from '../../app/schedule/[id]';
 import type {ScheduleItem,ScheduleTravelPlan} from '../../src/modules/schedule/types';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {SavedJourneyTrialControls} from '../../src/modules/journey/SavedJourneyTrialControls';

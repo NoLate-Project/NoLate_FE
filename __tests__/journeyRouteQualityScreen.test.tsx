@@ -1,7 +1,7 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
-import JourneyRouteQualityRoute from "../app/internal/journey-route-quality";
+import JourneyRouteQualityRoute from "../__test_screens__/journey/journey-route-quality";
 import type { JourneyRouteAssessmentResult } from "../src/modules/journey/journeyRouteAssessment";
 import { journeyRouteFixtures } from "../src/modules/journey/journeyRouteFixtures";
 
