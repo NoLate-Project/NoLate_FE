@@ -2,7 +2,7 @@ import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ScheduleDetail } from "../schedule/[id]";
+import { ScheduleDetail } from "../../app/schedule/[id]";
 import { journeyJSONRequest } from "../../src/modules/journey/journeyJSONRequest";
 import { createRenewingJourneyAuthenticationSource, journeyAuthentication, requireJourneyAuthenticationIdentity, type JourneyAuthenticationSource } from "../../src/modules/journey/automaticJourneyAuthentication";
 import { configureAutomaticJourneyPushPilot, refreshAutomaticJourneyCredentials, automaticRecord } from "../../src/modules/journey/automaticJourney";

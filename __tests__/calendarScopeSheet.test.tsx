@@ -141,7 +141,7 @@ describe("CalendarScopeSheet", () => {
             renderer!.root.findByProps({ accessibilityLabel: "가족 캘린더 공유하기" }).props.onPress();
         });
 
-        expect(props.onClose).toHaveBeenCalledTimes(1);
+        expect(props.onClose).not.toHaveBeenCalled();
         expect(props.onShareCalendar).toHaveBeenCalledWith(expect.objectContaining({ id: 21 }));
         expect(props.onChange).not.toHaveBeenCalled();
     });

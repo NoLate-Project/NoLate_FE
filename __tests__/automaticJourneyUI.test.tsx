@@ -2,7 +2,7 @@ import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { AppState, Platform, type AppStateStatus } from "react-native";
 
-import JourneyAutomaticRoute from "../app/internal/journey-automatic";
+import JourneyAutomaticRoute from "../__test_screens__/journey/journey-automatic";
 import { JourneyAutomaticTrialPanel, JourneySelectedRouteTrial } from "../src/modules/journey/JourneySelectedRouteTrial";
 import {
     canPrepareAutomaticJourneyAssessment, useAutomaticJourneyTrial, type AutomaticJourneyTrialScope,

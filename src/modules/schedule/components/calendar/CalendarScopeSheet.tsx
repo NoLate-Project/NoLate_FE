@@ -126,7 +126,7 @@ export default function CalendarScopeSheet({
             const target = id === "settings" ? settingsButton.current
                 : id === "manage" ? manageButton.current
                 : id === undefined ? null : shareButtons.current.get(id);
-            const handle = findNodeHandle(target);
+            const handle = findNodeHandle(target ?? null);
             if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle);
             returnFocus.current = undefined;
         });
