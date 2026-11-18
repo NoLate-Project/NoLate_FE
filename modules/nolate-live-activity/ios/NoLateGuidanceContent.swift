@@ -207,7 +207,9 @@ public enum NoLateGuidancePresentationPolicy {
           action: notice.action, symbol: "bus.fill", compact: notice.kind == "NEAR_STOP" ? "하차 준비" : "다음 정류장")
       }
       let name = NoLateGuidanceRouteLayoutPolicy.safeName(legs[position.legIndex].lineName)
-      return .init(title: name ?? "버스 이동 중", action: "버스로 이동 중", symbol: "bus.fill", compact: "버스 이동 중")
+      let target = NoLateGuidanceRouteLayoutPolicy.safeName(legs[position.legIndex].alightingStopName)
+      return .init(title: name ?? "버스 이동 중", action: target.map { "\($0)에서 하차" } ?? "버스로 이동 중",
+        symbol: "bus.fill", compact: "버스 이동 중")
     }
     if content.phase == "FINAL_WALK" {
       let length = legs[position.legIndex].walkingLengthMeters!

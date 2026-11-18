@@ -62,7 +62,11 @@ export function presentSavedJourneyStage(snapshot: AutomaticJourneySnapshot | nu
         }
         const line = journeyDisplayName(bus?.lineName);
         const verifiedName = line && line === journeyDisplayName(input.legs[busIndex]?.display?.lineName) ? line : null;
-        return { title: verifiedName ?? '버스 이동 중', action: '버스로 이동 중', activeLegIndex: busIndex };
+        const target = journeyDisplayName(bus?.alightingStopName);
+        const stops = input.legs[busIndex]?.stops;
+        const verifiedTarget = target && target === journeyDisplayName(stops?.[stops.length - 1]?.name) ? target : null;
+        return { title: verifiedName ?? '버스 이동 중',
+            action: verifiedTarget ? `${verifiedTarget}에서 하차` : '버스로 이동 중', activeLegIndex: busIndex };
     }
     const rawName = bus?.boardingStopName;
     const name = typeof rawName === 'string' && rawName.trim().length > 0 && journeyRouteUTF8Bytes(rawName) <= 256

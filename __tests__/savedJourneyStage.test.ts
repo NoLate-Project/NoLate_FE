@@ -28,6 +28,19 @@ it('waiting is at the boarding place but never claims a ride or next stop', () =
     expect(stage({ phase: 'WAITING', activeLegIndex: 1, walkProgress: 1 }))
         .toEqual({ title: '구로역', action: '버스 대기 · 도착하면 탑승 준비', activeLegIndex: 1 });
 });
+it('shows only the saved and native-matched alighting stop during a confirmed bus ride', () => {
+    const saved = { ...input, legs: input.legs.map(leg => leg.index === 1
+        ? { ...leg, stops: [{ name: '구로역' }, { name: '경복궁역' }], display: { lineName: '1711' } } : leg) } as JourneyRouteInput;
+    const route = { ...metadata, legs: metadata.legs.map(leg => leg.index === 1
+        ? { ...leg, lineName: '1711', alightingStopName: '경복궁역' } : leg) };
+    const ride = { schemaVersion: 2, phase: 'RIDING', activeLegIndex: 1, walkProgress: null,
+        rideProgress: 0.5, boardingConfirmed: true };
+    expect(presentSavedJourneyStage(snapshot(ride, route), binding, saved, 1021))
+        .toEqual({ title: '1711', action: '경복궁역에서 하차', activeLegIndex: 1 });
+    const wrong = { ...route, legs: route.legs.map(leg => leg.index === 1
+        ? { ...leg, alightingStopName: '다른 정류장' } : leg) };
+    expect(presentSavedJourneyStage(snapshot(ride, wrong), binding, saved, 1021)?.action).toBe('버스로 이동 중');
+});
 it.each(['sessionId', 'scheduleId', 'generation', 'routeRevision', 'routeInputDigest'])('rejects display metadata from another %s', key => {
     const foreign = { ...metadata, [key]: key === 'generation' || key === 'routeRevision' ? 2 : 'foreign' };
     expect(stage({}, 1021, foreign)).toEqual({ title: '승차 지점까지', action: '도보로 이동 중', activeLegIndex: 0 });

@@ -190,6 +190,11 @@ final class NoLateGuidanceRoutePositionTests: XCTestCase {
     }
     let copy = NoLateGuidancePresentationPolicy.presentation(value, legs: legs, now: 1021)
     XCTAssertEqual(copy.action, "버스로 이동 중"); XCTAssertFalse(copy.action.contains("%"))
+    let named = [legs[0], NoLateGuidanceRouteLeg(index: 1, kind: "BUS", lineName: "1711",
+      alightingStopName: "경복궁역"), legs[2]]
+    let namedCopy = NoLateGuidancePresentationPolicy.presentation(value, legs: named, now: 1021)
+    XCTAssertEqual(namedCopy.title, "1711")
+    XCTAssertEqual(namedCopy.action, "경복궁역에서 하차")
     XCTAssertNil(NoLateGuidancePresentationPolicy.freshArrival(value, legs: legs, now: 1021))
     let legacy = try JSONDecoder().decode(NoLateGuidanceContent.self, from: JSONEncoder().encode(content()))
     XCTAssertNil(legacy.rideProgress); XCTAssertFalse(legacy.boardingConfirmed)

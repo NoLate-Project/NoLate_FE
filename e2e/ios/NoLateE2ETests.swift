@@ -518,9 +518,9 @@ final class NoLateE2ETests: XCTestCase {
                                "Owned walking GPS must reach the actual 1711 boarding stop")
                 capture("isolated-navigation-real-odsay-bus-waiting")
                 NSLog("E2E_BUS_WAITING")
-                let riding = expectation(for: NSPredicate(format: "label CONTAINS %@", "버스로 이동 중"), evaluatedWith: progress)
+                let riding = expectation(for: NSPredicate(format: "label == %@", "경복궁역3번출구에서 하차"), evaluatedWith: progress)
                 XCTAssertEqual(XCTWaiter().wait(for: [riding], timeout: 150), .completed,
-                               "Independent bus motion and passenger GPS must confirm a shared ride")
+                               "Independent bus motion and passenger GPS must confirm a shared ride with its verified alighting stop")
                 capture("isolated-navigation-real-odsay-bus-riding")
                 sheetHandle.tap()
                 XCTAssertTrue(routeBar.waitForExistence(timeout: 5),
@@ -530,6 +530,8 @@ final class NoLateE2ETests: XCTestCase {
                 XCTAssertTrue(app.staticTexts["saved-journey-instruction"].label.contains("1711")
                               || app.staticTexts["saved-journey-instruction"].label.contains("버스로 이동 중"),
                               "The compact sheet must identify the current bus stage")
+                XCTAssertEqual(progress.label, "경복궁역3번출구에서 하차",
+                               "The compact current action must retain the verified alighting stop")
                 capture("isolated-navigation-real-odsay-bus-riding-map-focused")
                 sheetHandle.tap()
                 if environment["E2E_BUS_FULL_TRIP"] == "1" {
@@ -567,9 +569,9 @@ final class NoLateE2ETests: XCTestCase {
                     NSLog("E2E_BUS_LOCK_READY")
                     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
                     let lockInstruction = springboard.staticTexts.matching(NSPredicate(
-                        format: "label == %@ OR label CONTAINS %@", "버스로 이동 중", "마지막 확인 · 1711")).firstMatch
+                        format: "label == %@ OR label CONTAINS %@", "경복궁역3번출구에서 하차", "마지막 확인 · 1711")).firstMatch
                     XCTAssertTrue(lockInstruction.waitForExistence(timeout: 60),
-                                  "The lock-screen Live Activity must show the fresh ride or its explicitly stale 1711 label")
+                                  "The lock-screen Live Activity must show the verified alighting stop or its explicitly stale 1711 label")
                     let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
                     attachment.name = "isolated-navigation-real-odsay-bus-lock-screen"
                     attachment.lifetime = .keepAlways
