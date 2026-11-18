@@ -17,6 +17,12 @@
 성공했다. 내보낸 IPA의 `aps-environment=production`과 build 58도 확인했다.
 이 IPA를 App Store Connect에 업로드하거나 실기기 GPS/실제 APNs를
 검증한 것은 아니다.
+경로 이탈 화면을 포함한 FE `main` `2e2fa8d`에서도 iOS 1.3.0(58)
+Release 아카이브와 IPA를 새로 생성했다. 제품 후보 구성 검사, 아카이브·IPA의
+서명 검사, IPA의 `NoLateJourneyProductEnabled=true`와
+`aps-environment=production`을 확인했다. 산출물은
+`/private/tmp/NoLateFE-1.3.0-58-off-route-export-20261119/NoLateFE.ipa`이다.
+업로드·실기기 실행·실제 APNs 수신 검증은 수행하지 않았다.
 
 2026-11-19 추가: 실제 ODsay `WALK → BUS 1711 → WALK` 저장 경로를 독립 iOS 27.0
 시뮬레이터의 새 Release 앱에서 다시 열었다. 연속 주입 승객 GPS와 별도 시험 차량으로
