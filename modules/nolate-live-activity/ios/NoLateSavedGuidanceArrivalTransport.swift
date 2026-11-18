@@ -139,15 +139,18 @@ import Foundation
       let auth = try? JSONDecoder().decode(NoLateJourneyAuthentication.self, from: Data(authJSON.utf8)) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
     guard auth.valid(now: Date().timeIntervalSince1970) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
     guard
-      path.range(of: "^/api/schedules/[1-9][0-9]{0,17}/automatic-journey/(prepare-saved|[a-f0-9-]{36}/(departure|validate|stop|reconcile|live-activity))$", options: .regularExpression) != nil,
+      path.range(of: "^/api/schedules/[1-9][0-9]{0,17}/automatic-journey/(prepare-saved|[a-f0-9-]{36}/(departure|validate|stop|reconcile|reroute-candidates|live-activity))$", options: .regularExpression) != nil,
       let body = (try? JSONSerialization.jsonObject(with: Data(bodyJSON.utf8))) as? [String: Any],
       let url = URL(string: auth.apiOrigin + path) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
     if path.hasSuffix("/live-activity"), Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAPNsPilotEnabled") as? Bool != true {
       return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"]
     }
     do {
-      let data = try await request(url: url, body: body, accessToken: auth.accessToken)
-      guard data.count <= 65536, auth.valid(now: Date().timeIntervalSince1970) else { throw LifetimeError.rejected }
+      let candidateSearch = path.hasSuffix("/reroute-candidates")
+      let data = try await request(url: url, body: body, accessToken: auth.accessToken,
+        responseLimit: candidateSearch ? 1_048_576 : 262_144, timeout: candidateSearch ? 10 : 4)
+      let responseLimit = path.hasSuffix("/reroute-candidates") ? 1_048_576 : 65_536
+      guard data.count <= responseLimit, auth.valid(now: Date().timeIntervalSince1970) else { throw LifetimeError.rejected }
       return ["accepted": true, "responseJSON": String(decoding: data, as: UTF8.self)]
     } catch LifetimeError.rejected { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
     catch { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_UNAVAILABLE"] }
@@ -166,10 +169,11 @@ import Foundation
     guard let url = URL(string: "\(origin)/api/schedules/\(session.binding.scheduleId)/automatic-journey/\(session.binding.sessionId)\(suffix)") else { throw URLError(.badURL) }
     return try await request(url: url, body: body, accessToken: session.binding.syncScope == "AUTHENTICATED" ? auth?.accessToken : nil)
   }
-  private static func request(url: URL, body: [String: Any], accessToken: String?) async throws -> Data {
+  private static func request(url: URL, body: [String: Any], accessToken: String?,
+    responseLimit: Int = 262_144, timeout: TimeInterval = 4) async throws -> Data {
     let config = URLSessionConfiguration.ephemeral
     config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil
-    config.timeoutIntervalForRequest = 4; config.timeoutIntervalForResource = 6
+    config.timeoutIntervalForRequest = timeout; config.timeoutIntervalForResource = timeout + 2
     let client = URLSession(configuration: config, delegate: RedirectBlocker(), delegateQueue: nil)
     defer { client.invalidateAndCancel() }
     var request = URLRequest(url: url); request.httpMethod = "POST"
@@ -183,7 +187,7 @@ import Foundation
     var data = Data()
     for try await byte in stream {
       try Task.checkCancellation()
-      guard data.count < 262144 else { throw URLError(.dataLengthExceedsMaximum) }
+      guard data.count < responseLimit else { throw URLError(.dataLengthExceedsMaximum) }
       data.append(byte)
     }
     return data

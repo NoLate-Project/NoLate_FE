@@ -123,6 +123,15 @@ it("rejects different account, invalid path and logout before a network request"
     await expect(createAuthenticatedJourneyPost(async () => { throw new Error("AUTOMATIC_AUTH_REQUIRED"); }, identity)(path, {})).rejects.toThrow("AUTOMATIC_AUTH_REQUIRED");
     expect(fetch).not.toHaveBeenCalled();
 });
+it('allows only the exact authenticated reroute candidate path', async () => {
+    const auth = journeyAuthentication(token(), identity.apiOrigin, 7, now);
+    const send = jest.fn().mockResolvedValue({ success: true, data: {} });
+    const post = createAuthenticatedJourneyPost(async () => auth, identity, send);
+    const candidatePath = '/api/schedules/9001/automatic-journey/11111111-1111-4111-8111-111111111111/reroute-candidates';
+    await post(candidatePath, {});
+    expect(send).toHaveBeenCalledWith(auth, candidatePath, {});
+    await expect(post(`${candidatePath}/extra`, {})).rejects.toThrow('INVALID_AUTHENTICATED_JOURNEY_PATH');
+});
 it.each([{ ok: true, redirected: true, text: async () => '{}' }, { ok: true, url: "https://evil.invalid", text: async () => '{}' },
     { ok: true, text: async () => 'x'.repeat(65537) }, { ok: true, text: async () => '<private failure>' }])("bounds malformed and redirected JSON response %#", async response => {
     globalThis.fetch = jest.fn().mockResolvedValue(response);

@@ -1,15 +1,18 @@
 import { Buffer } from "buffer";
+import { AppState } from 'react-native';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { journeyAuthentication } from "../src/modules/journey/automaticJourneyAuthentication";
 import type { AutomaticJourneyBinding, AutomaticJourneyDeparture, AutomaticJourneySnapshot } from "../src/modules/journey/automaticJourney";
 import type { JourneyRouteInput } from "../src/modules/journey/journeyRouteInput";
 import { JOURNEY_STOP_OUTBOX_KEY } from '../src/modules/journey/journeyStopOutbox';
+import { trustedOffRouteFix } from '../src/modules/journey/journeyRerouteEligibility';
 import {
     prepareAutomaticJourneyTrial, restoreAutomaticJourneyTrial, stopAutomaticJourneyTrial,
     retryAutomaticJourneySync, retryAutomaticJourneyStops, setAutomaticJourneySyncPaused, getAutomaticJourneySyncState,
     subscribeAutomaticJourneySync,
     revalidateAutomaticJourneySavedRoute, reconcileAutomaticJourneyCheckpoint,
     journeyTrialExecution,
+    getAutomaticJourneyRerouteCandidates,
 } from "../src/modules/journey/automaticJourneyTrial";
 
 const mockGet = jest.fn();
@@ -296,6 +299,62 @@ it("authenticated saved preparation validates before native and never persists c
     queueDeparture(); await retryAutomaticJourneySync(); expect(serverDepartures).toBe(1);
     await stopAutomaticJourneyTrial(); expect(stored).toBeNull();
     expect(calls.map(call => call.path.split('/').pop())).toEqual(['prepare-saved', 'validate', 'departure', 'stop']);
+});
+it('foreground resumes an authenticated off-route candidate lookup without replacing the route', async () => {
+    const priorFlag = process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED;
+    const priorAppState = AppState.currentState;
+    process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED = 'true';
+    (AppState as { currentState: string }).currentState = 'background';
+    try {
+        const saved = { ...input, context: 'SAVED_ROUTE' } as JourneyRouteInput;
+        mockAssess.mockResolvedValue({ available: true, summary: { reasonCodes: ['SAVED_ROUTE_REVALIDATION_REQUIRED'],
+            legs: [{ kind: 'WALK', geometryUsable: true }] } });
+        const now = Math.floor(Date.now() / 1000);
+        const token = `e30.${Buffer.from(JSON.stringify({ type: 'ACCESS', sub: '7', sg: 2, iat: now, exp: now + 600 })).toString('base64url')}.c2ln`;
+        const auth = journeyAuthentication(token, 'http://127.0.0.1:15544', 7);
+        mockAuthenticatedPost.mockImplementation(async (credentials, path, body) => {
+            expect(credentials).toEqual(auth);
+            if (path.endsWith('/reroute-candidates')) return { success: true, data: {
+                provider: 'odsay', sessionId: binding.sessionId, generation: binding.generation,
+                routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
+                observedAt: body.observedAt, result: { paths: [{ pathType: 2, totalTime: 25, rps: [{}, {}] }] },
+            } };
+            const raw = await server(`http://127.0.0.1:15543${path}`, {
+                credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            });
+            return JSON.parse(await raw.text());
+        });
+        await prepareAutomaticJourneyTrial(saved, 'AUTHENTICATED', '9001', async () => auth);
+        queueDeparture(); await retryAutomaticJourneySync();
+        const observedAt = Date.now() / 1000;
+        const fix = { schemaVersion: 1, sessionId: binding.sessionId, generation: binding.generation,
+            routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
+            latitude: 37.565, longitude: 126.99, accuracyMeters: 8, observedAt,
+            validUntil: observedAt + 15 };
+        const snapshot = { ...ready, status: 'ACTIVE', sessionId: binding.sessionId,
+            routeRevision: binding.routeRevision, departureAcknowledged: true, qualityReason: 'OFF_ROUTE',
+            deviceMapLocation: fix } as AutomaticJourneySnapshot;
+        expect(trustedOffRouteFix(snapshot, binding, Date.now() / 1000)).not.toBeNull();
+        mockNativeEvent(snapshot); await flush();
+        expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(0);
+        mockGet.mockResolvedValue(snapshot);
+        (AppState as { currentState: string }).currentState = 'active';
+        const onAppChange = (AppState.addEventListener as jest.Mock).mock.calls.find(([event]) => event === 'change')?.[1];
+        expect(onAppChange).toBeDefined();
+        onAppChange?.('active'); await flush();
+        expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(1);
+        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'CANDIDATES', rerouteCandidateCount: 1 });
+        expect(getAutomaticJourneyRerouteCandidates()?.result.paths).toHaveLength(1);
+        mockNativeEvent(snapshot); await flush();
+        expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(1);
+        mockNativeEvent({ ...snapshot, qualityReason: 'GOOD', deviceMapLocation: null });
+        expect(getAutomaticJourneyRerouteCandidates()).toBeNull();
+        expect(binding.routeRevision).toBe(1);
+    } finally {
+        if (priorFlag === undefined) delete process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED;
+        else process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED = priorFlag;
+        (AppState as { currentState: string }).currentState = priorAppState;
+    }
 });
 it.each([true, false])('extended preparation checks the credential horizon before native arm (covered=%s)', async covered => {
     const saved = { ...input, context: 'SAVED_ROUTE' } as JourneyRouteInput;

@@ -240,7 +240,10 @@ function observeLifetime() {
         searchRerouteAfterConfirmedOffRoute(snapshot);
     });
     const app = AppState.addEventListener("change", state => {
-        if (state === "active") automaticRetry();
+        if (state === "active") {
+            automaticRetry();
+            getAutomaticJourneySnapshot().then(searchRerouteAfterConfirmedOffRoute).catch(() => undefined);
+        }
     });
     const auth = subscribeAuthInvalidation(async () => { await stopAutomaticJourneyTrial(); });
     const timer = setInterval(() => {
@@ -257,6 +260,16 @@ function searchRerouteAfterConfirmedOffRoute(snapshot: AutomaticJourneySnapshot)
     if (!fix) {
         if (rerouteCandidates) { rerouteCandidates = null; publish({ rerouteState: 'IDLE', rerouteCandidateCount: 0 }); }
         return;
+    }
+    if (rerouteCandidates) {
+        const previous = rerouteCandidates.fix;
+        const dy = (fix.latitude - previous.latitude) * 111_195;
+        const dx = (fix.longitude - previous.longitude) * 111_195
+            * Math.cos((fix.latitude + previous.latitude) * Math.PI / 360);
+        if (Date.now() - rerouteCandidates.receivedAt >= 120_000 || Math.hypot(dx, dy) >= 100) {
+            rerouteCandidates = null;
+            publish({ rerouteState: 'IDLE', rerouteCandidateCount: 0 });
+        }
     }
     if (rerouteLookup || Date.now() < nextRerouteLookupAt || rerouteCandidates) return;
     nextRerouteLookupAt = Date.now() + 20_000;
