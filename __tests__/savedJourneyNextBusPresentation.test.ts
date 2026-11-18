@@ -17,7 +17,9 @@ it('v7 shows only the fresh next-occurrence ETA with the matching route marker',
     const arrival={busLegIndex:3,providerRouteId:'999999997',directionLabel:'합성 동쪽 방면',sourceUpdatedAt:1200,expectedAt:1320,validUntil:1320};
     const s=snapshot('WAITING',3,{schemaVersion:7,arrivalStatus:'WAITING_INFORMATION',arrival});
     expect(presentSavedJourneyRoutePosition(s,binding,input,1201)?.legIndex).toBe(2);
-    expect(presentSavedJourneyGuidance(s,binding,1201)?.arrival).toEqual({directionLabel:'합성 동쪽 방면',remainingSeconds:119});
+    expect(presentSavedJourneyGuidance(s,binding,1201)?.arrival).toEqual({
+        kind: 'BUS', directionLabel: '합성 동쪽 방면', remainingSeconds: 119,
+    });
     for(const patch of [{schemaVersion:6},{arrival:{...arrival,busLegIndex:1}},{activeLegIndex:2},{phase:'RIDING'},
         {arrival:null},{arrivalStatus:'UNAVAILABLE'}])expect(presentSavedJourneyRoutePosition(snapshot('WAITING',3,
             {schemaVersion:7,arrivalStatus:'WAITING_INFORMATION',arrival,...patch}),binding,input,1201)).toBeNull();

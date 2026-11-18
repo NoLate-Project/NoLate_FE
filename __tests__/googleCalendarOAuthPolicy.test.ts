@@ -1,5 +1,6 @@
+/// <reference types="node" />
+import { createRequire } from "node:module";
 import * as AuthSession from "expo-auth-session";
-import { AuthRequest } from "expo-auth-session/build/AuthRequest";
 import * as GoogleAuth from "expo-auth-session/providers/google";
 
 import {
@@ -25,12 +26,17 @@ jest.mock("expo-auth-session/providers/google", () => ({
         tokenEndpoint: "https://oauth2.googleapis.com/token",
     },
 }));
-jest.mock("expo-modules-core", () => ({
-    CodedError: class CodedError extends Error {},
-}));
 jest.mock("expo-web-browser", () => ({
     openAuthSessionAsync: jest.fn(),
 }));
+
+// The SDK can resolve a separate pnpm copy of the native module.
+const authRequestPath = require.resolve("expo-auth-session/build/AuthRequest");
+const expoModulesCorePath = createRequire(authRequestPath).resolve("expo-modules-core");
+jest.doMock(expoModulesCorePath, () => ({
+    CodedError: class CodedError extends Error {},
+}));
+const { AuthRequest } = require(authRequestPath) as typeof import("expo-auth-session/build/AuthRequest");
 
 describe("Google Calendar OAuth policy", () => {
     it("requests only the two endpoint-specific read-only scopes", async () => {

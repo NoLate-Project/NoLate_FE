@@ -1,8 +1,9 @@
-import React from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
+import React, { useContext, useEffect, useRef, useState } from "react";
+import { AccessibilityInfo, Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
 import type { TmapLoadState } from "../../modules/map/TmapMapView";
+import LoadingIndicator from "../../ui/LoadingIndicator";
 import {
   APP_ACCENT_BLUE,
   IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT,
@@ -11,10 +12,31 @@ import {
 } from "./ScheduleDetailChrome";
 import { createScheduleDetailStyles } from "./schedule-detail.styles";
 import type { ScheduleDetailPresentation } from "./scheduleDetailPresentationModel";
+import { useSystemReduceMotion } from "../../modules/performance/useSystemReduceMotion";
+import {
+  SCHEDULE_EDITOR_EXIT_MS,
+  ScheduleDetailEditingContext,
+  ScheduleDetailEditResultContext,
+} from "./ScheduleDetailEditorTransition";
+import { getRouteInfoFromRoute, isSameScheduleDraftRoute } from "../../modules/schedule/routeInfo";
+
+function hasEditedRoute(previous: ScheduleDetailPresentation["item"], updated: ScheduleDetailPresentation["item"]) {
+  if (previous.route === updated.route && previous.travelMinutes === updated.travelMinutes
+    && previous.travelMode === updated.travelMode && previous.origin === updated.origin
+    && previous.destination === updated.destination) return false;
+
+  const before = getRouteInfoFromRoute(previous.route, previous);
+  const after = getRouteInfoFromRoute(updated.route, updated);
+  if (!before || !after) return Boolean(before || after);
+  // A schedule time edit can re-anchor the same route. It does not change the route itself.
+  return previous.travelMode !== updated.travelMode
+    || !isSameScheduleDraftRoute(before, { ...after, departureTime: before.departureTime });
+}
 
 const MAP_STATUS_HEIGHT = 52;
 const LARGE_MAP_STATUS_WITH_ACTION_HEIGHT = 108;
 const MAP_STATUS_GAP = 8;
+const LARGE_HEADER_FONT_MULTIPLIER = 2.5;
 const mapStatusEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const mapStatusLabels = {
   loading: '지도를 불러오는 중',
@@ -36,6 +58,22 @@ export function ScheduleDetailHeader({
   onRetryMap,
 }: ScheduleDetailHeaderProps) {
   const { height, fontScale } = useWindowDimensions();
+  const editing = useContext(ScheduleDetailEditingContext);
+  const editResult = useContext(ScheduleDetailEditResultContext);
+  const reduceMotion = useSystemReduceMotion();
+  const editButton = useRef<View>(null);
+  const openedEditor = useRef(false);
+  const handledEditResult = useRef<typeof editResult>(null);
+  const [changedHeader, setChangedHeader] = useState({ title: false, route: false });
+  const highlight = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (editing || !openedEditor.current) return;
+    const timer = setTimeout(() => {
+      openedEditor.current = false;
+      if (editButton.current) AccessibilityInfo.sendAccessibilityEvent(editButton.current, "focus");
+    }, reduceMotion ? 0 : SCHEDULE_EDITOR_EXIT_MS);
+    return () => clearTimeout(timer);
+  }, [editing, reduceMotion]);
   const {
     canEditSchedule,
     canManageSchedule,
@@ -62,29 +100,81 @@ export function ScheduleDetailHeader({
     topCardControlBg,
     travelText,
   } = presentation;
+  useEffect(() => {
+    if (editing || isPlainSchedule || !editResult || editResult === handledEditResult.current
+      || editResult.updated.id !== item.id) return;
+    if (reduceMotion) {
+      handledEditResult.current = editResult;
+      return;
+    }
+    const { previous, updated } = editResult;
+    const title = previous.title !== updated.title;
+    const route = hasEditedRoute(previous, updated);
+    if (!title && !route) {
+      handledEditResult.current = editResult;
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      handledEditResult.current = editResult;
+      setChangedHeader({ title, route });
+      highlight.setValue(1);
+      Animated.timing(highlight, { toValue: 0, duration: 180, useNativeDriver: true, isInteraction: false })
+        .start(({ finished }) => {
+          if (active && finished) setChangedHeader({ title: false, route: false });
+        });
+    }, SCHEDULE_EDITOR_EXIT_MS);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      highlight.stopAnimation();
+      highlight.setValue(0);
+    };
+  }, [editing, editResult, highlight, isPlainSchedule, item.id, reduceMotion]);
+
+  const renderHighlight = (field: "title" | "route") => changedHeader[field] && !editing && !reduceMotion
+    ? <Animated.View
+      testID={`schedule-detail-edit-highlight-${field}`}
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[StyleSheet.absoluteFillObject, { backgroundColor: topCardAccentText, borderRadius: 8,
+        opacity: highlight.interpolate({ inputRange: [0, 1], outputRange: [0, 0.14] }) }]}
+    />
+    : null;
   const largeRouteHeader = !isPlainSchedule && usesLargeRouteHeader;
-  const largeDurationFontSize = Math.round(11 * Math.min(fontScale, 2.5));
+  const headerFontScale = Math.min(fontScale, LARGE_HEADER_FONT_MULTIPLIER);
+  const largeTitleFontSize = Math.round(17 * headerFontScale);
+  const largeDurationFontSize = Math.round(11 * headerFontScale);
   const mapStatus = mapState !== 'ready' ? mapState : undefined;
   const mapRetryPending = mapStatus === 'retrying';
   const canRetryMap = mapStatus === 'error' || mapRetryPending;
   const mapStatusHeight = largeRouteHeader ? LARGE_MAP_STATUS_WITH_ACTION_HEIGHT : MAP_STATUS_HEIGHT;
   // Reserve the same clearance at each map state so the route sheet stays put on retry.
   const mapStatusClearance = mapState === 'ready' ? mapStatusHeight + MAP_STATUS_GAP : 0;
-  const title = (
+  const titleText = (
     <Text
       accessibilityRole="header"
       accessibilityLabel={isPlainSchedule ? '일정 상세' : item.title}
       style={[
         styles.topHeaderTitle,
         isPlainSchedule && styles.plainTopHeaderTitle,
-        largeRouteHeader && styles.topHeaderTitleLarge,
+        !isPlainSchedule && titleTextLayout,
+        largeRouteHeader && { fontSize: largeTitleFontSize },
         { color: primaryText },
       ]}
       numberOfLines={largeRouteHeader ? undefined : 1}
+      allowFontScaling={!largeRouteHeader}
       lineBreakStrategyIOS="hangul-word"
     >
       {isPlainSchedule ? '일정 상세' : item.title}
     </Text>
+  );
+  const title = isPlainSchedule ? titleText : (
+    <View style={[titleRowLayout, largeRouteHeader && styles.topHeaderTitleLarge]}>
+      {renderHighlight("title")}
+      {titleText}
+    </View>
   );
   const duration = hasRouteSummary ? (
     <View style={[styles.topHeaderTravelPill, largeRouteHeader && styles.topHeaderTravelPillLarge]}>
@@ -111,15 +201,17 @@ export function ScheduleDetailHeader({
       { borderTopColor: sheetBorder },
     ]}>
       <View style={[styles.topHeaderRouteBarMain, largeRouteHeader && styles.topHeaderRouteBarMainLarge]}>
+        {renderHighlight("route")}
         <Ionicons
           name={hasDetailedRoute ? 'navigate-outline' : 'location-outline'}
           size={largeRouteHeader ? 19 : 13}
           color={topCardAccentText}
         />
         <Text
+          testID="schedule-detail-route-name"
           style={[styles.topHeaderRouteBarText, { color: primaryText }]}
           accessibilityLabel={routeTitle}
-          maxFontSizeMultiplier={largeRouteHeader ? 2.5 : undefined}
+          maxFontSizeMultiplier={largeRouteHeader ? LARGE_HEADER_FONT_MULTIPLIER : undefined}
           numberOfLines={largeRouteHeader ? undefined : 1}
           lineBreakStrategyIOS="hangul-word"
         >
@@ -133,7 +225,7 @@ export function ScheduleDetailHeader({
   return (
       <View
         style={styles.topOverlay}
-        onLayout={!isPlainSchedule ? ({ nativeEvent }) => setRouteHeaderHeight(Math.ceil(nativeEvent.layout.height + mapStatusClearance)) : undefined}
+        onLayout={!isPlainSchedule ? ({ nativeEvent }) => setRouteHeaderHeight(Math.ceil(nativeEvent.layout.height), mapStatusClearance) : undefined}
       >
         <View
           style={[
@@ -233,7 +325,11 @@ export function ScheduleDetailHeader({
                 ) : null}
                 {canEditSchedule ? (
                   <Pressable
-                    onPress={openScheduleEditor}
+                    ref={editButton}
+                    onPress={() => {
+                      openedEditor.current = true;
+                      openScheduleEditor();
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel="일정 수정"
                     style={({ pressed }) => [
@@ -262,17 +358,16 @@ export function ScheduleDetailHeader({
           </View>
 
           {largeRouteHeader ? (
-            <View style={{ maxHeight: Math.max(110, Math.floor(height * 0.48) - insets.top - 62) }}>
-              <ScrollView
-                bounces={false}
-                indicatorStyle={isDark ? 'white' : 'black'}
-                style={styles.topHeaderScrollableContext}
-              >
-                {title}
-                {routeBar}
-              </ScrollView>
+            <ScrollView
+              testID="schedule-detail-header-scroll"
+              bounces={false}
+              indicatorStyle={isDark ? 'white' : 'black'}
+              style={[styles.topHeaderScrollableContext, { maxHeight: Math.max(110, Math.floor(height * 0.48) - insets.top - 62) }]}
+            >
+              {title}
+              {routeBar}
               {duration}
-            </View>
+            </ScrollView>
           ) : routeBar}
           {mapStatus ? (
             <View style={[
@@ -285,11 +380,13 @@ export function ScheduleDetailHeader({
                 entering={mapStatusEntrance}
                 style={[styles.topHeaderMapStatusCopy, largeRouteHeader && styles.topHeaderMapStatusCopyLarge]}
               >
-                {mapStatus === 'loading' || mapRetryPending ? (
-                  <ActivityIndicator size="small" color={topCardAccentText} />
-                ) : (
-                  <Ionicons name="map-outline" size={16} color={secondaryText} />
-                )}
+                <View style={styles.topHeaderMapStatusMark} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                  {mapStatus === 'loading' || mapRetryPending ? (
+                    <LoadingIndicator size="inline" delayMs={150} />
+                  ) : (
+                    <Ionicons name="map-outline" size={16} color={secondaryText} />
+                  )}
+                </View>
                 <Text
                   accessibilityLiveRegion="polite"
                   maxFontSizeMultiplier={1.5}
@@ -326,3 +423,5 @@ const styles = createScheduleDetailStyles({
   IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT,
   SHEET_HANDLE_HEIGHT,
 });
+const titleRowLayout = { flex: 1, minWidth: 0 } as const;
+const titleTextLayout = { flex: 0 } as const;

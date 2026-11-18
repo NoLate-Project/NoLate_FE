@@ -1,5 +1,5 @@
 import React from "react";
-import { AccessibilityInfo, LayoutAnimation, StyleSheet } from "react-native";
+import { AccessibilityInfo, LayoutAnimation, StyleSheet, Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import RouteStepTimeline from "../src/modules/schedule/components/route/RouteStepTimeline";
@@ -55,6 +55,21 @@ const routeInfo: RouteInfo = {
         },
     ],
 };
+
+it("suppresses a repeated 수도권 line label in the standard expanded timeline", () => {
+    const dimensions = jest.spyOn(require("react-native"), "useWindowDimensions")
+        .mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+        act(() => { renderer = TestRenderer.create(<RouteStepTimeline routeInfo={routeInfo} compact
+            stepDisplayNames={{ "subway-leg": "수도권 4호선", "bus-leg": "643번 강남행" }} />); });
+        expect(renderer!.root.findAllByProps({ testID: "route-step-full-name-subway-leg" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ testID: "route-step-full-name-bus-leg" }).props.children).toBe("643번 강남행");
+    } finally {
+        if (renderer) act(() => renderer?.unmount());
+        dimensions.mockRestore();
+    }
+});
 
 describe("RouteStepTimeline transit disclosure", () => {
     let renderer: ReactTestRenderer | undefined;
@@ -117,6 +132,95 @@ describe("RouteStepTimeline transit disclosure", () => {
         act(() => renderer!.root.findByProps({ testID: "route-step-first-stop-subway-leg" }).props.onLayout());
         expect(onRevealFirstStop.mock.calls[0][1]).toBe(false);
         expect(layoutAnimation).not.toHaveBeenCalled();
+    });
+
+    it("keeps a saved alighting stop and clock visible with the intermediate stations folded", async () => {
+        const step = {
+            ...routeInfo.steps[0],
+            title: "서울역",
+            alightingName: "사당역 (4호선)",
+            durationMinutes: 20,
+            stationCount: 2,
+            passStops: [{ name: "서울역 (4호선)" }, { name: "동작역" }, { name: "사당역" }],
+        };
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline
+                routeInfo={{ ...routeInfo, steps: [step] }}
+                compact inlineStationRail realtimeArrivalsEnabled={false}
+            />);
+        });
+        const root = renderer!.root;
+        expect(root.findAllByProps({ children: "사당역 하차" }).length).toBeGreaterThan(0);
+        const alightingClock = root.findByProps({ testID: "route-step-alighting-clock-subway-leg" });
+        expect(root.findAllByProps({ testID: "route-step-alighting-connector-subway-leg" })).toHaveLength(0);
+        const localArrival = new Date(Date.parse(routeInfo.departureTime) + 20 * 60_000);
+        expect(alightingClock.props.children).toBe(
+            [localArrival.getHours(), localArrival.getMinutes()].map(value => String(value).padStart(2, "0")).join(":"),
+        );
+        expect(root.findAllByProps({ children: "동작역" })).toHaveLength(0);
+        await act(async () => root.findByProps({ testID: "route-step-disclosure-subway-leg" }).props.onPress());
+        expect(root.findAllByProps({ children: "동작역" }).length).toBeGreaterThan(0);
+        expect(root.findAllByProps({ children: "서울역 (4호선)" })).toHaveLength(0);
+        expect(root.findAllByProps({ children: "사당역" })).toHaveLength(0);
+    });
+
+    it("describes the available intermediate stations when the total is missing and marks alighting separately", async () => {
+        const onPassStopPress = jest.fn();
+        const step = {
+            ...routeInfo.steps[0],
+            title: "서울역",
+            alightingName: "사당역 (4호선)",
+            durationMinutes: 16,
+            passStops: [{ name: "서울역 (4호선)" }, { name: "동작역" }, { name: "사당역" }],
+        };
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline
+                routeInfo={{ ...routeInfo, steps: [step, routeInfo.steps[1]] }}
+                compact inlineStationRail realtimeArrivalsEnabled={false}
+                canShowPassStopOnMap={(_step, index) => index === 1}
+                onPassStopPress={onPassStopPress}
+            />);
+        });
+        const root = renderer!.root;
+        const disclosure = root.findByProps({ testID: "route-step-disclosure-subway-leg" });
+        expect(disclosure.props.accessibilityLabel).toContain("경유역 1곳 · 16분");
+        await act(async () => disclosure.props.onPress());
+        expect(root.findAllByProps({ testID: "route-step-map-stop-subway-leg-0" })).toHaveLength(0);
+        expect(root.findAllByProps({ testID: "route-step-map-stop-subway-leg-2" })).toHaveLength(0);
+        const intermediate = root.findByProps({ testID: "route-step-map-stop-subway-leg-1" });
+        expect(intermediate.props.accessibilityLabel).toBe("동작역");
+        act(() => intermediate.props.onPress());
+        expect(onPassStopPress).toHaveBeenCalledWith("subway-leg", 1);
+        expect(root.findByProps({ testID: "route-step-alighting-marker-subway-leg" })
+            .findByProps({ name: "checkmark-outline" }).props.accessible).toBe(false);
+        expect(StyleSheet.flatten(
+            root.findByProps({ testID: "route-step-alighting-connector-subway-leg" }).props.style,
+        )).toMatchObject({ width: 5, backgroundColor: "#D1D5DB" });
+    });
+
+    it("keeps a named boarding stop and shows the alighting stop once for legacy labels", async () => {
+        const step = {
+            ...routeInfo.steps[1],
+            title: "합성 승차",
+            lineName: "합성",
+            alightingName: "합성 하차",
+            description: "합성 하차까지 · 2정거장 · 5분",
+            passStops: undefined,
+        };
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline
+                routeInfo={{ ...routeInfo, steps: [step] }}
+                compact inlineStationRail realtimeArrivalsEnabled={false}
+            />);
+        });
+        const countText = (value: string) => renderer!.root.findAllByType(Text).filter(
+            node => node.props.children === value,
+        ).length;
+        expect(countText("합성 하차")).toBe(1);
+        expect(countText("합성 하차 하차")).toBe(0);
+        expect(countText("합성 하차까지")).toBe(0);
+        expect(countText("2정거장 · 5분")).toBe(1);
+        expect(countText(" 승차")).toBe(1);
     });
 
     it("keeps a focused leg closed until the user opens it or selects a stop", async () => {

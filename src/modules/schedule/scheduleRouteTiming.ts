@@ -1,5 +1,6 @@
 import { isTransitRideKind } from "../map/transitModes";
-import { getRouteInfoFromRoute, isRouteInfo, type RouteInfo } from "./routeInfo";
+import { buildRouteInfoFromAlternative, getRouteInfoFromRoute, isRouteInfo, type RouteInfo } from "./routeInfo";
+import type { RouteAlternativeOption } from "../map/tmapApiCore";
 import { hasRenderableSavedRouteGeometry } from "../map/savedRouteMapPresentation";
 import type { Place } from "./types";
 
@@ -30,6 +31,7 @@ export type SelectedRouteTiming = {
 export type ReconciledScheduleRouteTiming = {
     departAt?: string;
     route: unknown;
+    travelMinutes?: number;
 };
 
 /**
@@ -66,22 +68,55 @@ function parseValidDate(value?: string | Date): Date | undefined {
     return Number.isFinite(date.getTime()) ? date : undefined;
 }
 
+export function isOdsayTimetableDepartureExpired(departureAt?: string): boolean {
+    if (!departureAt) return false;
+    const departure = Date.parse(departureAt);
+    return !Number.isFinite(departure) || departure <= Date.now();
+}
+
 /** Saved metro/bus estimates are not booked services. An earlier valid estimate is safe to keep. */
-export function resolveSavedDepartureAt({ startAt, departAt, travelMinutes, travelMode, fixedService }: {
+export function resolveSavedDepartureAt({ startAt, departAt, travelMinutes, travelMode, fixedService, routeInfo }: {
     startAt: string;
     departAt?: string;
     travelMinutes?: number;
     travelMode?: string;
     fixedService?: boolean;
+    routeInfo?: RouteInfo;
 }): Date | undefined {
     const stored = parseValidDate(departAt);
     const start = parseValidDate(startAt);
     if (!start) return stored;
+    if (travelMode === "TRANSIT" && routeInfo?.provider === "odsay" &&
+        routeInfo.timeBasis === "provider_schedule" && routeInfo.providerTimeBasis === "timetable") {
+        const scheduledDeparture = parseValidDate(routeInfo.departureTime);
+        const scheduledArrival = parseValidDate(routeInfo.arrivalTime);
+        if (scheduledDeparture && scheduledArrival && scheduledDeparture < scheduledArrival &&
+            scheduledArrival <= start && (!stored || stored.getTime() === scheduledDeparture.getTime())) {
+            return scheduledDeparture;
+        }
+    }
     const minutes = normalizeSelectedTravelMinutes(travelMinutes);
-    const estimate = minutes === undefined ? undefined : parseValidDate(new Date(start.getTime() - minutes * 60_000));
+    const exactSeconds = travelMode === "TRANSIT" && !fixedService
+        ? savedOdsayEstimateSeconds(routeInfo, minutes)
+        : undefined;
+    const estimatedSeconds = exactSeconds ?? (minutes === undefined ? undefined : minutes * 60);
+    const estimate = estimatedSeconds === undefined
+        ? undefined
+        : parseValidDate(new Date(start.getTime() - estimatedSeconds * 1000));
     if (travelMode === "TRANSIT" && !fixedService && stored &&
         (stored >= start || (estimate && stored > estimate))) return estimate;
     return stored ?? estimate;
+}
+
+function savedOdsayEstimateSeconds(info: RouteInfo | undefined, minutes: number | undefined): number | undefined {
+    if (info?.provider !== "odsay" || info.timeBasis !== "estimated" || info.providerTimeBasis !== "route_estimate") return undefined;
+    const seconds = info.totalDurationSeconds;
+    if (typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds <= 0 ||
+        Math.ceil(seconds / 60) !== minutes || minutes !== info.totalDurationMinutes) return undefined;
+    const originalDeparture = parseValidDate(info.departureTime);
+    const originalArrival = parseValidDate(info.arrivalTime);
+    return originalDeparture && originalArrival && originalArrival.getTime() - originalDeparture.getTime() === seconds * 1000
+        ? seconds : undefined;
 }
 
 function normalizeSelectedTravelMinutes(value?: number): number | undefined {
@@ -257,9 +292,24 @@ export function reconcileScheduleRouteTiming({
         return { departAt, route };
     }
 
-    const routeInfo = getRouteInfoFromRoute(route);
+    const previousRouteInfo = getRouteInfoFromRoute(route);
     // A changed appointment never moves a chosen public service. Re-selection is explicit.
-    if (routeInfo?.intercityJourney) return { departAt: routeInfo.departureTime, route };
+    if (previousRouteInfo?.intercityJourney) return { departAt: previousRouteInfo.departureTime, route };
+    let routeInfo = previousRouteInfo;
+    if (previousRouteInfo?.busPreviewObservation) {
+        const original = route as Partial<RouteAlternativeOption> | undefined;
+        if (original?.provider !== "odsay" || original.mode !== "TRANSIT" ||
+            !normalizeSelectedTravelMinutes(original.minutes) || !original.transitLegs?.some(leg => leg.kind === "BUS")) {
+            return { departAt: undefined, route: undefined };
+        }
+        const origin = previousRouteInfo.steps.find(step => step.type === "ORIGIN")?.coordinates?.[0];
+        const destination = previousRouteInfo.steps.find(step => step.type === "DESTINATION")?.coordinates?.[0];
+        routeInfo = buildRouteInfoFromAlternative({
+            ...original as RouteAlternativeOption, odsayBusPreview: undefined, odsayTimetablePreview: undefined,
+            providerDepartureAt: undefined, providerArrivalAt: undefined, providerTimeBasis: "route_estimate",
+        }, { name: previousRouteInfo.originName, lat: origin?.latitude, lng: origin?.longitude },
+        { name: previousRouteInfo.destinationName, lat: destination?.latitude, lng: destination?.longitude }, nextArrival);
+    }
     const durationMilliseconds = selectedDuration(routeInfo, travelMinutes, [nextArrival])?.milliseconds;
     if (durationMilliseconds === undefined) {
         // 계산 근거가 없으면 과거 시각을 새 일정에 잘못 붙이는 것보다 비우는 편이 안전하다.
@@ -275,6 +325,11 @@ export function reconcileScheduleRouteTiming({
         departureTime: nextDepartureAt,
         arrivalTime: nextArrival.toISOString(),
         timeBasis: "estimated",
+        ...(routeInfo.provider === "odsay" && {
+            providerTimeBasis: "route_estimate",
+            steps: routeInfo.steps.map(step =>
+                step.scheduledRide ? { ...step, scheduledRide: undefined } : step),
+        }),
     };
     if (isRouteInfo(route)) {
         return { departAt: nextDepartureAt, route: nextRouteInfo };
@@ -287,8 +342,17 @@ export function reconcileScheduleRouteTiming({
                 ...(route as Record<string, unknown>),
                 providerDepartureAt: undefined,
                 providerArrivalAt: undefined,
+                ...(routeInfo.provider === "odsay" && {
+                    odsayTimetablePreview: undefined,
+                    odsayBusPreview: undefined,
+                    providerTimeBasis: "route_estimate",
+                    transitDepartureAt: undefined,
+                    transitDepartureTimeSource: undefined,
+                    transitServiceState: undefined,
+                }),
                 routeInfo: nextRouteInfo,
             },
+            ...(previousRouteInfo?.busPreviewObservation && { travelMinutes: nextRouteInfo.totalDurationMinutes }),
         };
     }
 

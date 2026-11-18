@@ -6,7 +6,6 @@ import { recordCalendarScan } from '../../modules/onboarding/calendarConnectionS
 import { withCalendarImportTimeout } from '../../modules/onboarding/calendarImportReliability';
 import { scanSelectedCalendarProviders } from '../../modules/onboarding/calendarImportScan';
 import {
-  getDefaultSelectedCandidateIds,
   getDeviceCalendarProvider,
   loadDeviceCalendarImportSummary,
   requestDeviceCalendarPermission,
@@ -20,7 +19,6 @@ import {
 } from '../../modules/onboarding/googleCalendarImport';
 import type { CalendarProviderId, OnboardingStep } from './calendarImportModel';
 import {
-  CANDIDATE_PAGE_SIZE,
   GOOGLE_AUTH_TIMEOUT_MS,
   GOOGLE_TOKEN_EXCHANGE_TIMEOUT_MS,
   SECURE_STORAGE_TIMEOUT_MS,
@@ -40,13 +38,7 @@ type CalendarImportScanActionParams = {
   goToStep: (step: OnboardingStep) => void;
   setScanStage: Dispatch<SetStateAction<number>>;
   setScanStatusMessage: Dispatch<SetStateAction<string>>;
-  setCandidates: Dispatch<SetStateAction<DeviceCalendarCandidate[]>>;
-  setSelectedIds: Dispatch<SetStateAction<Set<string>>>;
-  setCategoryIdBySource: Dispatch<SetStateAction<Record<string, string>>>;
-  setCategoryAssignmentsExpanded: Dispatch<SetStateAction<boolean>>;
-  setExpandedCategorySourceKey: Dispatch<SetStateAction<string | null>>;
-  setVisibleCandidateCount: Dispatch<SetStateAction<number>>;
-  setIndividualSchedulesExpanded: Dispatch<SetStateAction<boolean>>;
+  onCandidatesLoaded: (candidates: DeviceCalendarCandidate[]) => void;
 };
 
 /** Google 인증과 선택된 공급자 스캔을 하나의 재시도 가능한 동작으로 구성합니다. */
@@ -60,13 +52,7 @@ export function createCalendarImportScanActions({
   goToStep,
   setScanStage,
   setScanStatusMessage,
-  setCandidates,
-  setSelectedIds,
-  setCategoryIdBySource,
-  setCategoryAssignmentsExpanded,
-  setExpandedCategorySourceKey,
-  setVisibleCandidateCount,
-  setIndividualSchedulesExpanded,
+  onCandidatesLoaded,
 }: CalendarImportScanActionParams) {
   const scanCalendars = async () => {
     const attemptId = scanAttemptRef.current + 1;
@@ -155,13 +141,7 @@ export function createCalendarImportScanActions({
             )}`
           : null,
       );
-      setCandidates(loadedCandidates);
-      setSelectedIds(getDefaultSelectedCandidateIds(loadedCandidates));
-      setCategoryIdBySource({});
-      setCategoryAssignmentsExpanded(false);
-      setExpandedCategorySourceKey(null);
-      setVisibleCandidateCount(CANDIDATE_PAGE_SIZE);
-      setIndividualSchedulesExpanded(false);
+      onCandidatesLoaded(loadedCandidates);
       goToStep('select');
     } catch (error) {
       if (!isCurrentAttempt()) return;

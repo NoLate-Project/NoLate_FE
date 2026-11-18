@@ -183,8 +183,12 @@ export async function loadDeviceCalendarSources(): Promise<DeviceCalendarSource[
         .map(toCalendarSource);
 }
 
-export function getDefaultSelectedCandidateIds(candidates: DeviceCalendarCandidate[]): Set<string> {
-    return new Set(candidates.map((candidate) => candidate.id));
+export function getDefaultSelectedCandidateIds(
+    candidates: DeviceCalendarCandidate[],
+    previousSelection?: ReadonlySet<string>,
+): Set<string> {
+    return new Set(candidates.map(candidate => candidate.id)
+        .filter(id => previousSelection === undefined || previousSelection.has(id)));
 }
 
 export function buildSchedulePayloadFromCandidate(

@@ -82,7 +82,7 @@ export function savedJourneyTimelineHighlight(stage: SavedJourneyStage | null, i
     if (stage?.activeLegIndex == null || !input) return undefined;
     const movements = route.steps.filter(step => !['ORIGIN', 'DESTINATION'].includes(step.type));
     if (movements.length !== input.legs.length || movements.some((step, index) => step.id !== `leg-${index}` || step.type !== input.legs[index].kind)) return undefined;
-    return { stepId: `leg-${stage.activeLegIndex}`, label: `${stage.title} · ${stage.action}` };
+    return { stepId: `leg-${stage.activeLegIndex}` };
 }
 
 /** Full display names only; never a name-based route match or boarding evidence. */

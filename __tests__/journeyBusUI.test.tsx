@@ -4,7 +4,7 @@ jest.mock("../src/modules/journey/JourneyBusArrivalTrial", () => ({ JourneyBusAr
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { Platform } from "react-native";
 
-import JourneyBusRoute from "../app/internal/journey-bus";
+import JourneyBusRoute from "./fixtures/journey/journey-bus";
 import { JourneyAutomaticTrialPanel } from "../src/modules/journey/JourneySelectedRouteTrial";
 import { journeyBusFixtures } from "../src/modules/journey/journeyBusFixtures";
 import { normalizeAutomaticJourneySnapshot, type AutomaticJourneySnapshot } from "../src/modules/journey/automaticJourney";
@@ -50,6 +50,7 @@ describe("P2-1 first-bus observation UI", () => {
             snapshot: { ...ready }, sync: { status: "IDLE", paused: false, errorCode: null }, assessment: null,
             consented: false, pending: false, errorCode: null, running: false, eligible: false,
             canAssess: true, canPrepare: false, canRestore: false, setConsented: mockConsent,
+            savedCheckpoint: undefined, canConsentToSavedRestore: false, canRestoreSaved: false, restoreSaved: jest.fn(),
             assess: mockAssess, prepare: mockPrepare, restore: mockRestore, stop: mockStop,
             retrySync: jest.fn(async () => undefined), setSyncPaused: jest.fn(), refresh: jest.fn(async () => undefined),
         };

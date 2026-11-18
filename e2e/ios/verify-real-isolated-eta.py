@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import subprocess
 from eta_timetable_preview import preview_exclusion
+from eta_fixture_scope import PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE
 
 DEVICE = '9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69'
 walking_spec = importlib.util.spec_from_file_location('walking_audit', Path(__file__).with_name('verify-eta-walking-boundaries.py'))
@@ -135,8 +136,8 @@ def verify_diagnostic_values(worker, public, seed, selected):
             assert timing['predictedArrivalAt'] == timing['timetable']['arrivalAt']
         assert verify_odsay_minute_walking(route)['timingResult'] == 'PASSED'
         timetable_verified = True
-    if worker['failureReason'].startswith('TRANSIT_TRAIN_NOT_YET_OBSERVED:'):
-        assert timetable_verified
+    if timetable_verified and worker['failureReason'].startswith(
+            ('TRANSIT_TRAIN_NOT_YET_OBSERVED:', 'TRANSIT_ARRIVAL_SOURCE_STALE:')):
         future_verified = verify_future_visibility(worker, public, route)
     else:
         # Late/failed journeys must not reappear as an eligible future preview.
@@ -190,6 +191,7 @@ def verify_walking_diagnostics(value):
     assert value['cacheEntries'] <= 256
     allowed = {'HTTP_AUTH', 'HTTP_QUOTA', 'HTTP_SERVER', 'HTTP_CLIENT', 'PROVIDER_APPLICATION_ERROR',
                'EMPTY_RESPONSE', 'INVALID_RESPONSE', 'PATH_COUNT_MISMATCH', 'NO_PATH', 'ENDPOINT_MISMATCH',
+               'BOUNDARY_ENDPOINT_GAP',
                'DISTANCE_MISMATCH', 'DURATION_MISMATCH', 'LINK_COUNT_MISMATCH', 'LINK_DISTANCE_MISMATCH',
                'LINK_COORDINATES_MISMATCH', 'TIMEOUT', 'TRANSPORT', 'DEADLINE', 'CIRCUIT_OPEN', 'BULKHEAD',
                'INTERRUPTED', 'UNEXPECTED'}
@@ -256,11 +258,22 @@ def verify_values(worker, public):
         assert instant(table['fetchedAt']) <= instant(worker['evaluatedAt']) + dt.timedelta(seconds=15)
         boarding, arrival = instant(timing['predictedBoardingAt']), instant(timing['predictedArrivalAt'])
         raw_boarding, raw_arrival = instant(table['boardingAt']), instant(table['arrivalAt'])
-        assert raw_arrival > raw_boarding and arrival - boarding == raw_arrival - raw_boarding
+        assert raw_arrival > raw_boarding
         if index == 0:
-            assert timing['basis'] == 'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE'
+            assert timing['basis'] in ('FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
+                                       'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
+                                       'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME')
             assert observation['trainNumber'] in (table['trainNumber'], table.get('realtimeTrainNumber'))
             assert boarding == instant(observation['expectedBoardingAt'])
+            scheduled_origin_arrival = instant(table.get('boardingStationArrivalAt') or table['boardingAt'])
+            assert scheduled_origin_arrival <= raw_boarding
+            if timing['basis'] == 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME':
+                age = (instant(worker['evaluatedAt']) - instant(timing['observationSourceUpdatedAt'])).total_seconds()
+                assert -5 <= age <= 120 and arrival > boarding
+            elif timing['basis'] == 'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING':
+                assert boarding < scheduled_origin_arrival and arrival == raw_arrival
+            else:
+                assert arrival - raw_arrival == boarding - scheduled_origin_arrival
         else:
             assert timing['basis'] == 'TIMETABLE' and boarding == raw_boarding and arrival == raw_arrival
     walks = [s for s in route['segments'] if s['kind'] == 'WALK']
@@ -289,8 +302,29 @@ def verify_values(worker, public):
             'walkingBoundaryAudit': walking}
 
 
+def verify_odsay_boundary_geometry(geometry, scope):
+    assert geometry['endpointBasis'] == 'PROVIDER_PATH_ENDPOINTS'
+    assert geometry.get('pathEvidence') is None
+    pins = geometry['providerQueryEndpoints']
+    start, end, query_start, query_end = (
+        walking_audit.coordinate(point) for point in (geometry['from'], geometry['to'], pins['start'], pins['end'])
+    )
+    assert all(point is not None for point in (start, end, query_start, query_end))
+    assert type(geometry['distanceMeters']) is int and 1 <= geometry['distanceMeters'] <= 3000
+
+    def offset(point, pin):
+        return math.hypot(point[0] - pin[0], (point[1] - pin[1]) * math.cos(math.radians(pin[0]))) * 111_195
+
+    assert offset(start, query_start) <= 5
+    end_offset = offset(end, query_end)
+    if end_offset > 5:
+        original = walking_audit.coordinate(pins.get('originalEgressEndpoint'))
+        assert scope == 'EGRESS' and original is not None and end_offset < 5.5
+        assert all(abs(a - b) <= 1e-7 for a, b in zip(end, original))
+
+
 def verify_odsay_minute_walking(route):
-    """Audit minute fallback / explicit full-path WALK seconds without assuming platform coverage."""
+    """Audit minute fallback and verified walk seconds without assuming platform coverage."""
     segments = route['segments']
     assert [s['sequence'] for s in segments] == list(range(len(segments)))
     cursor = instant(route['departureAt'])
@@ -298,23 +332,39 @@ def verify_odsay_minute_walking(route):
     assert len(ride_indices) >= 2
     walking_minutes = 0
     refined_seconds = []
+    boundary_seconds = []
     previous_arrival = None
     pending_walk = 0
     for index, segment in enumerate(segments):
         if segment['kind'] == 'WALK':
+            scope = 'ACCESS' if index < ride_indices[0] else 'EGRESS' if index > ride_indices[-1] else 'TRANSFER'
+            assert segment['walkingScope'] == scope
             minutes = segment['durationMinutes']
             assert type(minutes) is int and minutes >= 0
             seconds = segment.get('durationSeconds')
             timing_evidence = segment.get('walkingTiming')
+            geometry = segment.get('walkingGeometry')
+            boundary_verified = False
             if seconds is not None:
                 assert type(seconds) is int and seconds > 0 and math.ceil(seconds / 60) == minutes
                 assert type(timing_evidence) is dict
-                assert timing_evidence['source'] == 'ODSAY_FULL_PATH_SECONDS'
-                assert timing_evidence['sameOrderedPathVerified'] is True
                 assert timing_evidence['movementSeconds'] == seconds
                 assert instant(timing_evidence['fetchedAt']) <= instant(route['departureAt'])
-                assert timing_evidence['originalDurationMinutes'] == minutes
-                refined_seconds.append(seconds)
+                source = timing_evidence['source']
+                original_minutes = timing_evidence['originalDurationMinutes']
+                if source == 'ODSAY_FULL_PATH_SECONDS':
+                    assert timing_evidence['sameOrderedPathVerified'] is True
+                    assert original_minutes == minutes
+                    refined_seconds.append(seconds)
+                else:
+                    assert source in ('ODSAY_ENTRANCE_WALK_SECONDS', 'ODSAY_EXIT_WALK_SECONDS')
+                    assert scope == ('ACCESS' if source == 'ODSAY_ENTRANCE_WALK_SECONDS' else 'EGRESS')
+                    assert timing_evidence['sameOrderedPathVerified'] is False
+                    assert type(original_minutes) is int and 0 <= original_minutes <= minutes
+                    assert seconds <= 1800 and isinstance(geometry, dict)
+                    verify_odsay_boundary_geometry(geometry, scope)
+                    boundary_verified = True
+                    boundary_seconds.append({'scope': scope, 'seconds': seconds})
             else:
                 seconds = minutes * 60
                 if timing_evidence is not None:
@@ -324,8 +374,7 @@ def verify_odsay_minute_walking(route):
                 reference = timing_evidence['transferReference']
                 assert reference['application'] == 'REFERENCE_ONLY_DIRECTION_AND_PATH_UNVERIFIED'
                 assert reference['provider'] == 'seoulmetro' and reference['datasetDate'] == '2025-03-31'
-            geometry = segment.get('walkingGeometry')
-            if geometry is not None:
+            if geometry is not None and not boundary_verified:
                 assert geometry['endpointBasis'] == 'UNKNOWN'
                 assert geometry.get('from') is None and geometry.get('to') is None
                 meters = geometry.get('distanceMeters')
@@ -346,8 +395,6 @@ def verify_odsay_minute_walking(route):
                         assert type(point['lat']) in (int, float) and math.isfinite(point['lat']) and -90 <= point['lat'] <= 90
                         assert type(point['lng']) in (int, float) and math.isfinite(point['lng']) and -180 <= point['lng'] <= 180
                 assert count <= 512
-            scope = 'ACCESS' if index < ride_indices[0] else 'EGRESS' if index > ride_indices[-1] else 'TRANSFER'
-            assert segment['walkingScope'] == scope
             cursor += dt.timedelta(seconds=seconds)
             pending_walk += seconds
             walking_minutes += minutes
@@ -372,9 +419,17 @@ def verify_odsay_minute_walking(route):
     assert cursor == instant(route['arrivalAt'])
     total = (cursor - instant(route['departureAt'])).total_seconds()
     assert math.ceil(total / 60) == route['totalMinutes']
-    return {'classification': 'MIXED_RESOLUTION_WITH_FULL_PATH_REFINEMENT_EVIDENCE' if refined_seconds else 'MINUTE_RESOLUTION_WALKING_MODEL_NOT_EXACT_SOURCE_SECONDS',
-            'timingResult': 'PASSED', 'sourceWalkingResolutionSeconds': None if refined_seconds else 60,
+    has_second_resolution = bool(refined_seconds or boundary_seconds)
+    if boundary_seconds:
+        classification = 'WALKING_REFINEMENT_WITH_VERIFIED_ENTRANCE_OR_EXIT'
+    elif refined_seconds:
+        classification = 'MIXED_RESOLUTION_WITH_FULL_PATH_REFINEMENT_EVIDENCE'
+    else:
+        classification = 'MINUTE_RESOLUTION_WALKING_MODEL_NOT_EXACT_SOURCE_SECONDS'
+    return {'classification': classification,
+            'timingResult': 'PASSED', 'sourceWalkingResolutionSeconds': None if has_second_resolution else 60,
             'walkingMinutes': walking_minutes, 'adoptedFullPathWalkingSeconds': refined_seconds,
+            'adoptedEntranceExitWalkingSeconds': boundary_seconds,
             'exactSourceWalkingSecondsVerified': False,
             'stationInteriorCoverageVerified': False, 'realWorldAccuracyVerified': False}
 
@@ -385,6 +440,7 @@ def verify_comparison_export(worker, prediction):
     assert prediction['id'] == f"worker-{worker['scheduleId']}-{worker['latestHistoryId']}"
     assert prediction['observedAt'] == worker['evaluatedAt']
     assert prediction['requestedDepartureAt'] == prediction['departureAt'] == route['departureAt']
+    assert prediction.get('comparisonRequestedDepartureAt') == worker.get('comparisonRequestedDepartureAt')
     assert prediction['arrivalAt'] == route['arrivalAt'] == worker['predictedArrivalAt']
     assert prediction['protectedAlarmDepartureAt'] == worker['recommendedDepartureAt']
     assert prediction['realWorldAccuracyVerified'] is prediction['simulatorE2eVerified'] is False
@@ -401,6 +457,12 @@ def verify_comparison_export(worker, prediction):
     for ride, timing in zip(prediction['rides'], rides):
         table = timing['timetable']
         assert ride['boardingAt'] == timing['predictedBoardingAt']
+        station_arrival = timing['basis'] in (
+            'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME',
+            'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
+            'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
+        )
+        assert ride['boardingClockKind'] == ('STATION_ARRIVAL_PREDICTION' if station_arrival else 'BOARDING')
         assert ride['arrivalAt'] == timing['predictedArrivalAt']
         assert [ride[k] for k in ('line', 'from', 'to', 'direction', 'serviceClass')] == [
             table[k] for k in ('line', 'fromStationCode', 'toStationCode', 'directionCode', 'serviceClass')]
@@ -415,9 +477,10 @@ def verify_comparison_export(worker, prediction):
     return {'result': 'PASSED', 'mapAgreementVerified': False, 'actualTripAccuracyVerified': False}
 
 
-def verify(root, require_comparison_evidence=False):
+def verify(root, require_comparison_evidence=False, api_base=PRIVATE_API_BASE):
     root = root.resolve(strict=True)
     assert str(root).startswith('/private/tmp/nolate-eta-real-e2e.')
+    assert api_base in (PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE)
     results = []
     previous = None
     for path in sorted(root.glob('evaluation-*.json'), key=lambda p: int(p.stem.split('-')[-1])):
@@ -446,7 +509,7 @@ def verify(root, require_comparison_evidence=False):
                 assert summary['failedTests'] == summary['skippedTests'] == 0 and summary['devicesAndConfigurations']
                 assert all(x['device']['deviceId'] == DEVICE for x in summary['devicesAndConfigurations'])
                 metadata = json.loads((diagnostic_ui / 'metadata.json').read_text())
-                assert metadata['realIsolated'] is True and metadata['apiBase'] == 'http://127.0.0.1:5523'
+                assert metadata['realIsolated'] is True and metadata['apiBase'] == api_base
                 assert metadata['method'] == 'testVerifyIsolatedRealProviderDiagnostic' and metadata['allowSave'] is False
                 assert 'ETA_REAL_DIAGNOSTIC_UI_VERIFIED: ' in (diagnostic_ui / 'run.log').read_text()
                 results.append({'index': index, 'result': 'DIAGNOSTIC_UI_PASSED_NOT_ETA_ACCEPTANCE', **record})
@@ -471,9 +534,14 @@ def verify(root, require_comparison_evidence=False):
         assert summary['failedTests'] == summary['skippedTests'] == 0
         assert all(x['device']['deviceId'] == DEVICE for x in summary['devicesAndConfigurations'])
         metadata = json.loads((ui / 'metadata.json').read_text())
-        assert metadata['realIsolated'] is True and metadata['apiBase'] == 'http://127.0.0.1:5523'
+        assert metadata['realIsolated'] is True and metadata['apiBase'] == api_base
         assert metadata['method'] == 'testVerifyIsolatedRealProviderEta' and metadata['allowSave'] is False
-        assert 'ETA_REAL_ISOLATED_UI_VERIFIED: ' in (ui / 'run.log').read_text()
+        log = (ui / 'run.log').read_text()
+        assert 'ETA_REAL_ISOLATED_UI_VERIFIED: ' in log
+        if (api_base == REAL_ALTERNATE_API_BASE and record['journeyProvider'] == 'odsay'
+                and worker['effectiveSnapshot']['routeChanged'] is False):
+            assert 'ETA_REAL_ODSay_MATCHED_RAIL_VERIFIED' in log
+            record['matchedRideClocksVerified'] = True
         results.append({'index': index, 'result': 'PASSED', 'resultBundle': str(ui / 'result.xcresult'), **record})
     passed = sum(x['result'] == 'PASSED' for x in results)
     streak = longest_accepted_ui_streak(results)
@@ -493,7 +561,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', type=Path)
     parser.add_argument('--require-comparison-evidence', action='store_true')
+    parser.add_argument('--api-base', choices=(PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE), default=PRIVATE_API_BASE)
     args = parser.parse_args()
-    result = verify(args.root, require_comparison_evidence=args.require_comparison_evidence)
+    result = verify(args.root, require_comparison_evidence=args.require_comparison_evidence, api_base=args.api_base)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     raise SystemExit(verification_exit_code(result))

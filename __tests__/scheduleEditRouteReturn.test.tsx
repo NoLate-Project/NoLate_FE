@@ -1,6 +1,7 @@
 import React from "react";
+import { getScheduleRouteCardScrollOffset } from "../src/modules/schedule/components/form/scheduleRouteCardPosition";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
-import { Alert, Animated, StyleSheet, Switch } from "react-native";
+import { Alert, Animated, Keyboard, StyleSheet, Switch, Text } from "react-native";
 
 import ScheduleEditScreen, {
     SCHEDULE_EDIT_DARK_PAGE_BACKGROUND,
@@ -10,6 +11,7 @@ import {
     setRoutePlannerResult,
 } from "../src/modules/schedule/routePlannerSession";
 import type { ScheduleItem, ScheduleTravelPlan } from "../src/modules/schedule/types";
+import { scheduleFormCategoryManagerRoute } from "../src/modules/schedule/components/form/useCategoryManagementReturn";
 
 const mockCategory = { id: "work", title: "업무", color: "#FF3B30" };
 const mockOriginalRoute = {
@@ -131,6 +133,10 @@ jest.mock("../src/api/schedule", () => ({
     updateSchedule: (...args: unknown[]) => mockUpdateSchedule(...args),
     deleteSchedule: (...args: unknown[]) => mockDeleteSchedule(...args),
 }));
+jest.mock("../src/api/api", () => ({
+    __esModule: true,
+    default: { post: jest.fn().mockResolvedValue({ data: { success: true, data: { preview: null } } }) },
+}));
 jest.mock("../src/modules/auth/authStorage", () => ({
     getAuthMember: () => mockGetAuthMember(),
 }));
@@ -185,8 +191,10 @@ jest.mock("../src/modules/schedule/components/form/CategorySelectBox", () => {
 jest.mock("../src/modules/schedule/components/form/LocationInputRow", () => {
     const mockReact = require("react");
     const { Pressable: MockPressable } = require("react-native");
-    return ({ onPress, footer }: { onPress: () => void; footer?: React.ReactNode }) => mockReact.createElement(MockPressable, {
+    return ({ onPress, footer, variant }: { onPress: () => void; footer?: React.ReactNode; variant?: string }) => mockReact.createElement(MockPressable, {
         accessibilityLabel: "이동 경로 수정",
+        testID: "mock-location-input",
+        variant,
         onPress,
     }, footer);
 });
@@ -227,6 +235,18 @@ jest.mock("../src/ui/BrandedLoader", () => {
     return { BrandedLoadingState: () => mockReact.createElement(MockView) };
 });
 
+describe("route card position after applying a route", () => {
+    test.each([
+        [116, 100, 360, 130, 120, 116],
+        [116, 100, 360, 92, 120, 100],
+        [116, 100, 360, 384, 120, 168],
+        [116, 100, 150, 180, 200, 188],
+        [116, 100, 0, 180, 200, 116],
+    ])("restores scroll from %s in viewport %s/%s with card %s/%s to %s", (offset, top, height, cardTop, cardHeight, expected) => {
+        expect(getScheduleRouteCardScrollOffset(offset, top, height, cardTop, cardHeight)).toBe(expected);
+    });
+});
+
 describe("ScheduleEditScreen route return", () => {
     let renderer: ReactTestRenderer | undefined;
 
@@ -265,6 +285,17 @@ describe("ScheduleEditScreen route return", () => {
         jest.restoreAllMocks();
     });
 
+    test("카테고리 관리는 작성 폼으로 돌아갈 캘린더 범위를 전달한다", () => {
+        expect(scheduleFormCategoryManagerRoute(null)).toEqual({
+            pathname: "/schedule/categories",
+            params: { returnTo: "schedule-form" },
+        });
+        expect(scheduleFormCategoryManagerRoute(27, "함께 일정")).toEqual({
+            pathname: "/schedule/categories",
+            params: { returnTo: "schedule-form", calendarId: "27", calendarTitle: "함께 일정" },
+        });
+    });
+
     test("개발용 시뮬레이터 미리보기에서는 서버 상세 재조회를 건너뛴다", async () => {
         mockRouteParams = { id: "1", preview: "1" };
 
@@ -297,7 +328,7 @@ describe("ScheduleEditScreen route return", () => {
         ).backgroundColor).toBe("#2C2C2E");
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "schedule-edit-datetime-card" }).props.style,
-        ).backgroundColor).toBe("#2C2C2E");
+        ).backgroundColor).toBe("#1C1C1E");
         expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholderTextColor)
             .toBe("rgba(235,235,245,0.50)");
     });
@@ -324,11 +355,42 @@ describe("ScheduleEditScreen route return", () => {
         expect(renderer!.root.findAllByProps({ children: "일정 정보" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ children: "시간 없이 날짜로만 일정을 표시해요." })).toHaveLength(0);
         expect(renderer!.root.findByProps({ testID: "schedule-edit-datetime-card" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ testID: "schedule-edit-start-row" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ testID: "schedule-edit-end-row" })).toBeTruthy();
+        const formSections = renderer!.root.findAll(node =>
+            node.props.testID === "mock-location-input" || node.props.testID === "schedule-edit-datetime-card",
+        ).map(node => node.props.testID);
+        expect(formSections).toContain("mock-location-input");
+        expect(formSections.indexOf("schedule-edit-datetime-card"))
+            .toBeLessThan(formSections.indexOf("mock-location-input"));
+        expect(renderer!.root.findByProps({ testID: "mock-location-input" }).props.variant).toBe("edit");
+        for (const row of ["start", "end"]) {
+            const dateTimeRow = renderer!.root.findByProps({ testID: `schedule-edit-${row}-row` });
+            const fields = dateTimeRow.findAll(node =>
+                typeof node.props.style === "function"
+                && /^(시작|종료) (날짜|시간) /.test(node.props.accessibilityLabel ?? ""),
+            );
+            expect(fields).toHaveLength(2);
+            for (const field of fields) {
+                expect(StyleSheet.flatten(field.props.style({ pressed: false }))).toMatchObject({
+                    minHeight: 44,
+                    borderRadius: 10,
+                    backgroundColor: "#F7F7F8",
+                });
+            }
+            expect(dateTimeRow.findByProps({ name: "calendar-outline" }).props.accessible).toBe(false);
+            expect(dateTimeRow.findByProps({ name: "time-outline" }).props.accessible).toBe(false);
+            const dateValue = dateTimeRow.findAllByType(Text).find(({ props }) =>
+                typeof props.children === "string" && /^\d{4}\./.test(props.children),
+            );
+            expect(StyleSheet.flatten(dateValue?.props.style)).toMatchObject({
+                color: "#000000",
+                fontSize: 13,
+                fontVariant: ["tabular-nums"],
+            });
+        }
+        const endToggle = renderer!.root.findByProps({ testID: "schedule-edit-end-toggle-row" });
+        expect(endToggle.findByProps({ accessibilityLabel: "종료 시간" })).toBeTruthy();
         expect(renderer!.root.findByProps({ testID: "schedule-edit-end-row" })
-            .findAllByProps({ name: "chevron-forward" })).toHaveLength(1);
-        expect(renderer!.root.findByProps({ accessibilityLabel: "종료 시간" })).toBeTruthy();
+            .findAllByProps({ accessibilityLabel: "종료 시간" })).toHaveLength(0);
         expect(renderer!.root.findByProps({ testID: "schedule-edit-delete-action" })).toBeTruthy();
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "schedule-edit-page" }).props.style,
@@ -368,6 +430,15 @@ describe("ScheduleEditScreen route return", () => {
                 transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
             });
         });
+        await act(async () => endToggle.findByProps({ accessibilityLabel: "종료 시간" }).props.onValueChange(false));
+        expect(renderer!.root.findAllByProps({ testID: "schedule-edit-end-row" })).toHaveLength(0);
+        await act(async () => endToggle.findByProps({ accessibilityLabel: "종료 시간" }).props.onValueChange(true));
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-end-row" })).toBeTruthy();
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "종일 일정" }).props.onValueChange(true));
+        expect(renderer!.root.findAllByProps({ testID: "schedule-edit-end-toggle-row" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-end-row" }).findAll(node =>
+            typeof node.props.accessibilityLabel === "string" && node.props.accessibilityLabel.startsWith("마지막 날 "),
+        ).length).toBeGreaterThan(0);
     });
 
     test("제목과 메모는 포커스된 입력 필드만 흰 면과 강조 테두리로 구분한다", async () => {
@@ -581,6 +652,41 @@ describe("ScheduleEditScreen route return", () => {
         });
     });
 
+    test("키보드가 열린 동안 경로 버튼을 반복해서 눌러도 키보드가 닫힌 뒤 한 번만 이동한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+        const addListener = Keyboard.addListener.bind(Keyboard);
+        let remove: jest.SpyInstance | undefined;
+        let finishKeyboardHide: (() => void) | undefined;
+        jest.spyOn(Keyboard, "isVisible").mockReturnValue(true);
+        const dismiss = jest.spyOn(Keyboard, "dismiss").mockImplementation(() => undefined);
+        jest.spyOn(Keyboard, "addListener").mockImplementation((event, listener) => {
+            finishKeyboardHide = () => listener({
+                duration: 0,
+                easing: "keyboard",
+                endCoordinates: { screenX: 0, screenY: 874, width: 402, height: 0 },
+            });
+            const subscription = addListener(event, listener);
+            remove = jest.spyOn(subscription, "remove");
+            return subscription;
+        });
+
+        await act(async () => { renderer = TestRenderer.create(<ScheduleEditScreen />); });
+        const routeButton = renderer!.root.findByProps({ accessibilityLabel: "이동 경로 수정" });
+        await act(async () => {
+            routeButton.props.onPress();
+            routeButton.props.onPress();
+        });
+        expect(dismiss).toHaveBeenCalledTimes(1);
+        expect(mockRouterPush).not.toHaveBeenCalled();
+
+        await act(async () => {
+            finishKeyboardHide?.();
+            finishKeyboardHide?.();
+        });
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(mockRouterPush).toHaveBeenCalledTimes(1);
+    });
+
     test("경로 선택을 취소해도 기존 경로와 출발 알림 초안을 그대로 저장한다", async () => {
         mockGetSchedule.mockResolvedValue(mockItem);
         mockUpdateSchedule.mockImplementation(async (_id, payload) => ({
@@ -631,6 +737,32 @@ describe("ScheduleEditScreen route return", () => {
             notificationIntervalMinutes: 10,
             alertMode: "ALARM",
         }));
+    });
+
+    test("같은 경로를 다시 적용하면 새 경로 안내가 나타나지 않는다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+        const tree = () => <ScheduleEditScreen />;
+        await act(async () => {
+            renderer = TestRenderer.create(tree());
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "이동 경로 수정" }).props.onPress();
+        });
+        const sessionId = mockRouterPush.mock.calls[0][0].params.sessionId;
+        mockPathname = "/schedule/route-select";
+        await act(async () => renderer!.update(tree()));
+        setRoutePlannerResult(sessionId, {
+            origin: mockItem.origin,
+            destination: mockItem.destination,
+            travelMode: "TRANSIT",
+            travelMinutes: 36,
+            departureAt: mockItem.departAt,
+            route: { ...mockOriginalRoute, id: "same-candidate-new-ranking" },
+        });
+        mockPathname = "/schedule/1";
+        await act(async () => renderer!.update(tree()));
+
+        expect(renderer!.root.findAllByProps({ children: "일정을 저장하면 새 경로가 반영돼요." })).toHaveLength(0);
     });
 
     test("느린 상세 재조회와 무관하게 경로 변경 직후 저장할 수 있다", async () => {

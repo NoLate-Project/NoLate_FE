@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 import React from "react";
-import { AccessibilityInfo, ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar, Text, TextInput, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar, Text, TextInput, View, useWindowDimensions } from "react-native";
+import Animated, { FadeIn, FadeInDown, ReduceMotion } from "react-native-reanimated";
 
 import CalendarGlassSurface from "../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import ProfileRouteAccessibilityRoot from "../src/modules/profile/ProfileRouteAccessibilityRoot";
@@ -14,6 +16,13 @@ import { useProfileScreen } from "../src/routeSupport/useProfileScreen";
 import { useScreenFirstPaintPerformance } from "../src/modules/performance/useScreenFirstPaintPerformance";
 import ScreenFirstPaintShell from "../src/modules/performance/ScreenFirstPaintShell";
 import { useDeferredScreenContent } from "../src/modules/performance/useDeferredScreenContent";
+import { usePreMountedSceneActivity } from "../src/modules/performance/preMountedSceneActivity";
+
+const profileDetailEntry = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+const nameSheetBackdropEntry = FadeIn.duration(200).reduceMotion(ReduceMotion.System);
+const nameSheetEntry = FadeInDown.duration(200)
+    .withInitialValues({ transform: [{ translateY: 14 }] })
+    .reduceMotion(ReduceMotion.System);
 
 /** 프로필 정보와 계정·캘린더·앱 설정을 섹션별로 표시하는 화면입니다. */
 export default function ProfileRoute() {
@@ -32,16 +41,53 @@ export default function ProfileRoute() {
 }
 
 export function ProfileScreen() {
+    const { fontScale } = useWindowDimensions();
+    const compactProfile = fontScale <= 1.35;
+    const routeFocused = useIsFocused();
+    const sceneActivity = usePreMountedSceneActivity();
+    const profileVisible = sceneActivity ?? routeFocused;
     const {
         insets, colors, mode, profile, account, calendarConnection, calendarConnectionError, signingOut, withdrawing,
         loadingProfile, editingProfile, setEditingProfile, savingProfile, draftName, setDraftName, memberIdCopied, profileError,
+        savedNameRevision, canSaveName,
         accountAction, accountActionError, passwords, passwordChanged, savingPassword, withdrawalNeedsPassword, withdrawalCommitted,
         openAccountAction, closeAccountAction, changeAccountPasswordField, confirmSignOut, confirmWithdrawal, savePasswordChange,
         hasOpenModal, displayAccountName, isNaverAccount, displayEmail, displayLoginType, displayMemberId, profileSummary, avatarInitial,
         loadProfile, openProfileEditor, copyMemberId, saveProfile, goBackToSchedule, openCalendarOnboarding, openPlacesSettings,
-        openPrivacyPolicy, openTermsOfService,
-    } = useProfileScreen();
+        openPrivacyPolicy, openTermsOfService, defaultOriginName,
+    } = useProfileScreen(profileVisible);
     const [importHistoryExpanded, setImportHistoryExpanded] = React.useState(false);
+    const privacyLink = React.useRef<View>(null);
+    const termsLink = React.useRef<View>(null);
+    const calendarImportLink = React.useRef<View>(null);
+    const placesLink = React.useRef<View>(null);
+    const returnFocus = React.useRef<typeof privacyLink | null>(null);
+    const nameEditButton = React.useRef<View>(null);
+    const nameInput = React.useRef<TextInput>(null);
+    const nameEditorWasOpen = React.useRef(false);
+    const [nameInputFocused, setNameInputFocused] = React.useState(false);
+    const [revealedNameRevision, setRevealedNameRevision] = React.useState(0);
+    const restoreNameEditorFocus = React.useCallback(() => {
+        if (!compactProfile || !nameEditorWasOpen.current) return;
+        nameEditorWasOpen.current = false;
+        setNameInputFocused(false);
+        setRevealedNameRevision(savedNameRevision);
+        if (nameEditButton.current) AccessibilityInfo.sendAccessibilityEvent?.(nameEditButton.current, "focus");
+    }, [compactProfile, savedNameRevision]);
+    React.useEffect(() => {
+        if (Platform.OS === "ios" || editingProfile || !nameEditorWasOpen.current) return;
+        const frame = requestAnimationFrame(restoreNameEditorFocus);
+        return () => cancelAnimationFrame(frame);
+    }, [editingProfile, restoreNameEditorFocus]);
+    React.useEffect(() => {
+        if (!profileVisible || !returnFocus.current) return;
+        const frame = requestAnimationFrame(() => {
+            const target = returnFocus.current?.current;
+            returnFocus.current = null;
+            if (target) AccessibilityInfo.sendAccessibilityEvent(target, "focus");
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [profileVisible]);
     const passwordButton = React.useRef<React.ElementRef<typeof Pressable>>(null);
     const signOutButton = React.useRef<React.ElementRef<typeof Pressable>>(null);
     const withdrawalButton = React.useRef<React.ElementRef<typeof Pressable>>(null);
@@ -62,6 +108,85 @@ export function ProfileScreen() {
     if (loadingProfile && !account && !profile) {
         return <ProfileLoadingView colors={colors} dark={mode === "dark"} />;
     }
+    const editName = (
+        <Pressable
+            ref={nameEditButton}
+            accessibilityRole="button"
+            accessibilityLabel="표시 이름 수정"
+            accessibilityState={{ disabled: !profile?.memberId }}
+            disabled={!profile?.memberId}
+            onPress={() => {
+                nameEditorWasOpen.current = compactProfile;
+                openProfileEditor();
+            }}
+            style={({ pressed }) => [
+                compactProfile ? styles.nameEditButton : styles.backButton,
+                { opacity: !profile?.memberId ? 0.38 : pressed ? 0.55 : 1 },
+            ]}
+        >
+            <Ionicons name="pencil-outline" size={19} color={colors.textPrimary} />
+        </Pressable>
+    );
+    const nameRevision = compactProfile ? revealedNameRevision : savedNameRevision;
+    const nameInputAccent = mode === "dark" ? "#8CB4FF" : "#2563EB";
+    const disabledNameButton = compactProfile && !canSaveName && !savingProfile;
+    const connectionIconBackground = compactProfile
+        ? (mode === "dark" ? "#21314D" : "#EAF1FF")
+        : colors.selectedDayBg;
+    const connectionIconColor = compactProfile
+        ? (mode === "dark" ? "#91B8FF" : "#2767E8")
+        : colors.selectedDayText;
+    const importActionTitle = compactProfile
+        ? calendarConnection ? "일정 더 가져오기" : calendarConnectionError ? "다시 확인" : "일정 가져오기"
+        : "연동 관리";
+    const importAction = (
+        <Pressable
+            ref={calendarImportLink}
+            accessibilityRole="button"
+            accessibilityLabel={compactProfile ? importActionTitle : "캘린더 연동 관리"}
+            accessibilityHint={calendarConnection ? "연결할 캘린더를 다시 선택하거나 일정을 추가로 가져옵니다" : undefined}
+            onPress={calendarConnectionError && !calendarConnection ? loadProfile : () => {
+                returnFocus.current = calendarImportLink;
+                openCalendarOnboarding();
+            }}
+            style={({ pressed }) => [
+                styles.calendarManageButton,
+                compactProfile && styles.compactCalendarAction,
+                { borderColor: colors.border, backgroundColor: colors.inputBackground, opacity: pressed ? 0.62 : 1 },
+            ]}
+        >
+            {!compactProfile && <Ionicons name="settings-outline" size={17} color={colors.textPrimary} />}
+            <Text style={[styles.calendarManageButtonText, { color: colors.textPrimary }]}>{importActionTitle}</Text>
+            <Ionicons name="chevron-forward-outline" size={17} color={colors.textSecondary} />
+        </Pressable>
+    );
+    const identity = (
+        <>
+            <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={[
+                    styles.avatar, compactProfile && styles.compactAvatar,
+                    mode === "dark" ? styles.avatarDark : styles.avatarLight,
+                ]}
+            >
+                <Text numberOfLines={1} adjustsFontSizeToFit style={[
+                    styles.avatarText, compactProfile && styles.compactAvatarText,
+                    mode === "dark" ? styles.avatarTextDark : styles.avatarTextLight,
+                ]}>{avatarInitial}</Text>
+            </View>
+            <View style={styles.profileCardText}>
+                <Animated.Text key={nameRevision} entering={nameRevision ? profileDetailEntry : undefined}
+                    numberOfLines={1} style={[styles.profileName, { color: colors.textPrimary }]}>
+                    {displayAccountName}
+                </Animated.Text>
+                <Text numberOfLines={1} style={[styles.profileMeta, { color: colors.textSecondary }]}>
+                    {compactProfile ? (account?.loginType ? `${displayLoginType} 계정` : displayLoginType) : profileSummary}
+                </Text>
+            </View>
+            {compactProfile && editName}
+        </>
+    );
 
     return (
         <ProfileRouteAccessibilityRoot style={[styles.root, { backgroundColor: colors.background }]}>
@@ -89,25 +214,13 @@ export function ProfileScreen() {
 
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>프로필</Text>
 
-                <CalendarGlassSurface
+                {compactProfile ? <View style={styles.headerSpacer} /> : <CalendarGlassSurface
                     interactive
                     variant="toolbar"
                     style={[styles.backGlass, { borderColor: colors.border }]}
                 >
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="표시 이름 수정"
-                        accessibilityState={{ disabled: !profile?.memberId }}
-                        disabled={!profile?.memberId}
-                        onPress={openProfileEditor}
-                        style={({ pressed }) => [
-                            styles.backButton,
-                            { opacity: !profile?.memberId ? 0.38 : pressed ? 0.55 : 1 },
-                        ]}
-                    >
-                        <Ionicons name="pencil-outline" size={19} color={colors.textPrimary} />
-                    </Pressable>
-                </CalendarGlassSurface>
+                    {editName}
+                </CalendarGlassSurface>}
 
             </View>
 
@@ -118,10 +231,11 @@ export function ProfileScreen() {
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={[
                     styles.content,
+                    compactProfile && styles.compactContent,
                     { paddingBottom: Math.max(insets.bottom, 18) + 20 },
                 ]}
             >
-                <CalendarGlassSurface
+                {compactProfile ? <View style={styles.compactIdentity}>{identity}</View> : <CalendarGlassSurface
                     variant="card"
                     tone="solidCard"
                     style={[
@@ -129,40 +243,8 @@ export function ProfileScreen() {
                         { borderColor: colors.border },
                     ]}
                 >
-                    <View
-                        accessibilityElementsHidden
-                        importantForAccessibility="no-hide-descendants"
-                        style={[
-                            styles.avatar,
-                            mode === "dark" ? styles.avatarDark : styles.avatarLight,
-                        ]}
-                    >
-                        <Text
-                            numberOfLines={1}
-                            adjustsFontSizeToFit
-                            style={[
-                                styles.avatarText,
-                                mode === "dark" ? styles.avatarTextDark : styles.avatarTextLight,
-                            ]}
-                        >
-                            {avatarInitial}
-                        </Text>
-                    </View>
-                    <View style={styles.profileCardText}>
-                        <Text
-                            numberOfLines={1}
-                            style={[styles.profileName, { color: colors.textPrimary }]}
-                        >
-                            {displayAccountName}
-                        </Text>
-                        <Text
-                            numberOfLines={1}
-                            style={[styles.profileMeta, { color: colors.textSecondary }]}
-                        >
-                            {profileSummary}
-                        </Text>
-                    </View>
-                </CalendarGlassSurface>
+                    {identity}
+                </CalendarGlassSurface>}
 
                 {profileError ? (
                     <Pressable
@@ -181,59 +263,73 @@ export function ProfileScreen() {
                 ) : null}
 
                 <Modal
-                    animationType="fade"
+                    animationType={compactProfile ? "none" : "fade"}
                     transparent
                     visible={editingProfile}
                     onRequestClose={() => !savingProfile && setEditingProfile(false)}
+                    onShow={() => {
+                        if (compactProfile && nameInput.current) AccessibilityInfo.sendAccessibilityEvent?.(nameInput.current, "focus");
+                    }}
+                    onDismiss={restoreNameEditorFocus}
                     accessibilityViewIsModal
                 >
                     <KeyboardAvoidingView
                         behavior={Platform.OS === "ios" ? "padding" : "height"}
                         style={styles.modalRoot}
                     >
-                        <Pressable
-                            accessible={false}
-                            accessibilityElementsHidden
-                            importantForAccessibility="no-hide-descendants"
-                            disabled={savingProfile}
-                            onPress={() => setEditingProfile(false)}
-                            style={styles.modalBackdrop}
-                        />
-                        <ScrollView
+                        <Animated.View entering={compactProfile ? nameSheetBackdropEntry : undefined} style={styles.modalBackdropPosition}>
+                            <Pressable
+                                accessible={false}
+                                accessibilityElementsHidden
+                                importantForAccessibility="no-hide-descendants"
+                                disabled={savingProfile}
+                                onPress={() => setEditingProfile(false)}
+                                style={styles.modalBackdrop}
+                            />
+                        </Animated.View>
+                        <Animated.ScrollView
+                            entering={compactProfile ? nameSheetEntry : undefined}
+                            testID="profile-name-sheet"
+                            accessibilityViewIsModal
                             bounces={false}
                             keyboardShouldPersistTaps="handled"
                             showsVerticalScrollIndicator={false}
                             style={[
                                 styles.editSheetScroll,
+                                compactProfile && styles.compactNameSheet,
                                 { backgroundColor: colors.background, borderColor: colors.border },
                             ]}
-                            contentContainerStyle={styles.editSheetScrollContent}
+                            contentContainerStyle={[styles.editSheetScrollContent, compactProfile && styles.compactNameSheetContent]}
                         >
+                            {compactProfile && <View style={[styles.nameSheetHandle, { backgroundColor: colors.border }]} />}
                             <View style={styles.editSheetHeader}>
                                 <View>
                                     <Text style={[styles.editSheetTitle, { color: colors.textPrimary }]}>표시 이름 수정</Text>
-                                    <Text style={[styles.editSheetCaption, { color: colors.textSecondary }]}>프로필에 표시할 이름을 변경합니다.</Text>
+                                    {!compactProfile && <Text style={[styles.editSheetCaption, { color: colors.textSecondary }]}>프로필에 표시할 이름을 변경합니다.</Text>}
                                 </View>
                                 <Pressable
                                     accessibilityRole="button"
                                     accessibilityLabel="닫기"
                                     disabled={savingProfile}
                                     onPress={() => setEditingProfile(false)}
-                                    style={styles.modalCloseButton}
+                                    style={[styles.modalCloseButton, compactProfile && styles.compactNameCloseButton]}
                                 >
                                     <Ionicons name="close-outline" size={22} color={colors.textPrimary} />
                                 </Pressable>
                             </View>
 
-                            <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>이름</Text>
+                            <Text style={[styles.inputLabel, compactProfile && styles.compactNameLabel, { color: colors.textSecondary }]}>이름</Text>
                             <TextInput
+                                ref={nameInput}
                                 accessibilityLabel="표시 이름"
                                 autoCapitalize="none"
                                 autoCorrect={false}
-                                autoFocus
+                                autoFocus={!compactProfile}
                                 editable={!savingProfile}
                                 maxLength={20}
                                 onChangeText={setDraftName}
+                                onFocus={() => setNameInputFocused(true)}
+                                onBlur={() => setNameInputFocused(false)}
                                 onSubmitEditing={saveProfile}
                                 placeholder="표시할 이름"
                                 placeholderTextColor={colors.textSecondary}
@@ -241,7 +337,7 @@ export function ProfileScreen() {
                                 selectionColor={colors.textPrimary}
                                 style={[
                                     styles.nameInput,
-                                    { color: colors.textPrimary, borderColor: colors.border },
+                                    { color: colors.textPrimary, borderColor: compactProfile && nameInputFocused ? nameInputAccent : colors.border },
                                 ]}
                                 value={draftName}
                             />
@@ -249,21 +345,22 @@ export function ProfileScreen() {
 
                             <Pressable
                                 accessibilityRole="button"
-                                accessibilityState={{ disabled: savingProfile || !draftName.trim(), busy: savingProfile }}
-                                disabled={savingProfile || !draftName.trim()}
+                                accessibilityState={{ disabled: savingProfile || !canSaveName, busy: savingProfile }}
+                                disabled={savingProfile || !canSaveName}
                                 onPress={saveProfile}
                                 style={({ pressed }) => [
                                     styles.saveButton,
-                                    { opacity: savingProfile || !draftName.trim() || pressed ? 0.65 : 1 },
+                                    disabledNameButton && { backgroundColor: mode === "dark" ? "#263651" : "#DCE6FA" },
+                                    { opacity: !disabledNameButton && (savingProfile || !canSaveName || pressed) ? 0.65 : 1 },
                                 ]}
                             >
                                 {savingProfile ? (
                                     <ActivityIndicator color="#ffffff" />
                                 ) : (
-                                    <Text style={styles.saveButtonText}>저장</Text>
+                                    <Text style={[styles.saveButtonText, disabledNameButton && { color: mode === "dark" ? "#B9C8E5" : "#526582" }]}>저장</Text>
                                 )}
                             </Pressable>
-                        </ScrollView>
+                        </Animated.ScrollView>
                     </KeyboardAvoidingView>
                 </Modal>
 
@@ -274,14 +371,14 @@ export function ProfileScreen() {
                         tone="solidCard"
                         style={[styles.accountCard, { borderColor: colors.border }]}
                     >
-                        <AccountInfoRow
+                        {!compactProfile && <AccountInfoRow
                             label="표시 이름"
                             value={displayAccountName}
                             colors={colors}
                             onPress={openProfileEditor}
                             actionLabel="수정"
                             actionIcon="chevron-forward"
-                        />
+                        />}
                         {displayMemberId ? (
                             <AccountInfoRow
                                 label="NoLate ID"
@@ -297,17 +394,18 @@ export function ProfileScreen() {
                             value={displayEmail}
                             colors={colors}
                             selectable
+                            showDivider={!compactProfile || account?.loginType === "COMMON"}
                         />
-                        <AccountInfoRow
+                        {!compactProfile && <AccountInfoRow
                             label="로그인"
                             value={displayLoginType}
                             colors={colors}
                             showDivider={account?.loginType !== "COMMON"}
-                        />
+                        />}
                         {account?.loginType === "COMMON" ? (
                             <AccountInfoRow
                                 label="비밀번호"
-                                value="안전하게 변경"
+                                value={compactProfile ? undefined : "안전하게 변경"}
                                 colors={colors}
                                 showDivider={false}
                                 buttonRef={passwordButton}
@@ -316,7 +414,7 @@ export function ProfileScreen() {
                                     openAccountAction("password");
                                 }}
                                 actionLabel="변경"
-                                actionIcon="chevron-forward"
+                                actionIcon="chevron-forward-outline"
                             />
                         ) : null}
                     </CalendarGlassSurface>
@@ -349,32 +447,32 @@ export function ProfileScreen() {
                 ) : null}
 
                 <View style={styles.section}>
-                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>캘린더 연동</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{compactProfile ? "캘린더" : "캘린더 연동"}</Text>
                     <CalendarGlassSurface
-                        interactive={!calendarConnection}
+                        interactive={!compactProfile && !calendarConnection}
                         variant="card"
                         tone="solidCard"
                         style={[styles.calendarConnectionCard, { borderColor: colors.border }]}
                     >
                         {calendarConnection ? (
-                            <View style={styles.calendarConnectionContent}>
+                            <View style={[styles.calendarConnectionContent, compactProfile && styles.compactCalendarConnection]}>
                                 <View style={styles.calendarConnectionHeader}>
-                                    <View style={[styles.calendarConnectionIcon, { backgroundColor: colors.selectedDayBg }]}>
-                                        <Ionicons name="calendar-outline" size={21} color={colors.selectedDayText} />
+                                    <View style={[styles.calendarConnectionIcon, { backgroundColor: connectionIconBackground }]}>
+                                        <Ionicons name="calendar-outline" size={21} color={connectionIconColor} />
                                     </View>
                                     <View style={styles.calendarConnectionTitleWrap}>
                                         <Text style={[styles.calendarConnectionTitle, { color: colors.textPrimary }]}>
                                             {calendarConnection.providerLabel}
                                         </Text>
                                         <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
-                                            일정을 가져온 캘린더
+                                            {compactProfile ? `가져온 일정 ${calendarConnection.importedCount}개` : "일정을 가져온 캘린더"}
                                         </Text>
                                     </View>
-                                    <View style={styles.connectedBadge}>
+                                    {!compactProfile && <View style={styles.connectedBadge}>
                                         <Text style={styles.connectedBadgeText}>연동됨</Text>
-                                    </View>
+                                    </View>}
                                 </View>
-                                <View style={[styles.calendarStats, { borderTopColor: colors.border }]}>
+                                {compactProfile ? importAction : <View style={[styles.calendarStats, { borderTopColor: colors.border }]}>
                                     <CalendarConnectionStat
                                         label="캘린더"
                                         value={`${calendarConnection.calendarCount}개`}
@@ -387,64 +485,88 @@ export function ProfileScreen() {
                                         label="추가한 일정"
                                         value={`${calendarConnection.importedCount}개`}
                                     />
-                                </View>
+                                </View>}
                                 <Pressable
                                     accessibilityRole="button"
+                                    accessibilityLabel="가져오기 기록"
                                     accessibilityState={{ expanded: importHistoryExpanded }}
                                     onPress={() => setImportHistoryExpanded(expanded => !expanded)}
-                                    style={[styles.calendarManageButton, { borderColor: colors.border }]}
+                                    style={[styles.calendarManageButton, compactProfile && styles.compactCalendarHistory, { borderColor: colors.border }]}
                                 >
-                                    <Ionicons name="time-outline" size={17} color={colors.textSecondary} />
+                                    {!compactProfile && <Ionicons name="time-outline" size={17} color={colors.textSecondary} />}
                                     <Text style={[styles.calendarManageButtonText, { color: colors.textPrimary }]}>가져오기 기록</Text>
                                     <Ionicons name={importHistoryExpanded ? "chevron-up-outline" : "chevron-down-outline"} size={17} color={colors.textSecondary} />
                                 </Pressable>
-                                {importHistoryExpanded && calendarConnection.calendarNames.length > 0 ? (
-                                    <View style={styles.syncedCalendarList}>
-                                        {calendarConnection.calendarNames.map((name) => (
-                                            <View key={name} style={[styles.syncedCalendarPill, { borderColor: colors.border }]}>
-                                                <Ionicons name="ellipse" size={7} color={colors.textSecondary} />
-                                                <Text
-                                                    numberOfLines={1}
-                                                    style={[styles.syncedCalendarPillText, { color: colors.textPrimary }]}
-                                                >
-                                                    {name}
+                                {importHistoryExpanded && (
+                                    <Animated.View entering={profileDetailEntry} style={styles.importHistory}>
+                                        {compactProfile && !calendarConnection.importHistory?.length && (
+                                            <View style={[styles.calendarStats, { borderTopColor: colors.border }]}>
+                                                <CalendarConnectionStat label="확인한 캘린더" value={`${calendarConnection.calendarCount}개`} />
+                                                <CalendarConnectionStat label="확인한 일정" value={`${calendarConnection.eventCandidateCount}개`} />
+                                            </View>
+                                        )}
+                                        {calendarConnection.importHistory?.map((receipt, index) => (
+                                            <View key={`${receipt.completedAt}-${index}`} style={[styles.importReceipt, { borderColor: colors.border }]}>
+                                                <Text style={[styles.importReceiptTitle, { color: colors.textPrimary }]}>
+                                                    {receipt.providerLabels.join(" · ") || calendarConnection.providerLabel}
+                                                </Text>
+                                                <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
+                                                    가져온 일정 {receipt.imported}개 · 중복 {receipt.duplicate}개 · 확인 필요 {receipt.failed}개
+                                                </Text>
+                                                <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
+                                                    {formatConnectionDate(receipt.completedAt)}
                                                 </Text>
                                             </View>
                                         ))}
+                                        {!!calendarConnection.calendarNames.length && <View style={styles.syncedCalendarList}>
+                                            {calendarConnection.calendarNames.map((name) => (
+                                                <View key={name} style={[styles.syncedCalendarPill, { borderColor: colors.border }]}>
+                                                    <Ionicons name="ellipse" size={7} color={colors.textSecondary} />
+                                                    <Text
+                                                        style={[styles.syncedCalendarPillText, { color: colors.textPrimary }]}
+                                                    >
+                                                        {name}
+                                                    </Text>
+                                                </View>
+                                            ))}
+                                        </View>}
+                                        <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
+                                            마지막 확인 {formatConnectionDate(calendarConnection.lastScannedAt)}
+                                            {!calendarConnection.importHistory?.length && calendarConnection.lastImportedAt
+                                                ? ` · 마지막 추가 ${formatConnectionDate(calendarConnection.lastImportedAt)}`
+                                                : ""}
+                                        </Text>
+                                    </Animated.View>
+                                )}
+                                {!compactProfile && importAction}
+                            </View>
+                        ) : compactProfile ? (
+                            <View style={[styles.calendarConnectionContent, styles.compactCalendarConnection]}>
+                                <View style={styles.calendarConnectionHeader}>
+                                    <View style={[styles.calendarConnectionIcon, { backgroundColor: connectionIconBackground }]}>
+                                        <Ionicons name={calendarConnectionError ? "refresh-outline" : "calendar-outline"} size={21} color={connectionIconColor} />
                                     </View>
-                                ) : null}
-                                {importHistoryExpanded && <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
-                                    마지막 확인 {formatConnectionDate(calendarConnection.lastScannedAt)}
-                                    {calendarConnection.lastImportedAt
-                                        ? ` · 마지막 추가 ${formatConnectionDate(calendarConnection.lastImportedAt)}`
-                                        : ""}
-                                </Text>}
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel="캘린더 연동 관리"
-                                    accessibilityHint="연결할 캘린더를 다시 선택하거나 일정을 추가로 가져옵니다"
-                                    onPress={openCalendarOnboarding}
-                                    style={({ pressed }) => [
-                                        styles.calendarManageButton,
-                                        {
-                                            borderColor: colors.border,
-                                            backgroundColor: colors.inputBackground,
-                                            opacity: pressed ? 0.62 : 1,
-                                        },
-                                    ]}
-                                >
-                                    <Ionicons name="settings-outline" size={17} color={colors.textPrimary} />
-                                    <Text style={[styles.calendarManageButtonText, { color: colors.textPrimary }]}>연동 관리</Text>
-                                    <Ionicons name="chevron-forward-outline" size={17} color={colors.textSecondary} />
-                                </Pressable>
+                                    <View style={styles.calendarConnectionTitleWrap}>
+                                        <Text style={[styles.calendarConnectionTitle, { color: colors.textPrimary }]}>
+                                            {calendarConnectionError ? "연결 상태를 확인하지 못했어요" : "연동된 캘린더 없음"}
+                                        </Text>
+                                        {!calendarConnectionError && (
+                                            <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
+                                                휴대폰 캘린더나 Google Calendar의 일정을 추가할 수 있어요
+                                            </Text>
+                                        )}
+                                    </View>
+                                </View>
+                                {importAction}
                             </View>
                         ) : (
                             <Pressable
+                                ref={calendarImportLink}
                                 accessibilityRole="button"
                                 accessibilityLabel={calendarConnectionError
                                     ? "캘린더 연결 상태 다시 확인"
                                     : "캘린더 연결 설정"}
-                                onPress={calendarConnectionError ? loadProfile : openCalendarOnboarding}
+                                onPress={calendarConnectionError ? loadProfile : () => { returnFocus.current = calendarImportLink; openCalendarOnboarding(); }}
                                 style={({ pressed }) => [
                                     styles.calendarEmptyButton,
                                     { opacity: pressed ? 0.62 : 1 },
@@ -483,10 +605,12 @@ export function ProfileScreen() {
                             style={[styles.legalCard, { borderColor: colors.border }]}
                         >
                             <Pressable
+                                ref={placesLink}
                                 accessibilityRole="button"
                                 accessibilityLabel="내 장소 관리"
+                                accessibilityValue={defaultOriginName ? { text: `기본주소 · ${defaultOriginName}` } : undefined}
                                 accessibilityHint="기본주소와 즐겨찾기 카테고리를 관리합니다"
-                                onPress={openPlacesSettings}
+                                onPress={() => { returnFocus.current = placesLink; openPlacesSettings(); }}
                                 style={({ pressed }) => [
                                     styles.legalButton,
                                     { opacity: pressed ? 0.62 : 1 },
@@ -498,7 +622,9 @@ export function ProfileScreen() {
                                     </View>
                                     <View style={styles.settingTextWrap}>
                                         <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>내 장소</Text>
-                                        <Text style={[styles.settingHint, { color: colors.textSecondary }]}>기본주소와 즐겨찾기 카테고리 관리</Text>
+                                        <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
+                                            {defaultOriginName ? `기본주소 · ${defaultOriginName}` : "기본주소와 즐겨찾기 카테고리 관리"}
+                                        </Text>
                                     </View>
                                 </View>
                                 <View
@@ -533,8 +659,9 @@ export function ProfileScreen() {
                             <Pressable
                                 accessibilityRole="link"
                                 accessibilityLabel="개인정보처리방침"
+                                ref={privacyLink}
                                 accessibilityHint="캘린더, 위치, 알림 정보 처리 기준을 엽니다"
-                                onPress={openPrivacyPolicy}
+                                onPress={() => { returnFocus.current = privacyLink; openPrivacyPolicy(); }}
                                 style={({ pressed }) => [
                                     styles.legalButton,
                                     { opacity: pressed ? 0.62 : 1 },
@@ -566,8 +693,9 @@ export function ProfileScreen() {
                             <Pressable
                                 accessibilityRole="link"
                                 accessibilityLabel="서비스 이용약관"
+                                ref={termsLink}
                                 accessibilityHint="NoLate 서비스 이용 기준을 엽니다"
-                                onPress={openTermsOfService}
+                                onPress={() => { returnFocus.current = termsLink; openTermsOfService(); }}
                                 style={({ pressed }) => [
                                     styles.legalButton,
                                     { opacity: pressed ? 0.62 : 1 },

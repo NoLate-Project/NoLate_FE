@@ -4,9 +4,16 @@ import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } fro
 
 import { type ThemePreference, useTheme } from "./ThemeContext";
 
+export type OutlinedSelectionColors = {
+    backgroundColor: string;
+    borderColor: string;
+    color: string;
+};
+
 type Props = {
     style?: StyleProp<ViewStyle>;
     stacked?: boolean;
+    outlinedSelection?: OutlinedSelectionColors;
 };
 
 const OPTIONS: Array<{
@@ -35,17 +42,25 @@ const OPTIONS: Array<{
     },
 ];
 
-export default function ThemeModeSwitch({ style, stacked = false }: Props) {
+export default function ThemeModeSwitch({ style, stacked = false, outlinedSelection }: Props) {
     const { colors, preference, setPreference } = useTheme();
 
     return (
         <View
             accessibilityRole="radiogroup"
             accessibilityLabel="화면 테마"
-            style={[styles.group, { backgroundColor: colors.surface2, borderColor: colors.border }, stacked && styles.groupStacked, style]}
+            style={[
+                styles.group,
+                outlinedSelection ? styles.outlinedGroup : { backgroundColor: colors.surface2, borderColor: colors.border },
+                stacked && styles.groupStacked,
+                style,
+            ]}
         >
             {OPTIONS.map((option) => {
                 const selected = preference === option.value;
+                const labelColor = outlinedSelection
+                    ? selected ? outlinedSelection.color : colors.textPrimary
+                    : selected ? colors.selectedDayText : colors.textSecondary;
 
                 return (
                     <Pressable
@@ -61,23 +76,29 @@ export default function ThemeModeSwitch({ style, stacked = false }: Props) {
                         style={({ pressed }) => [
                             styles.option,
                             stacked && styles.optionStacked,
-                            selected && { backgroundColor: colors.selectedDayBg },
+                            outlinedSelection
+                                ? [styles.outlinedOption, {
+                                    backgroundColor: selected ? outlinedSelection.backgroundColor : colors.surface2,
+                                    borderColor: selected ? outlinedSelection.borderColor : colors.border,
+                                }]
+                                : selected && { backgroundColor: colors.selectedDayBg },
                             pressed && styles.pressed,
                         ]}
                     >
-                        <Ionicons
+                        {!outlinedSelection && <Ionicons
                             accessible={false}
                             name={option.icon}
                             size={15}
-                            color={selected ? colors.selectedDayText : colors.textSecondary}
-                        />
+                            color={labelColor}
+                        />}
                         <Text
                             numberOfLines={stacked ? undefined : 1}
                             maxFontSizeMultiplier={stacked ? 2 : undefined}
                             style={[
                                 styles.label,
                                 stacked && styles.labelStacked,
-                                { color: selected ? colors.selectedDayText : colors.textSecondary },
+                                outlinedSelection && styles.outlinedLabel,
+                                { color: labelColor },
                             ]}
                         >
                             {option.label}
@@ -99,6 +120,7 @@ const styles = StyleSheet.create({
         gap: 3,
     },
     groupStacked: { flexDirection: "column" },
+    outlinedGroup: { borderWidth: 0, padding: 0, gap: 6 },
     option: {
         flex: 1,
         minWidth: 0,
@@ -117,6 +139,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 7,
     },
+    outlinedOption: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 12 },
     label: {
         flexShrink: 1,
         fontSize: 12,
@@ -124,6 +147,7 @@ const styles = StyleSheet.create({
         fontWeight: "900",
     },
     labelStacked: { fontSize: 14, lineHeight: undefined },
+    outlinedLabel: { fontSize: 14, lineHeight: 19, fontWeight: "800" },
     pressed: {
         opacity: 0.62,
     },

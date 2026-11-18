@@ -32,6 +32,8 @@ export type ScheduleParseResult = {
     analysisId?: string;
     confidenceVersion?: string;
     title?: string;
+    /** True when there was no event title or purpose beyond the time and destination. */
+    titleDerivedFromTimeOrPlace?: boolean;
     notes?: string;
     date?: string;
     time?: string;

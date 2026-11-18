@@ -158,6 +158,7 @@ export function FilterSheet({
 
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="적용"
             onPress={() =>
               onApply({
                 ...draft,
@@ -222,6 +223,8 @@ function SegmentControl({
         return (
           <Pressable
             key={optionValue}
+            accessible
+            accessibilityLabel={label}
             accessibilityRole="radio"
             accessibilityState={{ selected }}
             onPress={() => onChange(optionValue)}
@@ -267,6 +270,9 @@ function SortOption({
 }) {
   return (
     <Pressable
+      accessible
+      accessibilityLabel={title}
+      accessibilityHint={description}
       accessibilityRole="radio"
       accessibilityState={{ selected }}
       onPress={onPress}

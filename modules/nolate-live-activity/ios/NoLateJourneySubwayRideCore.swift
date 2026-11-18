@@ -38,6 +38,7 @@ struct NoLateJourneySubwayRideCore: Sendable {
   let armedAt: Double
   let expiresAt: Double
   private(set) var snapshot = Snapshot()
+  private(set) var hasObservedBoardingWait = false
   private var lastSequence: Int64 = -1
   private var lastGPS: (at: Double, coordinate: Engine.Coordinate)?
   private var waitStarted: Double?
@@ -118,6 +119,7 @@ struct NoLateJourneySubwayRideCore: Sendable {
       if candidate != train.id { resetCandidate(); candidate = train.id }
       waitStarted = waitStarted ?? fix.observedAt; waitCount += 1
       candidateSource = train.sourceAt
+      hasObservedBoardingWait = true
       snapshot.phase = "WAITING"; snapshot.reason = "SUBWAY_BOARDING_NOT_CONFIRMED"
       snapshot.observedAt = fix.observedAt; snapshot.validUntil = min(expiresAt, train.validUntil, fix.observedAt + 15)
       return
@@ -170,5 +172,99 @@ struct NoLateJourneySubwayRideCore: Sendable {
     let r = Double.pi / 180
     let h = pow(sin((b.latitude-a.latitude)*r/2),2) + cos(a.latitude*r)*cos(b.latitude*r)*pow(sin((b.longitude-a.longitude)*r/2),2)
     return 6_371_000 * 2 * asin(sqrt(min(1,max(0,h))))
+  }
+}
+
+/// Ephemeral subway exit evidence. A train at the destination station is only an
+/// anchor: continuous passenger GPS on the owned final walking path is required
+/// before the existing final-walk reducer may start. No train/GPS history is saved.
+struct NoLateJourneySubwaySeparationCore: Sendable {
+  typealias E = NoLateJourneyEngineCore
+  typealias Snapshot = NoLateJourneyBusSeparationCore.Snapshot
+  let route: NoLateJourneySubwayRideCore.Route
+  let walk: NoLateJourneyFinalWalkCore.Route
+  private(set) var snapshot = Snapshot()
+  private var lastSequence: Int64 = -1
+  private var lastNow = 0.0
+  private var anchorUntil: Double?
+  private var firstAt: Double?
+  private var firstAlong: Double?
+  private var lastAt: Double?
+  private var lastAlong: Double?
+  private var lastCoordinate: E.Coordinate?
+  private var countedAlong: Double?
+  private var stopped = false
+
+  init(route: NoLateJourneySubwayRideCore.Route, walk: NoLateJourneyFinalWalkCore.Route) {
+    self.route = route; self.walk = walk
+  }
+
+  mutating func ingest(_ fix:E.Observation, subway:NoLateJourneySubwayRideCore.Snapshot?, now:Double) {
+    guard !stopped, now.isFinite, now >= lastNow,
+      fix.identity == route.identity, fix.identity == walk.identity,
+      fix.sequence > lastSequence, fix.sequence < Int64.max else { return }
+    tick(now:now); lastSequence = fix.sequence
+    if snapshot.status == "SEPARATION_OBSERVED" { return }
+    guard let target = route.stations.last?.coordinate,
+      fix.source == .realLocation, fix.observedAt.isFinite,
+      fix.observedAt >= now - 8, fix.observedAt <= now,
+      fix.horizontalAccuracyMeters.isFinite, (0...15).contains(fix.horizontalAccuracyMeters),
+      fix.coordinate.latitude.isFinite, (-90...90).contains(fix.coordinate.latitude),
+      fix.coordinate.longitude.isFinite, (-180...180).contains(fix.coordinate.longitude),
+      let projection = E.project(fix.coordinate,onto:walk.path),
+      projection.crossTrackMeters + fix.horizontalAccuracyMeters <= 25,
+      projection.alongRouteMeters <= 65 else { reset("PASSENGER_EXIT_LOCATION_UNRELIABLE"); return }
+    let along = projection.alongRouteMeters
+    if anchorUntil == nil {
+      guard let subway, subway.phase == "RIDING", subway.boardingConfirmed,
+        subway.currentStopIndex == route.stations.count - 1,
+        let at = subway.observedAt, at == fix.observedAt,
+        let until = subway.validUntil, now < until, until <= at + 15,
+        NoLateJourneySubwayRideCore.distance(target,fix.coordinate) + fix.horizontalAccuracyMeters <= 50,
+        along <= 15 else { reset("CONFIRMED_TARGET_SUBWAY_RIDE_REQUIRED"); return }
+      anchorUntil = now + 90
+      firstAt = fix.observedAt; firstAlong = along
+      lastAt = fix.observedAt; lastAlong = along; lastCoordinate = fix.coordinate; countedAlong = along
+      snapshot.status = "COLLECTING"; snapshot.reason = "CONTINUOUS_STATION_EXIT_REQUIRED"
+      snapshot.evidenceCount = 1; snapshot.validUntil = min(until,now + 15)
+      return
+    }
+    guard let anchorUntil, now < anchorUntil,
+      let lastAt, let lastAlong, let lastCoordinate,
+      fix.observedAt > lastAt, fix.observedAt - lastAt <= 8,
+      along >= lastAlong - 5,
+      NoLateJourneySubwayRideCore.distance(lastCoordinate,fix.coordinate) <= 25,
+      NoLateJourneySubwayRideCore.distance(lastCoordinate,fix.coordinate) / (fix.observedAt - lastAt) <= 3,
+      NoLateJourneySubwayRideCore.distance(target,fix.coordinate) <= 85 else {
+      reset("PASSENGER_EXIT_MOVEMENT_UNRELIABLE"); return
+    }
+    self.lastAt = fix.observedAt; self.lastAlong = along; self.lastCoordinate = fix.coordinate
+    if along - (countedAlong ?? along) >= 6 {
+      countedAlong = along; snapshot.evidenceCount = min(1000,snapshot.evidenceCount + 1)
+    }
+    if snapshot.evidenceCount >= 3,
+      fix.observedAt - (firstAt ?? fix.observedAt) >= 8,
+      along - (firstAlong ?? along) - fix.horizontalAccuracyMeters >= 16 {
+      snapshot.status = "SEPARATION_OBSERVED"
+      snapshot.reason = "CONFIRMED_SUBWAY_EXIT_ON_WALK_PATH"
+      snapshot.validUntil = min(anchorUntil,fix.observedAt + 15)
+    } else {
+      snapshot.status = "COLLECTING"
+      snapshot.reason = "CONTINUOUS_STATION_EXIT_REQUIRED"
+      snapshot.validUntil = min(anchorUntil,fix.observedAt + 15)
+    }
+  }
+
+  mutating func tick(now:Double) {
+    guard !stopped, now.isFinite, now >= lastNow else { return }
+    lastNow = now
+    if let until = snapshot.validUntil, now >= until { reset("SUBWAY_EXIT_EVIDENCE_STALE") }
+    if let until = anchorUntil, now >= until { reset("SUBWAY_EXIT_WINDOW_EXPIRED") }
+  }
+  mutating func stop() { stopped = true; reset("SUBWAY_SESSION_STOPPED") }
+  private mutating func reset(_ reason:String) {
+    anchorUntil = nil; firstAt = nil; firstAlong = nil; lastAt = nil; lastAlong = nil
+    lastCoordinate = nil; countedAlong = nil
+    snapshot = Snapshot(status:"UNAVAILABLE",reason:reason,evidenceCount:0,validUntil:nil)
   }
 }

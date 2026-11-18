@@ -39,11 +39,24 @@ describe('AuthProvider lifecycle boundaries', () => {
         jest.clearAllMocks();
         jest.mocked(isDepartureAlarmAccountCleanupPending).mockResolvedValue(false);
         jest.mocked(clearAccountScopedLocalData).mockResolvedValue(undefined);
+        jest.mocked(storage.getAccessToken).mockResolvedValue('access');
+        jest.mocked(storage.getRefreshToken).mockResolvedValue('refresh');
+        jest.mocked(storage.getAuthMember).mockResolvedValue({ id: 292, curationCompleted: true });
     });
     afterEach(async () => { await act(async () => renderer?.unmount()); });
     async function mount() {
         await act(async () => { renderer = TestRenderer.create(<AuthProvider><Probe /></AuthProvider>); });
     }
+
+    test('fresh install does not invalidate an account that never existed', async () => {
+        jest.mocked(storage.getAccessToken).mockResolvedValue(null);
+        jest.mocked(storage.getRefreshToken).mockResolvedValue(null);
+        jest.mocked(storage.getAuthMember).mockResolvedValue(null);
+        await mount();
+        expect(storage.clearAuthTokens).toHaveBeenCalledWith({ notifyListeners: false });
+        expect(value!.isAuthenticated).toBe(false);
+        expect(value!.isLoading).toBe(false);
+    });
 
     test('signOut cleans exactly once before logout, then clears credentials without listeners', async () => {
         await mount();

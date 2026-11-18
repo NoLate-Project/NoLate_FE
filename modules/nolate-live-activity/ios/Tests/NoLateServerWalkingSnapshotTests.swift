@@ -84,6 +84,16 @@ final class NoLateServerWalkingSnapshotTests:XCTestCase {
     ride["kind"]="BUS";legs[1]=ride;p["legs"]=legs
     XCTAssertThrowsError(try NoLateJourneyRouteNormalizer.prepareWalkingRoute(json:encode(p),allowValidatedSavedRoute:true))
   }
+  func testUnknownODsayBusWalkingContractNeedsIndependentTransitProof() throws {
+    var p=try payload();p["serviceState"]="UNKNOWN"
+    let json=try encode(p)
+    let input=try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:Data(json.utf8))
+    XCTAssertNoThrow(try input.walkingSnapshot!.validate(input:input))
+    let summary=try NoLateJourneyRouteNormalizer.normalize(json:json)
+    XCTAssertEqual(summary.reasonCodes,["SAVED_ROUTE_REVALIDATION_REQUIRED","ROUTE_SERVICE_UNVERIFIED"])
+    XCTAssertTrue(summary.legs[0].geometryUsable)
+    XCTAssertThrowsError(try NoLateJourneyRouteNormalizer.prepareWalkingRoute(json:json,allowValidatedSavedRoute:true))
+  }
   func testV4TwoHourSessionDoesNotRenewAdmissionOrLocationFreshness() throws {
     var p=try payload(),w=p["walkingSnapshot"] as! [String:Any]
     w["schemaVersion"]=4;w["navigationExpiresAtMs"]=8_500_000;p["walkingSnapshot"]=w

@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Pressable, StyleSheet, Text, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
@@ -11,6 +11,7 @@ import {
     type SignupConsentPolicy,
 } from "../../../api/legal";
 import type { SignupConsentsPayload } from "../../../api/member";
+import { runAfterScreenTransition } from "../../performance/runAfterScreenTransition";
 import { useTheme } from "../../theme/ThemeContext";
 import { AuthPrimaryButton } from "./AuthScreen";
 import {
@@ -54,12 +55,11 @@ export default function SignupAgreementPanel({
     useEffect(() => {
         if (!isFocused || !returnFocus.current) return;
         const link = returnFocus.current;
-        const frame = requestAnimationFrame(() => {
+        const task = runAfterScreenTransition(() => {
             returnFocus.current = null;
-            const target = findNodeHandle(link.current);
-            if (target != null) AccessibilityInfo.setAccessibilityFocus(target);
+            if (link.current) AccessibilityInfo.sendAccessibilityEvent?.(link.current, "focus");
         });
-        return () => cancelAnimationFrame(frame);
+        return task.cancel;
     }, [isFocused]);
 
     const loadPolicy = useCallback(async () => {
@@ -159,6 +159,7 @@ export default function SignupAgreementPanel({
             <Pressable
                 ref={privacyLink}
                 accessibilityRole="link"
+                accessibilityLabel="개인정보처리방침"
                 accessibilityState={{ disabled: submitting }}
                 disabled={submitting}
                 onPress={() => { returnFocus.current = privacyLink; onOpenPrivacyPolicy(); }}

@@ -1,12 +1,15 @@
 import styles from "./ScheduleAgendaViews.styles";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+    AccessibilityInfo,
     ActionSheetIOS,
     Alert,
     Animated,
     Easing,
     type GestureResponderEvent,
     type LayoutChangeEvent,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
     PanResponder,
     type PanResponderGestureState,
     Platform,
@@ -14,10 +17,13 @@ import {
     ScrollView,
     Text,
     View,
+    useWindowDimensions,
 } from "react-native";
 import { useReducedMotion } from "react-native-reanimated";
+import { useCalendarYearDateTarget } from "../calendar/CalendarYearDateHandoff";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import type { CalendarScope } from "../../calendarScope";
 import {
     buildMonthAgendaSections,
     getSelectedDayAgendaItems,
@@ -74,13 +80,16 @@ type AgendaStateProps = {
     error: string | null;
     bottomInset: number;
     onPressRetry: () => void;
-    onOpenSchedule: (id: string) => void;
+    onOpenSchedule: (id: string, restoreFocus?: () => void) => void;
     getScheduleSwipeActions?: ScheduleSwipeActionResolver;
     onRequestScheduleActions?: (item: ScheduleItem) => void;
     routeSetupRequiredCount?: number;
     onOpenRouteSetup?: () => void;
     returnHighlight?: { id: string; opacity: Animated.Value };
+    focusTarget?: AgendaFocusTarget;
 };
+
+export type AgendaFocusTarget = { id: string; run: string };
 
 type SelectedDayAgendaPanelProps = AgendaStateProps & {
     selectedDay: string;
@@ -92,12 +101,22 @@ type SelectedDayAgendaPanelProps = AgendaStateProps & {
 
 type MonthAgendaListProps = AgendaStateProps & {
     visibleMonth: string;
+    calendarScope?: CalendarScope;
     onRequestViewMode: (mode: MonthAgendaSteppedTarget) => void;
+    categoryFilter?: {
+        id: string | null;
+        onChange: (id: string | null) => void;
+        handledSavedItem?: string;
+        onHandleSavedItem: (id: string) => void;
+    };
     entryDate?: string;
+    entryLayoutTransitionActive?: boolean;
     savedEntry?: { itemId: string; categoryId?: string };
     saveReturnVisible?: boolean;
     reduceEntryMotion?: boolean;
 };
+
+type AgendaScrollAnchor = { date: string; offsetWithinSection: number };
 
 function useLoadedAgendaOpacity(loading: boolean, hasVisibleResults: boolean) {
     const reduceMotion = useReducedMotion();
@@ -146,6 +165,45 @@ function useAgendaEntryHighlight(entryId: string | undefined, ready: boolean, re
         };
     }, [entryId, opacity, ready, reduceMotion]);
     return opacity;
+}
+
+function useAgendaReturnFocus(
+    target: AgendaFocusTarget | undefined,
+    ready: boolean,
+    scrollRef: React.RefObject<ScrollView | null>,
+    getTopClearance?: () => number,
+) {
+    const cardRef = useRef<View>(null);
+    const contentRef = useRef<View>(null);
+    const [positionedRun, setPositionedRun] = useState<string>();
+    const run = target?.run;
+    useEffect(() => {
+        if (!run || !ready || positionedRun === run) return;
+        let active = true;
+        let focusFrame: number | undefined;
+        const frame = requestAnimationFrame(() => {
+            const card = cardRef.current;
+            const scroll = scrollRef.current;
+            const content = contentRef.current;
+            if (!card || !scroll || !content) return;
+            const focus = () => {
+                if (!active || card !== cardRef.current) return;
+                setPositionedRun(run);
+                AccessibilityInfo.sendAccessibilityEvent?.(card, 'focus');
+            };
+            card.measureLayout(content, (_x, y) => {
+                if (!active || card !== cardRef.current) return;
+                scroll.scrollTo({ y: Math.max(0, y - (getTopClearance?.() ?? 0) - 8), animated: false });
+                focusFrame = requestAnimationFrame(focus);
+            }, focus);
+        });
+        return () => {
+            active = false;
+            cancelAnimationFrame(frame);
+            if (focusFrame !== undefined) cancelAnimationFrame(focusFrame);
+        };
+    }, [getTopClearance, positionedRun, ready, run, scrollRef]);
+    return { cardRef, contentRef, positionedRun };
 }
 
 function AgendaInlineState({
@@ -444,19 +502,28 @@ export function SelectedDayAgendaPanel({
     onOpenRouteSetup,
     onRequestViewMode,
     returnHighlight,
+    focusTarget,
     savedItemId,
     saveReturnVisible = true,
     reduceEntryMotion = true,
 }: SelectedDayAgendaPanelProps) {
-    const { colors, mode } = useTheme();
+    const { colors } = useTheme();
     const selectedItems = useMemo(
         () => getSelectedDayAgendaItems(items, selectedDay),
         [items, selectedDay]
     );
     const selectedLabels = getCompactSectionLabels(selectedDay);
     const loadedOpacity = useLoadedAgendaOpacity(loading, !error && selectedItems.length > 0);
-    const savedRowReady = saveReturnVisible && !loading && !error && selectedItems.some(item => item.id === savedItemId);
-    const savedRowHighlight = useAgendaEntryHighlight(savedItemId, savedRowReady, reduceEntryMotion);
+    const scrollRef = useRef<ScrollView>(null);
+    const revealTarget = focusTarget ?? (savedItemId ? { id: savedItemId, run: `save-${savedItemId}` } : undefined);
+    const revealReady = saveReturnVisible && !loading && !error && selectedItems.some(item => item.id === revealTarget?.id);
+    const returnFocus = useAgendaReturnFocus(revealTarget, revealReady, scrollRef);
+    const savedRowHighlight = useAgendaEntryHighlight(
+        savedItemId,
+        revealReady && returnFocus.positionedRun === `save-${savedItemId}`,
+        reduceEntryMotion
+    );
+    const focusHighlight = useAgendaEntryHighlight(focusTarget?.run, revealReady, reduceEntryMotion);
 
     return (
         <View
@@ -489,6 +556,8 @@ export function SelectedDayAgendaPanel({
             </View>
 
             <ScrollView
+                ref={scrollRef}
+                innerViewRef={returnFocus.contentRef as React.RefObject<View>}
                 style={[
                     styles.scroll,
                     { marginBottom: getFloatingActionBarClearance(bottomInset) },
@@ -515,13 +584,7 @@ export function SelectedDayAgendaPanel({
                         testID="selected-day-agenda-group"
                         style={[
                             styles.selectedDayGroup,
-                            {
-                                backgroundColor: mode === "dark"
-                                    ? colors.surface
-                                    : colors.surface2,
-                                borderColor: colors.border,
-                                opacity: loadedOpacity,
-                            },
+                            { opacity: loadedOpacity },
                         ]}
                     >
                         {selectedItems.map((item, index) => (
@@ -539,10 +602,12 @@ export function SelectedDayAgendaPanel({
                                     item={item}
                                     groupRow
                                     showMultiDaySummary
-                                    returnHighlightOpacity={returnHighlight?.id === item.id
+                                    cardRef={revealTarget?.id === item.id ? returnFocus.cardRef : undefined}
+                                    returnHighlightOpacity={focusTarget?.id === item.id && !reduceEntryMotion ? focusHighlight
+                                        : returnHighlight?.id === item.id
                                         ? returnHighlight.opacity
                                         : savedItemId === item.id && !reduceEntryMotion ? savedRowHighlight : undefined}
-                                    onPress={() => onOpenSchedule(item.id)}
+                                    onPress={restoreFocus => onOpenSchedule(item.id, restoreFocus)}
                                     swipeActions={getScheduleSwipeActions?.(item)}
                                     onLongPress={onRequestScheduleActions
                                         ? () => onRequestScheduleActions(item)
@@ -560,6 +625,7 @@ export function SelectedDayAgendaPanel({
 /** 시안과 같은 날짜 섹션 카드로 구성된 월 전체 일정 목록. */
 export function MonthAgendaList({
     visibleMonth,
+    calendarScope = 'all',
     items,
     loading,
     error,
@@ -572,31 +638,54 @@ export function MonthAgendaList({
     onOpenRouteSetup,
     onRequestViewMode,
     entryDate,
+    entryLayoutTransitionActive = false,
+    categoryFilter,
     savedEntry,
     saveReturnVisible = true,
     reduceEntryMotion = true,
     returnHighlight,
+    focusTarget,
 }: MonthAgendaListProps) {
     const { colors, mode } = useTheme();
-    const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-    const [handledSavedItem, setHandledSavedItem] = useState<string>();
+    const agendaHandoffTarget = useCalendarYearDateTarget(entryDate, "agenda");
+    const { fontScale } = useWindowDimensions();
+    const stickyDates = fontScale <= 1.35;
+    const compactDateGroups = fontScale <= 1;
+    const [localCategoryId, setLocalCategoryId] = useState<string | null>(null);
+    const selectedCategoryId = categoryFilter ? categoryFilter.id : localCategoryId;
+    const setSelectedCategoryId = categoryFilter?.onChange ?? setLocalCategoryId;
+    const [localHandledSavedItem, setLocalHandledSavedItem] = useState<string>();
+    const handledSavedItem = categoryFilter ? categoryFilter.handledSavedItem : localHandledSavedItem;
+    const setHandledSavedItem = categoryFilter?.onHandleSavedItem ?? setLocalHandledSavedItem;
     const [filterClearedFor, setFilterClearedFor] = useState<string>();
-    if (savedEntry && savedEntry.itemId !== handledSavedItem) {
+    const revealSavedItem = Boolean(savedEntry && savedEntry.itemId !== handledSavedItem &&
+        selectedCategoryId && selectedCategoryId !== savedEntry.categoryId);
+    useLayoutEffect(() => {
+        if (!savedEntry || savedEntry.itemId === handledSavedItem) return;
         setHandledSavedItem(savedEntry.itemId);
-        if (selectedCategoryId && selectedCategoryId !== savedEntry.categoryId) {
+        if (revealSavedItem) {
             setSelectedCategoryId(null);
             setFilterClearedFor(savedEntry.itemId);
         }
-    }
+    }, [handledSavedItem, revealSavedItem, savedEntry, setHandledSavedItem, setSelectedCategoryId]);
     const monthItems = useMemo(
         () => getVisibleMonthAgendaItems(items, visibleMonth),
         [items, visibleMonth]
     );
+    const focusItem = monthItems.find(item => item.id === focusTarget?.id);
+    const handledFocusRun = useRef<string | undefined>(undefined);
+    const revealFocusedItem = Boolean(focusTarget && focusItem
+        && handledFocusRun.current !== focusTarget.run && selectedCategoryId && selectedCategoryId !== focusItem.category?.id);
+    useLayoutEffect(() => {
+        if (!focusTarget || !focusItem || handledFocusRun.current === focusTarget.run) return;
+        handledFocusRun.current = focusTarget.run;
+        if (revealFocusedItem) setSelectedCategoryId(null);
+    }, [focusItem, focusTarget, revealFocusedItem, setSelectedCategoryId]);
     const categoryOptions = useMemo(
         () => getAgendaCategoryOptions(monthItems),
         [monthItems]
     );
-    const activeCategoryId = selectedCategoryId
+    const activeCategoryId = !revealSavedItem && !revealFocusedItem && selectedCategoryId
         && categoryOptions.some((option) => option.id === selectedCategoryId)
         ? selectedCategoryId
         : null;
@@ -608,7 +697,7 @@ export function MonthAgendaList({
     );
     const { sections, entrySectionDate } = useMemo(() => {
         const monthSections = buildMonthAgendaSections(filteredItems, visibleMonth);
-        if (!entryDate || loading || error || (activeCategoryId && !savedEntry) || monthSections.length === 0) {
+        if (!entryDate || loading || error) {
             return { sections: monthSections, entrySectionDate: undefined };
         }
         if (monthSections.some(section => section.dateKey === entryDate)) {
@@ -626,45 +715,130 @@ export function MonthAgendaList({
             sections: [...monthSections, emptyEntry].sort((a, b) => a.dateKey.localeCompare(b.dateKey)),
             entrySectionDate: entryDate,
         };
-    }, [activeCategoryId, entryDate, error, filteredItems, loading, savedEntry, visibleMonth]);
+    }, [entryDate, error, filteredItems, loading, visibleMonth]);
+    const sectionLayouts = useRef(new Map<string, { y: number; height: number }>());
+    const sectionParts = useRef(new Map<string, { top?: number; end?: number; headingHeight?: number }>());
+    const visibleAnchor = useRef<AgendaScrollAnchor | undefined>(undefined);
+    const [scopePosition, setScopePosition] = useState<{
+        scope: CalendarScope;
+        month: string;
+        entryDate?: string;
+        anchor?: AgendaScrollAnchor;
+    }>({ scope: calendarScope, month: visibleMonth, entryDate });
+    if (scopePosition.scope !== calendarScope || scopePosition.month !== visibleMonth || scopePosition.entryDate !== entryDate) {
+        const sameDate = scopePosition.month === visibleMonth && scopePosition.entryDate === entryDate;
+        setScopePosition({ scope: calendarScope, month: visibleMonth, entryDate, anchor: sameDate ? visibleAnchor.current : undefined });
+    }
+    const scopeAnchor = scopePosition.scope === calendarScope ? scopePosition.anchor : undefined;
+    const restoreAnchor = !savedEntry && !focusTarget && scopeAnchor && sections.some(section =>
+        section.dateKey === scopeAnchor.date && section.items.length > 0
+    ) ? scopeAnchor : undefined;
+    const positioningDate = restoreAnchor?.date ?? entrySectionDate;
+    // A late date may need extra scroll range to align its sticky heading at the top.
+    const needsMeasuredEntry = Boolean(savedEntry || restoreAnchor ||
+        (stickyDates && positioningDate && positioningDate !== sections[0]?.dateKey));
     const scrollRef = useRef<ScrollView>(null);
     const entryLayout = useRef({ viewportHeight: 0, contentHeight: 0, offset: null as number | null });
     const entryFrame = useRef<number | null>(null);
     const entryStarted = useRef(false);
+    const verifyEntryOffset = useRef(false);
     const [entryPositioned, setEntryPositioned] = useState(false);
     const [entryEndSpace, setEntryEndSpace] = useState(0);
     useLayoutEffect(() => {
+        sectionLayouts.current.clear();
+        sectionParts.current.clear();
+        visibleAnchor.current = undefined;
         entryLayout.current = { viewportHeight: 0, contentHeight: 0, offset: null };
         entryStarted.current = false;
+        verifyEntryOffset.current = false;
         setEntryPositioned(false);
         setEntryEndSpace(0);
         return () => {
             if (entryFrame.current !== null) cancelAnimationFrame(entryFrame.current);
             entryFrame.current = null;
         };
-    }, [handledSavedItem]);
+    }, [activeCategoryId, calendarScope, entryDate, handledSavedItem, positioningDate, stickyDates, visibleMonth]);
     const positionEntry = useCallback(() => {
-        if (entryStarted.current) return;
-        const { viewportHeight, contentHeight, offset } = entryLayout.current;
-        if (!viewportHeight || !contentHeight || offset === null) return;
-        const missingSpace = viewportHeight + offset - contentHeight;
-        if (missingSpace > 1) {
-            setEntryEndSpace(Math.ceil(missingSpace));
-            return;
-        }
-        entryStarted.current = true;
+        if (entryLayoutTransitionActive || entryStarted.current || entryFrame.current !== null ||
+            entryLayout.current.offset === null) return;
         entryFrame.current = requestAnimationFrame(() => {
+            entryFrame.current = null;
+            const { viewportHeight, contentHeight, offset } = entryLayout.current;
+            if (offset === null) return;
+            if (needsMeasuredEntry) {
+                if (!viewportHeight || !contentHeight) return;
+                const missingSpace = viewportHeight + offset - contentHeight;
+                if (missingSpace > 1) {
+                    setEntryEndSpace(Math.ceil(missingSpace));
+                    return;
+                }
+            }
+            entryStarted.current = true;
+            verifyEntryOffset.current = needsMeasuredEntry && offset > 0;
             scrollRef.current?.scrollTo({ y: offset, animated: false });
+            if (positioningDate) visibleAnchor.current = {
+                date: positioningDate,
+                offsetWithinSection: offset - (sectionLayouts.current.get(positioningDate)?.y ?? offset),
+            };
             entryFrame.current = requestAnimationFrame(() => {
                 entryFrame.current = null;
                 setEntryPositioned(true);
             });
         });
-    }, []);
-    const measureEntry = useCallback((event: LayoutChangeEvent) => {
-        entryLayout.current.offset = Math.max(0, event.nativeEvent.layout.y - 8);
+    }, [entryLayoutTransitionActive, needsMeasuredEntry, positioningDate]);
+    useLayoutEffect(positionEntry, [positionEntry]);
+    const measureSection = (date: string, y: number, height: number) => {
+        sectionLayouts.current.set(date, { y, height });
+        if (date !== positioningDate) return;
+        // A gap above a sticky title exposes the preceding title as a clipped row.
+        const anchorOffset = restoreAnchor
+            ? Math.min(restoreAnchor.offsetWithinSection, Math.max(0, height - 1))
+            : stickyDates ? 0 : -8;
+        entryLayout.current.offset = Math.max(0, y + anchorOffset);
         positionEntry();
-    }, [positionEntry]);
+    };
+    const measureStickySection = (date: string, part: 'heading' | 'body', event: LayoutChangeEvent) => {
+        const { y, height } = event.nativeEvent.layout;
+        const layout = sectionParts.current.get(date) ?? {};
+        if (part === 'heading') {
+            layout.top = y;
+            layout.headingHeight = height;
+        } else {
+            layout.end = y + height;
+        }
+        sectionParts.current.set(date, layout);
+        if (layout.top !== undefined && layout.end !== undefined) {
+            measureSection(date, layout.top, layout.end - layout.top);
+        }
+    };
+    const rememberVisibleDate = ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const { y } = nativeEvent.contentOffset;
+        if (verifyEntryOffset.current && nativeEvent.layoutMeasurement && nativeEvent.contentSize) {
+            verifyEntryOffset.current = false;
+            const { offset } = entryLayout.current;
+            const viewportHeight = nativeEvent.layoutMeasurement.height;
+            const contentHeight = nativeEvent.contentSize.height;
+            const missingSpace = viewportHeight + (offset ?? 0) - contentHeight;
+            // iOS can clamp against the resized native viewport before onLayout reports it.
+            if (offset !== null && y < offset - 1 && missingSpace > 1) {
+                if (entryFrame.current !== null) cancelAnimationFrame(entryFrame.current);
+                entryFrame.current = null;
+                entryStarted.current = false;
+                entryLayout.current.viewportHeight = viewportHeight;
+                entryLayout.current.contentHeight = contentHeight;
+                setEntryPositioned(false);
+                setEntryEndSpace(space => space + Math.ceil(missingSpace));
+                return;
+            }
+        }
+        if (loading || (positioningDate && !entryPositioned)) return;
+        let firstVisible: { date: string; top: number } | undefined;
+        for (const [date, layout] of sectionLayouts.current) {
+            if (layout.y + layout.height <= y + 36) continue;
+            if (!firstVisible || layout.y < firstVisible.top) firstVisible = { date, top: layout.y };
+        }
+        visibleAnchor.current = firstVisible && { date: firstVisible.date, offsetWithinSection: y - firstVisible.top };
+    };
     const measureEntryViewport = useCallback((event: LayoutChangeEvent) => {
         entryLayout.current.viewportHeight = event.nativeEvent.layout.height;
         positionEntry();
@@ -673,12 +847,22 @@ export function MonthAgendaList({
         entryLayout.current.contentHeight = height;
         positionEntry();
     }, [positionEntry]);
+    const positioningEntry = Boolean(positioningDate && !entryPositioned);
+    const savedRun = savedEntry && `save-${savedEntry.itemId}`;
+    const revealTarget = focusTarget ?? (savedEntry && savedRun ? { id: savedEntry.itemId, run: savedRun } : undefined);
+    const revealReady = !positioningEntry && saveReturnVisible && !loading && !error
+        && filteredItems.some(item => item.id === revealTarget?.id);
+    const focusDate = revealTarget && sections.find(section => section.items.some(item => item.id === revealTarget.id))?.dateKey;
+    const getStickyClearance = useCallback(() => stickyDates && focusDate
+        ? sectionParts.current.get(focusDate)?.headingHeight ?? styles.sectionHeader.minHeight
+        : 0, [focusDate, stickyDates]);
+    const returnFocus = useAgendaReturnFocus(revealTarget, revealReady, scrollRef, getStickyClearance);
     const entryHighlight = useAgendaEntryHighlight(
         savedEntry?.itemId ?? entrySectionDate,
-        entryPositioned && saveReturnVisible && (!savedEntry || filteredItems.some(item => item.id === savedEntry.itemId)),
+        entryPositioned && saveReturnVisible && (!savedEntry || returnFocus.positionedRun === savedRun),
         reduceEntryMotion
     );
-    const positioningEntry = Boolean(entrySectionDate && !entryPositioned);
+    const focusHighlight = useAgendaEntryHighlight(focusTarget?.run, revealReady, reduceEntryMotion);
     const loadedOpacity = useLoadedAgendaOpacity(
         loading,
         !error && sections.length > 0 && !entrySectionDate
@@ -688,16 +872,20 @@ export function MonthAgendaList({
     const selectedCategoryTitle = categoryOptions.find(
         (option) => option.id === activeCategoryId
     )?.title ?? allCategoriesTitle;
-    const listIdentity = `${visibleMonth.slice(0, 7)}:${activeCategoryId ?? "all"}:${handledSavedItem ?? ""}`;
+    const listIdentity = `${visibleMonth.slice(0, 7)}:${calendarScope}:${entryDate ?? ""}:${positioningDate ?? ""}:${activeCategoryId ?? "all"}:${handledSavedItem ?? ""}:${stickyDates}`;
+    const showRouteNotice = routeSetupRequiredCount > 0 && Boolean(onOpenRouteSetup);
+    const stickyHeaderIndices = stickyDates && !loading && !error
+        ? sections.map((_, index) => Number(showRouteNotice) + 2 * index)
+        : undefined;
 
     useEffect(() => {
         if (
-            selectedCategoryId
+            !loading && !error && selectedCategoryId
             && !categoryOptions.some((option) => option.id === selectedCategoryId)
         ) {
             setSelectedCategoryId(null);
         }
-    }, [categoryOptions, selectedCategoryId]);
+    }, [categoryOptions, error, loading, selectedCategoryId, setSelectedCategoryId]);
 
     const selectCategoryOption = useCallback((buttonIndex: number) => {
         if (buttonIndex === categoryOptions.length + 1) return;
@@ -707,7 +895,7 @@ export function MonthAgendaList({
                 ? null
                 : categoryOptions[buttonIndex - 1]?.id ?? null
         );
-    }, [categoryOptions]);
+    }, [categoryOptions, setSelectedCategoryId]);
 
     const openCategoryFilter = useCallback(() => {
         const options = [
@@ -801,26 +989,34 @@ export function MonthAgendaList({
             <Animated.ScrollView
                 key={listIdentity}
                 ref={scrollRef}
-                onLayout={positioningEntry ? measureEntryViewport : undefined}
-                onContentSizeChange={positioningEntry ? measureEntryContent : undefined}
+                innerViewRef={returnFocus.contentRef as React.RefObject<View>}
+                onLayout={measureEntryViewport}
+                onContentSizeChange={measureEntryContent}
+                onScroll={rememberVisibleDate}
+                onScrollBeginDrag={() => { verifyEntryOffset.current = false; }}
+                scrollEventThrottle={16}
+                stickyHeaderIndices={stickyHeaderIndices}
                 pointerEvents={positioningEntry ? 'none' : 'auto'}
                 accessibilityElementsHidden={positioningEntry}
                 importantForAccessibility={positioningEntry ? 'no-hide-descendants' : 'auto'}
                 style={[
                     styles.scroll,
                     { marginBottom: getFloatingActionBarClearance(bottomInset) },
-                    positioningEntry ? styles.unpositionedAgenda : { opacity: loadedOpacity },
+                    positioningEntry && needsMeasuredEntry ? styles.unpositionedAgenda : { opacity: loadedOpacity },
                 ]}
                 contentContainerStyle={[
                     styles.monthListContent,
+                    stickyDates && styles.stickyMonthListContent,
+                    compactDateGroups && styles.compactMonthListContent,
                     styles.floatingBarContentEnd,
                 ]}
                 showsVerticalScrollIndicator={false}
             >
-                <RouteSetupInlineNotice
-                    count={routeSetupRequiredCount}
-                    onPress={onOpenRouteSetup}
-                />
+                {showRouteNotice ? (
+                    <View style={stickyDates && styles.stickySectionSpacing}>
+                        <RouteSetupInlineNotice count={routeSetupRequiredCount} onPress={onOpenRouteSetup} />
+                    </View>
+                ) : null}
                 {loading || error || sections.length === 0 ? (
                     <AgendaInlineState
                         loading={loading}
@@ -831,98 +1027,136 @@ export function MonthAgendaList({
                         onPressRetry={onPressRetry}
                     />
                 ) : (
-                    sections.map((section) => {
+                    sections.flatMap((section, index) => {
                         const labels = getCompactSectionLabels(section.dateKey);
                         const isEntry = section.dateKey === entrySectionDate;
+                        const continuedSelection = isEntry && entryDate && entryDate !== section.dateKey
+                            ? getCompactSectionLabels(entryDate).dateLabel
+                            : undefined;
 
-                        return (
-                            <View key={section.dateKey} style={styles.section} onLayout={isEntry && positioningEntry ? measureEntry : undefined}>
-                                <View
-                                    testID={isEntry ? 'month-agenda-entry-date' : undefined}
-                                    style={[
-                                        styles.sectionHeader,
-                                        { borderBottomColor: colors.border },
-                                    ]}
-                                >
-                                    {isEntry && !savedEntry && !reduceEntryMotion ? (
-                                        <Animated.View
-                                            pointerEvents="none"
-                                            style={[styles.entryHighlight, { backgroundColor: colors.selectedDayBg, opacity: entryHighlight }]}
-                                        />
-                                    ) : null}
-                                    <View style={styles.sectionHeading}>
-                                        <Text
-                                            accessibilityRole="header"
-                                            maxFontSizeMultiplier={1.6}
-                                            style={[
-                                                styles.sectionTitle,
-                                                { color: colors.textPrimary },
-                                            ]}
-                                        >
-                                            {labels.dateLabel}
-                                        </Text>
-                                        <Text
-                                            maxFontSizeMultiplier={1.6}
-                                            style={[
-                                                styles.sectionWeekday,
-                                                { color: colors.textSecondary },
-                                            ]}
-                                        >
-                                            {labels.weekdayLabel}
-                                        </Text>
-                                    </View>
+                        const heading = (
+                            <View
+                                testID={isEntry ? 'month-agenda-entry-date' : undefined}
+                                style={[styles.sectionHeader, { borderBottomColor: colors.border }]}
+                            >
+                                {isEntry && !savedEntry && !reduceEntryMotion ? (
+                                    <Animated.View
+                                        pointerEvents="none"
+                                        style={[styles.entryHighlight, { backgroundColor: colors.selectedDayBg, opacity: entryHighlight }]}
+                                    />
+                                ) : null}
+                                <View style={styles.sectionHeading}>
+                                    <Text
+                                        ref={isEntry ? agendaHandoffTarget : undefined}
+                                        accessibilityRole="header"
+                                        maxFontSizeMultiplier={1.6}
+                                        style={[
+                                            styles.sectionTitle,
+                                            { color: colors.textPrimary },
+                                        ]}
+                                    >
+                                        {labels.dateLabel}
+                                    </Text>
                                     <Text
                                         maxFontSizeMultiplier={1.6}
                                         style={[
-                                            styles.sectionCount,
+                                            styles.sectionWeekday,
                                             { color: colors.textSecondary },
                                         ]}
                                     >
-                                        {section.itemCount}개의 일정
+                                        {labels.weekdayLabel}
                                     </Text>
+                                    {continuedSelection ? (
+                                        <Text
+                                            maxFontSizeMultiplier={1.6}
+                                            style={[styles.continuedSelection, { color: mode === 'dark' ? '#9ABEFF' : '#1959DB' }]}
+                                        >
+                                            {`선택한 날 ${continuedSelection}`}
+                                        </Text>
+                                    ) : null}
                                 </View>
-
-                                {section.itemCount === 0 ? (
-                                    <AgendaInlineState loading={false} error={null} emptyText="등록된 일정이 없어요" onPressRetry={onPressRetry} />
-                                ) : (
-                                <View
-                                    testID="month-agenda-group"
+                                <Text
+                                    maxFontSizeMultiplier={1.6}
                                     style={[
-                                        styles.selectedDayGroup,
-                                        { backgroundColor: mode === "dark" ? colors.surface : colors.surface2, borderColor: colors.border },
+                                        styles.sectionCount,
+                                        { color: colors.textSecondary },
                                     ]}
                                 >
-                                    {section.items.map((item, index) => (
-                                      <React.Fragment key={item.id}>
-                                        {index > 0 ? (
-                                            <View
-                                                testID="month-agenda-divider"
-                                                style={[styles.selectedDayGroupDivider, { backgroundColor: colors.border }]}
-                                            />
-                                        ) : null}
-                                        <ScheduleAgendaCard
-                                            item={item}
-                                            compact
-                                            groupRow
-                                            showMultiDaySummary
-                                            returnHighlightOpacity={returnHighlight?.id === item.id
-                                                ? returnHighlight.opacity
-                                                : savedEntry?.itemId === item.id && !reduceEntryMotion ? entryHighlight : undefined}
-                                            onPress={() => onOpenSchedule(item.id)}
-                                            swipeActions={getScheduleSwipeActions?.(item)}
-                                            onLongPress={onRequestScheduleActions
-                                                ? () => onRequestScheduleActions(item)
-                                                : undefined}
-                                        />
-                                      </React.Fragment>
-                                    ))}
-                                </View>
-                                )}
+                                    {section.itemCount}개의 일정
+                                </Text>
                             </View>
                         );
+                        const body = section.itemCount === 0 ? (
+                            <Text style={[styles.emptyDayMessage, { color: colors.textSecondary }]}>
+                                {activeCategoryId ? "이 카테고리의 일정이 없어요" : "등록된 일정이 없어요"}
+                            </Text>
+                        ) : (
+                            <View
+                                testID="month-agenda-group"
+                                style={styles.selectedDayGroup}
+                            >
+                                {section.items.map((item, index) => (
+                                  <React.Fragment key={item.id}>
+                                    {index > 0 ? (
+                                        <View
+                                            testID="month-agenda-divider"
+                                            style={[styles.selectedDayGroupDivider, { backgroundColor: colors.border }]}
+                                        />
+                                    ) : null}
+                                    <ScheduleAgendaCard
+                                        item={item}
+                                        compact
+                                        groupRow
+                                        showMultiDaySummary
+                                        cardRef={revealTarget?.id === item.id ? returnFocus.cardRef : undefined}
+                                        returnHighlightOpacity={focusTarget?.id === item.id && !reduceEntryMotion ? focusHighlight
+                                            : returnHighlight?.id === item.id
+                                            ? returnHighlight.opacity
+                                            : savedEntry?.itemId === item.id && !reduceEntryMotion ? entryHighlight : undefined}
+                                        onPress={restoreFocus => onOpenSchedule(item.id, restoreFocus)}
+                                        swipeActions={getScheduleSwipeActions?.(item)}
+                                        onLongPress={onRequestScheduleActions
+                                            ? () => onRequestScheduleActions(item)
+                                            : undefined}
+                                    />
+                                  </React.Fragment>
+                                ))}
+                            </View>
+                        );
+                        if (stickyDates) {
+                            return [
+                                <View key={section.dateKey + ':heading'}
+                                    onLayout={event => measureStickySection(section.dateKey, 'heading', event)}
+                                    style={[styles.stickySectionHeader, {
+                                        backgroundColor: colors.calendarBackground,
+                                        borderBottomColor: colors.border,
+                                    }]}>
+                                    {heading}
+                                </View>,
+                                <View key={section.dateKey + ':body'}
+                                    testID={`month-agenda-body-${section.dateKey}`}
+                                    style={[
+                                        styles.stickySectionBody,
+                                        compactDateGroups && styles.compactSectionBody,
+                                        index < sections.length - 1 && (
+                                            compactDateGroups ? styles.compactSectionSpacing : styles.stickySectionSpacing
+                                        ),
+                                    ]}
+                                    onLayout={event => measureStickySection(section.dateKey, 'body', event)}>
+                                    {body}
+                                </View>,
+                            ];
+                        }
+                        return [
+                            <View key={section.dateKey} style={styles.section}
+                                onLayout={event => measureSection(section.dateKey, event.nativeEvent.layout.y, event.nativeEvent.layout.height)}>
+                                {heading}
+                                {body}
+                            </View>,
+                        ];
                     })
                 )}
-                {entrySectionDate && entryEndSpace > 0 ? (
+                {positioningDate && entryEndSpace > 0 ? (
                     <View pointerEvents="none" style={{ height: entryEndSpace }} />
                 ) : null}
             </Animated.ScrollView>

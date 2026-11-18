@@ -60,6 +60,7 @@ let lifecycleQueue: Promise<void> = Promise.resolve();
 
 export function startNoLateCustomAlarmAudio(
     soundId: NoLateAlarmSoundId = DEFAULT_NOLATE_ALARM_SOUND_ID,
+    onPreviewEnd?: (failed: boolean) => void,
 ): Promise<NoLateCustomAlarmAudioSession> {
     const generation = ++latestRequestedGeneration;
 
@@ -73,14 +74,14 @@ export function startNoLateCustomAlarmAudio(
         let sound: AlarmSound;
         try {
             await Audio.setAudioModeAsync(ALARM_AUDIO_MODE);
-            ({ sound } = await Audio.Sound.createAsync(
-                NOLATE_ALARM_LOOPS[soundId] ?? NOLATE_ALARM_LOOPS[DEFAULT_NOLATE_ALARM_SOUND_ID],
-                {
-                    shouldPlay: true,
-                    isLooping: true,
-                    volume: 1,
-                },
-            ));
+            const asset = NOLATE_ALARM_LOOPS[soundId] ?? NOLATE_ALARM_LOOPS[DEFAULT_NOLATE_ALARM_SOUND_ID];
+            const playback = { shouldPlay: true, isLooping: !onPreviewEnd, volume: 1 };
+            ({ sound } = onPreviewEnd
+                ? await Audio.Sound.createAsync(asset, playback, status => {
+                    if (status.isLoaded && status.didJustFinish) onPreviewEnd(false);
+                    if (!status.isLoaded && status.error) onPreviewEnd(true);
+                })
+                : await Audio.Sound.createAsync(asset, playback));
         } catch (error) {
             if (generation === latestRequestedGeneration && activeSession === null) {
                 await restoreNeutralAudioMode();

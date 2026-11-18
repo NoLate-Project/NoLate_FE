@@ -13,6 +13,26 @@ spec.loader.exec_module(verifier)
 
 
 class RealIsolationVerifierTest(unittest.TestCase):
+    def test_saved_bus_departure_status_rejects_rounded_time_or_unproven_live_data(self):
+        runner_spec = importlib.util.spec_from_file_location('bus_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        target = dt.datetime.fromisoformat('2026-11-16T21:48:02Z')
+        preview = {'departureAt': '2026-11-16T21:36:59Z', 'arrivalAt': target.isoformat(),
+                   'sourceUpdatedAt': '2026-11-16T21:29:54Z'}
+        route_info = {'totalDurationMinutes': 12, 'busPreviewObservation': {
+            'targetArrivalAt': target.isoformat(), 'sourceUpdatedAt': preview['sourceUpdatedAt'],
+        }}
+        status = {'scheduleId': 363, 'travelMinutes': 12, 'recommendedDepartureAt': preview['departureAt'],
+                  'source': 'SELECTED_ROUTE', 'stale': True, 'liveFetchedAt': None, 'predictedArrivalAt': None}
+        self.assertEqual(runner.verify_saved_bus_departure(route_info, status, preview, target)['travelMinutes'], 12)
+        for key, value in [('recommendedDepartureAt', '2026-11-16T21:36:02Z'), ('travelMinutes', 15),
+                           ('predictedArrivalAt', preview['arrivalAt']), ('source', 'LIVE_PROVIDER')]:
+            with self.subTest(field=key), self.assertRaises(AssertionError):
+                runner.verify_saved_bus_departure(route_info, {**status, key: value}, preview, target)
+        with self.assertRaises(AssertionError):
+            runner.verify_saved_bus_departure(route_info, status, preview, target + dt.timedelta(minutes=1))
+
     def test_walking_rejection_audit_preserves_failure_without_claiming_eta_failed(self):
         value = {'provider': 'odsay-walking', 'httpCalls': 2, 'cacheHits': 5, 'cacheEntries': 1,
                  'unavailableCalls': 1, 'failureCounts': {'ENDPOINT_MISMATCH': 1},
@@ -190,16 +210,17 @@ class RealIsolationVerifierTest(unittest.TestCase):
             'effectiveSnapshot': {'accepted': True, 'effectiveTransitRoute': {
                 'departureAt': '2026-10-12T04:00:26Z', 'arrivalAt': arrival,
                 'segments': [
-                    {'kind': 'WALK', 'walkingScope': 'ACCESS', 'walkingGeometry': {
+                    {'kind': 'WALK', 'walkingScope': 'ACCESS', 'durationMinutes': 2, 'walkingGeometry': {
                         'from': {'lat': 37.65, 'lng': 127.06}}},
                     {'kind': 'SUBWAY', 'rideTiming': {
+                        'basis': 'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
                         'predictedBoardingAt': '2026-10-12T04:03:13Z',
                         'predictedArrivalAt': '2026-10-12T04:18:00Z',
                         'timetable': {'provider': 'seoul-timetable', 'line': 'LINE_4',
                             'fromStationCode': '0411', 'toStationCode': '0433',
                             'directionCode': 'DOWN', 'serviceClass': 'LOCAL',
                             'serviceDate': '2026-10-12', 'trainNumber': '4012'}}},
-                    {'kind': 'WALK', 'walkingScope': 'EGRESS', 'walkingGeometry': {
+                    {'kind': 'WALK', 'walkingScope': 'EGRESS', 'durationMinutes': 3, 'walkingGeometry': {
                         'to': {'lat': 37.48, 'lng': 126.93}}},
                 ]}}}
         export_spec = importlib.util.spec_from_file_location('comparison_export', Path(__file__).with_name('verify-eta-comparison.py'))
@@ -207,12 +228,13 @@ class RealIsolationVerifierTest(unittest.TestCase):
         export_spec.loader.exec_module(exporter)
         prediction = exporter.worker_prediction(worker, 'synthetic-comparison-export-regression')
         self.assertEqual(verifier.verify_comparison_export(worker, prediction)['result'], 'PASSED')
-        for mutation in ('alarm_anchor', 'train', 'round_boarding', 'platform', 'actual_accuracy', 'precision', 'coordinate'):
+        for mutation in ('alarm_anchor', 'train', 'round_boarding', 'clock_kind', 'platform', 'actual_accuracy', 'precision', 'coordinate'):
             with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
                 changed = copy.deepcopy(prediction)
                 if mutation == 'alarm_anchor': changed['requestedDepartureAt'] = worker['recommendedDepartureAt']
                 elif mutation == 'train': changed['rides'][0]['trainIdentity']['number'] = '4999'
                 elif mutation == 'round_boarding': changed['rides'][0]['boardingAt'] = '2026-10-12T04:03:00Z'
+                elif mutation == 'clock_kind': changed['rides'][0]['boardingClockKind'] = 'BOARDING'
                 elif mutation == 'platform': changed['walkingBoundaryEvidence'][0]['to']['kind'] = 'STATION_PLATFORM'
                 elif mutation == 'precision': changed['arrivalClockEvidence']['resolutionSeconds'] = 60
                 elif mutation == 'coordinate': changed['originBoundary'] = 'coordinate:37.5,127.0'
@@ -322,6 +344,20 @@ class RealIsolationVerifierTest(unittest.TestCase):
         self.assertEqual(verifier.verify_values(worker, public)['sourceAgeSeconds'], 40)
         self.assertEqual(verifier.verify_values(worker, public)['walkingBoundaryAudit']['timingResult'], 'PASSED')
 
+    def test_first_live_shift_compares_station_arrivals_with_scheduled_dwell(self):
+        worker, public = self.sample()
+        route = worker['effectiveSnapshot']['effectiveTransitRoute']
+        timetable = route['segments'][1]['rideTiming']['timetable']
+        timetable['boardingStationArrivalAt'] = '2026-10-08T02:02:40Z'
+        timetable['arrivalAt'] = '2026-10-08T02:42:40Z'
+        public['effectiveTransitRoute'] = copy.deepcopy(route)
+        verifier.verify_values(worker, public)
+
+        timetable['arrivalAt'] = '2026-10-08T02:43:00Z'
+        public['effectiveTransitRoute'] = copy.deepcopy(route)
+        with self.assertRaises(AssertionError):
+            verifier.verify_values(worker, public)
+
     def test_odsay_walk_minutes_are_not_claimed_as_exact_seconds_or_geometry(self):
         worker, public = self.sample()
         worker['journeyProvider'] = 'odsay'
@@ -385,6 +421,44 @@ class RealIsolationVerifierTest(unittest.TestCase):
             p['effectiveTransitRoute'] = copy.deepcopy(r)
             with self.subTest(fault=fault), self.assertRaises((AssertionError, TypeError, AttributeError)):
                 verifier.verify_values(w, p)
+
+    def test_odsay_entrance_and_exit_seconds_preserve_audited_route_boundaries(self):
+        worker, public = self.sample()
+        worker['journeyProvider'] = 'odsay'
+        route = worker['effectiveSnapshot']['effectiveTransitRoute']
+        route['provider'] = 'odsay'
+        for walk in (s for s in route['segments'] if s['kind'] == 'WALK'):
+            walk.update(durationMinutes=2, durationSeconds=None, walkingGeometry=None)
+        for index, scope, source in ((0, 'ACCESS', 'ODSAY_ENTRANCE_WALK_SECONDS'),
+                                     (4, 'EGRESS', 'ODSAY_EXIT_WALK_SECONDS')):
+            start, end = {'lat': 37.65, 'lng': 127.06}, {'lat': 37.651, 'lng': 127.06}
+            route['segments'][index].update(durationSeconds=120, walkingTiming={
+                'source': source, 'originalDurationMinutes': 1, 'movementSeconds': 120,
+                'sameOrderedPathVerified': False, 'fetchedAt': worker['evaluatedAt'],
+            }, walkingGeometry={
+                'endpointBasis': 'PROVIDER_PATH_ENDPOINTS', 'distanceMeters': 148,
+                'from': start, 'to': end, 'providerQueryEndpoints': {'start': start.copy(), 'end': end.copy()},
+            })
+            self.assertEqual(route['segments'][index]['walkingScope'], scope)
+        public['effectiveTransitRoute'] = copy.deepcopy(route)
+        result = verifier.verify_values(worker, public)['walkingBoundaryAudit']
+        self.assertEqual(result['adoptedEntranceExitWalkingSeconds'],
+                         [{'scope': 'ACCESS', 'seconds': 120}, {'scope': 'EGRESS', 'seconds': 120}])
+        self.assertFalse(result['stationInteriorCoverageVerified'])
+
+        for fault in ('wrong-scope', 'ordered-claim', 'far-from-pin', 'platform-claim'):
+            incorrect = copy.deepcopy(route)
+            access = incorrect['segments'][0]
+            if fault == 'wrong-scope':
+                access['walkingTiming']['source'] = 'ODSAY_EXIT_WALK_SECONDS'
+            elif fault == 'ordered-claim':
+                access['walkingTiming']['sameOrderedPathVerified'] = True
+            elif fault == 'far-from-pin':
+                access['walkingGeometry']['providerQueryEndpoints']['start']['lat'] += 0.001
+            else:
+                access['walkingGeometry']['pathEvidence'] = {'stationInteriorCoverage': 'INCLUDED_TO_PLATFORM'}
+            with self.subTest(fault=fault), self.assertRaises(AssertionError):
+                verifier.verify_odsay_minute_walking(incorrect)
 
     def test_actual_odsay_diagnostic_never_counts_as_normal_eta_acceptance(self):
         worker, public = self.sample()

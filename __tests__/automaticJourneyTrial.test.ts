@@ -18,6 +18,7 @@ const mockConfigureAuth = jest.fn();
 const mockUpdateAuth = jest.fn();
 const mockAuthenticatedPost = jest.fn();
 const mockRestore = jest.fn();
+const mockReadCheckpointRoute = jest.fn();
 const mockStop = jest.fn();
 const mockTerminalCleanup = jest.fn();
 const mockOutbox = jest.fn();
@@ -36,6 +37,7 @@ jest.mock("../src/modules/journey/automaticJourney", () => ({
     updateAutomaticJourneyAuthentication: (...args: unknown[]) => mockUpdateAuth(...args),
     authenticatedAutomaticJourneyRequest: (...args: unknown[]) => mockAuthenticatedPost(...args),
     restoreAutomaticJourney: (route: string, binding: AutomaticJourneyBinding) => mockRestore(route, binding),
+    readSavedAutomaticJourneyCheckpointRoute: (binding: AutomaticJourneyBinding) => mockReadCheckpointRoute(binding),
     stopAutomaticJourney: () => mockStop(),
     reconcileAutomaticJourneyTerminal: (b: AutomaticJourneyBinding) => mockTerminalCleanup(b),
     getAutomaticJourneyDeparture: (binding: AutomaticJourneyBinding) => mockOutbox(binding),
@@ -592,10 +594,16 @@ it('cold authenticated stop retains intent without a credential, then same-accou
     await expect(prepareAutomaticJourneyTrial(input, 'SANDBOX')).rejects.toThrow('PENDING_STOP_BLOCKS_PREPARE');
     await expect(restoreAutomaticJourneyTrial(input)).rejects.toThrow('PENDING_STOP_BLOCKS_RESTORE');
     mockAuthenticatedPost.mockResolvedValue({ success: true, data: { sessionId: '11111111-1111-4111-8111-111111111111', state: 'STOPPED' } });
+    const otherAccountToken = `e30.${Buffer.from(JSON.stringify({ type: 'ACCESS', sub: '8', sg: 3, iat: now, exp: now + 600 })).toString('base64url')}.c2ln`;
+    await retryAutomaticJourneyStops(async () => journeyAuthentication(otherAccountToken, auth.apiOrigin, 8));
+    expect(mockAuthenticatedPost).not.toHaveBeenCalled();
+    expect(JSON.parse(stopStored!).bindings).toHaveLength(1);
+    const olderToken = `e30.${Buffer.from(JSON.stringify({ type: 'ACCESS', sub: '7', sg: 1, iat: now, exp: now + 600 })).toString('base64url')}.c2ln`;
+    await retryAutomaticJourneyStops(async () => journeyAuthentication(olderToken, auth.apiOrigin, 7));
+    expect(mockAuthenticatedPost).not.toHaveBeenCalled();
+    expect(JSON.parse(stopStored!).bindings).toHaveLength(1);
     const changedToken = `e30.${Buffer.from(JSON.stringify({ type: 'ACCESS', sub: '7', sg: 3, iat: now, exp: now + 600 })).toString('base64url')}.c2ln`;
     await retryAutomaticJourneyStops(async () => journeyAuthentication(changedToken, auth.apiOrigin, 7));
-    expect(mockAuthenticatedPost).not.toHaveBeenCalled();
-    await retryAutomaticJourneyStops(async () => auth);
     expect(mockAuthenticatedPost).toHaveBeenCalledTimes(1);
     expect(JSON.parse(stopStored!).bindings).toEqual([]);
     expect(getAutomaticJourneySyncState()).toMatchObject({ status: 'IDLE', pendingStopCount: 0, errorCode: null });
@@ -806,6 +814,30 @@ it.each(['ARMED', 'ACTIVE'])('preserves authoritative %s checkpoint without gran
     await reconcileAutomaticJourneyCheckpoint(source);
     expect(stored).toBe(before); expect(mockTerminalCleanup).not.toHaveBeenCalled(); expect(mockRestore).not.toHaveBeenCalled();
     expect(getAutomaticJourneySyncState().checkpointState).toBe('CURRENT');
+});
+it('resumes the retained route only after the server validates the exact saved checkpoint', async () => {
+    const { b, source, data } = coldAuthenticatedCheckpoint();
+    const saved = { ...input, context: "SAVED_ROUTE" as const };
+    const routeJSON = JSON.stringify({ ...saved, walkingSnapshot: { snapshotId: 'retained' } });
+    const checkpoint = { scheduleId: b.scheduleId, sessionId: b.sessionId, memberId: 7, expiresAt: b.expiresAtEpochSeconds };
+    mockAuthenticatedPost.mockResolvedValue({ success: true, data: { ...data, state: 'ACTIVE',
+        validatedAt: new Date().toISOString(), validUntil: new Date(Date.now() + 20_000).toISOString() } });
+    mockReadCheckpointRoute.mockResolvedValue(routeJSON);
+    mockRestore.mockResolvedValue({ ...ready, status: 'ACTIVE', sessionId: b.sessionId });
+    await restoreAutomaticJourneyTrial(saved, source, checkpoint);
+    expect(mockAuthenticatedPost.mock.calls[0][1]).toMatch(/\/validate$/);
+    expect(mockAuthenticatedPost.mock.invocationCallOrder[0]).toBeLessThan(mockReadCheckpointRoute.mock.invocationCallOrder[0]);
+    expect(mockRestore).toHaveBeenCalledWith(routeJSON, b);
+    expect(mockArm).not.toHaveBeenCalled();
+});
+it('refuses to restore a retained checkpoint from a different schedule', async () => {
+    const { b, source } = coldAuthenticatedCheckpoint();
+    await expect(restoreAutomaticJourneyTrial({ ...input, context: "SAVED_ROUTE" }, source,
+        { scheduleId: '9002', sessionId: b.sessionId, memberId: 7, expiresAt: b.expiresAtEpochSeconds }))
+        .rejects.toThrow('ROUTE_BINDING_MISMATCH');
+    expect(mockAuthenticatedPost).not.toHaveBeenCalled();
+    expect(mockReadCheckpointRoute).not.toHaveBeenCalled();
+    expect(mockRestore).not.toHaveBeenCalled();
 });
 it('transient outage preserves checkpoint, then automatic retry clears only on terminal receipt', async () => {
     const { source } = coldAuthenticatedCheckpoint(); const before = stored;

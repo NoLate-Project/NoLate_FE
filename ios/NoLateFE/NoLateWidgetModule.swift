@@ -3,8 +3,6 @@ import React
 import WidgetKit
 
 private enum NoLateWidgetBridgeConstants {
-  static let appGroupIdentifier = "group.com.anonymous.nolatefe"
-  static let snapshotKey = "nolate.widget.snapshot.v1"
   static let widgetKind = "NoLateScheduleWidget"
   static let maximumSnapshotBytes = 1_048_576
 }
@@ -32,9 +30,7 @@ final class NoLateWidgetModule: NSObject {
         )
         return
       }
-      guard let defaults = UserDefaults(
-        suiteName: NoLateWidgetBridgeConstants.appGroupIdentifier
-      ) else {
+      guard let url = NoLateWidgetSharedSnapshot.fileURL else {
         reject(
           "widget_app_group_unavailable",
           "위젯 공유 저장소를 열 수 없습니다.",
@@ -43,15 +39,13 @@ final class NoLateWidgetModule: NSObject {
         return
       }
 
-      defaults.set(data, forKey: NoLateWidgetBridgeConstants.snapshotKey)
-      guard defaults.data(forKey: NoLateWidgetBridgeConstants.snapshotKey) == data else {
-        reject(
-          "widget_snapshot_write_failed",
-          "위젯 일정 데이터를 저장하지 못했습니다.",
-          nil
-        )
+      do {
+        try NoLateWidgetSharedSnapshot.write(data, at: url)
+      } catch {
+        reject("widget_snapshot_write_failed", "위젯 일정 데이터를 저장하지 못했습니다.", error as NSError)
         return
       }
+      NoLateWidgetSharedSnapshot.removeLegacyValue()
 
       WidgetCenter.shared.reloadTimelines(ofKind: NoLateWidgetBridgeConstants.widgetKind)
       resolve(true)
@@ -65,9 +59,7 @@ final class NoLateWidgetModule: NSObject {
     _ resolve: RCTPromiseResolveBlock,
     rejecter reject: RCTPromiseRejectBlock
   ) {
-    guard let defaults = UserDefaults(
-      suiteName: NoLateWidgetBridgeConstants.appGroupIdentifier
-    ) else {
+    guard let url = NoLateWidgetSharedSnapshot.fileURL else {
       reject(
         "widget_app_group_unavailable",
         "위젯 공유 저장소를 열 수 없습니다.",
@@ -76,13 +68,12 @@ final class NoLateWidgetModule: NSObject {
       return
     }
 
-    defaults.removeObject(forKey: NoLateWidgetBridgeConstants.snapshotKey)
-    guard defaults.object(forKey: NoLateWidgetBridgeConstants.snapshotKey) == nil else {
-      reject(
-        "widget_snapshot_clear_failed",
-        "위젯 일정 데이터를 삭제하지 못했습니다.",
-        nil
-      )
+    NoLateWidgetSharedSnapshot.removeLegacyValue()
+    do {
+      // An empty file prevents a prior defaults value from reappearing after sign-out.
+      try NoLateWidgetSharedSnapshot.write(Data(), at: url)
+    } catch {
+      reject("widget_snapshot_clear_failed", "위젯 일정 데이터를 삭제하지 못했습니다.", error as NSError)
       return
     }
 

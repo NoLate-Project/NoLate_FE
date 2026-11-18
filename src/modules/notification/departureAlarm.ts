@@ -133,6 +133,7 @@ type NativeAlarmModule = {
         logicalAlarmId?: string;
         scheduleId: string;
         generation: number;
+        preserveTriggerAt?: string;
     }): Promise<DepartureAlarmMutationResult>;
     getScheduledAlarms(): Promise<DepartureAlarmSyncCommand[]>;
     openExactAlarmSettings(): Promise<boolean>;
@@ -220,6 +221,7 @@ export async function getDepartureAlarmCapabilities(): Promise<DepartureAlarmCap
 
 export async function applyDepartureAlarmCommand(
     command: DepartureAlarmSyncCommand,
+    preserveTriggerAt?: string,
 ): Promise<DepartureAlarmMutationResult> {
     const module = getNativeAlarmModule();
     if (!module) {
@@ -232,6 +234,7 @@ export async function applyDepartureAlarmCommand(
             logicalAlarmId: command.alarmId,
             scheduleId: command.scheduleId,
             generation: command.generation,
+            ...(preserveTriggerAt ? { preserveTriggerAt } : {}),
         });
     }
     const nativeCommand = { ...command };
@@ -245,7 +248,7 @@ export async function applyDepartureAlarmCommand(
 
 /**
  * Reconciles a complete generation using deterministic per-occurrence native ids. Missing and
- * already elapsed slots are tombstoned before future slots are upserted. A crash between calls is
+ * already elapsed slots are reconciled before future slots are upserted. A crash between calls is
  * recoverable: snapshot replay repeats the same generation, while native tombstones reject older
  * payloads and equal desired UPSERTs remain idempotent.
  */
@@ -345,12 +348,16 @@ export async function applyDepartureAlarmPlanCommand(
         isDepartureAlarmOccurrenceEligible(occurrence, nowMilliseconds)
     );
     const desiredNativeIds = new Set(futureOccurrences.map((occurrence) => occurrence.nativeAlarmId));
+    const declaredOccurrences = new Map(plan.occurrences.map(occurrence => [occurrence.nativeAlarmId, occurrence]));
     let reconciliationFailure: DepartureAlarmMutationResult | undefined;
     for (const nativeAlarmId of canonicalNativeAlarmIdsForPlan(plan.alarmId)) {
         if (desiredNativeIds.has(nativeAlarmId)) continue;
         try {
             const result = await applyDepartureAlarmCommand(
                 cancelCommandForNativeId(plan, nativeAlarmId),
+                // iOS can deliver on the next whole second and still needs the stored record
+                // to validate the notification response during its recovery window.
+                Platform.OS === "ios" ? declaredOccurrences.get(nativeAlarmId)?.triggerAt : undefined,
             );
             if (result.applied !== true) {
                 reconciliationFailure = result;

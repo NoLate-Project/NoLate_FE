@@ -43,6 +43,13 @@ export function createRouteSummaryStyles(options: RoutePlannerStyleOptions) {
         paddingTop: 0,
         paddingBottom: 0,
     },
+        transitDetailDepartureBasis: {
+        fontSize: 13,
+        fontWeight: "600",
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingBottom: 10,
+        marginBottom: 4,
+    },
         transitDetailHeroDuration: {
         fontSize: 34,
         fontWeight: "900",

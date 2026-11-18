@@ -6,6 +6,7 @@ export type BottomSheetSnap = "expanded" | "middle" | "collapsed" | "hidden";
 export const BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT = 30;
 export const TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT = 26;
 export const LARGE_TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT = 44;
+export const TRANSIT_OVERVIEW_HANDLE_TOUCH_HEIGHT = 44;
 export const TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT = 72;
 export const TRANSIT_DETAIL_ACTION_BAR_TOP_PADDING = 8;
 export const TRANSIT_DETAIL_ACTION_BUTTON_HEIGHT = 46;
@@ -78,7 +79,9 @@ export function getRoutePlannerBottomSheetLayout({
         TRANSIT_DETAIL_ACTION_BAR_TOP_PADDING +
         TRANSIT_DETAIL_ACTION_BUTTON_HEIGHT +
         transitDetailActionBarPaddingBottom +
-        (bottomSheetSnap === "collapsed" ? TRANSIT_DETAIL_COLLAPSED_SUMMARY_HEIGHT : 0)
+        (bottomSheetSnap === "collapsed"
+            ? TRANSIT_DETAIL_COLLAPSED_SUMMARY_HEIGHT + TRANSIT_OVERVIEW_HANDLE_TOUCH_HEIGHT
+            : 0)
     );
 
     const bottomPanelMaxHeight = isRouteDetailMode

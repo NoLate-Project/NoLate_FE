@@ -5,13 +5,15 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import ScheduleIcon from '../shared/ScheduleIcon';
 import Reanimated from 'react-native-reanimated';
 import CalendarGlassSurface from '../calendar/CalendarGlassSurface';
 import CalendarScopeContextLabel from '../calendar/CalendarScopeContextLabel';
-import CalendarViewModeGlyph from '../calendar/CalendarViewModeGlyph';
+import { CALENDAR_SEARCH_LARGE_FONT_SCALE, SEARCH_MIN_QUERY_LENGTH, showsSearchResultCountInDateHeading } from './CalendarSearchResults';
+import { CALENDAR_VIEW_OPTIONS, showsCalendarToolbarModeIcon } from '../calendar/viewMode';
 import LiquidGlassIconButton, {
   isLiquidGlassIconButtonAvailable,
 } from '../calendar/LiquidGlassIconButton';
@@ -46,6 +48,9 @@ const LIQUID_TOOLBAR_SEARCH_HEIGHT = 52;
 const LIQUID_TOOLBAR_SLOT_WIDTH = 50;
 
 const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
+
+const WIDE_VIEW_MODE_SLOT_WIDTH = 62;
+const WIDE_VIEW_MODE_SIBLING_WIDTH = (LIQUID_TOOLBAR_ACTIONS_WIDTH - WIDE_VIEW_MODE_SLOT_WIDTH) / 2;
 
 const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
 
@@ -103,6 +108,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
     visibleYear,
     pillTargetDepth,
     visiblePrimaryLabel,
+    primaryPillAccessibilityMonth,
     primaryPillContentWidth,
     primaryPillAnimatedStyle,
     selectedLiquidMode,
@@ -115,6 +121,11 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
     primaryPillYearScale,
     usesLiquidViewModeControl,
     isSearchToolbarOpen,
+    searchAwaitingCurrentQuery,
+    searchLoading,
+    searchError,
+    searchKeywordLength,
+    searchResults,
     searchHeaderTargetWidth,
     liquidPrototypeLayerWidth,
     liquidPrototypeLayerHeight,
@@ -142,6 +153,22 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
     activeCalendarPresentation,
     activeCalendarIconColor,
   } = controller;
+  const { width, fontScale } = useWindowDimensions();
+  const showsViewModeIcon = showsCalendarToolbarModeIcon(width, fontScale);
+  const usesWideViewModeSlot = showsViewModeIcon && pillTargetDepth !== 'year';
+  const searchResultCount =
+    fontScale <= CALENDAR_SEARCH_LARGE_FONT_SCALE &&
+    isSearchToolbarOpen && searchKeywordLength >= SEARCH_MIN_QUERY_LENGTH &&
+    !searchAwaitingCurrentQuery && !searchLoading && !searchError && searchResults.length > 0 &&
+    !showsSearchResultCountInDateHeading(searchResults, fontScale)
+      ? searchResults.length
+      : undefined;
+  const viewModeLabel = selectedLiquidMode === 'day' ? '일간'
+    : selectedLiquidMode === 'multi' ? '여러 날'
+    : selectedLiquidMode === 'week' ? '주간'
+    : CALENDAR_VIEW_OPTIONS.find(option => option.value === calendarViewMode)?.label ?? '보기';
+  const viewModeIcon = selectedLiquidMode === 'multi' ? 'multiDay'
+    : selectedLiquidMode === 'day' || selectedLiquidMode === 'week' ? 'calendar' : selectedLiquidMode;
   return (
     <>
       {(activeToolbarMenu !== null ||
@@ -210,6 +237,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                         : `${visibleYear}년 전체 월 보기`
                     }
                     accessibilityRole="button"
+                    accessibilityValue={primaryPillAccessibilityMonth ? { text: primaryPillAccessibilityMonth } : undefined}
                     style={({ pressed }) => [
                       styles.yearGlass,
                       {
@@ -246,6 +274,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                         : `${visibleYear}년 전체 월 보기`
                     }
                     accessibilityRole="button"
+                    accessibilityValue={primaryPillAccessibilityMonth ? { text: primaryPillAccessibilityMonth } : undefined}
                     style={({ pressed }) => [
                       styles.yearGlass,
                       {
@@ -305,6 +334,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
         <CalendarScopeContextLabel
           title={activeCalendarPresentation.title}
           color={activeCalendarIconColor}
+          searchResultCount={searchResultCount}
         />
       </Animated.View>
       {usesLiquidViewModeControl ? (
@@ -335,6 +365,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
               pillTargetDepth === 'day' ? 'timeline' : 'calendar'
             }
             showsViewModeButton={pillTargetDepth !== 'year'}
+            showsViewModeIcon={showsViewModeIcon}
             colorScheme={mode === 'dark' ? 'dark' : 'light'}
             closeRequest={prototypeCloseRequest}
             searchExpandedWidth={searchHeaderTargetWidth}
@@ -421,8 +452,10 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                     onPress={() => openToolbarMenu('view')}
                     accessibilityRole="button"
                     accessibilityLabel="캘린더 보기 방식 선택"
+                    accessibilityValue={{ text: viewModeLabel }}
                     style={({ pressed }) => [
                       styles.iconButton,
+                      usesWideViewModeSlot && { width: WIDE_VIEW_MODE_SLOT_WIDTH },
                       {
                         opacity: pressed ? 0.68 : 1,
                         transform: [{ scale: pressed ? 0.88 : 1 }],
@@ -430,24 +463,19 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                     ]}
                   >
                     <Animated.View
-                      style={{
+                      style={[styles.toolbarViewModeLabelRow, usesWideViewModeSlot && { width: WIDE_VIEW_MODE_SLOT_WIDTH }, {
                         opacity: calendarVisualProgress,
                         transform: [{ scale: calendarIconScale }],
-                      }}
+                      }]}
                     >
-                      {pillTargetDepth === 'day' ? (
-                        <ScheduleIcon
-                        name="calendar"
-                        role="toolbar"
-                          color={colors.textPrimary}
-                        />
-                      ) : (
-                        <CalendarViewModeGlyph
-                          mode={calendarViewMode}
-                          color={colors.textPrimary}
-                          toolbar
-                        />
+                      {usesWideViewModeSlot && (
+                        <ScheduleIcon name={viewModeIcon} role="calendarMarker" color={colors.textPrimary} />
                       )}
+                      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}
+                        style={[styles.toolbarViewModeLabel, { color: colors.textPrimary }]}>
+                        {viewModeLabel}
+                      </Text>
+                      <ScheduleIcon name="down" role="calendarMarker" color={colors.textPrimary} />
                     </Animated.View>
                   </Pressable>
                 )}
@@ -458,6 +486,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                   accessibilityLabel="일정 검색"
                   style={({ pressed }) => [
                     styles.iconButton,
+                    usesWideViewModeSlot && { width: WIDE_VIEW_MODE_SIBLING_WIDTH },
                     {
                       opacity: pressed ? 0.68 : 1,
                       transform: [{ scale: pressed ? 0.88 : 1 }],
@@ -477,6 +506,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                   accessibilityLabel="일정 추가"
                   style={({ pressed }) => [
                     styles.iconButton,
+                    usesWideViewModeSlot && { width: WIDE_VIEW_MODE_SIBLING_WIDTH },
                     {
                       opacity: pressed ? 0.68 : 1,
                       transform: [{ scale: pressed ? 0.88 : 1 }],

@@ -123,6 +123,18 @@ export function useScheduleAddSheetLifecycle({
     }
   }, [morphClosingPhase]);
 
+  const resumeMorphAfterRoute = useCallback(() => {
+    resetCloseLifecycle();
+    morphWasPresentedRef.current = true;
+    morphOpenStartedRef.current = true;
+    cancelAnimation(morphProgress);
+    cancelAnimation(morphPresentationOpacity);
+    morphProgress.value = 1;
+    morphPresentationOpacity.value = 1;
+    setMorphContentMounted(true);
+    setMorphSheetRasterized(true);
+  }, [morphPresentationOpacity, morphProgress, resetCloseLifecycle, setMorphContentMounted, setMorphSheetRasterized]);
+
   /** 현재 표시 주기가 여전히 유효할 때 모프 소유권과 도형 전환 애니메이션을 같은 시점에 시작합니다. */
   const startMorphOpenAnimation = useCallback(
     (openCycle: number) => {
@@ -541,13 +553,20 @@ export function useScheduleAddSheetLifecycle({
     }
     openSheet();
 
+    // Keep the measured opening for the normal path. A reused form can miss a
+    // layout callback, so allow its fallback height to open the form as well.
+    const openCycle = morphOpenCycleRef.current;
+    const fallback = isMorphPresentation
+      ? setTimeout(() => startMorphOpenAnimation(openCycle), MORPH_OPEN_DURATION_MS)
+      : null;
     return () => {
+      if (fallback !== null) clearTimeout(fallback);
       if (morphSeedPaintFrameRef.current !== null) {
         cancelAnimationFrame(morphSeedPaintFrameRef.current);
         morphSeedPaintFrameRef.current = null;
       }
     };
-  }, [isMorphPresentation, visible, openSheet, posY, setRendered]);
+  }, [isMorphPresentation, visible, openSheet, posY, setRendered, startMorphOpenAnimation]);
 
   useEffect(() => {
     if (visible || !rendered || morphClosingRef.current) return;
@@ -604,6 +623,6 @@ export function useScheduleAddSheetLifecycle({
     openSheet,
     posY,
     requestClose,
-    resetCloseLifecycle,
+    resumeMorphAfterRoute,
   };
 }

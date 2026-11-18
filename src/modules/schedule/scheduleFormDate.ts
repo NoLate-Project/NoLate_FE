@@ -101,6 +101,18 @@ export function normalizeScheduleFormRange(
     };
 }
 
+/** 시작일을 기존 종료일보다 뒤로 옮길 때, 시간제 일정의 길이를 유지한다. */
+export function getScheduleFormEndWhenMovingStartDate(
+    input: NormalizeScheduleFormRangeInput,
+    nextStartDay: Date,
+): Date | undefined {
+    if (input.allDay || !input.hasEndTime ||
+        startOfLocalScheduleDay(nextStartDay) <= startOfLocalScheduleDay(input.endDay)) return;
+    const { startAt, endAt } = normalizeScheduleFormRange(input);
+    const nextStartAt = mergeScheduleDateTime(nextStartDay, input.startTime);
+    return new Date(nextStartAt.getTime() + (endAt.getTime() - startAt.getTime()));
+}
+
 /** 저장된 end-exclusive 종일 종료값을 폼의 마지막 날(포함)로 변환한다. */
 export function getScheduleAllDayFormEndDay(startAt: Date, endAt: Date): Date {
     const startDay = startOfLocalScheduleDay(startAt);

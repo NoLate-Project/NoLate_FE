@@ -22,6 +22,7 @@ import {
     UNCATEGORIZED_FAVORITE_TAB_ID,
     getFavoritePlaceCategoryDisplayName,
 } from "../../src/modules/schedule/favoritePlaceSelection";
+import type { FavoritePlace } from "../../src/api/favoritePlaces";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import { BrandedLoadingState } from "../../src/ui/BrandedLoader";
 import {
@@ -66,8 +67,10 @@ export default function PlacesSettingsScreen() {
         sheet,
         setSheet,
         searchQuery,
-        setSearchQuery,
+        changeSearchQuery,
+        closeSheet,
         searchResults,
+        searchCompleted,
         searching,
         selectedCategoryKey,
         reduceMotionEnabled,
@@ -99,6 +102,11 @@ export default function PlacesSettingsScreen() {
         const node = key ? placeOptions.current.get(key) : null;
         if (node) AccessibilityInfo.sendAccessibilityEvent?.(node, "focus");
     }, []);
+    const reorderPlace = async (key: string, list: FavoritePlace[], index: number, offset: -1 | 1) => {
+        if (!await moveFavorite(list, index, offset)) return;
+        const options = placeOptions.current.get(key);
+        if (options) AccessibilityInfo.sendAccessibilityEvent?.(options, "focus");
+    };
     useEffect(() => {
         if (sheet || Platform.OS === "ios") return;
         const frame = requestAnimationFrame(restorePlaceFocus);
@@ -121,6 +129,11 @@ export default function PlacesSettingsScreen() {
     }, [closeActiveScene, returnsToSearch, router, runWithTransitionShell]);
 
     const anyBusy = busyKey !== null;
+    const placeEditor = sheet?.kind === "categoryEditor" ? sheet.returnToPlaceEditor : sheet;
+    const searchMode = sheet?.kind === "search" ? sheet.mode
+        : placeEditor?.kind === "placeEditor" && placeEditor.fromSearch ? "favorite" : undefined;
+    const standardDarkAppearance = !largeText && mode === "dark";
+    const placeActionColor = standardDarkAppearance ? "#9DC2FF" : "#2563EB";
     const selectedCategoryIndex = selectedCategory
         ? categories.findIndex((category) => category.id === selectedCategory.id)
         : -1;
@@ -131,9 +144,32 @@ export default function PlacesSettingsScreen() {
             : selectedCategory
                 ? getFavoritePlaceCategoryDisplayName(selectedCategory.name)
                 : "즐겨찾기";
-    const selectedCategoryCaption = selectedCategoryKey === DEFAULT_ADDRESS_FAVORITE_TAB_ID
-        ? "일정의 출발지로 자동 사용하는 주소예요"
-        : `${selectedFavorites.length}개 장소`;
+    const showingDefault = selectedCategoryKey === DEFAULT_ADDRESS_FAVORITE_TAB_ID;
+    const standardDefault = showingDefault && !largeText;
+    const showDefaultSetup = standardDefault && !defaultOrigin;
+    const defaultPlaceKey = defaultOrigin?.id ? `default:${defaultOrigin.id}` : undefined;
+
+    const renderPlaceOptions = (key: string, name: string) => {
+        const expanded = expandedPlaceKey === key;
+        return (
+            <Pressable
+                ref={node => {
+                    if (node) placeOptions.current.set(key, node);
+                    else placeOptions.current.delete(key);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`${name} 장소 옵션`}
+                accessibilityState={{ expanded }}
+                onPress={() => setExpandedPlaceKey(expanded ? null : key)}
+                style={({ pressed }) => [styles.iconAction, {
+                    backgroundColor: expanded ? "rgba(37,99,235,0.12)" : colors.surface2,
+                    opacity: pressed ? 0.65 : 1,
+                }]}
+            >
+                <Ionicons accessible={false} name="ellipsis-horizontal-outline" size={21} color={expanded ? placeActionColor : colors.textSecondary} />
+            </Pressable>
+        );
+    };
 
     return (
         <View style={[styles.root, { backgroundColor: colors.background }]}>
@@ -155,7 +191,6 @@ export default function PlacesSettingsScreen() {
                 </CalendarGlassSurface>
                 <View style={styles.headerTitleWrap}>
                     <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.headerTitle, { color: colors.textPrimary }]}>내 장소</Text>
-                    <Text maxFontSizeMultiplier={1.65} style={[styles.headerCaption, { color: colors.textSecondary }]}>즐겨찾기를 카테고리별로 관리해요</Text>
                 </View>
                 <CalendarGlassSurface
                     interactive
@@ -248,8 +283,8 @@ export default function PlacesSettingsScreen() {
                                 { borderColor: colors.border, backgroundColor: colors.surface, opacity: pressed || anyBusy ? 0.55 : 1 },
                             ]}
                         >
-                            <Ionicons name="add" size={18} color="#2563EB" />
-                            <Text style={styles.addCategoryTabText}>카테고리</Text>
+                            <Ionicons name="add-outline" size={18} color={placeActionColor} />
+                            <Text style={[styles.addCategoryTabText, { color: placeActionColor }]}>카테고리</Text>
                         </Pressable>
                     </ScrollView>
                 </View>
@@ -270,8 +305,14 @@ export default function PlacesSettingsScreen() {
                 >
                     <View style={styles.sectionHeader}>
                         <View style={styles.flexText}>
-                            <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.selectedCategoryTitle, { color: colors.textPrimary }]}>{selectedCategoryTitle}</Text>
-                            <Text maxFontSizeMultiplier={1.8} style={[styles.sectionCaption, { color: colors.textSecondary }]}>{selectedCategoryCaption}</Text>
+                            <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.selectedCategoryTitle, { color: colors.textPrimary }]}>
+                                {showingDefault ? "기본주소" : "저장한 장소"}
+                            </Text>
+                            {standardDefault ? (
+                                <Text style={[styles.defaultSetupHint, { color: colors.textSecondary }]}>
+                                    일정의 출발지로 자동 사용해요
+                                </Text>
+                            ) : null}
                         </View>
                         {selectedCategoryKey !== DEFAULT_ADDRESS_FAVORITE_TAB_ID ? (
                             <Pressable
@@ -281,8 +322,8 @@ export default function PlacesSettingsScreen() {
                                 onPress={() => openSearch("favorite")}
                                 style={({ pressed }) => [styles.smallAddButton, { opacity: pressed || anyBusy ? 0.55 : 1 }]}
                             >
-                                <Ionicons name="add" size={17} color="#2563EB" />
-                                <Text maxFontSizeMultiplier={1.65} style={styles.smallAddButtonText}>새 장소</Text>
+                                <Ionicons name="add-outline" size={17} color={placeActionColor} />
+                                <Text maxFontSizeMultiplier={1.65} style={[styles.smallAddButtonText, { color: placeActionColor }]}>장소 추가</Text>
                             </Pressable>
                         ) : null}
                     </View>
@@ -332,7 +373,7 @@ export default function PlacesSettingsScreen() {
                             style={[
                                 styles.defaultCard,
                                 {
-                                    borderColor: defaultOrigin ? "#2563EB" : colors.border,
+                                    borderColor: defaultOrigin && largeText ? "#2563EB" : colors.border,
                                     backgroundColor: colors.surface,
                                 },
                             ]}
@@ -341,43 +382,68 @@ export default function PlacesSettingsScreen() {
                                 <>
                                     <View style={styles.placeMainRow}>
                                         <View style={[styles.placeIcon, { backgroundColor: "rgba(37,99,235,0.12)" }]}>
-                                            <Ionicons name="home" size={22} color="#2563EB" />
+                                            <Ionicons name="home-outline" size={22} color="#2563EB" />
                                         </View>
                                         <View style={styles.flexText}>
                                             <View style={styles.badgeRow}>
-                                                <Text numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.defaultName, { color: colors.textPrimary }]}>
+                                                <Text numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[standardDefault ? styles.cardTitle : styles.defaultName, { color: colors.textPrimary }]}>
                                                     {defaultOrigin.name ?? "기본주소"}
                                                 </Text>
-                                                <View style={styles.defaultBadge}>
-                                                    <Text style={styles.defaultBadgeText}>사용 중</Text>
-                                                </View>
+                                                {!standardDefault ? (
+                                                    <View style={styles.defaultBadge}>
+                                                        <Text style={styles.defaultBadgeText}>사용 중</Text>
+                                                    </View>
+                                                ) : null}
                                             </View>
                                             <Text numberOfLines={largeText ? undefined : 2} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.cardCaption, { color: colors.textSecondary }]}>
                                                 {defaultOrigin.address ?? "주소 정보 없음"}
                                             </Text>
                                         </View>
+                                        {standardDefault && defaultPlaceKey
+                                            ? renderPlaceOptions(defaultPlaceKey, defaultOrigin.name ?? "기본주소")
+                                            : null}
                                     </View>
-                                    <View style={[styles.cardToolbar, { borderTopColor: colors.border }]}>
-                                        <Text style={[styles.defaultUsageText, { color: colors.textSecondary }]}>일정 출발지로 자동 입력</Text>
-                                        <View style={styles.cardActions}>
-                                            <IconAction
-                                                label={`${defaultOrigin.name ?? "기본주소"} 수정`}
-                                                icon="pencil-outline"
-                                                disabled={!defaultOrigin.id || anyBusy}
-                                                colors={colors}
-                                                onPress={() => openFavoriteEditor(defaultOrigin)}
-                                            />
-                                            <IconAction
-                                                label={`${defaultOrigin.name ?? "기본주소"} 즐겨찾기에서 삭제`}
-                                                icon="trash-outline"
-                                                destructive
-                                                disabled={!defaultOrigin.id || anyBusy}
-                                                colors={colors}
-                                                onPress={() => deleteFavorite(defaultOrigin)}
-                                            />
+                                    {standardDefault ? (
+                                        <View style={[styles.defaultBadge, styles.defaultActiveBadge]}>
+                                            <Ionicons accessible={false} name="checkmark-outline" size={13} color={mode === "dark" ? "#9DC2FF" : "#2563EB"} />
+                                            <Text style={[styles.defaultBadgeText, mode === "dark" && styles.defaultActiveBadgeDarkText]}>
+                                                기본주소로 사용 중
+                                            </Text>
                                         </View>
-                                    </View>
-                                    <View style={styles.defaultActions}>
+                                    ) : null}
+                                    {(!standardDefault || (defaultPlaceKey && expandedPlaceKey === defaultPlaceKey)) ? (
+                                        <Reanimated.View
+                                            entering={standardDefault && !reduceMotionEnabled ? placeActionsEntry : undefined}
+                                            style={[styles.cardToolbar, { borderTopColor: colors.border }]}
+                                        >
+                                            {!standardDefault ? (
+                                                <Text style={[styles.defaultUsageText, { color: colors.textSecondary }]}>일정 출발지로 자동 입력</Text>
+                                            ) : null}
+                                            <View style={styles.cardActions}>
+                                                <IconAction
+                                                    label={`${defaultOrigin.name ?? "기본주소"} 수정`}
+                                                    visibleLabel={standardDefault ? "수정" : undefined}
+                                                    icon="pencil-outline"
+                                                    disabled={!defaultOrigin.id || anyBusy}
+                                                    colors={colors}
+                                                    onPress={() => {
+                                                        if (standardDefault && defaultPlaceKey) returnPlaceKey.current = defaultPlaceKey;
+                                                        openFavoriteEditor(defaultOrigin);
+                                                    }}
+                                                />
+                                                <IconAction
+                                                    label={`${defaultOrigin.name ?? "기본주소"} 즐겨찾기에서 삭제`}
+                                                    visibleLabel={standardDefault ? "삭제" : undefined}
+                                                    icon="trash-outline"
+                                                    destructive
+                                                    disabled={!defaultOrigin.id || anyBusy}
+                                                    colors={colors}
+                                                    onPress={() => deleteFavorite(defaultOrigin)}
+                                                />
+                                            </View>
+                                        </Reanimated.View>
+                                    ) : null}
+                                    <View style={standardDefault ? styles.defaultActiveActions : styles.defaultActions}>
                                         <Pressable
                                             accessibilityRole="button"
                                             accessibilityLabel="기본주소 변경"
@@ -385,11 +451,18 @@ export default function PlacesSettingsScreen() {
                                             onPress={() => openSearch("default")}
                                             style={({ pressed }) => [
                                                 styles.secondaryButton,
-                                                { borderColor: colors.border, opacity: pressed || anyBusy ? 0.55 : 1 },
+                                                standardDefault && styles.defaultActiveAction,
+                                                {
+                                                    borderColor: colors.border,
+                                                    opacity: pressed || anyBusy ? 0.55 : 1,
+                                                    backgroundColor: standardDefault ? colors.surface2 : undefined,
+                                                },
                                             ]}
                                         >
-                                            <Ionicons name="swap-horizontal" size={17} color={colors.textPrimary} />
-                                            <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>변경</Text>
+                                            <Ionicons name={standardDefault ? "refresh-outline" : "swap-horizontal-outline"} size={17} color={colors.textPrimary} />
+                                            <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>
+                                                {standardDefault ? "주소 변경" : "변경"}
+                                            </Text>
                                         </Pressable>
                                         <Pressable
                                             accessibilityRole="button"
@@ -398,33 +471,54 @@ export default function PlacesSettingsScreen() {
                                             onPress={clearDefaultOrigin}
                                             style={({ pressed }) => [
                                                 styles.secondaryButton,
+                                                standardDefault && styles.defaultActiveAction,
                                                 { borderColor: colors.border, opacity: pressed || anyBusy ? 0.55 : 1 },
                                             ]}
                                         >
-                                            <Ionicons name="close-circle-outline" size={17} color="#EF4444" />
+                                            <Ionicons name={standardDefault ? "close-outline" : "close-circle-outline"} size={17} color="#EF4444" />
                                             <Text style={[styles.secondaryButtonText, { color: "#EF4444" }]}>해제</Text>
                                         </Pressable>
                                     </View>
                                 </>
                             ) : (
-                                <View style={styles.emptyDefaultContent}>
-                                    <View style={[styles.emptyDefaultIcon, { backgroundColor: colors.surface2 }]}>
-                                        <Ionicons name="home-outline" size={26} color="#2563EB" />
+                                <View style={showDefaultSetup ? styles.defaultSetupContent : styles.emptyDefaultContent}>
+                                    <View style={showDefaultSetup ? styles.placeMainRow : styles.emptyDefaultSummary}>
+                                        <View style={[
+                                            styles.emptyDefaultIcon,
+                                            showDefaultSetup && styles.defaultSetupIcon,
+                                            { backgroundColor: showDefaultSetup ? "rgba(37,99,235,0.10)" : colors.surface2 },
+                                        ]}>
+                                            <Ionicons name="home-outline" size={showDefaultSetup ? 22 : 26} color="#2563EB" />
+                                        </View>
+                                        <View style={showDefaultSetup ? styles.flexText : styles.emptyDefaultSummary}>
+                                            <Text style={[
+                                                showDefaultSetup ? styles.cardTitle : styles.emptyDefaultTitle,
+                                                { color: colors.textPrimary },
+                                            ]}>
+                                                {showDefaultSetup ? "기본주소를 설정하세요" : "기본주소가 아직 없어요"}
+                                            </Text>
+                                            <Text style={[
+                                                showDefaultSetup ? styles.cardCaption : styles.emptyDefaultCaption,
+                                                { color: colors.textSecondary },
+                                            ]}>
+                                                {showDefaultSetup
+                                                    ? "자주 출발하는 곳을 저장하면 일정과 경로에 자동으로 입력돼요."
+                                                    : "자주 출발하는 장소를 기본주소로 저장하면 일정과 경로 검색에 자동으로 입력됩니다."}
+                                            </Text>
+                                        </View>
                                     </View>
-                                    <Text style={[styles.emptyDefaultTitle, { color: colors.textPrimary }]}>기본주소가 아직 없어요</Text>
-                                    <Text style={[styles.emptyDefaultCaption, { color: colors.textSecondary }]}>
-                                        자주 출발하는 장소를 기본주소로 저장하면 일정과 경로 검색에 자동으로 입력됩니다.
-                                    </Text>
                                     <Pressable
                                         accessibilityRole="button"
-                                        accessibilityLabel="기본주소 설정"
+                                        accessibilityLabel={showDefaultSetup ? "기본주소 추가" : "기본주소 설정"}
                                         accessibilityHint="즐겨찾기 또는 장소 검색으로 기본주소를 선택합니다"
                                         disabled={anyBusy}
                                         onPress={() => openSearch("default")}
                                         style={({ pressed }) => [styles.primaryButton, { opacity: pressed || anyBusy ? 0.65 : 1 }]}
                                     >
-                                        <Ionicons name="add" size={19} color="#FFFFFF" />
-                                        <Text style={styles.primaryButtonText}>기본주소 설정</Text>
+                                        <Ionicons name="add-outline" size={19} color="#FFFFFF" />
+                                        <Text style={styles.primaryButtonText}>
+                                            {showDefaultSetup ? "기본주소 추가" : "기본주소 설정"}
+                                        </Text>
                                     </Pressable>
                                 </View>
                             )}
@@ -449,7 +543,7 @@ export default function PlacesSettingsScreen() {
                             <Reanimated.View
                                 key={key}
                                 layout={reduceMotionEnabled ? undefined : placeReorder}
-                                style={[styles.placeCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                                style={[styles.placeCard, { borderColor: colors.border }]}
                             >
                                 <View style={[styles.placeMainRow, styles.placeDisclosure]}>
                                     <View style={[styles.placeIcon, { backgroundColor: colors.surface2 }]}>
@@ -463,22 +557,7 @@ export default function PlacesSettingsScreen() {
                                             {favorite.address ?? "주소 정보 없음"}
                                         </Text>
                                     </View>
-                                    <Pressable
-                                        ref={node => {
-                                            if (node) placeOptions.current.set(key, node);
-                                            else placeOptions.current.delete(key);
-                                        }}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`${name} 장소 옵션`}
-                                        accessibilityState={{ expanded }}
-                                        onPress={() => setExpandedPlaceKey(expanded ? null : key)}
-                                        style={({ pressed }) => [styles.iconAction, {
-                                            backgroundColor: expanded ? "rgba(37,99,235,0.12)" : colors.surface2,
-                                            opacity: pressed ? 0.65 : 1,
-                                        }]}
-                                    >
-                                        <Ionicons accessible={false} name="ellipsis-horizontal-outline" size={21} color={expanded ? "#2563EB" : colors.textSecondary} />
-                                    </Pressable>
+                                    {renderPlaceOptions(key, name)}
                                 </View>
                                 {expanded ? (
                                     <Reanimated.View entering={reduceMotionEnabled ? undefined : placeActionsEntry} style={[styles.expandedPlaceActions, { borderTopColor: colors.border }]}>
@@ -512,30 +591,37 @@ export default function PlacesSettingsScreen() {
                                                 onPress={() => deleteFavorite(favorite)}
                                             />
                                         </View>
-                                        <View style={styles.placeReorderRow}>
-                                            <Text style={[styles.placeReorderLabel, { color: colors.textSecondary }]}>목록 순서</Text>
-                                            <View style={styles.reorderButtons}>
-                                                <IconAction
-                                                    label={`${favorite.name ?? "장소"} 위로 이동`}
-                                                    icon="arrow-up-outline"
-                                                    disabled={index === 0 || anyBusy}
-                                                    colors={colors}
-                                                    onPress={() => void moveFavorite(selectedFavorites, index, -1)}
-                                                />
-                                                <IconAction
-                                                    label={`${favorite.name ?? "장소"} 아래로 이동`}
-                                                    icon="arrow-down-outline"
-                                                    disabled={index === selectedFavorites.length - 1 || anyBusy}
-                                                    colors={colors}
-                                                    onPress={() => void moveFavorite(selectedFavorites, index, 1)}
-                                                />
+                                        {largeText || selectedFavorites.length > 1 ? (
+                                            <View style={[styles.placeReorderRow, { borderTopColor: colors.border }]}>
+                                                <Text style={[styles.placeReorderLabel, { color: colors.textSecondary }]}>목록 순서</Text>
+                                                <View style={styles.reorderButtons}>
+                                                    <IconAction
+                                                        label={`${favorite.name ?? "장소"} 위로 이동`}
+                                                        icon="arrow-up-outline"
+                                                        disabled={index === 0 || anyBusy}
+                                                        colors={colors}
+                                                        onPress={() => reorderPlace(key, selectedFavorites, index, -1)}
+                                                    />
+                                                    <IconAction
+                                                        label={`${favorite.name ?? "장소"} 아래로 이동`}
+                                                        icon="arrow-down-outline"
+                                                        disabled={index === selectedFavorites.length - 1 || anyBusy}
+                                                        colors={colors}
+                                                        onPress={() => reorderPlace(key, selectedFavorites, index, 1)}
+                                                    />
+                                                </View>
                                             </View>
-                                        </View>
+                                        ) : null}
                                     </Reanimated.View>
                                 ) : null}
                             </Reanimated.View>
                         );
                     })}
+                    {showDefaultSetup ? (
+                        <Text style={[styles.defaultSetupHint, { color: colors.textSecondary }]}>
+                            저장한 장소는 즐겨찾기 탭에서도 관리할 수 있어요.
+                        </Text>
+                    ) : null}
                 </Animated.View>
             </ScrollView>}
 
@@ -553,40 +639,59 @@ export default function PlacesSettingsScreen() {
                 animationType={reduceMotionEnabled ? "none" : "slide"}
                 presentationStyle="pageSheet"
                 onDismiss={restorePlaceFocus}
-                onRequestClose={() => busyKey ? undefined : setSheet(null)}
+                onRequestClose={closeSheet}
             >
-                <View style={[styles.sheetRoot, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 14) }]}>
-                    {sheet?.kind === "search" ? (
-                        <SearchSheet
-                            mode={sheet.mode}
-                            query={searchQuery}
-                            results={searchResults}
-                            favorites={favorites}
-                            defaultOrigin={defaultOrigin}
-                            searching={searching}
-                            disabled={anyBusy}
-                            colors={colors}
-                            onChangeQuery={setSearchQuery}
-                            onSearch={() => void performSearch()}
-                            onSelectResult={chooseSearchResult}
-                            onSelectFavorite={chooseFavoriteAsDefault}
-                            onClose={() => setSheet(null)}
-                        />
-                    ) : sheet?.kind === "placeEditor" ? (
+                <View style={[
+                    styles.sheetRoot,
+                    { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 14) },
+                    sheet?.kind === "search" && standardDarkAppearance && styles.searchDarkSurface,
+                ]}>
+                    {searchMode && (
+                        <View
+                            style={[styles.sheetRoot, sheet?.kind !== "search" && styles.inactiveSearchSheet]}
+                            pointerEvents={sheet?.kind === "search" ? "auto" : "none"}
+                            accessibilityElementsHidden={sheet?.kind !== "search"}
+                            importantForAccessibility={sheet?.kind === "search" ? "auto" : "no-hide-descendants"}
+                        >
+                            <SearchSheet
+                                mode={searchMode}
+                                active={sheet?.kind === "search"}
+                                standardLayout={!largeText}
+                                dark={standardDarkAppearance}
+                                query={searchQuery}
+                                results={searchResults}
+                                searchCompleted={searchCompleted}
+                                favorites={favorites}
+                                defaultOrigin={defaultOrigin}
+                                searching={searching}
+                                disabled={anyBusy}
+                                colors={colors}
+                                onChangeQuery={changeSearchQuery}
+                                onSearch={() => void performSearch(!largeText)}
+                                onSelectResult={chooseSearchResult}
+                                onSelectFavorite={chooseFavoriteAsDefault}
+                                onClose={closeSheet}
+                            />
+                        </View>
+                    )}
+                    {sheet?.kind === "placeEditor" ? (
                         <PlaceEditor
                             sheet={sheet}
                             categories={categories}
+                            standardLayout={!largeText}
                             disabled={anyBusy}
                             colors={colors}
                             onChange={(updates) => setSheet((current) => current?.kind === "placeEditor"
                                 ? { ...current, ...updates }
                                 : current)}
                             onSave={() => void savePlaceEditor()}
-                            onClose={() => setSheet(null)}
+                            onClose={closeSheet}
+                            onAddCategory={largeText ? undefined : () => openCategoryEditor()}
                         />
                     ) : sheet?.kind === "categoryEditor" ? (
                         <CategoryEditor
                             categoryId={sheet.categoryId}
+                            standardCreate={!largeText && !sheet.categoryId}
                             name={sheet.name}
                             color={sheet.color}
                             disabled={anyBusy}
@@ -595,7 +700,7 @@ export default function PlacesSettingsScreen() {
                                 ? { ...current, ...updates }
                                 : current)}
                             onSave={() => void saveCategoryEditor()}
-                            onClose={() => setSheet(null)}
+                            onClose={closeSheet}
                         />
                     ) : null}
                 </View>

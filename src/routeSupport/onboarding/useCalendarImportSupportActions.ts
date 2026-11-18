@@ -17,6 +17,7 @@ import {
 import { getWritableCalendarImportCategories } from '../../modules/onboarding/calendarImportCategory';
 import { getCalendarImportCompletionRoute } from '../../modules/onboarding/calendarImportNavigation';
 import { withCalendarImportTimeout } from '../../modules/onboarding/calendarImportReliability';
+import { useImmediateNavigationTransition } from '../../modules/performance/ImmediateNavigationTransition';
 import {
   hasFavoriteDepartureCoords,
   saveFavoriteDeparturePlace,
@@ -80,6 +81,7 @@ type CalendarImportSupportActionParams = {
 export function useCalendarImportSupportActions(
   params: CalendarImportSupportActionParams,
 ) {
+  const { discardSceneReturn } = useImmediateNavigationTransition();
   const {
     categoryLoadSequenceRef,
     dispatch,
@@ -215,7 +217,14 @@ export function useCalendarImportSupportActions(
       setCompletingCuration(true);
       await persistCurationCompletion();
       scanAttemptRef.current += 1;
-      router.replace(getCalendarImportCompletionRoute(isManagementEntry));
+      discardSceneReturn('/onboarding/calendar-import');
+      const completionRoute = getCalendarImportCompletionRoute(isManagementEntry);
+      if (completionRoute === '/schedule') {
+        // Reveal the calendar the user was browsing, including its selected date and scroll.
+        router.dismissTo(completionRoute);
+      } else {
+        router.replace(completionRoute);
+      }
     } catch (error) {
       Alert.alert(
         '완료 상태 저장 실패',

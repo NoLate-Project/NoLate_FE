@@ -5,6 +5,7 @@ const { readFileSync } = require('fs') as {
 export {};
 
 const scheduleRouteSource = readFileSync('app/schedule/index.tsx', 'utf8');
+const rootLayoutSource = readFileSync('app/_layout.tsx', 'utf8');
 const scheduleStateSource = readFileSync(
   'src/modules/schedule/hooks/useScheduleIndexState.ts',
   'utf8',
@@ -49,14 +50,15 @@ function sourceBetween(source: string, start: string, end: string) {
 }
 
 describe('schedule calendar view mode preference wiring', () => {
-  test('mounts immediately from memory or the default while restoring storage', () => {
-    const preferenceGate = scheduleRouteSource;
-
-    expect(preferenceGate).toContain('getCachedCalendarViewModePreference()');
-    expect(preferenceGate).toContain('?? DEFAULT_CALENDAR_VIEW_MODE');
-    expect(preferenceGate).toContain('loadCalendarViewModePreference()');
-    expect(preferenceGate).not.toContain('if (!initialCalendarViewMode)');
-    expect(preferenceGate).toContain(
+  test('restores the saved mode under the startup loader before mounting the calendar', () => {
+    const preferenceGate = sourceBetween(rootLayoutSource, 'export default function RootLayout()', 'const preMountedDetailItem');
+    expect(preferenceGate).toContain('loadCalendarViewModePreference().finally');
+    expect(preferenceGate).toContain('isAuthenticated && isCurationCompleted && !calendarViewPreferenceReady');
+    expect(rootLayoutSource).toContain('<RootNavigator isLoading={isLoading} />');
+    expect(rootLayoutSource).toContain('if (isLoading) { return ( <View');
+    expect(scheduleRouteSource).toContain('getCachedCalendarViewModePreference() ?? DEFAULT_CALENDAR_VIEW_MODE');
+    expect(scheduleRouteSource).not.toContain('setInitialCalendarViewMode');
+    expect(scheduleRouteSource).toContain(
       'initialCalendarViewMode={initialCalendarViewMode}',
     );
   });

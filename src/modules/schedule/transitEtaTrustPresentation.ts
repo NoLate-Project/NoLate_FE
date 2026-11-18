@@ -39,6 +39,7 @@ export function getTransitEtaTrustPresentation({
   const unsupported = ownStatus?.failureReason?.startsWith('TRANSIT_ITINERARY_REFRESH_UNSUPPORTED');
   const onTimeUnavailable = ownStatus?.failureReason?.startsWith('TRANSIT_ON_TIME_ARRIVAL_UNAVAILABLE');
   const missedTransfer = ownStatus?.failureReason?.startsWith('TRANSIT_TRANSFER_MISSED');
+  const unverifiedTransfer = ownStatus?.failureReason?.startsWith('TRANSIT_TRANSFER_TIMING_UNKNOWN:');
   const arrivalUnavailable = ownStatus?.failureReason?.startsWith('TRANSIT_ARRIVAL_UNAVAILABLE:');
   const arrivalOutOfHorizon = ownStatus?.failureReason?.startsWith('TRANSIT_ARRIVAL_OUT_OF_HORIZON:');
   const notObserved = ownStatus?.failureReason?.startsWith('TRANSIT_TRAIN_NOT_YET_OBSERVED:');
@@ -53,6 +54,8 @@ export function getTransitEtaTrustPresentation({
       ? '현재 확인된 경로로 정시 도착 불가'
       : missedTransfer
       ? '환승 불가 · 경로 재확인 필요'
+      : unverifiedTransfer
+      ? '환승 가능 여부 미확인 · 저장 경로 기준'
       : unsupported
       ? '재조회 미지원 · 경로 재선택 필요'
       : notObserved

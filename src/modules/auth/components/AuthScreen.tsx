@@ -2,6 +2,7 @@ import React, { ReactNode } from "react";
 import {
     ActivityIndicator,
     Image,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -13,6 +14,7 @@ import {
     TextInput,
     TextInputProps,
     TextStyle,
+    useWindowDimensions,
     View,
     ViewStyle,
 } from "react-native";
@@ -41,6 +43,7 @@ type AuthScreenProps = {
     backLabel?: string;
     signupStep?: 1 | 2;
     density?: AuthDensity;
+    keyboardRevealRef?: React.RefObject<View | null>;
 };
 
 type AuthInputProps = TextInputProps & {
@@ -56,6 +59,7 @@ type AuthPrimaryButtonProps = {
     label: string;
     disabled?: boolean;
     loading?: boolean;
+    buttonRef?: React.Ref<View>;
     onPress: () => void;
 };
 
@@ -77,12 +81,41 @@ export function AuthScreen({
     backLabel,
     signupStep,
     density = "regular",
+    keyboardRevealRef,
 }: AuthScreenProps) {
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
     const { mode, colors } = useTheme();
+    const { fontScale } = useWindowDimensions();
     const styles = createStyles(colors, mode, density);
     const isCompact = density === "compact";
+    const scrollRef = React.useRef<ScrollView>(null);
+    const scrollOffset = React.useRef(0);
+    const reduceMotion = useSystemReduceMotion();
+
+    React.useEffect(() => {
+        if (Platform.OS !== "ios" || !isFocused || !keyboardRevealRef) return;
+        let active = true;
+        const reveal = (keyboardTop: number) => {
+            keyboardRevealRef.current?.measureInWindow((_x, top, _width, height) => {
+                if (!active || height <= 0) return;
+                const overlap = top + height + 12 - keyboardTop;
+                if (overlap > 0) {
+                    scrollRef.current?.scrollTo({ y: Math.max(0, scrollOffset.current) + overlap, animated: !reduceMotion });
+                }
+            });
+        };
+        const show = Keyboard.addListener("keyboardDidShow", ({ endCoordinates }) => reveal(endCoordinates.screenY));
+        const frame = requestAnimationFrame(() => {
+            const keyboard = Keyboard.metrics();
+            if (keyboard) reveal(keyboard.screenY);
+        });
+        return () => {
+            active = false;
+            cancelAnimationFrame(frame);
+            show.remove();
+        };
+    }, [isFocused, keyboardRevealRef, reduceMotion]);
 
     return (
         <AuthDensityContext.Provider value={density}>
@@ -95,8 +128,10 @@ export function AuthScreen({
                 <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
 
                 <ScrollView
+                    ref={scrollRef}
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
+                    onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
                     contentContainerStyle={[
                         styles.content,
                         {
@@ -138,14 +173,14 @@ export function AuthScreen({
                                         <View style={[styles.signupProgressSegment, signupStep === 2 && styles.signupProgressActive]} />
                                     </View>
                                 </View>
-                                {title ? <Text accessibilityRole="header" style={styles.signupTitle}>{title}</Text> : null}
+                                {title ? <Text accessibilityRole="header" lineBreakStrategyIOS="hangul-word" style={styles.signupTitle}>{title}</Text> : null}
                                 <Text style={styles.signupSubtitle}>{subtitle}</Text>
                             </View>
                         ) : (
                             <View style={styles.hero}>
                                 <View style={styles.heroBrand}>
                                     <View style={styles.heroLogoWrap}>
-                                        <Image source={APP_LOGO} resizeMode="cover" style={styles.heroLogo} />
+                                        <Image source={APP_LOGO} resizeMode="cover" style={[styles.heroLogo, !title && fontScale <= 1.35 && styles.quietHeroLogo]} />
                                     </View>
                                     <Text style={styles.heroBrandText}>NoLate</Text>
                                 </View>
@@ -173,8 +208,11 @@ export function AuthInput({
     inputStyle,
     inputRef,
     errorMessage,
+    placeholder,
     placeholderTextColor,
     accessibilityLabel,
+    allowFontScaling = true,
+    maxFontSizeMultiplier,
     secureTextEntry,
     onFocus,
     onBlur,
@@ -182,18 +220,36 @@ export function AuthInput({
 }: AuthInputProps) {
     const { colors, mode } = useTheme();
     const density = React.useContext(AuthDensityContext);
+    const { fontScale } = useWindowDimensions();
     const styles = createStyles(colors, mode, density);
     const [passwordVisible, setPasswordVisible] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
     const isPasswordField = secureTextEntry === true;
     const errorColor = mode === "dark" ? "#FF9C96" : "#B42318";
-
-    return (
+    const inputFontScale = allowFontScaling
+        ? Math.min(fontScale, maxFontSizeMultiplier || Infinity)
+        : 1;
+    const inputLineHeight = Math.ceil((density === "compact" ? 21 : 22) * inputFontScale);
+    // UIKit can clip secure placeholders at standard sizes and other placeholders at larger sizes.
+    const useTextPlaceholder = Platform.OS === "ios" && (isPasswordField || inputFontScale > 1.35);
+    const labelAbove = fontScale <= 1.35;
+    // iOS can miss repainting the secure glyphs after a visibility toggle and blur.
+    const showPasswordMask = Platform.OS === "ios" && labelAbove && isPasswordField
+        && !passwordVisible && !focused && !!inputProps.value;
+    const placeholderColor = placeholderTextColor ?? colors.inputPlaceholder;
+    const fieldLabel = <Text accessible={labelAbove ? false : undefined} style={[styles.fieldLabel, focused && { color: colors.textPrimary }]}>{label}</Text>;
+    const fieldError = errorMessage ? (
+        <Text accessibilityRole="alert" style={[styles.fieldError, !labelAbove && styles.fieldErrorInside, { color: errorColor }]}>
+            {errorMessage}
+        </Text>
+    ) : null;
+    const field = (
         <View
             style={[
                 styles.field,
+                labelAbove && styles.fieldWithLabelAbove,
                 focused && { borderColor: colors.textSecondary, backgroundColor: colors.surface },
-                errorMessage && { borderColor: errorColor },
+                errorMessage && { borderColor: errorColor, ...(labelAbove && { backgroundColor: mode === "dark" ? "#2A1D22" : "#FDF2F2" }) },
                 containerStyle,
             ]}
         >
@@ -205,24 +261,40 @@ export function AuthInput({
                 <Ionicons name={icon} size={19} color={colors.textSecondary} />
             </View>
             <View style={styles.fieldBody}>
-                <Text style={[styles.fieldLabel, focused && { color: colors.textPrimary }]}>{label}</Text>
-                <TextInput
-                    {...inputProps}
-                    ref={inputRef}
-                    onFocus={(event) => { setFocused(true); onFocus?.(event); }}
-                    onBlur={(event) => { setFocused(false); onBlur?.(event); }}
-                    accessibilityLabel={accessibilityLabel ?? label}
-                    placeholderTextColor={
-                        placeholderTextColor ?? colors.inputPlaceholder
-                    }
-                    secureTextEntry={isPasswordField && !passwordVisible}
-                    style={[styles.fieldInput, { color: colors.textPrimary }, inputStyle]}
-                />
-                {errorMessage && (
-                    <Text accessibilityRole="alert" style={{ color: errorColor, fontSize: 13, marginTop: 4 }}>
-                        {errorMessage}
-                    </Text>
-                )}
+                {!labelAbove && fieldLabel}
+                <View>
+                    <TextInput
+                        {...inputProps}
+                        ref={inputRef}
+                        onFocus={(event) => { setFocused(true); onFocus?.(event); }}
+                        onBlur={(event) => { setFocused(false); onBlur?.(event); }}
+                        accessibilityLabel={accessibilityLabel ?? label}
+                        accessibilityHint={errorMessage ?? inputProps.accessibilityHint}
+                        allowFontScaling={allowFontScaling}
+                        maxFontSizeMultiplier={maxFontSizeMultiplier}
+                        placeholder={useTextPlaceholder ? undefined : placeholder}
+                        placeholderTextColor={placeholderColor}
+                        secureTextEntry={isPasswordField && !passwordVisible}
+                        style={[styles.fieldInput, { color: colors.textPrimary, minHeight: inputLineHeight + 8 }, inputStyle,
+                            showPasswordMask && styles.hiddenInputText]}
+                    />
+                    {showPasswordMask && (
+                        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.fieldPlaceholder}>
+                            <Text style={[styles.fieldInput, { color: colors.textPrimary }, inputStyle]} numberOfLines={1}>
+                                {"•".repeat(Math.min(inputProps.value?.length ?? 0, 32))}
+                            </Text>
+                        </View>
+                    )}
+                    {useTextPlaceholder && placeholder && !focused && !inputProps.value && (
+                        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.fieldPlaceholder}>
+                            <Text style={[styles.fieldInput, { color: placeholderColor }, inputStyle]}
+                                allowFontScaling={allowFontScaling} maxFontSizeMultiplier={maxFontSizeMultiplier} numberOfLines={1}>
+                                {placeholder}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+                {!labelAbove && fieldError}
             </View>
             {isPasswordField ? (
                 <Pressable
@@ -242,12 +314,20 @@ export function AuthInput({
             ) : null}
         </View>
     );
+    return labelAbove ? (
+        <View style={styles.labeledField}>
+            {fieldLabel}
+            {field}
+            {fieldError}
+        </View>
+    ) : field;
 }
 
 export function AuthPrimaryButton({
     label,
     disabled,
     loading = false,
+    buttonRef,
     onPress,
 }: AuthPrimaryButtonProps) {
     const { colors, mode } = useTheme();
@@ -257,6 +337,7 @@ export function AuthPrimaryButton({
 
     return (
         <Pressable
+            ref={buttonRef}
             accessibilityRole="button"
             accessibilityLabel={label}
             accessibilityState={{ disabled: Boolean(disabled || loading), busy: loading }}
@@ -385,6 +466,7 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             shadowOpacity: isDark ? 0.54 : 0.34,
             shadowRadius: isCompact ? 25 : 30,
         },
+        quietHeroLogo: { shadowOpacity: 0, elevation: 0 },
         heroBrandText: {
             color: colors.textPrimary,
             fontSize: isCompact ? 17 : 18,
@@ -424,6 +506,11 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             paddingHorizontal: isCompact ? 12 : 14,
             gap: isCompact ? 10 : 12,
         },
+        labeledField: { gap: 4 },
+        fieldWithLabelAbove: {
+            minHeight: isCompact ? 48 : 54,
+            backgroundColor: colors.inputBackground,
+        },
         fieldIcon: {
             width: 30,
             alignItems: "center",
@@ -447,11 +534,17 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             fontWeight: "500",
             marginBottom: 3,
         },
+        fieldError: { fontSize: 13 },
+        fieldErrorInside: { marginTop: 4 },
         fieldInput: {
-            minHeight: isCompact ? 27 : 30,
             paddingVertical: 0,
             fontSize: isCompact ? 15 : 16,
             fontWeight: "500",
+        },
+        hiddenInputText: { color: "transparent" },
+        fieldPlaceholder: {
+            ...StyleSheet.absoluteFillObject,
+            justifyContent: "center",
         },
         primaryButton: {
             minHeight: isCompact ? 52 : 56,

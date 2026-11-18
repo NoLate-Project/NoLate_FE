@@ -99,6 +99,17 @@ export function createShellStyles(options: ScheduleIndexStylesOptions) {
         elevation: 58,
         backgroundColor: "transparent",
     },
+        yearCloseButton: {
+        width: undefined,
+        minWidth: 64,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 4,
+        paddingHorizontal: 10,
+        borderWidth: StyleSheet.hairlineWidth,
+    },
+        yearCloseText: { fontSize: 14, fontWeight: "700" },
         stickyCalendarHeader: {
         position: "absolute",
         left: 0,

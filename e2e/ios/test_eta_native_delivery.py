@@ -68,6 +68,14 @@ class NativeDeliveryEvidenceTest(unittest.TestCase):
         self.assertEqual(result['deliveryDelaySeconds'], 1)
         self.assertFalse(result['audibleSoundMeasured'])
 
+    def test_off_minute_check_rejects_flooring_at_either_boundary(self):
+        precise = '2026-11-18T03:57:37Z'
+        rounded = '2026-11-18T03:57:00Z'
+        delivery.verify_off_minute_trigger({'recommendedDepartureAt': precise, 'alarmStates': [{'trigger_at': precise}]})
+        for departure, trigger in ((precise, rounded), (rounded, precise), (rounded, rounded)):
+            with self.subTest(departure=departure, trigger=trigger), self.assertRaises(AssertionError):
+                delivery.verify_off_minute_trigger({'recommendedDepartureAt': departure, 'alarmStates': [{'trigger_at': trigger}]})
+
     def test_wrong_mode_and_late_delivery_are_not_accepted(self):
         worker, record = evidence()
         for text in (logs(record, 'background'), logs(record, seconds='26')):

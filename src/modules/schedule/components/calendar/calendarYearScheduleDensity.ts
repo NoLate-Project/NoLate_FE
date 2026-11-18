@@ -24,6 +24,18 @@ const DARK_DENSITY_COLORS = [
     { backgroundColor: "#FF453A", textColor: "#FFFFFF" },
 ] as const;
 
+const STANDARD_LIGHT_DENSITY_COLORS = [
+    { backgroundColor: "#FFE8E3", textColor: "#8B373D" },
+    { backgroundColor: "#FFD4CC", textColor: "#80272E" },
+    { backgroundColor: "#FFC5BD", textColor: "#77202B" },
+] as const;
+
+const STANDARD_DARK_DENSITY_COLORS = [
+    { backgroundColor: "#4B2A39", textColor: "#FFC1C4" },
+    { backgroundColor: "#603440", textColor: "#FFC1C4" },
+    { backgroundColor: "#76404A", textColor: "#FFC1C4" },
+] as const;
+
 export function buildCalendarYearScheduleCounts(
     items: readonly ScheduleItem[]
 ): CalendarYearScheduleCounts {
@@ -50,13 +62,16 @@ export function getCalendarYearScheduleDensityLevel(count: number): 0 | 1 | 2 | 
 
 export function getCalendarYearScheduleDensityPresentation(
     count: number,
-    mode: "light" | "dark"
+    mode: "light" | "dark",
+    standard = false
 ): CalendarYearScheduleDensityPresentation | null {
     const level = getCalendarYearScheduleDensityLevel(count);
     if (level === 0) return null;
 
-    const colors = (mode === "dark" ? DARK_DENSITY_COLORS : LIGHT_DENSITY_COLORS)[level - 1];
-    return { level, ...colors };
+    const palette = standard
+        ? (mode === "dark" ? STANDARD_DARK_DENSITY_COLORS : STANDARD_LIGHT_DENSITY_COLORS)
+        : (mode === "dark" ? DARK_DENSITY_COLORS : LIGHT_DENSITY_COLORS);
+    return { level, ...palette[level - 1] };
 }
 
 export function getCalendarYearScheduleFetchRanges(year: number) {

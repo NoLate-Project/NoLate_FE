@@ -70,6 +70,21 @@ test('official bus crosswalk is bounded to the authenticated binding and malform
     }
     expect(normalizeAutomaticJourneyBinding({ ...binding, officialBusAdmission: proof })).toBeNull();
 });
+test('isolated iOS simulator retains a server-issued official bus proof', () => {
+    const previous = Platform.OS;
+    Platform.OS = 'ios';
+    try {
+        const proof = { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK', busLegIndex: 1,
+            routeId: '100100185', direction: '상행', stationCount: 2, firstStopSequence: 10, lastStopSequence: 12 };
+        const simulator = { ...binding, syncScope: 'AUTHENTICATED', apiOrigin: 'http://127.0.0.1:5527',
+            authMemberId: 7, loginGeneration: 2, savedRouteValidated: true, guidanceEnabled: true };
+        expect(normalizeAutomaticJourneyBinding({ ...simulator, officialBusAdmission: proof })?.officialBusAdmission).toEqual(proof);
+        expect(normalizeAutomaticJourneyBinding({ ...simulator, syncScope: 'SANDBOX', officialBusAdmission: proof })).toBeNull();
+        expect(normalizeAutomaticJourneyBinding({ ...simulator, officialBusAdmission: { ...proof, stationCount: 3 } })).toBeNull();
+    } finally {
+        Platform.OS = previous;
+    }
+});
 test('official subway crosswalk stays in a DEVICE saved-route binding and rejects malformed or mixed proofs', () => {
     const device = { ...binding, execution: 'DEVICE', syncScope: 'AUTHENTICATED',
         apiOrigin: 'https://api.example.com', authMemberId: 7, loginGeneration: 2,

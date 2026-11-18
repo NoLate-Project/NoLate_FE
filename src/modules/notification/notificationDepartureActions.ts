@@ -4,6 +4,7 @@ import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api
 import { ApiResponseError } from "../../api/response";
 import { getAuthMember } from "../auth/authStorage";
 import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRecovery";
+import { createScheduleDepartureMutationEvent, emitScheduleMutation } from "../schedule/scheduleMutationEvents";
 
 /** 잘못된 계정·식별자처럼 재시도해도 성공할 수 없는 알림 액션을 구분하는 오류입니다. */
 class PermanentNotificationInteractionError extends Error {
@@ -24,7 +25,8 @@ export function isRetryableNotificationInteractionError(error: unknown): boolean
 
 /** 알림의 출발 완료 액션을 서버에 반영하고 관련 네이티브 알람을 복구 동기화합니다. */
 export async function completeDepartureFromNotificationAction(scheduleId: string): Promise<void> {
-    await markScheduleDeparted(scheduleId);
+    const updated = await markScheduleDeparted(scheduleId);
+    emitScheduleMutation(createScheduleDepartureMutationEvent(updated));
     await recoverDepartureAlarmsAfterMutation();
 }
 

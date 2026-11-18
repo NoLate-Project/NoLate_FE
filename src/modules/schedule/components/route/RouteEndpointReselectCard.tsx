@@ -12,6 +12,8 @@ type RouteEndpointReselectCardProps = {
     destinationText: string;
     onEditOrigin: () => void;
     onEditDestination: () => void;
+    originRef?: React.Ref<View>;
+    destinationRef?: React.Ref<View>;
     onSwap: () => void;
     colors: {
         surface: string;
@@ -32,6 +34,8 @@ export default function RouteEndpointReselectCard({
     destinationText,
     onEditOrigin,
     onEditDestination,
+    originRef,
+    destinationRef,
     onSwap,
     colors,
     style,
@@ -41,8 +45,8 @@ export default function RouteEndpointReselectCard({
     const resolvedOriginText = originText || "출발지 미지정";
     const resolvedDestinationText = destinationText || "도착지 미지정";
     const endpoints = [
-        { label: "출발지", name: resolvedOriginText, color: colors.accentGreen, onEdit: onEditOrigin },
-        { label: "도착지", name: resolvedDestinationText, color: colors.accentRed, onEdit: onEditDestination },
+        { label: "출발지", name: resolvedOriginText, color: colors.accentGreen, onEdit: onEditOrigin, ref: originRef },
+        { label: "도착지", name: resolvedDestinationText, color: colors.accentRed, onEdit: onEditDestination, ref: destinationRef },
     ];
     const swapButton = (
         <Pressable
@@ -57,7 +61,7 @@ export default function RouteEndpointReselectCard({
                 pressed && styles.pressed,
             ]}
         >
-            <Ionicons name={stackLabels ? "swap-vertical-outline" : "swap-vertical"} size={22} color={colors.textSecondary} />
+            <Ionicons name="swap-vertical-outline" size={22} color={colors.textSecondary} />
         </Pressable>
     );
 
@@ -75,10 +79,11 @@ export default function RouteEndpointReselectCard({
                     pointerEvents="none"
                     style={[styles.railLine, { backgroundColor: colors.border }]}
                 />
-                {endpoints.map(({ label, name, color, onEdit }, index) => (
+                {endpoints.map(({ label, name, color, onEdit, ref }, index) => (
                     <React.Fragment key={label}>
                         {index > 0 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
                         <Pressable
+                            ref={ref}
                             onPress={onEdit}
                             accessibilityRole="button"
                             accessibilityLabel={`${label} 재선택, 현재 ${name}`}

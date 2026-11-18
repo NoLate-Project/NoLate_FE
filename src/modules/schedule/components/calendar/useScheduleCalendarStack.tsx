@@ -66,7 +66,7 @@ type UseScheduleCalendarStackParams = {
     onVisibleMonthChange: (month: string) => void;
     onOpenDay: (day: string) => void;
     todayFocusTarget?: TodayFocusTarget | null;
-    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean };
+    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean; requestKey?: string };
     onSavedStackPositionReady?: (itemId: string) => void;
 };
 
@@ -131,11 +131,12 @@ export function useScheduleCalendarStack({
                     monthDate,
                     firstDay,
                     CALENDAR_DAY_HEIGHTS[viewMode],
-                    monthKey === anchorMonthKey ? 0 : STACK_MONTH_HEADER_HEIGHT
+                    monthKey === anchorMonthKey ? 0 : STACK_MONTH_HEADER_HEIGHT,
+                    day => stackCalendarLayout.byDate[day] !== undefined,
                 );
             }
         );
-    }, [firstDay, stackListAnchorMonth, viewMode]);
+    }, [firstDay, stackCalendarLayout, stackListAnchorMonth, viewMode]);
     const stackMonthLayouts = useMemo(() => {
         let offset = 0;
         return stackMonths.map((month, index) => {
@@ -191,8 +192,9 @@ export function useScheduleCalendarStack({
             positionedStackListSessionRef.current !== stackListSessionKey;
         const hasExplicitScrollRequest =
             handledStackScrollRequestRef.current !== scrollRequest;
+        const savedTargetKey = savedDateTarget?.requestKey ?? savedDateTarget?.itemId;
         const savedDayIndex = savedDateTarget?.day === selectedDay
-            && savedDateTarget.itemId !== handledSavedItem.current
+            && savedTargetKey !== handledSavedItem.current
             ? targetMonth.days.findIndex(day => day?.dateString === savedDateTarget.day)
             : -1;
         const hasNewTargetMonth =
@@ -248,9 +250,10 @@ export function useScheduleCalendarStack({
 
             const monthStart = stackMonthLayouts[stackTargetMonthIndex].offset + targetMonth.headerHeight;
             if (savedDayIndex >= 0 && savedDateTarget) {
-                handledSavedItem.current = savedDateTarget.itemId;
-                const weekTop = monthStart + Math.floor(savedDayIndex / 7) * targetMonth.dayHeight;
-                const weekBottom = weekTop + targetMonth.dayHeight;
+                handledSavedItem.current = savedTargetKey;
+                const week = targetMonth.weeks[Math.floor(savedDayIndex / 7)];
+                const weekTop = monthStart + week.offset;
+                const weekBottom = weekTop + week.height;
                 const { height, offset } = stackViewport.current;
                 const weekIsVisible = !isNewListSession && height > 0
                     && weekTop >= offset && weekBottom <= offset + height;
@@ -379,9 +382,8 @@ export function useScheduleCalendarStack({
                 </View>
             )}
             <View style={styles.stackMonthGrid}>
-                {Array.from(
-                    { length: Math.ceil(item.days.length / 7) },
-                    (_, weekIndex) => {
+                {item.weeks.map(
+                    (week, weekIndex) => {
                         const weekDays = item.days.slice(
                             weekIndex * 7,
                             weekIndex * 7 + 7
@@ -399,7 +401,7 @@ export function useScheduleCalendarStack({
                                 style={[
                                     styles.stackWeekRow,
                                     {
-                                        height: item.dayHeight,
+                                        height: week.height,
                                         borderTopColor: colors.border,
                                     },
                                 ]}
@@ -410,7 +412,7 @@ export function useScheduleCalendarStack({
                                             ?? `${item.key}-blank-${weekIndex}-${dayIndex}`}
                                         style={[
                                             styles.stackDayCell,
-                                            { height: item.dayHeight },
+                                            { height: week.height },
                                         ]}
                                     >
                                         <CustomDay
@@ -425,6 +427,7 @@ export function useScheduleCalendarStack({
                                                 ? calendarDaysByDate[date.dateString]
                                                 : undefined}
                                             viewMode="stack"
+                                            stackCellHeight={week.height}
                                             stackPresentation={date
                                                 ? stackCalendarLayout.byDate[date.dateString]
                                                 : undefined}

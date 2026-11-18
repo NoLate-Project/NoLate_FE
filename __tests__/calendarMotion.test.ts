@@ -361,6 +361,11 @@ describe("calendar depth motion", () => {
         }
     });
 
+    test("320pt 화면에서 날짜와 세 가지 도구 사이에 간격을 남긴다", () => {
+        const { width } = resolveCalendarPrimaryPillLayout("month", "2026년 11월", 320);
+        expect(16 + width + 6 + 150 + 16).toBeLessThanOrEqual(320);
+    });
+
     test("아주 좁거나 비정상적인 화면 폭에서도 안전한 폭을 반환한다", () => {
         expect(resolveCalendarPrimaryPillLayout("day", "7월", 180).width)
             .toBe(CALENDAR_PRIMARY_PILL_LAYOUT.minimumSafeWidth);
@@ -428,6 +433,17 @@ describe("month agenda panel motion", () => {
             dayHeight: 72,
             panelHeight: 840,
         });
+    });
+
+    test("기본 글자 크기에서 일정 패널을 앞당기고 날짜 셀을 44pt까지 보호한다", () => {
+        const metrics = { viewportHeight: 900, fixedChromeHeight: 170, defaultDayHeight: 72, prefersCompactGrid: true };
+        const fiveWeeks = resolveDetailMonthPanelLayout({ ...metrics, weekCount: 5 });
+        const sixWeeks = resolveDetailMonthPanelLayout({ ...metrics, weekCount: 6 });
+        expect(fiveWeeks.calendarHeight).toBeCloseTo(423, 10);
+        expect(sixWeeks).toEqual({ calendarHeight: 434, dayHeight: 44, panelHeight: 466 });
+        expect(resolveDetailMonthPanelLayout({ ...metrics, viewportHeight: 667, weekCount: 6 })).toEqual(
+            resolveDetailMonthPanelLayout({ ...metrics, viewportHeight: 667, weekCount: 6, prefersCompactGrid: false })
+        );
     });
 
     test("작은 화면의 6주 달도 패널 비율을 지키며 모든 행에 같은 높이를 배분한다", () => {

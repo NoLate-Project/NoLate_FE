@@ -37,7 +37,7 @@ import {
 import { useTheme } from "../../modules/theme/ThemeContext";
 import { usePreMountedSceneActivity } from "../../modules/performance/preMountedSceneActivity";
 import {
-    CATEGORY_COLORS,
+    CATEGORY_COLOR_OPTIONS,
     configureCategoryContentLayout,
     getPlacesSettingsErrorMessage as errorMessage,
     isSameFavoritePlace as samePlace,
@@ -45,6 +45,8 @@ import {
     type SearchMode,
     type SheetState,
 } from "./placesSettingsModel";
+
+const EMPTY_SEARCH_RESULTS: PlaceSearchItem[] = [];
 
 /**
  * 내 장소 화면의 조회, 검색, 기본주소, 즐겨찾기·카테고리 변경 상태를 관리합니다.
@@ -65,8 +67,9 @@ export function usePlacesSettings() {
     const [busyKey, setBusyKey] = useState<string | null>(null);
     const [sheet, setSheet] = useState<SheetState>(null);
     const [searchQuery, setSearchQuery] = useState("");
-    const [searchResults, setSearchResults] = useState<PlaceSearchItem[]>([]);
+    const [searchMatches, setSearchMatches] = useState<PlaceSearchItem[] | null>(null);
     const [searching, setSearching] = useState(false);
+    const searchRequestIdRef = useRef(0);
     const [selectedCategoryKey, setSelectedCategoryKey] = useState<string>(DEFAULT_ADDRESS_FAVORITE_TAB_ID);
     const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
     const categoryContentEntrance = useRef(new Animated.Value(1)).current;
@@ -123,11 +126,18 @@ export function usePlacesSettings() {
     const navigationFocused = useIsFocused();
     const sceneActive = usePreMountedSceneActivity();
     const isFocused = sceneActive ?? navigationFocused;
+    const stopSearch = useCallback(() => {
+        searchRequestIdRef.current += 1;
+        setSearching(false);
+    }, []);
+
     useEffect(() => {
         if (!isFocused) return;
+        setSearching(false);
         void loadPlaces(!loadedOnceRef.current);
         return () => {
             loadRequestIdRef.current += 1;
+            searchRequestIdRef.current += 1;
         };
     }, [isFocused, loadPlaces]);
 
@@ -186,7 +196,7 @@ export function usePlacesSettings() {
         }
         const animation = Animated.timing(categoryContentEntrance, {
             toValue: 1,
-            duration: 210,
+            duration: 220,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
         });
@@ -201,17 +211,38 @@ export function usePlacesSettings() {
     }, [selectedCategory, selectedCategoryId]);
 
     const openSearch = useCallback((searchMode: SearchMode) => {
+        stopSearch();
         setSearchQuery("");
-        setSearchResults([]);
+        setSearchMatches(null);
         setSheet({ kind: "search", mode: searchMode });
-    }, []);
+    }, [stopSearch]);
+
+    const changeSearchQuery = useCallback((query: string) => {
+        stopSearch();
+        setSearchQuery(query);
+        setSearchMatches(null);
+    }, [stopSearch]);
+
+    const closeSheet = useCallback(() => {
+        if (busyKey) return;
+        stopSearch();
+        setSheet(current => {
+            if (current?.kind === "categoryEditor" && current.returnToPlaceEditor) {
+                return current.returnToPlaceEditor;
+            }
+            return current?.kind === "placeEditor" && current.fromSearch
+                ? { kind: "search", mode: "favorite" }
+                : null;
+        });
+    }, [busyKey, stopSearch]);
 
     const refresh = useCallback(() => {
         setRefreshing(true);
         void loadPlaces(false);
     }, [loadPlaces]);
 
-    const performSearch = useCallback(async () => {
+    const performSearch = useCallback(async (showInlineResults = false) => {
+        if (sheet?.kind !== "search") return;
         const query = searchQuery.trim();
         if (query.length < 2) {
             Alert.alert("검색어를 확인해 주세요", "장소명이나 주소를 두 글자 이상 입력해 주세요.");
@@ -219,19 +250,24 @@ export function usePlacesSettings() {
         }
 
         Keyboard.dismiss();
+        const requestId = ++searchRequestIdRef.current;
+        setSearchMatches(null);
         setSearching(true);
         try {
             const results = await searchAddressByKeyword(query);
-            setSearchResults(results);
-            if (results.length === 0) {
+            if (searchRequestIdRef.current !== requestId) return;
+            setSearchMatches(results);
+            if (results.length === 0 && !showInlineResults) {
                 Alert.alert("검색 결과가 없어요", "장소명이나 주소를 조금 다르게 입력해 보세요.");
             }
         } catch (error) {
-            Alert.alert("장소를 검색하지 못했어요", errorMessage(error));
+            if (searchRequestIdRef.current === requestId) {
+                Alert.alert("장소를 검색하지 못했어요", errorMessage(error));
+            }
         } finally {
-            setSearching(false);
+            if (searchRequestIdRef.current === requestId) setSearching(false);
         }
-    }, [searchQuery]);
+    }, [searchQuery, sheet]);
 
     const chooseSearchResult = useCallback((place: PlaceSearchItem) => {
         if (sheet?.kind !== "search") return;
@@ -239,7 +275,9 @@ export function usePlacesSettings() {
             const existing = findMatchingFavoritePlace(place, favorites);
             setSheet({
                 kind: "placeEditor",
+                fromSearch: true,
                 place: existing ?? place,
+                placeName: existing?.placeName ?? place.name,
                 favoriteId: existing?.id,
                 label: existing?.name?.trim() || place.name,
                 categoryId: existing?.categoryId ?? selectedCategoryId,
@@ -249,7 +287,7 @@ export function usePlacesSettings() {
 
         setSheet(null);
         setBusyKey("default-search");
-        saveFavoriteDeparturePlace(place)
+        saveFavoriteDeparturePlace(place, { cacheBeforeSave: false })
             .then(() => loadPlaces(false))
             .catch((error) => Alert.alert("기본주소를 설정하지 못했어요", errorMessage(error)))
             .finally(() => setBusyKey(null));
@@ -257,13 +295,14 @@ export function usePlacesSettings() {
 
     const chooseFavoriteAsDefault = useCallback((favorite: FavoritePlace) => {
         if (!favorite.id) return;
+        stopSearch();
         setSheet(null);
         setBusyKey(`default-${favorite.id}`);
         saveFavoriteDepartureFavorite(favorite)
             .then(() => loadPlaces(false))
             .catch((error) => Alert.alert("기본주소를 설정하지 못했어요", errorMessage(error)))
             .finally(() => setBusyKey(null));
-    }, [loadPlaces]);
+    }, [loadPlaces, stopSearch]);
 
     const clearDefaultOrigin = useCallback(() => {
         Alert.alert(
@@ -291,6 +330,7 @@ export function usePlacesSettings() {
             kind: "placeEditor",
             favoriteId: favorite.id,
             place: favorite,
+            placeName: favorite.placeName,
             label: favorite.name?.trim() || "즐겨찾기 장소",
             categoryId: favorite.categoryId,
         });
@@ -306,16 +346,24 @@ export function usePlacesSettings() {
 
         setBusyKey("save-place");
         try {
+            loadRequestIdRef.current += 1;
+            setRefreshing(false);
             if (sheet.favoriteId) {
-                await updateFavoritePlaceToApi(sheet.favoriteId, {
+                const updated = await updateFavoritePlaceToApi(sheet.favoriteId, {
                     label,
                     categoryId: sheet.categoryId ?? null,
                 });
+                setFavorites(current => sortByOrder(current.map(place => place.id === updated.id ? updated : place)));
+                setDefaultOrigin(current => current?.id === updated.id ? updated : current);
+                if (sheet.fromSearch || selectedCategoryKey !== DEFAULT_ADDRESS_FAVORITE_TAB_ID) {
+                    selectCategoryKey(updated.categoryId ?? UNCATEGORIZED_FAVORITE_TAB_ID);
+                }
             } else {
                 await saveFavoritePlaceToApi(
-                    { ...sheet.place, name: label },
-                    { categoryId: sheet.categoryId }
+                    sheet.place,
+                    { label, categoryId: sheet.categoryId }
                 );
+                selectCategoryKey(sheet.categoryId ?? UNCATEGORIZED_FAVORITE_TAB_ID);
             }
             setSheet(null);
             await loadPlaces(false);
@@ -324,7 +372,7 @@ export function usePlacesSettings() {
         } finally {
             setBusyKey(null);
         }
-    }, [loadPlaces, sheet]);
+    }, [loadPlaces, selectCategoryKey, selectedCategoryKey, sheet]);
 
     const deleteFavorite = useCallback((favorite: FavoritePlace) => {
         if (!favorite.id) return;
@@ -405,11 +453,15 @@ export function usePlacesSettings() {
             : []);
         if (items.length !== next.length) return;
 
+        loadRequestIdRef.current += 1;
+        setRefreshing(false);
         setFavorites(next);
         setBusyKey("reorder-places");
         try {
             setFavorites(sortByOrder(await reorderFavoritePlacesToApi(items)));
+            return true;
         } catch (error) {
+            setFavorites(favorites);
             await loadPlaces(false);
             Alert.alert("즐겨찾기 순서를 바꾸지 못했어요", errorMessage(error));
         } finally {
@@ -418,12 +470,14 @@ export function usePlacesSettings() {
     }, [busyKey, favorites, loadPlaces]);
 
     const openCategoryEditor = useCallback((category?: FavoritePlaceCategory) => {
-        setSheet({
+        Keyboard.dismiss();
+        setSheet(current => ({
             kind: "categoryEditor",
             categoryId: category?.id,
             name: category?.name ?? "",
-            color: category?.color ?? CATEGORY_COLORS[0],
-        });
+            color: category?.color ?? CATEGORY_COLOR_OPTIONS[0].color,
+            returnToPlaceEditor: !category && current?.kind === "placeEditor" ? current : undefined,
+        }));
     }, []);
 
     const saveCategoryEditor = useCallback(async () => {
@@ -456,6 +510,19 @@ export function usePlacesSettings() {
                 });
             } else {
                 savedCategory = await createFavoritePlaceCategoryToApi(name, sheet.color);
+            }
+            if (sheet.returnToPlaceEditor) {
+                Keyboard.dismiss();
+                setCategories(current => sortByOrder([
+                    ...current.filter(category => category.id !== savedCategory.id),
+                    savedCategory,
+                ]));
+                setSheet({
+                    ...sheet.returnToPlaceEditor,
+                    categoryId: savedCategory.id ?? sheet.returnToPlaceEditor.categoryId,
+                });
+                await loadPlaces(false);
+                return;
             }
             setSheet(null);
             await loadPlaces(false);
@@ -536,8 +603,10 @@ export function usePlacesSettings() {
         sheet,
         setSheet,
         searchQuery,
-        setSearchQuery,
-        searchResults,
+        changeSearchQuery,
+        closeSheet,
+        searchResults: searchMatches ?? EMPTY_SEARCH_RESULTS,
+        searchCompleted: searchMatches !== null,
         searching,
         selectedCategoryKey,
         reduceMotionEnabled,

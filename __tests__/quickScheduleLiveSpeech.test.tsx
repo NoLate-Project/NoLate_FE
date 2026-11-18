@@ -2,7 +2,7 @@ import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import * as ImagePicker from "expo-image-picker";
 import { Audio } from "expo-av";
-import { ActionSheetIOS, Alert } from "react-native";
+import { ActionSheetIOS, Alert, Linking } from "react-native";
 
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
@@ -47,6 +47,10 @@ function createDeferred<T>(): Deferred<T> {
 }
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
+jest.mock("../src/api/api", () => ({
+    __esModule: true,
+    default: { post: jest.fn().mockResolvedValue({ data: { success: true, data: { preview: null } } }) },
+}));
 jest.mock("expo-router", () => ({
     usePathname: () => "/schedule",
     useRouter: () => ({ push: jest.fn() }),
@@ -155,6 +159,38 @@ describe("QuickScheduleModal live speech", () => {
         jest.useRealTimers();
     });
 
+    test("마이크 권한을 거절하면 음성 탭에서 직접 입력하고 설정을 열 수 있다", async () => {
+        (Audio.requestPermissionsAsync as jest.Mock).mockResolvedValueOnce({ granted: false });
+        const openSettings = jest.spyOn(Linking, "openSettings").mockResolvedValue(undefined);
+        const alert = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+        const onAnalyze = jest.fn().mockResolvedValue(parseResult);
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal visible defaultDay="2026-07-23" onAnalyze={onAnalyze}
+                        onSave={jest.fn()} onClose={jest.fn()} />
+                </ThemeProvider>
+            );
+        });
+        const action = (label: string) => renderer!.root.findByProps({ accessibilityLabel: label });
+        await act(async () => action("음성으로 빠른 일정 만들기").props.onPress());
+        await act(async () => action("실시간 음성 인식 시작").props.onPress());
+
+        expect(alert).not.toHaveBeenCalled();
+        expect(mockStartLiveSpeechRecognition).not.toHaveBeenCalled();
+        expect(renderer!.root.findAllByProps({ children: "마이크를 사용할 수 없어요" }).length)
+            .toBeGreaterThan(0);
+        await act(async () => action("설정 열기").props.onPress());
+        expect(openSettings).toHaveBeenCalledTimes(1);
+
+        const sentence = "7월 23일 오후 3시 서울역에서 회의";
+        await act(async () => action("일정 내용 직접 입력").props.onChangeText(sentence));
+        await act(async () => action("입력 내용으로 일정 미리보기").props.onPress());
+        expect(onAnalyze).toHaveBeenCalledWith(sentence, expect.objectContaining({
+            inputMode: "voice", voiceTranscript: sentence,
+        }));
+    });
+
     test("부분 문장을 표시하고 수정한 최종 문장을 분석에 전달한다", async () => {
         const onAnalyze = jest.fn().mockResolvedValue(parseResult);
         await act(async () => {
@@ -176,20 +212,10 @@ describe("QuickScheduleModal live speech", () => {
                 .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
                 .props.onPress();
         });
+        const voiceSpectrum = { testID: "quick-schedule-voice-spectrum" };
+        expect(renderer!.root.findAllByProps(voiceSpectrum)).toHaveLength(0);
         expect(
-            renderer!.root.findByProps({ testID: "quick-schedule-voice-spectrum" })
-        ).toBeDefined();
-        expect(
-            renderer!.root.findAll((node) => (
-                node.props.testID === "quick-schedule-voice-spectrum-bar"
-                && typeof node.type === "string"
-            ))
-        ).toHaveLength(48);
-        expect(
-            renderer!.root.findAll((node) => node.props.children === "말하기")
-        ).not.toHaveLength(0);
-        expect(
-            renderer!.root.findAll((node) => node.props.children === "눌러서 시작")
+            renderer!.root.findAll((node) => node.props.children === "눌러서 말하기")
         ).not.toHaveLength(0);
         await act(async () => {
             renderer!.root
@@ -204,6 +230,13 @@ describe("QuickScheduleModal live speech", () => {
             maxDurationMillis: 60_000,
             requiresOnDeviceRecognition: true,
         }));
+        expect(renderer!.root.findByProps(voiceSpectrum)).toBeDefined();
+        expect(
+            renderer!.root.findAll((node) => (
+                node.props.testID === "quick-schedule-voice-spectrum-bar"
+                && typeof node.type === "string"
+            ))
+        ).toHaveLength(48);
 
         await act(async () => {
             mockTranscriptListener?.({
@@ -248,6 +281,7 @@ describe("QuickScheduleModal live speech", () => {
             await Promise.resolve();
         });
         expect(mockStopLiveSpeechRecognition).toHaveBeenCalledWith("speech-session-1");
+        expect(renderer!.root.findAllByProps(voiceSpectrum)).toHaveLength(0);
 
         await act(async () => {
             renderer!.root

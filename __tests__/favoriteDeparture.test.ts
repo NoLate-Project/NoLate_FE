@@ -154,6 +154,19 @@ describe("favorite departure synchronization", () => {
         expect(mockedSetFavoriteAsDefaultOrigin).not.toHaveBeenCalled();
     });
 
+    test("keeps the current cached default when an account setting cannot be saved", async () => {
+        const current = { name: "기존 기본주소", lat: 37.49, lng: 126.9 };
+        const replacement = { id: "27", name: "새 기본주소", lat: 37.5, lng: 127.03 };
+        storage.set(FAVORITE_DEPARTURE_PLACES_KEY, JSON.stringify([current]));
+        mockedSaveDefaultOrigin.mockRejectedValue(new Error("offline"));
+        mockedSetFavoriteAsDefaultOrigin.mockRejectedValue(new Error("offline"));
+
+        await expect(saveFavoriteDeparturePlace(replacement, { cacheBeforeSave: false })).rejects.toThrow("offline");
+        await expect(saveFavoriteDepartureFavorite(replacement)).rejects.toThrow("offline");
+        expect(mockedSetItem).not.toHaveBeenCalled();
+        expect(JSON.parse(storage.get(FAVORITE_DEPARTURE_PLACES_KEY) ?? "[]")).toEqual([current]);
+    });
+
     test("clears local default candidates before clearing the account default", async () => {
         storage.set(FAVORITE_DEPARTURE_PLACES_KEY, JSON.stringify([
             { name: "예전 집", lat: 37.1, lng: 127.1 },

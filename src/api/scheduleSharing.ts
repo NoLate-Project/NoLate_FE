@@ -61,6 +61,8 @@ export type ScheduleShareInvitationAcceptResult = {
     invitation: ScheduleShareInvitation;
     share: ScheduleShare;
     calendarMembership?: ScheduleCalendarMember | null;
+    calendarTitle?: string | null;
+    scheduleTitle?: string | null;
 };
 
 export type ShareInboxItem = {

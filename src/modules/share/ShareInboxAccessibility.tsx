@@ -6,10 +6,11 @@ import {
     type ViewProps,
 } from "react-native";
 
-export function ShareInboxButton(props: PressableProps) {
+export function ShareInboxButton({ ref, ...props }: PressableProps & { ref?: React.Ref<View> }) {
     return (
         <Pressable
             {...props}
+            ref={ref}
             accessible
             role="button"
             accessibilityRole="button"

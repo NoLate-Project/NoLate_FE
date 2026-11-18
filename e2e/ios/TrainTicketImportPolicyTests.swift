@@ -45,3 +45,27 @@ print("Numeric terminal / clock ambiguity policy: 3 additional assertions passed
 precondition((try? TrainTicketDraft.parse(text + "\n예매 취소 안내: 취소수수료는 예매처에서 확인").confirmedPayload(source: "IOS_SHARE_PDF", now: now)) != nil)
 precondition((try? TrainTicketDraft.parse(text + "\n예매 상태: 취소").confirmedPayload(source: "IOS_SHARE_PDF", now: now)) == nil)
 print("Cancellation instructions / actual status policy: 2 additional assertions passed")
+
+func assertInvalidField(_ draft: TrainTicketDraft, _ field: TrainTicketDraft.ValidationError.Field?) throws {
+  do {
+    _ = try draft.confirmedPayload(source: "IOS_SHARE_TEXT", now: now)
+    preconditionFailure("Expected validation to fail")
+  } catch let error as TrainTicketDraft.ValidationError {
+    precondition(error.field == field)
+  }
+}
+
+invalid = draft; invalid.departureName = ""
+try assertInvalidField(invalid, .departure)
+invalid = draft; invalid.arrivalName = invalid.departureName
+try assertInvalidField(invalid, .arrival)
+invalid = draft; invalid.departureTime = "2026-10-11 11:00"
+try assertInvalidField(invalid, .departureTime)
+invalid = draft; invalid.arrivalTime = "2026-10-14 13:40"
+try assertInvalidField(invalid, .arrivalTime)
+invalid = draft; invalid.trainNumber = ""
+try assertInvalidField(invalid, .trainNumber)
+invalid = draft; invalid.kind = "INTERCITY_BUS"; invalid.grade = ""
+try assertInvalidField(invalid, .grade)
+try assertInvalidField(cancelled, nil)
+print("Validation field mapping: 7 assertions passed")

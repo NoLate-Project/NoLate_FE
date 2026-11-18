@@ -398,6 +398,19 @@ actor NoLateAlarmCoordinator {
       )
     }
 
+    if let current, NoLateAlarmRecoveryPolicy.preservesScheduledOccurrence(
+      current,
+      for: command,
+      nowMilliseconds: nowMilliseconds
+    ) {
+      return NoLateAlarmMutationResult(
+        applied: true,
+        scheduled: true,
+        reason: "ALREADY_APPLIED",
+        deliveryMode: current.deliveryMode
+      )
+    }
+
     snapshot.alarms.removeValue(forKey: command.alarmId)
     let retainedGeneration = max(
       command.generation,

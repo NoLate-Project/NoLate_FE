@@ -143,6 +143,23 @@ describe("NoLate custom alarm audio", () => {
         expect(mockSetAudioModeAsync).toHaveBeenLastCalledWith(NEUTRAL_MODE);
     });
 
+    test("plays a preview once and signals completion from playback status", async () => {
+        const onEnd = jest.fn();
+        const session = await startNoLateCustomAlarmAudio("BELL", onEnd);
+        sessions.push(session);
+
+        expect(mockCreateAsync).toHaveBeenLastCalledWith(
+            2,
+            { shouldPlay: true, isLooping: false, volume: 1 },
+            expect.any(Function),
+        );
+        const updateStatus = mockCreateAsync.mock.lastCall![2];
+        updateStatus({ isLoaded: true, didJustFinish: false });
+        expect(onEnd).not.toHaveBeenCalled();
+        updateStatus({ isLoaded: true, didJustFinish: true });
+        expect(onEnd).toHaveBeenCalledWith(false);
+    });
+
     test("an old stop cannot restore neutral mode while a newer start is waiting", async () => {
         const first = await startSession();
         let finishOldStop: (status: { isLoaded: boolean }) => void = () => undefined;

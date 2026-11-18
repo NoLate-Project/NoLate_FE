@@ -51,6 +51,7 @@ type QuickScheduleModalShellProps = {
   inputModeDescription: string;
   isPrewarmOnly: boolean;
   mode: string;
+  onCancelAnalysis: () => void;
   onCancelEditField: () => void;
   onRequestClose: () => void;
   onRetryCategories?: () => void;
@@ -81,6 +82,7 @@ export function QuickScheduleModalShell({
   inputModeDescription,
   isPrewarmOnly,
   mode,
+  onCancelAnalysis,
   onCancelEditField,
   onRequestClose,
   onRetryCategories,
@@ -90,6 +92,8 @@ export function QuickScheduleModalShell({
 }: QuickScheduleModalShellProps) {
   const largeText = useWindowDimensions().fontScale > 1.35;
   const usePreviewHeader = presentedStep !== "input";
+  const showingAnalysisWait = presentedStep === "analyzing";
+  const closeDisabled = submitting && flowStep !== "analyzing";
   return (
     <Reanimated.View
       pointerEvents={isPrewarmOnly ? "none" : "box-none"}
@@ -144,13 +148,10 @@ export function QuickScheduleModalShell({
                     <View style={[styles.closeButton, largeText && styles.closeButtonLarge, { backgroundColor: colors.surface2 }]}>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="빠른 일정 등록 닫기"
-                        accessibilityState={{
-                          disabled: submitting && flowStep !== "analyzing",
-                          busy: submitting,
-                        }}
-                        disabled={submitting && flowStep !== "analyzing"}
-                        onPress={onRequestClose}
+                        accessibilityLabel={showingAnalysisWait ? "확인 취소" : "빠른 일정 등록 닫기"}
+                        accessibilityState={{ disabled: closeDisabled, busy: closeDisabled }}
+                        disabled={closeDisabled}
+                        onPress={showingAnalysisWait ? onCancelAnalysis : onRequestClose}
                         hitSlop={10}
                         style={({ pressed }) => [styles.closeButtonPressable, { opacity: pressed ? 0.58 : 1 }]}
                       >

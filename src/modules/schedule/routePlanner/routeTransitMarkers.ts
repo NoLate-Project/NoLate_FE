@@ -5,7 +5,7 @@ import {
   type TransitLegDetail,
 } from '../../map/routingService';
 import { type TmapMarker } from '../../map/TmapMapView';
-import { resolveTransitRouteNodeCoordinate } from '../../map/transitRouteGeometry';
+import { hasRailLineGeometry, isRailKind, resolveTransitRouteNodeCoordinate } from '../../map/transitRouteGeometry';
 import {
   buildTransitLegInteractionId,
   buildTransitStopInteractionId,
@@ -46,6 +46,7 @@ import {
   getTransitLegBoardCoord,
   getTransitLegEndCoord,
   getTransitLegStartCoord,
+  getTransitLegVisualColor,
   isRideLegKind,
 } from './routeTransitLegCoordinates';
 import {
@@ -53,7 +54,7 @@ import {
   normalizeDisplayPathCoords,
   routeCoordDistanceMeters,
 } from './routeTransitWalkGeometry';
-import { compactTransitLineLabel } from '../routeInfo';
+import { compactTransitLineLabel, findTransitRideLineLabel } from '../routeInfo';
 
 export const TRANSIT_BADGE_MAX_COUNT = 18;
 const KAKAO_LABEL_TEXT_COLOR = '#1F2937';
@@ -210,12 +211,11 @@ export function buildTransitEventMarkers(
       getTransitLegAlightCoord(leg) ??
       getTransitLegEndCoord(leg) ??
       getTransitLegAlightAnchorOnPath(leg);
-    const lineLabel =
-      compactTransitLineLabel(leg.lineName) ??
-      compactTransitLineLabel(leg.label);
+    const lineLabel = findTransitRideLineLabel(leg);
     const baseOrder = index * 10;
 
     if (isRideLegKind(leg.kind)) {
+      const lineColor = getTransitLegVisualColor(leg);
       const hasWalkBeforeRide = legs
         .slice(0, index)
         .some(candidate => candidate.kind === 'WALK');
@@ -236,7 +236,7 @@ export function buildTransitEventMarkers(
           kind: leg.kind,
           legIndex: index,
           lineLabel,
-          lineColor: leg.lineColor,
+          lineColor,
           stopName: normalizeTransitStopName(leg.startName),
           directionLabel: getTransitBoardingDirectionHint(leg),
           badgeSide: getTransitEventBadgeSide(leg, 'BOARD'),
@@ -252,7 +252,7 @@ export function buildTransitEventMarkers(
           kind: leg.kind,
           legIndex: index,
           lineLabel,
-          lineColor: leg.lineColor,
+          lineColor,
           stopName: normalizeTransitStopName(leg.endName),
           badgeSide: getTransitEventBadgeSide(leg, 'ALIGHT'),
           boundaryRole:
@@ -271,7 +271,7 @@ export function buildTransitEventMarkers(
           kind: leg.kind,
           legIndex: index,
           lineLabel,
-          lineColor: leg.lineColor,
+          lineColor,
           stopName: normalizeTransitStopName(leg.startName),
           directionLabel: getTransitBoardingDirectionHint(leg),
           badgeSide: getTransitEventBadgeSide(leg, 'BOARD'),
@@ -401,7 +401,7 @@ export function buildTransitEventMarkers(
     );
     if (!presentation.visible) return [];
     const compactLineLabel = compactTransitLineLabel(detailLineLabel);
-    const showContextLabel = mapZoom >= 16.8;
+    const showContextLabel = shouldPreserveTransitBoundaryEvents(mapZoom);
     const contextPrimary = [
       compactLineLabel,
       compactTransitStopLabel(detailStopName, 14),
@@ -440,12 +440,11 @@ export function buildTransitEventMarkers(
         markerStyle,
         caption,
         displayType: 'routeLabel',
-        badgeLabel:
-          showContextLabel && contextPrimary
-            ? contextPrimary
-            : compactLineLabel ?? actionLabel,
+        badgeLabel: showContextLabel
+          ? contextPrimary || actionLabel
+          : compactTransitStopLabel(detailStopName, 14) ?? actionLabel,
         badgeSubLabel: showContextLabel ? contextSecondary : undefined,
-        badgeVariant: showContextLabel ? 'context' : 'route',
+        badgeVariant: showContextLabel ? 'context' : 'stop',
         badgeSide: detailBadgeSide,
         eventIntent,
         zIndex: 3701 + index * 2,
@@ -494,17 +493,12 @@ export function buildTransitPassStopMarkers(
     const selectedBelongsToLeg = selectedStop?.legIndex === legIndex;
     if (!policy.visible && !selectedBelongsToLeg) return;
 
-    const lineLabel =
-      compactTransitLineLabel(leg.lineName) ??
-      compactTransitLineLabel(leg.label);
-    const lineColor = getTransitKindLineColor(
-      leg.kind,
-      lineLabel,
-      leg.lineColor,
-    );
+    const lineLabel = findTransitRideLineLabel(leg);
+    const lineColor = getTransitLegVisualColor(leg);
     const markerStyle: TmapMarker['markerStyle'] =
       leg.kind === 'BUS' ? 'bus' : 'subway';
     const displayPath =
+      (!isRailKind(leg.kind) || hasRailLineGeometry(leg)) &&
       Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2
         ? normalizeDisplayPathCoords(leg.pathCoords, leg.kind)
         : [];
@@ -660,10 +654,8 @@ export function buildTransitRouteIdentityMarkers(
     return [];
 
   return legs.flatMap((leg, legIndex): TmapMarker[] => {
-    if (!isRideLegKind(leg.kind)) return [];
-    const lineLabel =
-      compactTransitLineLabel(leg.lineName) ??
-      compactTransitLineLabel(leg.label);
+    if (!isRideLegKind(leg.kind) || (isRailKind(leg.kind) && !hasRailLineGeometry(leg))) return [];
+    const lineLabel = findTransitRideLineLabel(leg);
     if (!lineLabel) return [];
     const displayPath =
       Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2
@@ -680,7 +672,7 @@ export function buildTransitRouteIdentityMarkers(
         interactionId: buildTransitLegInteractionId(legIndex),
         latitude: markerCoord.lat,
         longitude: markerCoord.lng,
-        tintColor: getTransitKindLineColor(leg.kind, lineLabel, leg.lineColor),
+        tintColor: getTransitLegVisualColor(leg),
         markerStyle: getTransitModeMarkerStyle(leg.kind),
         caption: lineLabel,
         displayType: 'routeLabel',

@@ -13,6 +13,7 @@ import {
 
 import { getScheduleDetailSheetHeights } from "../../modules/schedule/detailPresentation";
 import { useSystemReduceMotion } from "../../modules/performance/useSystemReduceMotion";
+import { SAVED_JOURNEY_MOTION } from "../../modules/journey/savedJourneyMotion";
 import {
   IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT,
   SHEET_HANDLE_HEIGHT,
@@ -22,10 +23,14 @@ import {
 } from "./ScheduleDetailChrome";
 import type { SheetSnapMode } from "./scheduleDetailModel";
 
+const SHEET_DRAG_SNAP_THRESHOLD = 24;
+
 type ScheduleDetailSheetControllerOptions = {
   windowHeight: number;
   bottomInset: number;
   previewEnabled: boolean;
+  guidanceNavigation?: boolean;
+  inspectingCompanion?: boolean;
   initialSheetMode: SheetSnapMode;
   initialParticipantsExpanded: boolean;
 };
@@ -38,18 +43,28 @@ export function useScheduleDetailSheetController({
   windowHeight,
   bottomInset,
   previewEnabled,
+  guidanceNavigation = false,
+  inspectingCompanion = false,
   initialSheetMode,
   initialParticipantsExpanded,
 }: ScheduleDetailSheetControllerOptions) {
   const sheetScrollRef = useRef<ScrollView>(null);
   const reduceMotion = useSystemReduceMotion();
   const sheetStartOffsetRef = useRef(0);
+  const sheetDragging = useRef(false);
+  const activeSnap = useRef<{ target: number; reason?: 'live-activity' }>(undefined);
   const sheetSnapModeRef = useRef<SheetSnapMode>(
     previewEnabled ? initialSheetMode : "compact",
   );
   const baseSheetHeights = getScheduleDetailSheetHeights(windowHeight);
   const { fontScale } = useWindowDimensions();
-  const [routeHeaderHeight, setRouteHeaderHeight] = useState(0);
+  const [routeHeaderLayout, setRouteHeaderLayout] = useState({ height: 0, statusClearance: 0 });
+  const routeHeaderHeight = routeHeaderLayout.height + routeHeaderLayout.statusClearance;
+  const setRouteHeaderHeight = useCallback((height: number, statusClearance: number) => {
+    setRouteHeaderLayout(previous => previous.height === height && previous.statusClearance === statusClearance
+      ? previous
+      : { height, statusClearance });
+  }, []);
   const largeRouteHeader = fontScale > 1.35;
   const sheetMaxHeight = routeHeaderHeight > 0
     ? Math.min(baseSheetHeights.maxHeight, Math.max(160, windowHeight - routeHeaderHeight - 32))
@@ -59,12 +74,28 @@ export function useScheduleDetailSheetController({
   const handleSheetHeaderLayout = useCallback((event: LayoutChangeEvent) => {
     setSheetHeaderHeight(Math.ceil(event.nativeEvent.layout.height));
   }, []);
+  // Keep the compact route summary below the companion heading and above the safe area.
+  const companionHeaderHeight = inspectingCompanion && !largeRouteHeader
+    ? Math.max(0, sheetHeaderHeight - handleHeight)
+    : 0;
+  const [compactSummaryHeight, setCompactSummaryHeight] = useState(0);
+  const handleCompactContentSizeChange = useCallback((_width: number, height: number) => {
+    const measuredHeight = Math.ceil(height);
+    setCompactSummaryHeight(current => Math.abs(current - measuredHeight) > 1 ? measuredHeight : current);
+  }, []);
+  const compactMinimumHeight = Math.max(
+    baseSheetHeights.minHeight,
+    Math.ceil(IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT * Math.max(1, fontScale)) + bottomInset,
+  ) + companionHeaderHeight;
+  const fittedCompactHeight = largeRouteHeader || compactSummaryHeight === 0
+    ? compactMinimumHeight
+    : Math.max(compactMinimumHeight, Math.min(
+        baseSheetHeights.midHeight,
+        sheetHeaderHeight + compactSummaryHeight + bottomInset,
+      ));
   const sheetMinHeight = Math.min(
     sheetMaxHeight - (largeRouteHeader ? Math.min(80, Math.round(sheetMaxHeight * 0.22)) : 1),
-    Math.max(
-      baseSheetHeights.minHeight,
-      Math.ceil(IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT * Math.max(1, fontScale)) + bottomInset,
-    ),
+    fittedCompactHeight,
   );
   const sheetBottomPadding = Math.max(bottomInset, 14);
   const [expandedContentHeight, setExpandedContentHeight] = useState(0);
@@ -163,16 +194,6 @@ export function useScheduleDetailSheetController({
     ],
   );
 
-  useEffect(() => {
-    sheetTranslateY.stopAnimation(() => {
-      const nextOffset =
-        sheetSnapModeRef.current === "expanded"
-          ? sheetExpandedOffset
-          : sheetCollapsedOffset;
-      sheetTranslateY.setValue(nextOffset);
-    });
-  }, [reduceMotion, sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY]);
-
   /** 드래그 종료 위치와 속도를 투영해 가장 가까운 시트 스냅 모드를 결정한다. */
   const getSheetSnapMode = useCallback(
     (current: number, velocityY: number): SheetSnapMode => {
@@ -189,42 +210,65 @@ export function useScheduleDetailSheetController({
     [sheetCollapsedOffset, sheetExpandedOffset],
   );
 
-  /** 요약과 상세의 위치만 바꿔 상세 스크롤과 펼침 상태를 유지한다. */
-  const snapSheet = useCallback(
-    (nextMode: SheetSnapMode) => {
-      sheetSnapModeRef.current = nextMode;
-      setSheetMode(nextMode);
-      const toValue = nextMode === "expanded" ? sheetExpandedOffset : sheetCollapsedOffset;
+  const animateSheetSnap = useCallback(
+    (nextMode: SheetSnapMode, toValue: number, reason?: "live-activity") => {
       if (reduceMotion) {
+        activeSnap.current = undefined;
         sheetTranslateY.setValue(toValue);
         return;
       }
-      if (previewEnabled) {
-        Animated.timing(sheetTranslateY, {
+      const snap = { target: toValue, reason };
+      activeSnap.current = snap;
+      const expandingGuidance = guidanceNavigation && !largeRouteHeader && nextMode === "expanded";
+      const animation = reason === "live-activity" || expandingGuidance || previewEnabled
+        ? Animated.timing(sheetTranslateY, {
           toValue,
-          duration: nextMode === "expanded" ? 300 : 240,
-          easing: Easing.out(Easing.cubic),
+          duration: reason === "live-activity" ? SAVED_JOURNEY_MOTION.activityHandoffMs
+            : expandingGuidance ? SAVED_JOURNEY_MOTION.expandMs : nextMode === "expanded" ? 300 : 240,
+          easing: expandingGuidance && !reason
+            ? Easing.bezier(...SAVED_JOURNEY_MOTION.routeCurve) : Easing.out(Easing.cubic),
           useNativeDriver: false,
-        }).start();
-        return;
-      }
-      Animated.spring(sheetTranslateY, {
-        toValue,
-        damping: 26,
-        stiffness: 210,
-        mass: 0.92,
-        restDisplacementThreshold: 0.35,
-        restSpeedThreshold: 0.35,
-        useNativeDriver: false,
-      }).start();
+        })
+        : Animated.spring(sheetTranslateY, {
+          toValue,
+          damping: 26,
+          stiffness: 210,
+          mass: 0.92,
+          restDisplacementThreshold: 0.35,
+          restSpeedThreshold: 0.35,
+          useNativeDriver: false,
+        });
+      animation.start(() => {
+        if (activeSnap.current === snap) activeSnap.current = undefined;
+      });
     },
-    [
-      previewEnabled,
-      reduceMotion,
-      sheetCollapsedOffset,
-      sheetExpandedOffset,
-      sheetTranslateY,
-    ],
+    [previewEnabled, guidanceNavigation, largeRouteHeader, reduceMotion, sheetTranslateY],
+  );
+
+  useEffect(() => {
+    if (sheetDragging.current) return;
+    const mode = sheetSnapModeRef.current;
+    const target = mode === "expanded" ? sheetExpandedOffset : sheetCollapsedOffset;
+    const snap = activeSnap.current;
+    if (snap && !reduceMotion) {
+      // The departure header changes height during expansion. Keep moving from
+      // the current position if measurement changes the endpoint.
+      if (snap.target !== target) animateSheetSnap(mode, target, snap.reason);
+      return;
+    }
+    activeSnap.current = undefined;
+    sheetTranslateY.setValue(target);
+  }, [animateSheetSnap, reduceMotion, sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY]);
+
+  /** 요약과 상세의 위치만 바꿔 상세 스크롤과 펼침 상태를 유지한다. */
+  const snapSheet = useCallback(
+    (nextMode: SheetSnapMode, reason?: "live-activity") => {
+      sheetDragging.current = false;
+      sheetSnapModeRef.current = nextMode;
+      setSheetMode(nextMode);
+      animateSheetSnap(nextMode, nextMode === "expanded" ? sheetExpandedOffset : sheetCollapsedOffset, reason);
+    },
+    [animateSheetSnap, sheetCollapsedOffset, sheetExpandedOffset],
   );
 
   const participantDisclosureAnimatedStyle = useMemo(
@@ -294,6 +338,8 @@ export function useScheduleDetailSheetController({
           Math.abs(gesture.dy) > Math.abs(gesture.dx),
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: () => {
+          sheetDragging.current = true;
+          activeSnap.current = undefined;
           sheetTranslateY.stopAnimation(current => {
             sheetStartOffsetRef.current = current;
           });
@@ -308,6 +354,10 @@ export function useScheduleDetailSheetController({
           );
         },
         onPanResponderRelease: (_event, gesture) => {
+          if (Math.abs(gesture.dy) < SHEET_DRAG_SNAP_THRESHOLD) {
+            snapSheet(sheetSnapModeRef.current);
+            return;
+          }
           if (previewEnabled) {
             const nextMode = gesture.dy <= -36 ? "expanded"
               : gesture.dy >= 36 ? "compact" : sheetSnapModeRef.current;
@@ -321,18 +371,7 @@ export function useScheduleDetailSheetController({
           );
           snapSheet(getSheetSnapMode(currentOffset, gesture.vy));
         },
-        onPanResponderTerminate: (_event, gesture) => {
-          if (previewEnabled) {
-            snapSheet(sheetSnapModeRef.current);
-            return;
-          }
-          const currentOffset = clamp(
-            sheetStartOffsetRef.current + gesture.dy,
-            sheetExpandedOffset,
-            sheetCollapsedOffset,
-          );
-          snapSheet(getSheetSnapMode(currentOffset, gesture.vy));
-        },
+        onPanResponderTerminate: () => snapSheet(sheetSnapModeRef.current),
       }),
     [
       getSheetSnapMode,
@@ -345,6 +384,8 @@ export function useScheduleDetailSheetController({
   );
 
   return {
+    compactSummaryScrollable: !largeRouteHeader && compactSummaryHeight > sheetCompactContentHeight,
+    handleCompactContentSizeChange,
     handleExpandedContentLayout,
     handleSheetHeaderLayout,
     largeRouteHeader,
@@ -353,6 +394,7 @@ export function useScheduleDetailSheetController({
     participantsExpanded,
     previewParticipantsExpanded,
     reduceMotion,
+    routeMapHeaderHeight: routeHeaderLayout.height,
     setExpandedContentHeight,
     setParticipantsExpanded,
     setRouteHeaderHeight,

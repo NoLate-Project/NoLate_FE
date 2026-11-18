@@ -24,6 +24,8 @@ BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
 DEVICE = '9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69'
 BASE, TITLE = 'http://127.0.0.1:5523', 'ETA E2E isolated fixture'
 SEOUL = dt.timezone(dt.timedelta(hours=9))
+# Exercise an off-minute clock so an unnoticed floor to the minute fails the audit.
+NATIVE_FUTURE_LEAD_SECONDS = 277
 
 
 def pinned_launchctl_application_pid(process_listing):
@@ -111,6 +113,12 @@ def verify_initial_arming(worker, login_summary):
             'workerEvaluatedAt': evaluated.isoformat(), 'scheduledAt': scheduled.isoformat()}
 
 
+def verify_off_minute_trigger(worker):
+    trigger = dt.datetime.fromisoformat(worker['alarmStates'][0]['trigger_at'])
+    departure = dt.datetime.fromisoformat(worker['recommendedDepartureAt'])
+    assert trigger == departure and trigger.second != 0, 'ETA seconds must survive M0 scheduling'
+
+
 def verify_cancel_state(root, name, worker):
     assert worker['alarmStates'][0]['operation'] == 'CANCEL'
     verify_ui_result(root / name, 'state')
@@ -140,6 +148,8 @@ def audit_run(root):
         name = 'ui-delivery-' + mode
         worker = json.loads((root / (name + '-worker.json')).read_text())
         assert worker['physicalTransitHttpCalls'] == 0
+        if report.get('offMinuteTriggerRequired'):
+            verify_off_minute_trigger(worker)
         if previous is None and report.get('armingBeginsAfterLogin'):
             login = json.loads(subprocess.check_output(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary',
                 '--path', str(root / 'ui-login' / 'result.xcresult')], timeout=30))
@@ -195,7 +205,8 @@ def main():
               'existingServersStopped': False, 'physicalIphone': 'DEFERRED_BY_USER',
               'fcmDeliveryVerified': False, 'audibleSoundMeasured': False,
               'realWorldAccuracyVerified': False, 'requestedModes': args.modes, 'cases': [],
-              'armingBeginsAfterLogin': True, 'nativeFutureLeadSeconds': 300,
+              'armingBeginsAfterLogin': True, 'nativeFutureLeadSeconds': NATIVE_FUTURE_LEAD_SECONDS,
+              'offMinuteTriggerRequired': True,
               'coldStartDiagnostic': {'enabled': args.trace_cold_start, 'samples': [],
                                       'latencyBenchmarkClaimed': False}}
 
@@ -362,7 +373,7 @@ def main():
                 stderr=subprocess.STDOUT, check=True, timeout=300)
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.simulator-fixture=true',
-                '-Dnolate.eta.native-delivery-lead-seconds=300', '-classpath', (root / 'classpath.txt').read_text(),
+                f'-Dnolate.eta.native-delivery-lead-seconds={NATIVE_FUTURE_LEAD_SECONDS}', '-classpath', (root / 'classpath.txt').read_text(),
                 'com.noLate.eta.simulator.EtaSimulatorFixtureServer', str(root)], cwd=BE, stdin=subprocess.PIPE,
                 stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         def ready():
@@ -398,6 +409,7 @@ def main():
             assert value['source'] == 'LIVE_PROVIDER' and value['stale'] is False
             assert value['alarmStates'][0]['operation'] == 'UPSERT'
             assert value['physicalTransitHttpCalls'] == 0
+            verify_off_minute_trigger(value)
             ui('testObserveIsolatedNativeAlarmDelivery', value, 'ui-delivery-' + mode, mode)
         cleanup('ui-native-cleanup')
         report['result'] = 'PASSED'

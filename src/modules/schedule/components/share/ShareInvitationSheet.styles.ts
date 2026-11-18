@@ -196,6 +196,13 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         letterSpacing: 0,
     },
+    targetInputClear: {
+        width: 44,
+        height: 44,
+        marginEnd: -12,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     directSuccess: {
         minHeight: 42,
         borderRadius: 8,

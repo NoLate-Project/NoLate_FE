@@ -20,6 +20,7 @@ import {
   canManagePresentedSchedule,
 } from '../../modules/schedule/schedulePermissions';
 import { getSavedRouteEntryPath } from '../../modules/schedule/savedRouteDetailPresentation';
+import { getScheduleFocusDay } from '../../modules/schedule/calendarNavigation';
 import { useScheduleStore } from '../../modules/schedule/store';
 import type {
   ScheduleTravelPlan,
@@ -40,8 +41,10 @@ import { useTheme } from '../../modules/theme/ThemeContext';
 import { getAuthMember } from '../../modules/auth/authStorage';
 import { canOpenParticipantTravelPlan } from '../../modules/schedule/travelPlanPresentation';
 import { completeScheduleDeparture } from '../../modules/schedule/scheduleDepartureCompletion';
-import { canOpenJourneyGuidance, journeyGuidanceRoute } from '../../modules/journey/journeyFeature';
+import { canOpenJourneyGuidance } from '../../modules/journey/journeyFeature';
 import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
+import { useGuidanceActivityHandoff, useGuidanceActivityRepeatTap } from '../../modules/journey/useGuidanceActivityHandoff';
+import { automaticUUID } from '../../modules/journey/automaticJourney';
 import { revalidateAutomaticJourneySavedRoute } from '../../modules/journey/automaticJourneyTrial';
 import { saveScheduleRouteAsMyTravelPlan } from '../../modules/schedule/scheduleTravelPlanSave';
 import { classifyDepartureNudgeResult } from '../../modules/schedule/departureNudgeResult';
@@ -89,20 +92,28 @@ export function useScheduleDetailController({
   previewCurrentMemberId,
   onPreviewOpenEditor,
 }: ScheduleDetailPreviewProps = {}) {
-  const { id: routeId, openRouteSetup, openRouteDetail, entrySource } = useLocalSearchParams<{
+  const { id: routeId, openRouteSetup, openRouteDetail, entrySource, guidanceSession, navigationMode: navigationModeParam } = useLocalSearchParams<{
     id: string;
     entrySource?: string;
     openRouteSetup?: string | string[];
     openRouteDetail?: string | string[];
+    guidanceSession?: string;
+    navigationMode?: string;
   }>();
   const pathname = usePathname();
   const router = useRouter();
   const internalPreviewItem =
     typeof __DEV__ === 'boolean' && __DEV__ ? previewItem : undefined;
   const id = internalPreviewItem?.id ?? routeId ?? initialItem?.id;
+  const [navigationScheduleId, setNavigationScheduleId] = useState<string | null>(
+    () => !internalPreviewItem && navigationModeParam === '1' && id ? id : null,
+  );
+  useEffect(() => {
+    if (!internalPreviewItem && navigationModeParam === '1' && id) setNavigationScheduleId(id);
+  }, [id, internalPreviewItem, navigationModeParam]);
   const { runWithTransitionShell } = useImmediateNavigationTransition();
-  const goBack = useCallback(() => {
-    if ((entrySource === 'calendar-search' || entrySource === 'notification-inbox') && router.canGoBack()) {
+  const goBackNormally = useCallback(() => {
+    if ((entrySource === 'calendar-search' || entrySource === 'notification-inbox' || entrySource === 'share-inbox') && router.canGoBack()) {
       // Preserve the visible list during the native back transition.
       router.back();
       return;
@@ -117,37 +128,6 @@ export function useScheduleDetailController({
   const { colors, mode } = useTheme();
   const isDark = mode === 'dark';
   const { state, dispatch } = useScheduleStore();
-  const {
-    handleExpandedContentLayout,
-    handleSheetHeaderLayout,
-    largeRouteHeader,
-    participantDisclosureAnimatedStyle,
-    participantDisclosureProgress,
-    participantsExpanded,
-    previewParticipantsExpanded,
-    reduceMotion,
-    setExpandedContentHeight,
-    setParticipantsExpanded,
-    setRouteHeaderHeight,
-    sheetBottomPadding,
-    sheetMaxHeight,
-    sheetMinHeight,
-    sheetMode,
-    sheetPanResponder,
-    sheetQuickSummaryAnimatedStyle,
-    sheetExpandedContentAnimatedStyle,
-    sheetHandleAnimatedStyle,
-    sheetScrollRef,
-    sheetTranslateY,
-    snapSheet,
-    toggleParticipantsExpanded,
-  } = useScheduleDetailSheetController({
-    windowHeight,
-    bottomInset: insets.bottom,
-    previewEnabled: Boolean(internalPreviewItem),
-    initialSheetMode,
-    initialParticipantsExpanded,
-  });
   const [loading, setLoading] = useState(false);
   const [loadedDetailId, setLoadedDetailId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -159,6 +139,7 @@ export function useScheduleDetailController({
       ? previewCurrentMemberId
       : null,
   );
+  const [memberResolved, setMemberResolved] = useState(false);
   const [departureSubmission, setDepartureSubmission] = useState<{
     scheduleId: string;
     status: 'pending' | 'failed' | 'recorded';
@@ -194,7 +175,11 @@ export function useScheduleDetailController({
   const travelPlanRequests = useRef(createLatestRequestGuard()).current;
   const travelPlanRequestPending = useRef(false);
   const routePlannerWasActiveRef = useRef(false);
+  const routePlannerReturnFocusRef = useRef<(() => void) | undefined>(undefined);
+  const routePlannerFocusTask = useRef<ReturnType<typeof runAfterScreenTransition> | null>(null);
   const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => () => routePlannerFocusTask.current?.cancel(), []);
 
   const { departureStatus } =
     useScheduleDepartureStatusController({
@@ -208,13 +193,77 @@ export function useScheduleDetailController({
     internalPreviewItem
     ?? (id ? state.itemsById[id] : undefined)
     ?? initialItem;
+  const fromGuidanceActivity = !internalPreviewItem && entrySource === 'guidance-activity' && automaticUUID(guidanceSession);
+  const authoritativeDetailLoaded = !internalPreviewItem && loadedDetailId === id;
+  const guidanceActivityHandoff = useGuidanceActivityHandoff(
+    fromGuidanceActivity ? guidanceSession : undefined,
+    authoritativeDetailLoaded && !loadError && item?.id === id ? id : undefined,
+    (item?.myTravelPlan?.memberId ?? item?.ownerMemberId) === currentMemberId ? currentMemberId : null,
+  );
+  const guidanceRepeatTap = useGuidanceActivityRepeatTap(id, fromGuidanceActivity ? guidanceSession : undefined);
+  const guidanceResumeHandoff = guidanceActivityHandoff === 'resume';
+  const liveActivityEntry = guidanceActivityHandoff === 'live' || guidanceResumeHandoff
+    ? `${guidanceSession}:${guidanceRepeatTap}` : undefined;
+  const navigationMode = navigationScheduleId === id || liveActivityEntry !== undefined;
+  const {
+    compactSummaryScrollable,
+    handleCompactContentSizeChange,
+    handleExpandedContentLayout,
+    handleSheetHeaderLayout,
+    largeRouteHeader,
+    participantDisclosureAnimatedStyle,
+    participantDisclosureProgress,
+    participantsExpanded,
+    previewParticipantsExpanded,
+    reduceMotion,
+    routeMapHeaderHeight,
+    setExpandedContentHeight,
+    setParticipantsExpanded,
+    setRouteHeaderHeight,
+    sheetBottomPadding,
+    sheetMaxHeight,
+    sheetMinHeight,
+    sheetMode,
+    sheetPanResponder,
+    sheetQuickSummaryAnimatedStyle,
+    sheetExpandedContentAnimatedStyle,
+    sheetHandleAnimatedStyle,
+    sheetScrollRef,
+    sheetTranslateY,
+    snapSheet,
+    toggleParticipantsExpanded,
+  } = useScheduleDetailSheetController({
+    windowHeight,
+    bottomInset: insets.bottom,
+    previewEnabled: Boolean(internalPreviewItem),
+    guidanceNavigation: navigationMode || Boolean(internalPreviewItem && previewOfflineGuidanceMap),
+    inspectingCompanion: Boolean(inspectedTravelPlan),
+    initialSheetMode,
+    initialParticipantsExpanded,
+  });
+  const goBack = useCallback(() => {
+    if (guidanceActivityHandoff !== 'ended' || !item?.startAt) {
+      goBackNormally();
+      return;
+    }
+    const focusDay = getScheduleFocusDay(item.startAt);
+    if (!focusDay) {
+      goBackNormally();
+      return;
+    }
+    router.dismissTo({
+      pathname: '/schedule',
+      params: { focus: 'month', focusDay, focusSchedule: item.id, focusRun: String(Date.now()) },
+    });
+  }, [goBackNormally, guidanceActivityHandoff, item?.id, item?.startAt, router]);
   useEffect(() => {
     if (!item || currentMemberId == null || internalPreviewItem) return;
+    if (fromGuidanceActivity && (!authoritativeDetailLoaded || loadError)) return;
     // Only the authoritative own route invalidates; opening another schedule/participant does not.
     const own = (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId;
     const input = own ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null;
     revalidateAutomaticJourneySavedRoute(String(item.id), input).catch(() => undefined);
-  }, [item, currentMemberId, internalPreviewItem]);
+  }, [item, currentMemberId, internalPreviewItem, fromGuidanceActivity, authoritativeDetailLoaded, loadError]);
   const canManageSchedule = useMemo(
     () => canManagePresentedSchedule(item, currentMemberId),
     [currentMemberId, item],
@@ -301,6 +350,7 @@ export function useScheduleDetailController({
     savedDisplayTravelMinutes,
     displayTravelMode,
     handleMapMarkerPress,
+    handleMapCameraChanged,
     canShowPassStopOnMap,
     handleRoutePassStopPress,
     handleMapZoomChanged,
@@ -326,9 +376,12 @@ export function useScheduleDetailController({
     savedRecommendedDepartureAt,
     isDark,
     topInset: insets.top,
+    routeMapHeaderHeight: largeRouteHeader ? 0 : routeMapHeaderHeight,
     sheetMinHeight,
-    openRouteDetail,
+    openRouteDetail: fromGuidanceActivity ? undefined : openRouteDetail,
+    liveActivityEntry,
     reduceMotion,
+    navigationMode,
     snapSheet,
   });
   const currentTravelMinutes = displayedDepartureTiming.travelMinutes;
@@ -394,6 +447,9 @@ export function useScheduleDetailController({
       })
       .catch(() => {
         if (!cancelled) setCurrentMemberId(null);
+      })
+      .finally(() => {
+        if (!cancelled) setMemberResolved(true);
       });
 
     return () => {
@@ -453,8 +509,10 @@ export function useScheduleDetailController({
   const completeDeparture = useCallback(async () => {
     if (inspectedTravelPlan) return;
     if (journeyGuidanceAvailable && id) {
-      // Enter the opt-in screen first; only its confirmed start records departure.
-      router.push(journeyGuidanceRoute(id));
+      // Enter guidance on the current map. Preparation and GPS, not this tap,
+      // determine whether the journey has actually started.
+      setNavigationScheduleId(id);
+      snapSheet('compact');
       return;
     }
     if (!id || currentMemberDepartedAt || departureRequests.has(id)) return;
@@ -500,7 +558,7 @@ export function useScheduleDetailController({
     item?.departureParticipants,
     journeyGuidanceAvailable,
     nowMs,
-    router,
+    snapSheet,
   ]);
 
   const requestDepartureNudge = useCallback(
@@ -623,7 +681,7 @@ export function useScheduleDetailController({
     ],
   );
 
-  const openCurrentRoutePlanner = useCallback(async () => {
+  const openCurrentRoutePlanner = useCallback(async (restoreFocus?: () => void) => {
     if (
       internalPreviewItem ||
       !item ||
@@ -667,11 +725,13 @@ export function useScheduleDetailController({
       },
     );
     routePlannerWasActiveRef.current = false;
+    routePlannerFocusTask.current?.cancel();
+    routePlannerReturnFocusRef.current = restoreFocus;
     setRoutePlannerSessionId(targetSessionId);
     routeDetailAdPendingRef.current = true;
     try {
       await showRouteDetailInterstitialIfEligible({
-        suppress: isRouteDetailEntryRequested(openRouteDetail),
+        suppress: fromGuidanceActivity || isRouteDetailEntryRequested(openRouteDetail),
       });
       if (entryPath === '/schedule/route-select') {
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -714,6 +774,7 @@ export function useScheduleDetailController({
     openScheduleEditor,
     internalPreviewItem,
     item,
+    fromGuidanceActivity,
     openRouteDetail,
     routeOption,
     routeSavePending,
@@ -803,8 +864,16 @@ export function useScheduleDetailController({
       routePlannerSessionId,
       item,
     );
+    const restoreFocus = routePlannerReturnFocusRef.current;
+    routePlannerReturnFocusRef.current = undefined;
     setRoutePlannerSessionId(undefined);
     if (payload) void saveSelectedRoute(payload);
+    else if (restoreFocus) {
+      routePlannerFocusTask.current = runAfterScreenTransition(() => {
+        routePlannerFocusTask.current = null;
+        restoreFocus();
+      });
+    }
   }, [item, pathname, routePlannerSessionId, saveSelectedRoute]);
 
   return {
@@ -822,7 +891,12 @@ export function useScheduleDetailController({
     guidancePreviewAuthenticationSource: __DEV__ && !!internalPreviewItem && internalPreviewItem.id === '9001'
       && currentMemberId === 7 && previewOfflineGuidanceMap ? previewGuidanceAuthenticationSource : undefined,
     loading,
-    authoritativeDetailLoaded: !internalPreviewItem && loadedDetailId === id,
+    authoritativeDetailLoaded,
+    guidanceEndedHandoff: guidanceActivityHandoff === 'ended',
+    guidanceResumeHandoff,
+    liveActivityEntry,
+    guidanceHandoffPending: fromGuidanceActivity && id != null && !loadError
+      && (!authoritativeDetailLoaded || !memberResolved || guidanceActivityHandoff === 'pending'),
     loadError,
     setRetryKey,
     setRouteHeaderHeight,
@@ -861,6 +935,8 @@ export function useScheduleDetailController({
     recommendedDepartureAt,
     preservingEarlierDeparture: displayedDepartureTiming.preservingEarlierDeparture,
     departureDisplayState,
+    compactSummaryScrollable,
+    handleCompactContentSizeChange,
     sheetQuickSummaryAnimatedStyle,
     sheetExpandedContentAnimatedStyle,
     sheetHandleAnimatedStyle,
@@ -891,6 +967,7 @@ export function useScheduleDetailController({
     selectedRoutePassStopName,
     reduceMotion,
     handleMapMarkerPress,
+    handleMapCameraChanged,
     canShowPassStopOnMap,
     handleRoutePassStopPress,
     handleRouteStepPress,
@@ -899,6 +976,7 @@ export function useScheduleDetailController({
     showWholeRoute,
     completeDeparture,
     journeyGuidanceAvailable,
+    navigationMode,
     confirmDepartureNudge,
     openParticipantTravelPlan,
     openCurrentRoutePlanner,

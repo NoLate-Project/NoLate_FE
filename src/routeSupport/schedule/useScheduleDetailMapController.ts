@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, useWindowDimensions } from 'react-native';
 
-import type { TmapMapViewHandle } from '../../modules/map/TmapMapView';
+import type { TmapCameraState, TmapMapViewHandle } from '../../modules/map/TmapMapView';
 import {
   getCurrentLocation,
   getCurrentLocationPermissionState,
@@ -16,11 +16,12 @@ import {
   getSavedTransitLegCoords,
 } from '../../modules/map/savedRouteMapPresentation';
 import { buildTransitStopInteractionId, parseTransitMapInteractionId } from '../../modules/map/transitMapInteraction';
-import { routeCoords, toRouteCoord } from '../../modules/map/savedRouteMapGeometry';
+import { getSavedTransitLegStationCoords, routeCoords, toRouteCoord } from '../../modules/map/savedRouteMapGeometry';
 import { nearestPathCoordinate } from '../../modules/map/savedRouteMapMarkers';
+import { hasRailLineGeometry, isRailKind } from '../../modules/map/transitRouteGeometry';
 import { isTransitRideKind } from '../../modules/map/transitModes';
 import { buildSavedRouteDetailInfo } from '../../modules/schedule/savedRouteDetailPresentation';
-import { buildTransitRouteProgressSegments } from '../../modules/schedule/transitRouteProgress';
+import { buildSavedTransitProgressFromSteps, buildTransitRouteProgressSegments } from '../../modules/schedule/transitRouteProgress';
 import { normalizeStopName, type RoutePassStop, type RouteStep } from '../../modules/schedule/routeInfo';
 import type {
   ScheduleItem,
@@ -33,9 +34,12 @@ import { useSavedJourneyMapView } from '../../modules/journey/useSavedJourneyPos
 import {
   APP_ACCENT_BLUE,
   DEFAULT_CAMERA,
+  MAP_ACTION_BUTTON_HEIGHT,
+  MAP_ACTION_SHEET_GAP,
   showLocationSettingsAlert,
 } from './ScheduleDetailChrome';
 import { mapCoordFromUnknown, type SheetSnapMode } from './scheduleDetailModel';
+import { shouldMoveFollowingCamera, shouldPauseFollowingCamera } from './navigationMapFollow';
 
 type ScheduleDetailMapControllerOptions = {
   scheduleId?: string;
@@ -45,10 +49,13 @@ type ScheduleDetailMapControllerOptions = {
   savedRecommendedDepartureAt?: Date;
   isDark: boolean;
   topInset: number;
+  routeMapHeaderHeight: number;
   sheetMinHeight: number;
   openRouteDetail?: string | string[];
+  liveActivityEntry?: string;
   reduceMotion: boolean;
-  snapSheet: (mode: SheetSnapMode) => void;
+  navigationMode: boolean;
+  snapSheet: (mode: SheetSnapMode, reason?: 'live-activity') => void;
 };
 
 function isSameRouteStop(a: RoutePassStop, b: RoutePassStop) {
@@ -70,15 +77,19 @@ export function useScheduleDetailMapController({
   savedRecommendedDepartureAt,
   isDark,
   topInset,
+  routeMapHeaderHeight,
   sheetMinHeight,
   openRouteDetail,
+  liveActivityEntry,
   reduceMotion,
+  navigationMode,
   snapSheet,
 }: ScheduleDetailMapControllerOptions) {
   const { width: mapWidth, height: mapHeight } = useWindowDimensions();
   const mapRef = useRef<TmapMapViewHandle>(null);
   const lastOverviewFitKeyRef = useRef<string | undefined>(undefined);
   const [mapZoom, setMapZoom] = useState(DEFAULT_CAMERA.zoom);
+  const [cameraScaleSample, setCameraScaleSample] = useState<TmapCameraState>();
   const [focusedLegIndex, setFocusedLegIndex] = useState<number | undefined>();
   const [focusedEndpoint, setFocusedEndpoint] = useState<'ORIGIN' | 'DESTINATION'>();
   const hasFocusedMapLocation = focusedLegIndex !== undefined || focusedEndpoint !== undefined;
@@ -91,9 +102,12 @@ export function useScheduleDetailMapController({
     longitude: number;
   }>();
   const [currentLocationPending, setCurrentLocationPending] = useState(false);
+  const [followingGuidance, setFollowingGuidance] = useState(navigationMode);
+  const followCommandUntilRef = useRef(0);
+  const lastFollowCoordRef = useRef<{ latitude: number; longitude: number } | undefined>(undefined);
   const currentLocationPendingRef = useRef(false);
   const currentLocationRequestGuardRef = useRef(createLatestRequestGuard());
-  const autoOpenedRouteDetailItemIdRef = useRef<string | undefined>(undefined);
+  const autoOpenedRouteDetailEntryRef = useRef<string | undefined>(undefined);
 
   /** 참여자 경로 등 표시 대상이 바뀔 때 이전 구간·정류장 선택을 함께 해제한다. */
   const clearRouteFocus = useCallback(() => {
@@ -108,8 +122,15 @@ export function useScheduleDetailMapController({
     currentLocationPendingRef.current = false;
     setCurrentLocationCoord(undefined);
     setCurrentLocationPending(false);
-    autoOpenedRouteDetailItemIdRef.current = undefined;
+    lastFollowCoordRef.current = undefined;
+    autoOpenedRouteDetailEntryRef.current = undefined;
   }, [clearRouteFocus, scheduleId]);
+
+  useEffect(() => {
+    setFollowingGuidance(navigationMode);
+    followCommandUntilRef.current = Date.now() + 1600;
+    lastFollowCoordRef.current = undefined;
+  }, [navigationMode, scheduleId]);
 
   useEffect(
     () => () => {
@@ -123,7 +144,19 @@ export function useScheduleDetailMapController({
     && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId
     ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
     [item, currentMemberId, inspectedTravelPlan]);
-  const { position: guidancePosition, walkingPaths: guidanceWalkingPaths } = useSavedJourneyMapView(guidanceInput, String(item?.id ?? ''));
+  const { guidanceActive, position: guidancePosition, walkingPaths: guidanceWalkingPaths } =
+    useSavedJourneyMapView(guidanceInput, String(item?.id ?? ''));
+  const guidanceLatitude = guidancePosition?.latitude;
+  const guidanceLongitude = guidancePosition?.longitude;
+  useEffect(() => {
+    if (!navigationMode || !followingGuidance || guidanceLatitude == null || guidanceLongitude == null) return;
+    const next = { latitude: guidanceLatitude, longitude: guidanceLongitude };
+    const previous = lastFollowCoordRef.current;
+    if (!shouldMoveFollowingCamera(previous, next)) return;
+    lastFollowCoordRef.current = next;
+    followCommandUntilRef.current = Date.now() + 1600;
+    mapRef.current?.animateCameraTo({ ...next, zoom: 16, duration: reduceMotion ? 0 : 420 });
+  }, [followingGuidance, guidanceLatitude, guidanceLongitude, navigationMode, reduceMotion]);
   // Stabilize immutable geometry across the hook's freshness clock; do not refit every second.
   const guidanceWalkingJSON = JSON.stringify(guidanceWalkingPaths);
   const guidanceWalkingCoordinates = useMemo(() => new Map<number, {latitude: number; longitude: number}[]>(
@@ -171,7 +204,7 @@ export function useScheduleDetailMapController({
       id: 'schedule-detail-guidance-location', ...guidancePosition,
       displayType: 'dot' as const, tintColor: APP_ACCENT_BLUE, badgeBorderColor: '#FFFFFF', dotSize: 14, zIndex: 1001,
     }];
-    if (!currentLocationCoord) return markers;
+    if (guidanceActive || !currentLocationCoord) return markers;
     return [
       ...markers,
       {
@@ -184,7 +217,7 @@ export function useScheduleDetailMapController({
         zIndex: 1000,
       },
     ];
-  }, [currentLocationCoord, markers, guidancePosition]);
+  }, [currentLocationCoord, guidanceActive, guidancePosition, markers]);
   const mapCoords = useMemo(
     () =>
       getSavedRouteFitCoords(
@@ -197,12 +230,14 @@ export function useScheduleDetailMapController({
   );
   const mapEdgePadding = useMemo(
     () => ({
-      top: topInset + 124,
+      // Endpoint pins extend above the coordinates the map fits.
+      top: Math.max(topInset + 124, routeMapHeaderHeight + 52),
       right: 44,
-      bottom: sheetMinHeight + 28,
+      // Fit above the floating map actions as well as the sheet.
+      bottom: sheetMinHeight + MAP_ACTION_SHEET_GAP + MAP_ACTION_BUTTON_HEIGHT + 12,
       left: 44,
     }),
-    [sheetMinHeight, topInset],
+    [routeMapHeaderHeight, sheetMinHeight, topInset],
   );
   const fitRouteCoordinates = useCallback((coords: typeof mapCoords) => {
     const map = mapRef.current;
@@ -222,13 +257,14 @@ export function useScheduleDetailMapController({
     }
     const target = getPaddedBoundsCamera(bounds, {
       width: mapWidth, height: mapHeight, padding: mapEdgePadding,
-    }, { wholeZoomLevels: true, boundsPaddingFactor: 1.08 });
+    }, { wholeZoomLevels: true, boundsPaddingFactor: 1.08, cameraScaleSample });
     if (target) map.animateCameraTo({ ...target, duration: 0 });
-  }, [mapEdgePadding, mapHeight, mapWidth, reduceMotion]);
-  const overviewFitKey = useMemo(
-    () => getSavedRouteOverviewFitKey(mapCoords, mapEdgePadding),
-    [mapCoords, mapEdgePadding],
-  );
+  }, [cameraScaleSample, mapEdgePadding, mapHeight, mapWidth, reduceMotion]);
+  const overviewFitKey = useMemo(() => {
+    const key = getSavedRouteOverviewFitKey(mapCoords, mapEdgePadding);
+    if (!key || !reduceMotion) return key;
+    return `${key}:${cameraScaleSample ? 'direct-measured' : 'direct'}`;
+  }, [cameraScaleSample, mapCoords, mapEdgePadding, reduceMotion]);
   const routeDetailInfo = useMemo(
     () =>
       buildSavedRouteDetailInfo({
@@ -247,8 +283,12 @@ export function useScheduleDetailMapController({
     ],
   );
   const routeProgressSegments = useMemo(
-    () => buildTransitRouteProgressSegments(routeLegs),
-    [routeLegs],
+    () => routeLegs.length > 0
+      ? buildTransitRouteProgressSegments(routeLegs)
+      : displayTravelMode === 'TRANSIT'
+        ? buildSavedTransitProgressFromSteps(routeDetailInfo?.steps)
+        : [],
+    [displayTravelMode, routeDetailInfo?.steps, routeLegs],
   );
   const routeTravelSteps = useMemo(
     () =>
@@ -278,10 +318,11 @@ export function useScheduleDetailMapController({
     : undefined;
 
   useEffect(() => {
+    const entry = liveActivityEntry ?? (isRouteDetailEntryRequested(openRouteDetail) ? item?.id : undefined);
     if (
       !item ||
-      !isRouteDetailEntryRequested(openRouteDetail) ||
-      autoOpenedRouteDetailItemIdRef.current === item.id ||
+      !entry ||
+      autoOpenedRouteDetailEntryRef.current === entry ||
       (!routeDetailInfo &&
         !savedDisplayTravelMinutes &&
         item.routeSetupRequired !== true)
@@ -291,10 +332,11 @@ export function useScheduleDetailMapController({
     // Notification/native alarm entry expands once after the route-backed sheet exists.
     // Keeping the one-shot marker prevents an offline action retry or a rerender from
     // repeatedly overriding the user's manual collapse gesture.
-    autoOpenedRouteDetailItemIdRef.current = item.id;
-    snapSheet('expanded');
+    autoOpenedRouteDetailEntryRef.current = entry;
+    snapSheet('expanded', liveActivityEntry ? 'live-activity' : undefined);
   }, [
     item,
+    liveActivityEntry,
     openRouteDetail,
     routeDetailInfo,
     savedDisplayTravelMinutes,
@@ -305,13 +347,14 @@ export function useScheduleDetailMapController({
     (legIndex: number) => {
       const leg = routeLegs[legIndex];
       if (!leg) return;
+      setFollowingGuidance(false);
 
       const legCoords = leg.kind === 'WALK' ? guidanceWalkingCoordinates.get(legIndex) ?? getSavedTransitLegCoords(leg) : getSavedTransitLegCoords(leg);
       setFocusedLegIndex(legIndex);
       setFocusedEndpoint(undefined);
       setSelectedTransitStop(undefined);
       snapSheet('compact');
-      fitRouteCoordinates(legCoords);
+      fitRouteCoordinates(legCoords.length < 2 && isRailKind(leg.kind) ? getSavedTransitLegStationCoords(leg) : legCoords);
     },
     [fitRouteCoordinates, routeLegs, snapSheet, guidanceWalkingCoordinates],
   );
@@ -323,6 +366,7 @@ export function useScheduleDetailMapController({
         focusRouteLeg(legIndex);
         return;
       }
+      setFollowingGuidance(false);
 
       setFocusedLegIndex(legIndex);
       setFocusedEndpoint(undefined);
@@ -349,6 +393,7 @@ export function useScheduleDetailMapController({
         mapCoordFromUnknown(step.coordinates?.[0]) ??
         mapCoordFromUnknown(routeEndpointCoord);
       if (!endpointCoord) return;
+      setFollowingGuidance(false);
 
       setFocusedLegIndex(undefined);
       setFocusedEndpoint(step.type);
@@ -370,8 +415,10 @@ export function useScheduleDetailMapController({
       if (!leg || !rawCoord) return;
       const interactionId = buildTransitStopInteractionId(legIndex, stopIndex);
       const marker = markers.find(candidate => candidate.interactionId === interactionId);
-      const coord = mapCoordFromUnknown(marker ?? nearestPathCoordinate(rawCoord, routeCoords(leg.pathCoords)));
+      const stopPath = !isRailKind(leg.kind) || hasRailLineGeometry(leg) ? routeCoords(leg.pathCoords) : [];
+      const coord = mapCoordFromUnknown(marker ?? nearestPathCoordinate(rawCoord, stopPath));
       if (!coord) return;
+      setFollowingGuidance(false);
 
       setFocusedLegIndex(legIndex);
       setFocusedEndpoint(undefined);
@@ -444,7 +491,26 @@ export function useScheduleDetailMapController({
     setMapZoom(current => (Math.abs(current - zoom) < 0.04 ? current : zoom));
   }, []);
 
+  const handleMapCameraChanged = useCallback((nextCamera: TmapCameraState) => {
+    const scale = nextCamera.metersPerPixel;
+    if (reduceMotion && typeof scale === 'number' && Number.isFinite(scale) && scale > 0) {
+      setCameraScaleSample(previous => previous ?? nextCamera);
+    }
+    if (!navigationMode || !followingGuidance || !guidancePosition) return;
+    if (shouldPauseFollowingCamera(nextCamera, guidancePosition, Date.now(), followCommandUntilRef.current)) {
+      setFollowingGuidance(false);
+    }
+  }, [followingGuidance, guidancePosition, navigationMode, reduceMotion]);
+
   const moveToCurrentLocation = useCallback(async () => {
+    clearRouteFocus();
+    if (navigationMode && guidancePosition) {
+      lastFollowCoordRef.current = guidancePosition;
+      followCommandUntilRef.current = Date.now() + 1600;
+      setFollowingGuidance(true);
+      mapRef.current?.animateCameraTo({ ...guidancePosition, zoom: 16, duration: reduceMotion ? 0 : 420 });
+      return;
+    }
     if (currentLocationPendingRef.current) return;
 
     const guard = currentLocationRequestGuardRef.current;
@@ -473,12 +539,17 @@ export function useScheduleDetailMapController({
       const coord = await getCurrentLocation();
       if (!guard.isCurrent(requestId)) return;
       setCurrentLocationCoord(coord);
+      if (navigationMode) {
+        lastFollowCoordRef.current = coord;
+        followCommandUntilRef.current = Date.now() + 1600;
+        setFollowingGuidance(true);
+      }
       mapRef.current?.animateCameraTo({
         ...coord,
         zoom: 16,
         duration: reduceMotion ? 0 : 420,
       });
-    } catch (error) {
+    } catch {
       if (!guard.isCurrent(requestId)) return;
       const permissionState = await getCurrentLocationPermissionState().catch(
         () => undefined,
@@ -505,9 +576,7 @@ export function useScheduleDetailMapController({
       }
       Alert.alert(
         '현재 위치를 찾을 수 없어요',
-        error instanceof Error
-          ? error.message
-          : '현재 위치를 가져오지 못했습니다.',
+        '잠시 후 내 위치를 다시 눌러 주세요. 저장한 경로는 계속 볼 수 있어요.',
       );
     } finally {
       if (guard.isCurrent(requestId)) {
@@ -515,7 +584,7 @@ export function useScheduleDetailMapController({
         setCurrentLocationPending(false);
       }
     }
-  }, [reduceMotion]);
+  }, [clearRouteFocus, guidancePosition, navigationMode, reduceMotion]);
   const camera = useMemo(() => {
     if (mapCoords.length === 0) return DEFAULT_CAMERA;
     const latitude =
@@ -537,13 +606,14 @@ export function useScheduleDetailMapController({
   }, [fitRouteCoordinates, mapCoords, overviewFitKey]);
 
   const showWholeRoute = useCallback(() => {
+    setFollowingGuidance(false);
     clearRouteFocus();
     fitMap(true);
   }, [clearRouteFocus, fitMap]);
 
   useEffect(() => {
-    if (!hasFocusedMapLocation) fitMap();
-  }, [fitMap, hasFocusedMapLocation]);
+    if (!hasFocusedMapLocation && !(navigationMode && followingGuidance && guidancePosition)) fitMap();
+  }, [fitMap, followingGuidance, guidancePosition, hasFocusedMapLocation, navigationMode]);
 
   return {
     camera,
@@ -558,6 +628,7 @@ export function useScheduleDetailMapController({
     savedDisplayTravelMinutes,
     displayTravelMode,
     handleMapMarkerPress,
+    handleMapCameraChanged,
     handleMapZoomChanged,
     handleRouteStepPress,
     handleRoutePassStopPress,

@@ -248,6 +248,36 @@ describe("TMAP transit response parser", () => {
         });
     });
 
+    test("keeps a generic subway leg path from being treated as provider rail geometry", () => {
+        const leg = {
+            mode: "SUBWAY",
+            route: "수도권4호선",
+            sectionTime: 960,
+            start: { name: "서울역", lon: 126.9728, lat: 37.5547 },
+            end: { name: "사당역", lon: 126.9816, lat: 37.4765 },
+            path: "126.9728,37.5547 126.975,37.515 126.9816,37.4765",
+        };
+        const parseLeg = (providerLeg: typeof leg & { passShape?: { linestring?: string; coordinates?: unknown[] } }) =>
+            parseTransitOptionsFromTmap({
+                metaData: { plan: { itineraries: [{ totalTime: 960, legs: [providerLeg] }] } },
+            })[0].transitLegs?.[0];
+        expect(parseLeg(leg)).toMatchObject({ pathCoordsIsExact: false, pathCoords: undefined });
+        for (const passShape of [
+            { linestring: "126.9728,37.5547 missing-point 126.969,37.515 126.9816,37.4765" },
+            { coordinates: [[126.9728, 37.5547], null, [126.969, 37.515], [126.9816, 37.4765]] },
+        ]) {
+            expect(parseLeg({ ...leg, passShape })).toMatchObject({ pathCoordsIsExact: false, pathCoords: undefined });
+        }
+        expect(parseLeg({
+            ...leg,
+            passShape: { linestring: "126.9728,37.5547 126.969,37.515 126.9816,37.4765" },
+        })).toMatchObject({
+            pathCoordsIsExact: true,
+            pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
+            rawPathPointCount: 3,
+        });
+    });
+
     test("treats sub-1000 totalTime values as seconds", () => {
         const result = parseTransitOptionsFromTmap({
             metaData: {

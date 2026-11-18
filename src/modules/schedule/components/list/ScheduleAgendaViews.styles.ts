@@ -50,8 +50,6 @@ const styles = StyleSheet.create({
         gap: 9,
     },
     selectedDayGroup: {
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
         overflow: "hidden",
     },
     selectedDayGroupDivider: {
@@ -101,6 +99,13 @@ const styles = StyleSheet.create({
         paddingTop: 12,
         gap: 22,
     },
+    stickyMonthListContent: { gap: 0 },
+    compactMonthListContent: { paddingTop: 4 },
+    stickySectionBody: { marginTop: 8 },
+    compactSectionBody: { marginTop: 4 },
+    stickySectionSpacing: { marginBottom: 22 },
+    compactSectionSpacing: { marginBottom: 8 },
+    stickySectionHeader: { borderBottomWidth: StyleSheet.hairlineWidth },
     routeSetupNotice: {
         minHeight: 44,
         paddingHorizontal: 10,
@@ -157,8 +162,9 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         flexDirection: "row",
+        flexWrap: "wrap",
         alignItems: "baseline",
-        gap: 8,
+        columnGap: 8,
     },
     sectionTitle: {
         flexShrink: 0,
@@ -168,12 +174,17 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     sectionWeekday: {
-        flex: 1,
-        minWidth: 0,
+        flexShrink: 0,
         fontSize: 11,
         lineHeight: 16,
         fontWeight: "500",
         letterSpacing: 0,
+    },
+    continuedSelection: {
+        flexShrink: 1,
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "600",
     },
     sectionCount: {
         flexShrink: 0,
@@ -182,6 +193,7 @@ const styles = StyleSheet.create({
         fontWeight: "500",
         letterSpacing: 0,
     },
+    emptyDayMessage: { fontSize: 14, lineHeight: 21, paddingHorizontal: 8, paddingVertical: 14 },
     emptyState: {
         minHeight: 84,
         alignItems: "center",

@@ -73,7 +73,12 @@ export function RoutePlannerMapHeader({ controller }: Props) {
   } = controller;
   const endpoints = `${originDisplay} → ${destinationDisplay}`;
   const showsRouteChoices = isTransitMode && (visibleAlternatives?.length ?? 0) > 1 && !etaLoading;
-  const choiceLabels = showsRouteChoices ? getMapRouteChoiceLabels(visibleAlternatives) : [];
+  const choiceLabels = showsRouteChoices ? getMapRouteChoiceLabels(visibleAlternatives, {
+    compareLinesAcrossDurations: !largeRouteText,
+  }) : [];
+  const twoInlineChoices = showsRouteChoices && visibleAlternatives.length === 2 && !largeRouteText;
+  const choiceAccent = shouldRenderTransitDetailDark ? '#A4CAFA' : transitDetailPrimaryActionBg;
+  const choiceAccentText = shouldRenderTransitDetailDark ? '#10243B' : transitDetailPrimaryActionText;
   const activeChoiceId = showsRouteChoices ? selectedAlternativeId : undefined;
   const previousChoiceId = useRef(activeChoiceId);
   const choiceProgress = useRef(new Animated.Value(1)).current;
@@ -120,6 +125,75 @@ export function RoutePlannerMapHeader({ controller }: Props) {
       </Text>
     </Pressable>
   );
+  const choiceButtons = showsRouteChoices ? visibleAlternatives.map((option, index) => {
+    const selected = option.id === selectedAlternativeId;
+    const label = choiceLabels[index];
+    return (
+      <Pressable
+        key={option.id}
+        testID={`route-planner-map-choice-${option.id}`}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ selected }}
+        onPress={() => { if (!selected) selectAlternativeByIndex(index); }}
+        style={({ pressed }) => [
+          styles.transitMapChoice,
+          twoInlineChoices && styles.transitMapChoiceInline,
+          {
+            backgroundColor: transitRouteChipBg,
+            opacity: pressed ? 0.76 : 1,
+          },
+        ]}
+      >
+        {selected && (
+          <Animated.View
+            testID="route-planner-map-choice-highlight"
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFillObject,
+              styles.transitMapChoiceHighlight,
+              {
+                backgroundColor: choiceAccent,
+                opacity: reduceMotion ? 1 : choiceProgress.interpolate({
+                  inputRange: [0, 1], outputRange: [0.88, 1],
+                }),
+                transform: [{ scale: reduceMotion ? 1 : choiceProgress.interpolate({
+                  inputRange: [0, 1], outputRange: [0.96, 1],
+                }) }],
+              },
+            ]}
+          />
+        )}
+        <Text
+          lineBreakStrategyIOS="hangul-word"
+          style={[styles.transitMapChoiceText, { color: selected ? choiceAccentText : transitRouteChipText }]}
+        >
+          {label}
+        </Text>
+      </Pressable>
+    );
+  }) : null;
+  const EditControls = showsRouteChoices ? View : React.Fragment;
+  const choices = showsRouteChoices && (
+    twoInlineChoices || largeRouteText ? (
+      <View
+        testID="route-planner-map-choices"
+        style={twoInlineChoices ? styles.transitMapChoicesInline : styles.transitMapChoicesWrapped}
+      >
+        {choiceButtons}
+      </View>
+    ) : (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        testID="route-planner-map-choices"
+        style={styles.transitMapChoices}
+        contentContainerStyle={styles.transitMapChoicesRow}
+      >
+        {choiceButtons}
+      </ScrollView>
+    )
+  );
   return (
     <>
       {isRouteDetailMode ? (
@@ -148,109 +222,60 @@ export function RoutePlannerMapHeader({ controller }: Props) {
               color={shouldRenderTransitDetailDark ? '#FFFFFF' : '#111827'}
             />
           </Pressable>
-          <Pressable
-            onPress={() => openRoutePointEditorFromHeader('origin')}
-            accessibilityRole="button"
-            accessibilityLabel="출발지와 도착지 수정"
-            accessibilityValue={{ text: endpoints }}
-            style={({ pressed }) => [
-              styles.transitMapRouteSummaryPill,
-              showsRouteChoices && { backgroundColor: overlayBoxBg },
-              largeRouteText && styles.transitMapRouteSummaryExpanded,
-              pressed && styles.transitMapRouteSummaryPressed,
-            ]}
-          >
-            <View style={styles.transitMapRouteSummaryIcon}>
+          {!largeRouteText && choices}
+          <EditControls {...(showsRouteChoices ? { style: largeRouteText ? styles.transitMapRouteEditRowLarge : styles.transitMapRouteEditRow } : {})}>
+            <Pressable
+              onPress={() => openRoutePointEditorFromHeader('origin')}
+              accessibilityRole="button"
+              accessibilityLabel="출발지와 도착지 수정"
+              accessibilityValue={{ text: endpoints }}
+              style={({ pressed }) => [
+                styles.transitMapRouteSummaryPill,
+                showsRouteChoices && { backgroundColor: overlayBoxBg },
+                largeRouteText && styles.transitMapRouteSummaryExpanded,
+                pressed && styles.transitMapRouteSummaryPressed,
+              ]}
+            >
+              <View style={styles.transitMapRouteSummaryIcon}>
+                <Ionicons
+                  name="pencil-outline"
+                  size={14}
+                  color="#FFFFFF"
+                />
+              </View>
+              <Text
+                numberOfLines={largeRouteText ? undefined : 1}
+                maxFontSizeMultiplier={2}
+                lineBreakStrategyIOS="hangul-word"
+                style={[styles.transitMapRouteSummaryText, showsRouteChoices && { color: colors.textPrimary }]}
+              >
+                {endpoints}
+              </Text>
+            </Pressable>
+            {!largeRouteText && nextRouteAction}
+            <Pressable
+              onPress={
+                isTransitMode ? openTransitDeparturePicker : goToScheduleList
+              }
+              accessibilityRole="button"
+              accessibilityLabel={
+                isTransitMode ? '출발 시각 선택' : '일정 목록으로 이동'
+              }
+              style={[
+                styles.transitMapScheduleButton,
+                largeRouteText && styles.transitMapRouteExpandedIcon,
+                { backgroundColor: largeRouteText ? colors.surface : transitRouteChipBg },
+              ]}
+            >
               <Ionicons
-                name="pencil-outline"
-                size={14}
-                color="#FFFFFF"
+                name="calendar-outline"
+                size={19}
+                color={shouldRenderTransitDetailDark ? '#FFFFFF' : '#111827'}
               />
-            </View>
-            <Text
-              numberOfLines={largeRouteText ? undefined : 1}
-              maxFontSizeMultiplier={2}
-              lineBreakStrategyIOS="hangul-word"
-              style={[styles.transitMapRouteSummaryText, showsRouteChoices && { color: colors.textPrimary }]}
-            >
-              {endpoints}
-            </Text>
-          </Pressable>
-          {!largeRouteText && nextRouteAction}
-          <Pressable
-            onPress={
-              isTransitMode ? openTransitDeparturePicker : goToScheduleList
-            }
-            accessibilityRole="button"
-            accessibilityLabel={
-              isTransitMode ? '출발 시각 선택' : '일정 목록으로 이동'
-            }
-            style={[
-              styles.transitMapScheduleButton,
-              largeRouteText && styles.transitMapRouteExpandedIcon,
-              { backgroundColor: largeRouteText ? colors.surface : transitRouteChipBg },
-            ]}
-          >
-            <Ionicons
-              name="calendar-outline"
-              size={19}
-              color={shouldRenderTransitDetailDark ? '#FFFFFF' : '#111827'}
-            />
-          </Pressable>
+            </Pressable>
+          </EditControls>
+          {largeRouteText && choices}
           {largeRouteText && nextRouteAction}
-          {showsRouteChoices && (
-            <ScrollView
-              horizontal={!largeRouteText}
-              showsHorizontalScrollIndicator={false}
-              style={styles.transitMapChoices}
-              contentContainerStyle={largeRouteText ? styles.transitMapChoicesWrapped : styles.transitMapChoicesRow}
-            >
-              {visibleAlternatives.map((option, index) => {
-                const selected = option.id === selectedAlternativeId;
-                const label = choiceLabels[index];
-                return (
-                  <Pressable
-                    key={option.id}
-                    testID={`route-planner-map-choice-${option.id}`}
-                    accessibilityRole="button"
-                    accessibilityLabel={label}
-                    accessibilityState={{ selected }}
-                    onPress={() => { if (!selected) selectAlternativeByIndex(index); }}
-                    style={({ pressed }) => [
-                      styles.transitMapChoice,
-                      {
-                        backgroundColor: overlayBoxBg,
-                        opacity: pressed ? 0.76 : 1,
-                      },
-                    ]}
-                  >
-                    {selected && (
-                      <Animated.View
-                        testID="route-planner-map-choice-highlight"
-                        pointerEvents="none"
-                        style={[
-                          StyleSheet.absoluteFillObject,
-                          styles.transitMapChoiceHighlight,
-                          {
-                            backgroundColor: transitDetailPrimaryActionBg,
-                            opacity: reduceMotion ? 1 : choiceProgress.interpolate({
-                              inputRange: [0, 1], outputRange: [0.88, 1],
-                            }),
-                            transform: [{ scale: reduceMotion ? 1 : choiceProgress.interpolate({
-                              inputRange: [0, 1], outputRange: [0.96, 1],
-                            }) }],
-                          },
-                        ]}
-                      />
-                    )}
-                    <Text style={[styles.transitMapChoiceText, { color: selected ? transitDetailPrimaryActionText : colors.textPrimary }]}>
-                      {label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          )}
         </View>
       ) : (
         <View style={[styles.topOverlay, { paddingTop: insets.top + 4 }]}>
@@ -329,9 +354,7 @@ export function RoutePlannerMapHeader({ controller }: Props) {
                   onPress={clearPlaceSearch}
                   style={styles.searchIcon}
                 >
-                  <Text style={{ color: colors.textDisabled, fontSize: 16 }}>
-                    ✕
-                  </Text>
+                  <Ionicons accessible={false} name="close-outline" size={18} color={colors.textSecondary} />
                 </Pressable>
               ) : null}
             </Pressable>

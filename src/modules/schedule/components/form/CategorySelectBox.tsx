@@ -236,7 +236,7 @@ export default function CategorySelectBox({
                                 </View>
                                 <Ionicons
                                     accessible={false}
-                                    name="checkmark"
+                                    name="checkmark-outline"
                                     size={18}
                                     color={active ? selectionAccent : "transparent"}
                                 />

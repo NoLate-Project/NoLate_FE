@@ -1,3 +1,6 @@
+import type { RouteInfo } from "../../routeInfo";
+import { reconcileScheduleRouteTiming } from "../../scheduleRouteTiming";
+
 type NotificationSettingsPaletteInput = {
     dark: boolean;
     surface: string;
@@ -16,14 +19,25 @@ export function getNotificationSettingsPalette({ dark, surface }: NotificationSe
         warningColor: dark ? "#FFBF69" : "#A85C00",
     };
 }
-
-/** 일정 시작 시각과 예상 이동 시간으로 카드에 표시할 출발·도착 시각을 안전하게 계산합니다. */
-export function getNotificationRouteTiming(routeMinutes: number | undefined, startAt: Date | undefined) {
-    const arrivalAt = startAt && !Number.isNaN(startAt.getTime()) ? startAt : undefined;
+/** ODsay 시간표와 일정 변경 시각을 저장 화면과 같은 기준으로 해석합니다. */
+export function getNotificationRouteTiming(route: RouteInfo | undefined, startAt: Date | undefined, plannedArrivalAt?: string) {
+    if (!startAt || !Number.isFinite(startAt.getTime())) return {};
+    if (route?.provider === "odsay" && route.timeBasis === "provider_schedule" && route.providerTimeBasis === "timetable") {
+        const departure = Date.parse(route.departureTime);
+        const arrival = Date.parse(route.arrivalTime);
+        const planned = Date.parse(plannedArrivalAt ?? "");
+        if (Number.isFinite(planned) && planned !== startAt.getTime()) {
+            const { departAt } = reconcileScheduleRouteTiming({ route, plannedArrivalAt, nextArrivalAt: startAt });
+            return { arrivalAt: startAt, recommendedDepartureAt: departAt ? new Date(departAt) : undefined };
+        } else if (departure < arrival && arrival <= startAt.getTime()) {
+            return { arrivalAt: new Date(arrival), recommendedDepartureAt: new Date(departure) };
+        }
+    }
+    const routeMinutes = route?.totalDurationMinutes;
     return {
-        arrivalAt,
-        recommendedDepartureAt: arrivalAt && typeof routeMinutes === "number"
-            ? new Date(arrivalAt.getTime() - routeMinutes * 60 * 1000)
+        arrivalAt: startAt,
+        recommendedDepartureAt: typeof routeMinutes === "number" && Number.isFinite(routeMinutes) && routeMinutes > 0
+            ? new Date(startAt.getTime() - routeMinutes * 60_000)
             : undefined,
     };
 }

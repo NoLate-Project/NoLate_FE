@@ -144,6 +144,12 @@ export function createHeaderStyles(options: ScheduleDetailStylesOptions) {
         topHeaderMapStatusCopyLarge: {
         flex: 0,
     },
+        topHeaderMapStatusMark: {
+        width: 18,
+        height: 18,
+        alignItems: "center",
+        justifyContent: "center",
+    },
         topHeaderMapStatusLabel: {
         flex: 1,
         minWidth: 0,

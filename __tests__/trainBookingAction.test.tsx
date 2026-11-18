@@ -1,4 +1,5 @@
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 import React from 'react';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { Alert, Linking, Platform } from 'react-native';

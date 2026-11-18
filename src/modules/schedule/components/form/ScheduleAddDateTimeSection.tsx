@@ -58,6 +58,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
     startTime,
     togglePicker,
   } = controller;
+  const fieldBackground = largeText ? 'transparent' : colors.surface2;
 
   return (
     <>
@@ -66,11 +67,11 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
         testID="schedule-add-time-card"
         style={[
           styles.compactSectionCard,
-          { borderColor: colors.border, backgroundColor: colors.surface2 },
+          { borderColor: colors.border, backgroundColor: largeText ? colors.surface2 : colors.surface },
         ]}
       >
-        <View style={styles.compactToggleRow}>
-          <Text style={[styles.compactRowTitle, { color: colors.textPrimary }]}>
+        <View style={[styles.compactToggleRow, largeText && styles.compactToggleRowLarge]}>
+          <Text style={[styles.compactRowTitle, styles.compactToggleLabel, { color: colors.textPrimary }]}>
             종일
           </Text>
           <Switch
@@ -87,7 +88,46 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
         <View
           style={[styles.compactDivider, { backgroundColor: colors.border }]}
         />
-        <View style={[styles.compactDateTimeRow, largeText && styles.compactDateTimeRowLarge]}>
+        {allDay && !largeText ? (
+          <View style={[styles.compactDateTimeRow, styles.compactFieldsRow]}>
+            {([
+              { field: 'startDate', label: '시작', accessibilityLabel: '시작 날짜', day: startDay },
+              { field: 'endDate', label: '마지막 날', accessibilityLabel: '마지막 날', day: endDay },
+            ] as const).map(({ field, label, accessibilityLabel, day }) => {
+              const expanded = picker === field;
+              const date = formatScheduleFormDate(day);
+              return (
+                <Pressable
+                  key={field}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${accessibilityLabel} ${date}`}
+                  accessibilityState={{ expanded }}
+                  onPress={() => togglePicker(field)}
+                  style={({ pressed }) => [
+                    styles.compactDatePressable,
+                    styles.compactAllDayPressable,
+                    styles.compactField,
+                    { backgroundColor: expanded ? selectedFieldColor : pressed ? pressedFieldColor : fieldBackground },
+                  ]}
+                >
+                  <Text style={[styles.compactValueCaption, { color: colors.textSecondary }]}>{label}</Text>
+                  <View style={styles.compactAllDayValueRow}>
+                    <Text
+                      lineBreakStrategyIOS="hangul-word"
+                      style={[styles.compactRowDate, styles.compactAllDayDate, { color: expanded ? FORM_ACCENT : colors.textPrimary }]}
+                    >
+                      {date}
+                    </Text>
+                    <ScheduleIcon name="calendar" color={expanded ? FORM_ACCENT : formPlaceholderColor} />
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : <View style={[styles.compactDateTimeRow, largeText ? styles.compactDateTimeRowLarge : styles.compactFieldsRow]}>
+          {!largeText && (
+            <Text style={[styles.compactRowTitle, styles.compactFieldLabel, { color: colors.textPrimary }]}>시작</Text>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
@@ -95,33 +135,35 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
             onPress={() => togglePicker('startDate')}
             style={({ pressed }) => [
               styles.compactDatePressable,
-              largeText && styles.compactDatePressableLarge,
+              largeText ? styles.compactDatePressableLarge : styles.compactDatePressableInline,
+              !largeText && styles.compactField,
               {
                 backgroundColor:
                   picker === 'startDate'
                     ? selectedFieldColor
                     : pressed
                     ? pressedFieldColor
-                    : 'transparent',
+                    : fieldBackground,
               },
             ]}
           >
-            <Text
+            {largeText && (
+              <Text style={[styles.compactRowTitle, { color: picker === 'startDate' ? FORM_ACCENT : colors.textPrimary }]}>
+                시작
+              </Text>
+            )}
+            <Text lineBreakStrategyIOS="hangul-word"
               style={[
-                styles.compactRowTitle,
-                {
-                  color:
-                    picker === 'startDate' ? FORM_ACCENT : colors.textPrimary,
-                },
+                largeText ? styles.compactRowSub : styles.compactRowDate,
+                !largeText && styles.compactFieldValue,
+                { color: largeText ? colors.textSecondary : picker === 'startDate' ? FORM_ACCENT : colors.textPrimary },
               ]}
             >
-              시작
+              {largeText ? formDateText(startDay) : formatScheduleFormDate(startDay)}
             </Text>
-            <Text lineBreakStrategyIOS="hangul-word"
-              style={[styles.compactRowSub, { color: colors.textSecondary }]}
-            >
-              {formDateText(startDay)}
-            </Text>
+            {!largeText && (
+              <ScheduleIcon name="calendar" color={picker === 'startDate' ? FORM_ACCENT : formPlaceholderColor} />
+            )}
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -136,14 +178,15 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
             onPress={() => togglePicker(allDay ? 'endDate' : 'startTime')}
             style={({ pressed }) => [
               styles.compactValuePressable,
-              largeText && styles.compactValuePressableLarge,
+              largeText ? styles.compactValuePressableLarge : styles.compactTimeField,
+              !largeText && styles.compactField,
               {
                 backgroundColor:
                   picker === (allDay ? 'endDate' : 'startTime')
                     ? selectedFieldColor
                     : pressed
                     ? pressedFieldColor
-                    : 'transparent',
+                    : fieldBackground,
               },
             ]}
           >
@@ -161,6 +204,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
               style={[
                 styles.compactRowValue,
                 largeText && styles.compactRowValueLarge,
+                  !largeText && styles.compactTimeFieldValue,
                 {
                   color:
                     picker === (allDay ? 'endDate' : 'startTime')
@@ -172,7 +216,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
               {allDay ? formatScheduleFormDate(endDay) : hhmmText(startTime)}
             </Text>
             <ScheduleIcon
-              name="forward"
+              name={largeText ? 'forward' : allDay ? 'calendar' : 'time'}
               color={
                 picker === (allDay ? 'endDate' : 'startTime')
                   ? FORM_ACCENT
@@ -180,7 +224,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
               }
             />
           </Pressable>
-        </View>
+        </View>}
 
         {!allDay ? (
           <>
@@ -190,11 +234,11 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
                 { backgroundColor: colors.border },
               ]}
             />
-            <View style={styles.compactToggleRow}>
+            <View style={[styles.compactToggleRow, largeText && styles.compactToggleRowLarge]}>
               <Text
-                style={[styles.compactRowTitle, { color: colors.textPrimary }]}
+                style={[styles.compactRowTitle, styles.compactToggleLabel, { color: colors.textPrimary }]}
               >
-                종료
+                {largeText ? '종료' : '종료 일시'}
               </Text>
               <Switch
                 accessibilityLabel="종료 시각 설정"
@@ -217,7 +261,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
                 { backgroundColor: colors.border },
               ]}
             />
-            <View style={[styles.compactDateTimeRow, largeText && styles.compactDateTimeRowLarge]}>
+            <View style={[styles.compactDateTimeRow, largeText ? styles.compactDateTimeRowLarge : styles.compactFieldsRow]}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(
@@ -227,36 +271,35 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
                 onPress={() => togglePicker('endDate')}
                 style={({ pressed }) => [
                   styles.compactDatePressable,
-                  largeText && styles.compactDatePressableLarge,
+                  largeText ? styles.compactDatePressableLarge : styles.compactDatePressableInline,
+                  !largeText && styles.compactField,
                   {
                     backgroundColor:
                       picker === 'endDate'
                         ? selectedFieldColor
                         : pressed
                         ? pressedFieldColor
-                        : 'transparent',
+                        : fieldBackground,
                   },
                 ]}
               >
-                <Text
-                  style={[
-                    styles.compactRowTitle,
-                    {
-                      color:
-                        picker === 'endDate' ? FORM_ACCENT : colors.textPrimary,
-                    },
-                  ]}
-                >
-                  {largeText ? '날짜' : '종료 일시'}
-                </Text>
+                {largeText && (
+                  <Text style={[styles.compactRowTitle, { color: picker === 'endDate' ? FORM_ACCENT : colors.textPrimary }]}>
+                    날짜
+                  </Text>
+                )}
                 <Text lineBreakStrategyIOS="hangul-word"
                   style={[
-                    styles.compactRowSub,
-                    { color: colors.textSecondary },
+                    largeText ? styles.compactRowSub : styles.compactRowDate,
+                    !largeText && styles.compactFieldValue,
+                    { color: largeText ? colors.textSecondary : picker === 'endDate' ? FORM_ACCENT : colors.textPrimary },
                   ]}
                 >
-                  {formDateText(endDay)}
+                  {largeText ? formDateText(endDay) : formatScheduleFormDate(endDay)}
                 </Text>
+                {!largeText && (
+                  <ScheduleIcon name="calendar" color={picker === 'endDate' ? FORM_ACCENT : formPlaceholderColor} />
+                )}
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -265,14 +308,15 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
                 onPress={() => togglePicker('endTime')}
                 style={({ pressed }) => [
                   styles.compactValuePressable,
-                  largeText && styles.compactValuePressableLarge,
+                  largeText ? styles.compactValuePressableLarge : styles.compactTimeField,
+                  !largeText && styles.compactField,
                   {
                     backgroundColor:
                       picker === 'endTime'
                         ? selectedFieldColor
                         : pressed
                         ? pressedFieldColor
-                        : 'transparent',
+                        : fieldBackground,
                   },
                 ]}
               >
@@ -280,6 +324,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
                   style={[
                     styles.compactRowValue,
                     largeText && styles.compactRowValueLarge,
+                    !largeText && styles.compactTimeFieldValue,
                     {
                       color:
                         picker === 'endTime' ? FORM_ACCENT : colors.textPrimary,
@@ -289,7 +334,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
                   {hhmmText(endTime)}
                 </Text>
                 <ScheduleIcon
-                  name="forward"
+                  name={largeText ? 'forward' : 'time'}
                   color={
                     picker === 'endTime' ? FORM_ACCENT : formPlaceholderColor
                   }
@@ -319,7 +364,7 @@ export default function ScheduleAddDateTimeSection({ controller, largeText = fal
           {isDisplayDate && (
             <Calendar
               monthFormat="yyyy년 M월"
-              key={mode}
+              key={`${mode}-${displayPicker}`}
               current={calendarSelected}
               onDayPress={onDayPress}
               markedDates={{

@@ -14,6 +14,7 @@ import {
 import { buildTransitLegAssistText } from './routeTransitMarkers';
 import { formatRouteDuration as formatRouteInfoDuration } from '../routeInfo';
 import RouteStepTimeline from '../components/route/RouteStepTimeline';
+import { formatArrivalClock } from '../components/route/RouteStepTimeline.helpers';
 import type { RoutePlannerController } from './useRoutePlannerController';
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -88,6 +89,10 @@ export function RoutePlannerAlternativeSection({ controller, onRevealFirstStop }
   const largeRouteText = fontScale > 1.35;
   const compactTimelineHeader = isTransitDetailMode && !!selectedRouteInfo;
   const notOperating = selectedAlternative?.transitServiceState === 'not_operating';
+  const departureBasisClock = compactTimelineHeader && !notOperating &&
+    !selectedRouteInfo?.intercityJourney && selectedRouteInfo?.departureTime
+    ? formatArrivalClock(selectedRouteInfo.departureTime, 0)
+    : undefined;
   const detailTimeMeta = compactTimelineHeader && (isDurationEstimate || notOperating)
     ? selectedTransitMeta?.fareText
     : selectedTransitMeta?.combinedText;
@@ -125,7 +130,7 @@ export function RoutePlannerAlternativeSection({ controller, onRevealFirstStop }
           accessibilityLiveRegion="polite"
         >
           <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <BrandedLoader size="button" variant="route" markMotion="settle" accessibilityLabel="경로를 찾는 중" />
+            <BrandedLoader size="button" settleMark accessibilityLabel="경로를 찾는 중" />
           </View>
           <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.alternativeLoadingCopy}>
             <Text style={[styles.alternativeLoadingText, { color: detailPrimaryText }]}>
@@ -206,7 +211,19 @@ export function RoutePlannerAlternativeSection({ controller, onRevealFirstStop }
             styles.selectedRouteSectionDetail,
           ]}
         >
-          {!!selectedAlternative && (
+          {!!selectedAlternative && (departureBasisClock ? (
+            <Text
+              testID="route-planner-departure-basis"
+              accessibilityRole="header"
+              lineBreakStrategyIOS="hangul-word"
+              style={[
+                styles.transitDetailDepartureBasis,
+                { color: detailSecondaryText, borderBottomColor: detailBorderColor },
+              ]}
+            >
+              {departureBasisClock} 출발 기준
+            </Text>
+          ) : (
             <View
               style={[
                 isTransitMode
@@ -303,7 +320,7 @@ export function RoutePlannerAlternativeSection({ controller, onRevealFirstStop }
                   </View>
                 )}
             </View>
-          )}
+          ))}
 
           {selectedRouteInfo ? (
             <View
@@ -331,6 +348,7 @@ export function RoutePlannerAlternativeSection({ controller, onRevealFirstStop }
                 primaryTextColor={detailPrimaryText}
                 secondaryTextColor={detailSecondaryText}
                 showEstimatedClockHeading={isDurationEstimate}
+                realtimeArrivalsActive={!isBottomSheetHidden && bottomSheetSnap !== 'collapsed'}
                 compact
                 inlineStationRail
               />

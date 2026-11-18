@@ -68,16 +68,26 @@ export function getTransitArrivalPresentation({
     hasRequest,
     loadState,
     arrivalCount,
+    allEstimatesPassed = false,
     updatedAt,
     nowMs,
 }: {
     hasRequest: boolean;
     loadState?: TransitArrivalLoadState;
     arrivalCount: number;
+    allEstimatesPassed?: boolean;
     updatedAt?: string;
     nowMs?: number;
 }): TransitArrivalPresentation {
     const freshness = getTransitArrivalFreshness(updatedAt, nowMs);
+    if (allEstimatesPassed) {
+        return {
+            statusLabel: "정보 없음",
+            inlineMessage: "새 도착 정보를 기다리고 있어요.",
+            showArrivalCard: false,
+            showLoadingIcon: false,
+        };
+    }
     if (arrivalCount > 0) {
         return {
             statusLabel: loadState === "error" || freshness.stale ? "갱신 지연" : "실시간",

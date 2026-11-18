@@ -4,7 +4,7 @@ import * as AuthSession from 'expo-auth-session';
 import * as GoogleAuth from 'expo-auth-session/providers/google';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import {
   AccessibilityInfo,
   Alert,
@@ -12,6 +12,7 @@ import {
   BackHandler,
   Easing,
   Platform,
+  Pressable,
   ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +33,7 @@ import {
 } from '../../modules/onboarding/calendarImportNavigation';
 import { shouldPrepareCalendarImportRoutes } from '../../modules/onboarding/calendarImportRouteEnrichment';
 import {
+  getDefaultSelectedCandidateIds,
   getCalendarProviderLabel,
   type DeviceCalendarCandidate,
 } from '../../modules/onboarding/deviceCalendarImport';
@@ -79,10 +81,15 @@ export function useCalendarImportController() {
   const scrollViewRef = useRef<ScrollView>(null);
   const currentStepRef = useRef<OnboardingStep>('intro');
   const scanAttemptRef = useRef(0);
+  const hasCompletedScan = useRef(false);
   const stepMotionDidMountRef = useRef(false);
   const stepMotion = useRef(new Animated.Value(1)).current;
   const scrollOffsets = useRef<Partial<Record<OnboardingStep, number>>>({});
   const visibleStepRef = useRef<OnboardingStep>("intro");
+  const lastCandidateButtonRef = useRef<ComponentRef<typeof Pressable>>(null);
+  const candidateContinueButtonRef = useRef<ComponentRef<typeof Pressable>>(null);
+  const scanButtonRef = useRef<ComponentRef<typeof Pressable>>(null);
+  const restoredFocusRef = useRef<'scan' | 'candidate' | null>(null);
   const goBackStepRef = useRef<() => void>(() => undefined);
 
   const googleCalendarRedirectUri = AuthSession.makeRedirectUri({
@@ -113,6 +120,8 @@ export function useCalendarImportController() {
     Set<CalendarConsentId>
   >(() => new Set());
   const [scanStage, setScanStage] = useState(0);
+  const [scanWasStopped, setScanWasStopped] = useState(false);
+  const [lastCandidateId, setLastCandidateId] = useState<string | null>(null);
   const [scanStatusMessage, setScanStatusMessage] =
     useState('캘린더 연결을 확인하고 있어요');
   const [candidates, setCandidates] = useState<DeviceCalendarCandidate[]>([]);
@@ -298,10 +307,26 @@ export function useCalendarImportController() {
     const nextDirection =
       motionStepIndex(nextStep) < motionStepIndex(currentStep) ? -1 : 1;
 
+    restoredFocusRef.current =
+      currentStep === 'scanning' && nextStep === 'permission' ? 'scan' :
+      currentStep === 'enrich' && nextStep === 'select' ? 'candidate' : null;
+    if (nextStep === 'scanning') {
+      setScanWasStopped(false);
+    } else if (nextStep === 'provider') {
+      setScanWasStopped(false);
+    }
     setStepTransitionDirection(nextDirection);
     currentStepRef.current = nextStep;
     setStep(nextStep);
   };
+
+  const restoreControlFocus = useCallback(() => {
+    const restore = restoredFocusRef.current;
+    restoredFocusRef.current = null;
+    const control = restore === 'scan' ? scanButtonRef.current :
+      restore === 'candidate' ? lastCandidateButtonRef.current ?? candidateContinueButtonRef.current : null;
+    if (control) AccessibilityInfo.sendAccessibilityEvent?.(control, 'focus');
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -328,6 +353,7 @@ export function useCalendarImportController() {
     const frame = requestAnimationFrame(() => {
       scrollViewRef.current?.scrollTo({ y: scrollOffsets.current[step] ?? 0, animated: false });
       visibleStepRef.current = step;
+      if (reduceMotionEnabled) restoreControlFocus();
     });
 
     if (!stepMotionDidMountRef.current || reduceMotionEnabled) {
@@ -343,12 +369,14 @@ export function useCalendarImportController() {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     });
-    animation.start();
+    animation.start(({ finished }) => {
+      if (finished && currentStepRef.current === step) restoreControlFocus();
+    });
     return () => {
       cancelAnimationFrame(frame);
       animation.stop();
     };
-  }, [reduceMotionEnabled, step, stepMotion, stepTransitionDirection]);
+  }, [reduceMotionEnabled, restoreControlFocus, step, stepMotion, stepTransitionDirection]);
 
   const {
     loadCategories,
@@ -488,6 +516,7 @@ export function useCalendarImportController() {
         break;
       case 'scanning':
         scanAttemptRef.current += 1;
+        setScanWasStopped(true);
         setErrorMessage('일정 확인을 중단했어요. 준비되면 다시 시도해 주세요.');
         goToStep('permission');
         break;
@@ -535,13 +564,13 @@ export function useCalendarImportController() {
     goToStep,
     setScanStage,
     setScanStatusMessage,
-    setCandidates,
-    setSelectedIds,
-    setCategoryIdBySource,
-    setCategoryAssignmentsExpanded,
-    setExpandedCategorySourceKey,
-    setVisibleCandidateCount,
-    setIndividualSchedulesExpanded,
+    onCandidatesLoaded: next => {
+      const preserveSelection = hasCompletedScan.current;
+      hasCompletedScan.current = true;
+      setCandidates(next);
+      setSelectedIds(current => getDefaultSelectedCandidateIds(next, preserveSelection ? current : undefined));
+      setLastCandidateId(current => next.some(candidate => candidate.id === current) ? current : null);
+    },
   });
 
   const toggleCandidate = (candidate: DeviceCalendarCandidate) => {
@@ -698,8 +727,11 @@ export function useCalendarImportController() {
     routePreparationEnabled,
     routesReadyForImport,
     scanCalendars,
+    candidateContinueButtonRef,
+    scanButtonRef,
     scanStage,
     scanStatusMessage,
+    scanWasStopped,
     scrollViewRef,
     searchDefaultOrigin,
     selectAllCandidates,
@@ -726,6 +758,9 @@ export function useCalendarImportController() {
     toggleCalendarConsent,
     toggleCalendarConsentDetail,
     toggleCandidate,
+    lastCandidateId,
+    setLastCandidateId,
+    lastCandidateButtonRef,
     toggleCandidateSourceGroup,
     toggleProvider,
     travelMinutes,

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Linking } from 'react-native';
 import { Ionicons as ExpoIonicons } from '@expo/vector-icons';
+import { applyOdsayBusPreview, applyOdsayEntranceEstimate, buildOdsayBusPreviewInput, buildOdsayTimetablePreviewInput } from '../../../api/transitTimetablePreview';
 
 import {
   canPersistResolvedRoute,
@@ -13,9 +14,11 @@ import {
 import type { TmapPathOverlay } from '../../map/TmapMapView';
 import {
   buildTransitRouteTimeMeta,
+  formatTransitClockWithDayContext,
   getTransitModeLabels,
   getTransitRouteCategory,
   shouldShowTransitDurationOnly,
+  TIMETABLE_DESTINATION_ARRIVAL_LABEL,
 } from './presentation';
 import {
   buildQaCameraPreset,
@@ -38,6 +41,8 @@ import {
   buildRouteSummaryMetrics,
   buildRouteInfoFromAlternative,
   formatRouteClock,
+  isOdsayTimetableRouteInfo,
+  roundRouteArrivalMinute,
   formatRouteDuration as formatRouteInfoDuration,
   type RouteInfo,
 } from '../routeInfo';
@@ -45,6 +50,7 @@ import { buildTransitRouteProgressSegments, formatTransitWalkingSummary, getTran
 import { getRoutePlannerInitial } from '../routePlannerSession';
 import { resolveSelectedRouteTiming } from '../scheduleRouteTiming';
 import { TRAVEL_MODE_META } from '../travelMode';
+import { useOdsayTimetablePreview } from '../useOdsayTimetablePreview';
 import type { TravelMode } from '../types';
 import type {
   QaCameraPresetId,
@@ -189,12 +195,48 @@ export function useRoutePlannerPresentation({
       visibleAlternatives.findIndex(item => item.id === selectedAlternativeId),
     [selectedAlternativeId, visibleAlternatives],
   );
-  const selectedAlternative =
-    selectedAlternativeIndex >= 0
-      ? routeAlternatives[selectedAlternativeIndex]
-      : undefined;
+  const baseSelection = routeAlternatives[selectedAlternativeIndex];
+  const targetArrivalAt = initial?.targetArrivalAt;
+  const requestedDepartureAt = hasExplicitDeparture ? initialRouteDepartureAt.toISOString() : undefined;
+  const handedOffPreview = baseSelection?.odsayTimetablePreview;
+  const canUseHandoff = Boolean(handedOffPreview && baseSelection === handoffRoute &&
+    baseSelection.provider === 'odsay' && baseSelection.transitServiceState !== 'not_operating' &&
+    !etaLoading && Date.parse(handedOffPreview.departureAt) > Date.now() &&
+    originLat === initial?.origin?.lat && originLng === initial?.origin?.lng &&
+    destinationLat === initial?.destination?.lat && destinationLng === initial?.destination?.lng &&
+    (requestedDepartureAt
+      ? Date.parse(handedOffPreview.departureAt) === Date.parse(requestedDepartureAt)
+      : targetArrivalAt && Date.parse(handedOffPreview.arrivalAt) <= Date.parse(targetArrivalAt)));
+  const previewInput = useMemo(() => {
+    if (!hasRouteReady || !isTransitMode || etaLoading || !baseSelection || canUseHandoff ||
+        baseSelection.transitServiceState === 'not_operating') return undefined;
+    const origin = { lat: originLat, lng: originLng };
+    const destination = { lat: destinationLat, lng: destinationLng };
+    if (requestedDepartureAt) {
+      const time = { requestedDepartureAt };
+      return { timetable: buildOdsayTimetablePreviewInput(baseSelection, time, origin, destination),
+        bus: buildOdsayBusPreviewInput(baseSelection, time, origin, destination) };
+    }
+    if (targetArrivalAt) {
+      const time = { targetArrivalAt };
+      return { timetable: buildOdsayTimetablePreviewInput(baseSelection, time, origin, destination),
+        bus: buildOdsayBusPreviewInput(baseSelection, time, origin, destination) };
+    }
+  }, [baseSelection, canUseHandoff, destinationLat, destinationLng, etaLoading, hasRouteReady,
+      isTransitMode, originLat, originLng, requestedDepartureAt, targetArrivalAt]);
+  const { preview, missingEntranceWalk, busPreview, waiting } = useOdsayTimetablePreview(previewInput?.timetable, previewInput?.bus);
+  const selectedAlternative = useMemo(() => {
+    const currentPreview = canUseHandoff ? handedOffPreview : preview;
+    if (baseSelection && busPreview) return applyOdsayBusPreview(baseSelection, busPreview);
+    if (baseSelection && missingEntranceWalk && !currentPreview) {
+      return applyOdsayEntranceEstimate({...baseSelection, odsayTimetablePreview: undefined}, missingEntranceWalk);
+    }
+    return baseSelection && (currentPreview !== baseSelection.odsayTimetablePreview || busPreview !== baseSelection.odsayBusPreview)
+      ? { ...baseSelection, odsayTimetablePreview: currentPreview, odsayBusPreview: busPreview }
+      : baseSelection;
+  }, [baseSelection, busPreview, canUseHandoff, handedOffPreview, preview, missingEntranceWalk]);
   const canSubmitRoute =
-    !routeSubmitPending &&
+    !routeSubmitPending && !waiting &&
     canPersistResolvedRoute({
       hasRouteReady,
       routeLoading: etaLoading,
@@ -310,6 +352,9 @@ export function useRoutePlannerPresentation({
     [selectedAlternative, selectedRouteDepartureAt],
   );
   const selectedTransitProgressSegments = useMemo(() => {
+    if (selectedAlternative?.transitLegs?.some(leg => leg.journeyPhase === 'BUFFER')) {
+      return buildTransitRouteProgressSegments(selectedAlternative.transitLegs);
+    }
     const segmentBasedProgress = buildTransitProgressSegmentsFromRoute(
       selectedNormalizedRoute,
     );
@@ -349,14 +394,15 @@ export function useRoutePlannerPresentation({
       selectedRouteDepartureAt,
       selectedAlternativeIndex,
     );
-    const candidateRouteInfo = isTransitMode
+    const candidateRouteInfo = isTransitMode && !selectedAlternative.odsayTimetablePreview &&
+      !selectedAlternative.odsayBusPreview && !missingEntranceWalk
       ? buildRouteInfoFromNormalizedRoute(
           baseRouteInfo,
           selectedNormalizedRoute,
         )
       : baseRouteInfo;
     const selectedTiming = resolveSelectedRouteTiming({
-      targetArrivalAt: hasExplicitDeparture ? undefined : initial?.targetArrivalAt,
+      targetArrivalAt: hasExplicitDeparture || selectedAlternative.odsayBusPreview ? undefined : initial?.targetArrivalAt,
       routeInfo: candidateRouteInfo,
       fallbackDepartureAt: selectedRouteDepartureAt,
     });
@@ -375,6 +421,7 @@ export function useRoutePlannerPresentation({
     initial?.targetArrivalAt,
     hasExplicitDeparture,
     isTransitMode,
+    missingEntranceWalk,
     originAddress,
     originDisplay,
     originLat,
@@ -388,11 +435,15 @@ export function useRoutePlannerPresentation({
     selectedRouteInfo?.departureTime ?? selectedRouteDepartureAt.toISOString();
   const selectedCollapsedRouteSummary = useMemo(() => {
     if (!selectedRouteInfo) return undefined;
-    const arrivalText = formatRouteClock(selectedRouteInfo.arrivalTime);
+    const arrival = selectedRouteInfo.arrivalTime;
+    const timetableArrival = isOdsayTimetableRouteInfo(selectedRouteInfo) ? roundRouteArrivalMinute(arrival) : undefined;
+    const arrivalText = timetableArrival && selectedRouteInfo.departureTime
+      ? formatTransitClockWithDayContext(timetableArrival, new Date(selectedRouteInfo.departureTime))
+      : formatRouteClock(timetableArrival ?? arrival);
     const legs = selectedAlternative?.transitLegs;
     const hasTransitLegs = selectedAlternative?.mode === 'TRANSIT' && Boolean(legs?.length);
     const walkingSummary = hasTransitLegs && legs
-      ? formatTransitWalkingSummary(getTransitRouteWalkingMinutes(legs))
+      ? formatTransitWalkingSummary(getTransitRouteWalkingMinutes(legs, selectedAlternative?.odsayTimetablePreview))
       : undefined;
     const metrics = buildRouteSummaryMetrics(selectedRouteInfo)
       .filter(
@@ -404,7 +455,9 @@ export function useRoutePlannerPresentation({
       arrivalText: shouldShowTransitDurationOnly(selectedAlternative) || selectedAlternative?.transitServiceState === 'not_operating'
         ? undefined
         : (arrivalText
-        ? `${arrivalText} ${selectedRouteInfo.timeBasis === 'provider_schedule' ? '도착' : '예상 도착'}`
+        ? `${arrivalText} ${selectedAlternative?.odsayTimetablePreview ? TIMETABLE_DESTINATION_ARRIVAL_LABEL :
+          selectedAlternative?.odsayBusPreview ? '예상 도착 · 실시간 반영' :
+          selectedRouteInfo.timeBasis === 'provider_schedule' ? '도착' : '예상 도착'}`
         : undefined),
       metricsText: metrics.join(' · '),
     };

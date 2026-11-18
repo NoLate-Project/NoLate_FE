@@ -1,4 +1,5 @@
 import React from "react";
+import { Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import { getSubwayArrivals } from "../src/api/transitArrivals";
@@ -52,12 +53,77 @@ function buildRouteInfo(durations: StepDuration[]): RouteInfo {
 }
 
 describe("RouteStepTimeline timing", () => {
+    it("keeps the intercity mode badge and service grade readable on separate lines", async () => {
+        const route = buildRouteInfo([]);
+        route.steps.splice(1, 0, {
+            id: "service", type: "INTERCITY_BUS", title: "인천공항1터미널",
+            badgeText: "시외버스 · 우등", lineName: "우등", description: "85분 · 시간표 17:20 → 18:45",
+        });
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact realtimeArrivalsActive={false} />);
+        });
+
+        const row = renderer!.root.findByProps({ testID: "route-step-row-service" });
+        const text = row.findAllByType(Text).map(node => node.props.children);
+        expect(text).toContain("시외버스");
+        const description = row.findAllByType(Text).find(node =>
+            node.props.children === "우등 · 85분 · 시간표 17:20 → 18:45"
+        );
+        expect(description).toBeDefined();
+        expect(description?.props.numberOfLines).toBeUndefined();
+    });
+
+    it("uses a clock for a terminal buffer and omits the transfer arrow from the walking rail", async () => {
+        const route = buildRouteInfo([]);
+        route.steps.splice(1, 0,
+            { id: "transfer", type: "TRANSFER", title: "환승", durationMinutes: 3 },
+            { id: "buffer", type: "TRANSFER", title: "탑승 준비·대기 (준비 20분 포함)",
+                description: "20분", durationMinutes: 20, journeyPhase: "BUFFER" },
+            { id: "bus", type: "INTERCITY_BUS", title: "인천공항1터미널", lineName: "우등" });
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact realtimeArrivalsActive={false} />);
+        });
+
+        const transfer = renderer!.root.findByProps({ testID: "route-step-row-transfer" });
+        expect(transfer.findAllByType("Ionicons" as never).map(icon => icon.props.name))
+            .not.toContain("swap-horizontal-outline");
+        const buffer = renderer!.root.findByProps({ testID: "route-step-row-buffer" });
+        expect(buffer.findAllByType("Ionicons" as never).map(icon => icon.props.name)).toContain("time-outline");
+        const bufferText = renderer!.root.findByProps({ testID: "route-step-row-buffer" })
+            .findAllByType(Text).map(node => node.props.children);
+        expect(bufferText).not.toContain("우등 타는 곳까지");
+        expect(bufferText).not.toContain("20분");
+    });
+
     it("uses the predicted clock to age a delayed station response", () => {
         const expected = new Date(2026, 9, 4, 11, 5);
         const arrival = { provider: "seoul-openapi", kind: "SUBWAY", expectedAt: expected.toISOString(), waitMinutes: 5 };
         expect(getArrivalClockText(arrival)).toBe("11:05");
         expect(getArrivalWaitText(arrival, expected.getTime() - 110_000)).toBe("2분");
         expect(getArrivalWaitText(arrival, expected.getTime() + 10_000)).toBe("예정 시각 지남");
+    });
+
+    it("shows the ODsay timetable's boarding clocks even when the rough durations give different clocks", async () => {
+        const route = buildRouteInfo([{ durationMinutes: 20 }, { durationMinutes: 10 }]);
+        route.provider = "odsay";
+        route.timeBasis = "provider_schedule";
+        route.providerTimeBasis = "timetable";
+        route.steps[1].scheduledRide = {
+            boardingAt: new Date(2026, 9, 4, 11, 9).toISOString(),
+            arrivalAt: new Date(2026, 9, 4, 11, 31).toISOString(),
+        };
+        route.steps[2].scheduledRide = {
+            boardingAt: new Date(2026, 9, 4, 11, 38).toISOString(),
+            arrivalAt: new Date(2026, 9, 4, 11, 49).toISOString(),
+        };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <RouteStepTimeline routeInfo={route} compact inlineStationRail realtimeArrivalsActive={false} />
+            );
+        });
+        const texts = renderer!.root.findAllByType(Text).map(node => node.props.children);
+        expect(texts).toEqual(expect.arrayContaining(["11:09", "11:38", "12:10"]));
+        expect(texts).not.toContain("11:25");
     });
 
     it("anchors a legacy relative wait to its source timestamp rather than the current clock", () => {
@@ -68,6 +134,31 @@ describe("RouteStepTimeline timing", () => {
         };
         expect(getArrivalClockText(arrival)).toBe("11:04");
         expect(getArrivalWaitText(arrival, source.getTime() + 180_000)).toBe("1분");
+    });
+
+    it("shows the matched wait separately on the next ride only", async () => {
+        const route = buildRouteInfo([{ durationMinutes: 48 }, { durationMinutes: 8 }]);
+        route.matchedTimeline = true;
+        route.steps[1].matchedTimeline = {
+            startAt: "2026-11-22T09:34:00Z", endAt: "2026-11-22T10:22:00Z", movementSeconds: 2880,
+            startsWithStationArrivalPrediction: true,
+        };
+        route.steps[2].matchedTimeline = {
+            startAt: "2026-11-22T10:26:30Z", endAt: "2026-11-22T10:34:00Z",
+            movementSeconds: 450, transferWaitSeconds: 113,
+        };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <RouteStepTimeline routeInfo={route} compact inlineStationRail realtimeArrivalsActive={false} />
+            );
+        });
+        const first = renderer!.root.findByProps({ testID: "route-step-row-leg-0" });
+        const second = renderer!.root.findByProps({ testID: "route-step-row-leg-1" });
+        const label = "환승 대기 예상 1분 53초";
+        expect(first.findAllByType(Text).some(node => node.props.children === "열차 도착 예측")).toBe(true);
+        expect(second.findAllByType(Text).some(node => node.props.children === "열차 도착 예측")).toBe(false);
+        expect(first.findAllByType(Text).some(node => node.props.children === label)).toBe(false);
+        expect(second.findAllByType(Text).some(node => node.props.children === label)).toBe(true);
     });
 
     it("renders delayed data using its source time even when the response just arrived", async () => {
@@ -99,6 +190,97 @@ describe("RouteStepTimeline timing", () => {
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
+    });
+
+    it.each([false, true])("distinguishes expired estimates from usable arrivals (upcoming: %s)", async (hasUpcoming) => {
+        const now = Date.now();
+        const passed = {
+            provider: "test", kind: "SUBWAY", destinationName: "사당",
+            expectedAt: new Date(now - 60_000).toISOString(),
+        };
+        const upcoming = {
+            provider: "test", kind: "SUBWAY", destinationName: "오이도",
+            expectedAt: new Date(now + 240_000).toISOString(),
+        };
+        const departed = { ...passed, arrivalStatus: "DEPARTED" as const };
+        jest.mocked(getSubwayArrivals).mockResolvedValueOnce(hasUpcoming ? [passed, departed, upcoming] : [passed, departed]);
+        const routeInfo = { ...buildRouteInfo([{ durationMinutes: 5 }]), departureTime: "" };
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={routeInfo} compact inlineStationRail />);
+        });
+        const hasText = (text: string) =>
+            renderer!.root.findAll(node => node.props.children === text).length > 0;
+        expect(hasText("실시간")).toBe(hasUpcoming);
+        expect(hasText("오이도행")).toBe(hasUpcoming);
+        expect(hasText("사당행")).toBe(false);
+        expect(hasText("예정 시각 지남")).toBe(false);
+        expect(hasText("갱신 지연")).toBe(false);
+        expect(hasText("새 도착 정보를 기다리고 있어요.")).toBe(!hasUpcoming);
+        expect(hasText("방금 갱신")).toBe(hasUpcoming);
+        expect(hasText("--:--")).toBe(false);
+    });
+
+    it("pauses closed-sheet polling and retains the last arrival and open stops across a failed refresh", async () => {
+        const route = buildRouteInfo([{ durationMinutes: 5 }]);
+        route.steps[1].passStops = [{ name: "출발역" }, { name: "다음역" }];
+        const arrivals = jest.mocked(getSubwayArrivals);
+        arrivals.mockClear();
+        let resolveArrivals!: (result: Awaited<ReturnType<typeof getSubwayArrivals>>) => void;
+        arrivals.mockImplementationOnce(() => new Promise(resolve => { resolveArrivals = resolve; }));
+        const update = async (active: boolean, routeInfo = route) => {
+            await act(async () => {
+                const content = <RouteStepTimeline
+                    routeInfo={routeInfo} compact inlineStationRail realtimeArrivalsActive={active}
+                    initialExpandedStepId="leg-0"
+                />;
+                if (renderer) renderer.update(content);
+                else renderer = TestRenderer.create(content);
+            });
+        };
+        const expectText = (text: string) => {
+            expect(renderer!.root.findAll(node => node.props.children === text).length).toBeGreaterThan(0);
+        };
+        jest.useFakeTimers();
+        try {
+            await update(false);
+            expect(arrivals).not.toHaveBeenCalled();
+            await update(true);
+            await update(true, { ...route, steps: route.steps.map(step => ({ ...step })) });
+            await update(false);
+            await act(async () => { jest.advanceTimersByTime(90_000); });
+            await update(true);
+            expect(arrivals).toHaveBeenCalledTimes(1);
+            await act(async () => {
+                resolveArrivals([{ provider: "test", kind: "SUBWAY", destinationName: "사당", waitMinutes: 6 }]);
+            });
+            expectText("사당행");
+            expectText("실시간");
+
+            await update(false);
+            await act(async () => { jest.advanceTimersByTime(90_000); });
+            expect(arrivals).toHaveBeenCalledTimes(1);
+            arrivals.mockRejectedValueOnce(new Error("Provider unavailable"));
+            await update(true);
+            expect(arrivals).toHaveBeenCalledTimes(2);
+            expectText("사당행");
+            expectText("갱신 지연");
+            expect(renderer!.root.findByProps({ testID: "route-step-disclosure-leg-0" })
+                .props.accessibilityState.expanded).toBe(true);
+
+            const changedRoute = { ...route, steps: route.steps.map(step => step.id === "leg-0"
+                ? { ...step, title: "신림역" }
+                : step) };
+            await update(false, changedRoute);
+            expect(arrivals).toHaveBeenCalledTimes(2);
+            arrivals.mockResolvedValueOnce([]);
+            await update(true, changedRoute);
+            expect(arrivals).toHaveBeenLastCalledWith(expect.objectContaining({ stationName: "신림역" }));
+            expect(renderer!.root.findAll(node => node.props.children === "사당행")).toHaveLength(0);
+        } finally {
+            await act(async () => renderer?.unmount());
+            renderer = undefined;
+            jest.useRealTimers();
+        }
     });
 
     async function renderTimeline(routeInfo: RouteInfo, onStepPress?: () => void) {
@@ -146,6 +328,32 @@ describe("RouteStepTimeline timing", () => {
         expectStepClock("leg-1", "11:05");
         expectStepClock("leg-2", "11:06");
         expectStepClock("destination", "11:06");
+    });
+
+    it.each([
+        { states: ["error", "error"], status: "실시간 도착 조회 실패", mixed: false },
+        { states: ["empty", "empty"], status: "실시간 도착 정보 없음", mixed: false },
+        { states: ["error", "empty"], status: undefined, mixed: true },
+        { states: [], status: undefined, mixed: false },
+    ])("keeps one estimated-clock heading with distinct arrival states ($states)", async ({ states, status, mixed }) => {
+        const arrivals = jest.mocked(getSubwayArrivals).mockReset();
+        for (const state of states) {
+            if (state === "error") arrivals.mockRejectedValueOnce(new Error("Arrival provider unavailable"));
+            else arrivals.mockResolvedValueOnce([]);
+        }
+        const routeInfo = buildRouteInfo([{ durationMinutes: 16 }, { durationMinutes: 9 }]);
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={routeInfo} compact inlineStationRail
+                showEstimatedClockHeading realtimeArrivalsEnabled={states.length > 0} />);
+        });
+        const text = renderer!.root.findAllByType(Text).map(node => node.props.children);
+        expect(text.filter(value => typeof value === "string" && value.startsWith("구간별 예상 시각")))
+            .toEqual([status ? `구간별 예상 시각 · ${status}` : "구간별 예상 시각"]);
+        expect(text).not.toContain("경로 예상 시간 기준");
+        expect(text.includes("실시간 도착 정보를 불러오지 못했어요.")).toBe(mixed);
+        expect(text.includes("지금 확인할 수 있는 도착 예정이 없어요.")).toBe(mixed);
+        expectStepClock("leg-0", "11:05");
+        expectStepClock("leg-1", "11:21");
     });
 
     it("preserves the ticket label and both fixed train clocks in the rendered row", async () => {

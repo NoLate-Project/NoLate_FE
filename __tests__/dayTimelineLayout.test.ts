@@ -10,6 +10,7 @@ import {
     formatDayTimelineDeparture,
     formatDayTimelineTimeRange,
     getDayTimelineEventMetadata,
+    getTimelineDisplayEntries,
 } from "../src/modules/schedule/dayTimelineLayout";
 import type { ScheduleItem } from "../src/modules/schedule/types";
 
@@ -94,6 +95,23 @@ describe("day timeline layout", () => {
         expect(positioned.every((event) => event.laneCount === 2)).toBe(true);
     });
 
+    test("좁은 열의 겹친 일정은 하나의 진입점으로 표시하고 실제 일정과 다음 구간은 보존한다", () => {
+        const simultaneous = Array.from({ length: 40 }, (_, index) =>
+            makeItem(`item-${index}`, "2026-07-10T09:00:00", "2026-07-10T09:15:00"));
+        const next = makeItem("next", "2026-07-10T11:00:00", "2026-07-10T12:00:00");
+        const positioned = buildPositionedEvents([...simultaneous, next], "2026-07-10");
+        const entries = getTimelineDisplayEntries(positioned, 340);
+        expect(entries).toHaveLength(2);
+        expect(entries[0]).toMatchObject({ events: positioned.slice(0, 40), startMinute: 9 * 60 });
+        expect(entries[1]).toBe(positioned[40]);
+
+        const pair = buildPositionedEvents(simultaneous.slice(0, 2), "2026-07-10", { compact: true });
+        expect(getTimelineDisplayEntries(pair, 200)).toEqual(pair);
+        expect(getTimelineDisplayEntries(pair, 100)).toMatchObject([
+            { events: pair, startMinute: 9 * 60, height: DAY_TIMELINE_COMPACT_EVENT_HEIGHT },
+        ]);
+    });
+
     test("이동 일정은 시안의 세 번째 정보 줄을 위한 높이와 메타데이터를 가진다", () => {
         const item = makeItem(
             "travel",
@@ -137,6 +155,44 @@ describe("day timeline layout", () => {
         const metadata = getDayTimelineEventMetadata(item);
 
         expect(formatDayTimelineDeparture(metadata.departureAt)).toBe("오전 8:40");
+    });
+
+    test("검증된 ODsay 출발은 표시용 소요시간을 올림해 다시 역산하지 않는다", () => {
+        const departureTime = "2026-11-15T07:53:15.000Z";
+        const arrivalTime = "2026-11-15T08:59:29.000Z";
+        const routeInfo = {
+            id: "odsay-with-timetable", provider: "odsay",
+            originName: "노원역", destinationName: "신림역",
+            timeBasis: "provider_schedule", providerTimeBasis: "timetable",
+            departureTime, arrivalTime, totalDurationMinutes: 67, totalDurationSeconds: 3974,
+            steps: [{ id: "subway", type: "SUBWAY", title: "노원" }],
+        };
+        const item = makeItem("odsay", arrivalTime, arrivalTime, {
+            travelMode: "TRANSIT", departAt: departureTime, travelMinutes: 67, route: { routeInfo },
+        });
+        expect(getDayTimelineEventMetadata(item).departureAt).toBe(departureTime);
+        expect(getDayTimelineEventMetadata({ ...item, departAt: undefined }).departureAt).toBe(departureTime);
+        expect(getDayTimelineEventMetadata({ ...item, departAt: "2026-11-15T07:50:00.000Z" }).departureAt)
+            .toBe("2026-11-15T07:50:00.000Z");
+    });
+
+    test("ODsay의 초 단위 경로 추정값을 저장 후에도 그대로 사용한다", () => {
+        const startAt = "2026-11-15T13:40:00.000Z";
+        const departure = "2026-11-15T13:25:23.000Z";
+        const routeInfo = {
+            id: "odsay-estimate", provider: "odsay", originName: "강남역", destinationName: "역삼역",
+            timeBasis: "estimated", providerTimeBasis: "route_estimate",
+            departureTime: departure, arrivalTime: startAt,
+            totalDurationMinutes: 15, totalDurationSeconds: 877,
+            steps: [{ id: "bus", type: "BUS", title: "360" }],
+        };
+        const item = makeItem("odsay", startAt, startAt, {
+            travelMode: "TRANSIT", travelMinutes: 15, departAt: departure, route: { routeInfo },
+        });
+        expect(getDayTimelineEventMetadata(item).departureAt).toBe(departure);
+        expect(getDayTimelineEventMetadata({ ...item, departAt: undefined }).departureAt).toBe(departure);
+        expect(getDayTimelineEventMetadata({ ...item, route: { routeInfo: { ...routeInfo, totalDurationSeconds: 876 } } }).departureAt)
+            .toBe("2026-11-15T13:25:00.000Z");
     });
 
     test.each([

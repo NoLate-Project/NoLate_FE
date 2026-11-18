@@ -1519,29 +1519,20 @@ describe("ScheduleCalendar detail month swipe motion", () => {
             (node.type as unknown) === "TextInput"
             && node.props.accessibilityState?.selected === true
         )) ?? [];
-        expect(selectedAccessibilityGlyphs).toHaveLength(1);
-        expect(selectedAccessibilityGlyphs[0].props.testID).toBe(
-            "detail-month-selection-day-current"
-        );
-        expect(renderer?.root.findAll((node) => (
-            /^detail-month-cell-/.test(node.props.testID ?? "")
-            && node.props.accessibilityState?.selected === true
-        ))).toHaveLength(0);
+        expect(selectedAccessibilityGlyphs).toHaveLength(0);
+        expect(getDetailMonthDayProps("2026-01-31").isSelectedDay).toBe(true);
+        expect(renderer?.root.findByProps({
+            testID: "detail-month-selection-current",
+        }).props).toMatchObject({
+            accessibilityElementsHidden: true,
+            importantForAccessibility: "no-hide-descendants",
+        });
         expect(getDetailMonthSelectionText("current")).toBe("31");
         expect(getDetailMonthSelectionText("next")).toBe("28");
 
         act(() => registeredShift(1));
         expect(getDetailMonthSelectionText("current")).toBe("28");
         expect(getDetailMonthSelectionText("next")).toBe("28");
-        const februarySelectionProps = renderer?.root.findByProps({
-            testID: "detail-month-selection-day-current",
-        }).props.animatedProps.__mockFactory();
-        expect(februarySelectionProps).toMatchObject({
-            accessibilityLabel: "2026년 2월 28일, 선택됨",
-            accessible: true,
-            accessibilityElementsHidden: false,
-            importantForAccessibility: "yes",
-        });
 
         act(() => registeredShift(1));
         expect(getDetailMonthSelectionText("current")).toBe("28");
@@ -1616,20 +1607,11 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         const month = today.slice(0, 7);
 
         expect(getDetailMonthSelectionStyle("current").opacity).toBe(0);
-        const todaySelectionProps = renderer?.root.findByProps({
-            testID: "detail-month-selection-day-current",
-        }).props.animatedProps.__mockFactory();
-        expect(todaySelectionProps).toMatchObject({
-            accessibilityLabel: expect.stringContaining(
-                `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일, 선택됨, 오늘`
-            ),
-            accessible: true,
-        });
         const cell = getDetailMonthGrid(month).findByProps({
             testID: `detail-month-cell-${month}-${today}`,
         });
-        expect(cell.props.accessibilityState.selected).toBeUndefined();
-        expect(cell.props.accessibilityLabel).not.toContain("선택됨");
+        expect(cell.props.accessibilityState.selected).toBe(true);
+        expect(cell.props.accessibilityLabel).toContain("오늘");
         const circle = cell.findByProps({ testID: "calendar-day-circle" });
         expect(StyleSheet.flatten(circle.props.style).backgroundColor).toBe(
             expectedColor
@@ -1719,12 +1701,9 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         );
         expect(dayStyle.width).toBe(glyphStyle.width);
         expect(lunarStyle.width).toBeLessThanOrEqual(glyphStyle.width);
-        expect(selectionDay?.props.animatedProps.__mockFactory())
-            .toMatchObject({
-                accessibilityLabel:
-                    "2026년 7월 20일, 선택됨, 음 6.7",
-                accessible: true,
-            });
+        expect(selectionDay?.props.accessible).toBe(false);
+        expect(cell.props.accessibilityState.selected).toBe(true);
+        expect(cell.props.accessibilityLabel).toContain("음 6.7");
     });
 
     test("가로·세로 pager grid는 월별 고정 detail cell height를 사용한다", async () => {
@@ -1734,7 +1713,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         expectDetailMonthPageCellHeights();
     });
 
-    test("같은 달의 날짜 선택은 grid를 다시 렌더하지 않고 current glyph 접근성만 갱신한다", async () => {
+    test("같은 달의 날짜 선택은 두 날짜 버튼만 갱신하고 다른 월과 셀을 유지한다", async () => {
         const heightFixture = createDetailMonthHeightFixture();
         await renderCalendar("2026-07-15", false, "detail", heightFixture);
         const initialDates = [
@@ -1749,9 +1728,12 @@ describe("ScheduleCalendar detail month swipe motion", () => {
                 testID: `detail-month-grid-${initialDate.slice(0, 7)}`,
             }).props
         ));
+        const untouchedCell = getDetailMonthGrid("2026-07").findByProps({
+            testID: "detail-month-cell-2026-07-2026-07-18",
+        }).props;
         expect(getDetailMonthDayProps(
             "2026-07-15"
-        ).isSelectedDay).toBe(false);
+        ).isSelectedDay).toBe(true);
         expect(getDetailMonthDayProps(
             "2026-07-15",
             "2026-07-20"
@@ -1770,15 +1752,13 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         expect(getDetailMonthDayProps(
             "2026-07-15",
             "2026-07-20"
-        ).isSelectedDay).toBe(false);
+        ).isSelectedDay).toBe(true);
         expect(getDetailMonthSelectionText("current")).toBe("20");
-        expect(renderer?.root.findByProps({
-            testID: "detail-month-selection-day-current",
-        }).props.animatedProps.__mockFactory()).toMatchObject({
-            accessibilityLabel: "2026년 7월 20일, 선택됨",
-            accessible: true,
-        });
+        expect(getDetailMonthGrid("2026-07").findByProps({
+            testID: "detail-month-cell-2026-07-2026-07-18",
+        }).props).toBe(untouchedCell);
         initialDates.forEach((initialDate, index) => {
+            if (initialDate === "2026-07-15") return;
             const nextGridProps = renderer?.root.findByProps({
                 testID: `detail-month-grid-${initialDate.slice(0, 7)}`,
             }).props;

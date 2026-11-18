@@ -407,6 +407,21 @@ enum NoLateAlarmGenerationPolicy {
 }
 
 enum NoLateAlarmRecoveryPolicy {
+  static func preservesScheduledOccurrence(
+    _ alarm: NoLateStoredAlarm,
+    for command: NoLateValidatedCancelCommand,
+    nowMilliseconds: Int64
+  ) -> Bool {
+    alarm.deliveryMode == .timeSensitive &&
+      alarm.state == .scheduled &&
+      alarm.generation == command.generation &&
+      alarm.sourceTriggerAtMilliseconds == command.preserveTriggerAtMilliseconds &&
+      disposition(
+        triggerAtMilliseconds: alarm.effectiveTriggerAtMilliseconds,
+        nowMilliseconds: nowMilliseconds
+      ) == .keep
+  }
+
   static func disposition(
     triggerAtMilliseconds: Int64,
     nowMilliseconds: Int64
@@ -512,6 +527,7 @@ struct NoLateValidatedCancelCommand: Sendable {
   let logicalAlarmId: String?
   let scheduleId: String
   let generation: Int64
+  let preserveTriggerAtMilliseconds: Int64?
 }
 
 struct NoLateValidatedNotificationResponseFire: Sendable {
@@ -663,7 +679,8 @@ enum NoLateAlarmInput {
     alarmId: String,
     logicalAlarmId: String?,
     scheduleId: String,
-    generation: Double
+    generation: Double,
+    preserveTriggerAt: String? = nil
   ) throws -> NoLateValidatedCancelCommand {
     NoLateValidatedCancelCommand(
       alarmId: try validatedIdentifier(alarmId, fieldName: "alarmId"),
@@ -671,7 +688,8 @@ enum NoLateAlarmInput {
         try validatedIdentifier($0, fieldName: "logicalAlarmId")
       },
       scheduleId: try validatedIdentifier(scheduleId, fieldName: "scheduleId"),
-      generation: try safeInteger(generation, fieldName: "generation")
+      generation: try safeInteger(generation, fieldName: "generation"),
+      preserveTriggerAtMilliseconds: try preserveTriggerAt.map(isoTimestampMilliseconds)
     )
   }
 

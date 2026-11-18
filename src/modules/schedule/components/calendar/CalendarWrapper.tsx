@@ -30,7 +30,7 @@ type Props = {
     transitionActive?: boolean;
     reduceMotionEnabled?: boolean;
     todayFocusTarget?: TodayFocusTarget | null;
-    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean };
+    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean; requestKey?: string };
     onSavedStackPositionReady?: (itemId: string) => void;
     onTodayFocusReady?: (day: string) => void;
     onRegisterDetailMonthMotionCancel?: (

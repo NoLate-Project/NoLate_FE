@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   Keyboard,
   Platform,
@@ -15,6 +16,7 @@ import {
 import Reanimated, { useReducedMotion } from 'react-native-reanimated';
 import styles from './ScheduleAddModal.styles';
 
+import LoadingIndicator from '../../../../ui/LoadingIndicator';
 import { startOfLocalScheduleDay } from '../../scheduleFormDate';
 import CategoryLoadErrorBanner from './CategoryLoadErrorBanner';
 import CategoryPickerRow from './CategorySelectBox';
@@ -22,6 +24,7 @@ import LocationInputRow from './LocationInputRow';
 import NotificationSettingsCard from './NotificationSettingsCard';
 import { ScheduleRouteDraftNotice } from './ScheduleRouteDraftNotice';
 import ScheduleAddDateTimeSection from './ScheduleAddDateTimeSection';
+import { getScheduleRouteCardScrollOffset } from './scheduleRouteCardPosition';
 
 import {
   FORM_ACCENT,
@@ -32,6 +35,7 @@ import {
   type Props,
 } from './scheduleAddModalModel';
 import { useScheduleAddModalController } from './useScheduleAddModalController';
+import { useCategoryManagementReturn } from './useCategoryManagementReturn';
 export type { ScheduleAddMorphPresenter } from './scheduleAddModalModel';
 
 /**
@@ -65,7 +69,16 @@ export default function ScheduleNewModal({
   const largeText = useWindowDimensions().fontScale > 1.35;
   const reduceMotion = useReducedMotion();
   const formScrollRef = useRef<ScrollView>(null);
+  const formSurfaceRef = useRef<View>(null);
+  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
   const categoryTriggerRef = useRef<View>(null);
+  const openCategoryManagement = useCategoryManagementReturn(categoryTriggerRef, visible);
+  const routeButtonRef = useRef<React.ComponentRef<typeof Pressable>>(null);
+  const routeSectionRef = useRef<View>(null);
+  const routeOffsetRef = useRef<number | null>(null);
+  const restoredRouteSessionRef = useRef<string | undefined>(undefined);
+  const routeReturnPending = useRef<string | undefined>(undefined);
+  const routeHighlightOpacity = useRef(new Animated.Value(0)).current;
   const formOffsetRef = useRef(0);
   const formContentHeightRef = useRef(0);
   const headerHeightRef = useRef(0);
@@ -92,26 +105,126 @@ export default function ScheduleNewModal({
     onMorphReady,
     morphPresenterRef,
   });
-  const { memoInputRef } = controller;
+  const { memoInputRef, routeReturn, shouldRender } = controller;
+  const revealFocusedMemo = useCallback((keyboardTop: number | undefined) => {
+    if (keyboardTop == null) return;
+    const memo = memoInputRef.current;
+    if (!memo?.isFocused()) return;
+    memo.measureInWindow((_x, y, _width, height) => {
+      if (!memo.isFocused() || height <= 0) return;
+      const overlap = y + height + 12 - keyboardTop;
+      if (overlap > 0) {
+        formScrollRef.current?.scrollTo({
+          y: Math.max(0, formOffsetRef.current) + overlap,
+          animated: !reduceMotion,
+        });
+      }
+    });
+  }, [memoInputRef, reduceMotion]);
   useEffect(() => {
-    if (Platform.OS !== 'ios' || !visible) return;
-    const subscription = Keyboard.addListener('keyboardDidShow', ({ endCoordinates }) => {
-      const memo = memoInputRef.current;
-      if (!memo?.isFocused()) return;
-      memo.measureInWindow((_x, y, _width, height) => {
-        if (!memo.isFocused()) return;
-        const overlap = y + height + 12 - endCoordinates.screenY;
-        if (overlap > 0) {
-          formScrollRef.current?.scrollTo({
-            y: Math.max(0, formOffsetRef.current) + overlap,
-            animated: !reduceMotion,
-          });
+    if (Platform.OS !== 'ios' || !visible || !shouldRender) {
+      setKeyboardOverlap(0);
+      return;
+    }
+    if (!largeText) setKeyboardOverlap(0);
+    let active = true;
+    const show = Keyboard.addListener('keyboardDidShow', ({ endCoordinates }) => {
+      if (!largeText) {
+        revealFocusedMemo(endCoordinates.screenY);
+        return;
+      }
+      formSurfaceRef.current?.measureInWindow((_x, y, _width, height) => {
+        if (active && height > 0) {
+          setKeyboardOverlap(Math.max(0, Math.ceil(y + height - endCoordinates.screenY)));
         }
       });
     });
-    return () => subscription.remove();
-  }, [memoInputRef, reduceMotion, visible]);
-  if (!controller.shouldRender) return null;
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardOverlap(0));
+    return () => {
+      active = false;
+      show.remove();
+      hide.remove();
+    };
+  }, [largeText, revealFocusedMemo, shouldRender, visible]);
+  useEffect(() => {
+    if (keyboardOverlap <= 0) return;
+    const frame = requestAnimationFrame(() => {
+      const keyboard = Keyboard.metrics();
+      if (keyboard) revealFocusedMemo(keyboard.screenY - saveFooterHeightRef.current);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [keyboardOverlap, revealFocusedMemo]);
+  useEffect(() => {
+    if (reduceMotion || !visible) {
+      routeHighlightOpacity.stopAnimation();
+      routeHighlightOpacity.setValue(0);
+    }
+  }, [reduceMotion, routeHighlightOpacity, visible]);
+  const restoreRoutePosition = useCallback(() => {
+    const offset = routeOffsetRef.current;
+    const scroll = formScrollRef.current;
+    if (!visible || !shouldRender || !routeReturn || routeReturn.sessionId === restoredRouteSessionRef.current ||
+        offset == null || !scroll || formContentHeightRef.current <= 0) return;
+
+    const sessionId = routeReturn.sessionId;
+    restoredRouteSessionRef.current = sessionId;
+    routeReturnPending.current = sessionId;
+    routeOffsetRef.current = null;
+    formOffsetRef.current = offset;
+    scroll.scrollTo({ y: offset, animated: false });
+    if (routeReturn.applied && !reduceMotion) {
+      routeHighlightOpacity.setValue(0.12);
+      Animated.timing(routeHighlightOpacity, {
+        toValue: 0,
+        duration: 160,
+        useNativeDriver: true,
+        isInteraction: false,
+      }).start();
+    }
+    requestAnimationFrame(() => {
+      const button = routeButtonRef.current;
+      const section = routeSectionRef.current;
+      const viewport = scroll.getNativeScrollRef();
+      const isCurrent = () => formScrollRef.current === scroll && routeReturnPending.current === sessionId;
+      if (!isCurrent() || !button) return;
+      const restoreFocus = () => {
+        if (isCurrent() && routeButtonRef.current === button) {
+          AccessibilityInfo.sendAccessibilityEvent?.(button, 'focus');
+        }
+      };
+      if (!routeReturn.applied || !section || !viewport) {
+        restoreFocus();
+        return;
+      }
+
+      viewport.measureInWindow((_x, top, _width, height) => {
+        section.measureInWindow((_sectionX, y, _sectionWidth, sectionHeight) => {
+          if (!isCurrent()) return;
+          const target = getScheduleRouteCardScrollOffset(offset, top, height, y, sectionHeight);
+          if (target !== offset) {
+            formOffsetRef.current = target;
+            scroll.scrollTo({ y: target, animated: false });
+            requestAnimationFrame(restoreFocus);
+            return;
+          }
+          restoreFocus();
+        });
+      });
+    });
+  }, [reduceMotion, routeHighlightOpacity, routeReturn, shouldRender, visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      routeReturnPending.current = undefined;
+      routeOffsetRef.current = null;
+      return;
+    }
+    if (!shouldRender) return;
+    const frame = requestAnimationFrame(restoreRoutePosition);
+    return () => cancelAnimationFrame(frame);
+  }, [restoreRoutePosition, shouldRender, visible]);
+
+  if (!shouldRender) return null;
   const {
     SheetContentView,
     SheetMotionView,
@@ -184,6 +297,7 @@ export default function ScheduleNewModal({
     travelMode,
     writableCategories,
   } = controller;
+  const canOpenCategories = writableCategories.length > 0 || Boolean(onManageCategories);
   const reportFormHeight = (width: number, height: number) => {
     if (height <= 0) return;
     const fixedHeight = headerHeightRef.current + (largeText ? saveFooterHeightRef.current : 0);
@@ -224,8 +338,9 @@ export default function ScheduleNewModal({
         maxFontSizeMultiplier={largeText ? 2.4 : undefined}
         style={[styles.saveBtnText, { color: saveTextColor }]}
       >
-        {submitting ? '저장 중…' : '일정 저장'}
+        {submitting ? '저장 중' : '일정 저장'}
       </Text>
+      {submitting && <LoadingIndicator tone="inverse" delayMs={150} />}
     </Pressable>
   );
 
@@ -334,6 +449,7 @@ export default function ScheduleNewModal({
           ]}
         >
           <Reanimated.View
+            ref={formSurfaceRef}
             collapsable={false}
             shouldRasterizeIOS={
               Platform.OS === 'ios' &&
@@ -390,17 +506,18 @@ export default function ScheduleNewModal({
                 <ScrollView
                   ref={formScrollRef}
                   testID="schedule-add-scroll"
-                  style={styles.scrollView}
+                  style={[styles.scrollView, largeText && styles.scrollViewLarge]}
                   keyboardShouldPersistTaps="handled"
                   keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : undefined}
-                  automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+                  automaticallyAdjustKeyboardInsets={Platform.OS === 'ios' && !largeText}
                   showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.scrollContent}
+                  contentContainerStyle={[styles.scrollContent, largeText && styles.scrollContentLarge]}
                   onScroll={({ nativeEvent }) => { formOffsetRef.current = nativeEvent.contentOffset.y; }}
                   scrollEventThrottle={16}
                   onContentSizeChange={(width, height) => {
                     formContentHeightRef.current = height;
                     reportFormHeight(width, height);
+                    if (height > 0) restoreRoutePosition();
                   }}
                 >
                   {categoryError && onRetryCategories ? (
@@ -412,9 +529,10 @@ export default function ScheduleNewModal({
                   ) : null}
 
                   <View
-                    style={
-                      isMorphPresentation ? styles.morphBodyContent : undefined
-                    }
+                    style={[
+                      isMorphPresentation && styles.morphBodyContent,
+                      largeText && styles.formBodyLarge,
+                    ]}
                   >
                     <Text
                       style={[styles.label, { color: colors.textSecondary }]}
@@ -470,10 +588,10 @@ export default function ScheduleNewModal({
                         }`}
                         accessibilityState={{
                           expanded: categoryPickerOpen,
-                          disabled: writableCategories.length === 0,
+                          disabled: !canOpenCategories,
                         }}
                         onPress={toggleCategory}
-                        disabled={writableCategories.length === 0}
+                        disabled={!canOpenCategories}
                         hitSlop={{ top: 7, right: 4, bottom: 7, left: 4 }}
                         style={({ pressed }) => [
                           styles.categoryInlineChip,
@@ -557,23 +675,33 @@ export default function ScheduleNewModal({
                           setSelectedCategoryId(nextCategoryId);
                           setCategoryPickerOpen(false);
                         }}
-                        onManageCategories={onManageCategories}
+                        onManageCategories={onManageCategories
+                          ? () => openCategoryManagement(() => onManageCategories(category ? category.calendarId ?? null : undefined))
+                          : undefined}
                       />
                     </Animated.View>
 
                     <ScheduleAddDateTimeSection controller={controller} largeText={largeText} />
 
-                    <LocationInputRow
-                      originValue={originText}
-                      destinationValue={destinationText}
-                      travelMode={travelMode}
-                      travelMinutes={travelMinutes}
-                      routeInfo={routeInfo}
-                      onPress={openRoutePlanner}
-                      onClear={routeInfo ? clearRoute : undefined}
-                      wrapTitle={largeText}
-                      footer={<ScheduleRouteDraftNotice change={routeDraftChange} color={colors.textSecondary} />}
-                    />
+                    <View ref={routeSectionRef} collapsable={false}>
+                      <LocationInputRow
+                        originValue={originText}
+                        destinationValue={destinationText}
+                        travelMode={travelMode}
+                        travelMinutes={travelMinutes}
+                        routeInfo={routeInfo}
+                        routeButtonRef={routeButtonRef}
+                        highlightOpacity={routeHighlightOpacity}
+                        onPress={() => {
+                          routeReturnPending.current = undefined;
+                          routeOffsetRef.current = formOffsetRef.current;
+                          openRoutePlanner();
+                        }}
+                        onClear={routeInfo ? clearRoute : undefined}
+                        wrapTitle={largeText}
+                        footer={<ScheduleRouteDraftNotice change={routeDraftChange} color={colors.textSecondary} />}
+                      />
+                    </View>
 
                     {!!routeInfo && (
                       <NotificationSettingsCard
@@ -583,6 +711,7 @@ export default function ScheduleNewModal({
                         leadMinutes={notificationLeadMinutes}
                         intervalMinutes={notificationIntervalMinutes}
                         routeInfo={routeInfo}
+                        routePlannedArrivalAt={controller.routePlannedArrivalAt}
                         startAt={
                           allDay
                             ? startOfLocalScheduleDay(startDay)
@@ -626,6 +755,11 @@ export default function ScheduleNewModal({
                       >
                         <TextInput
                           ref={memoInputRef}
+                          onFocus={() => {
+                            if (Platform.OS === 'ios') {
+                              requestAnimationFrame(() => revealFocusedMemo(Keyboard.metrics()?.screenY));
+                            }
+                          }}
                           testID="schedule-add-memo-input"
                           value={notes}
                           onChangeText={value => {
@@ -652,6 +786,7 @@ export default function ScheduleNewModal({
                         onPress={openMemo}
                         style={({ pressed }) => [
                           styles.memoCollapsedCard,
+                          largeText && styles.memoCollapsedCardLarge,
                           {
                             borderColor: colors.border,
                             backgroundColor: pressed
@@ -683,7 +818,10 @@ export default function ScheduleNewModal({
                 </ScrollView>
                 {largeText && (
                   <View
-                    style={[styles.saveFooter, { borderTopColor: colors.border, backgroundColor: colors.surface }]}
+                    style={[
+                      styles.saveFooter,
+                      { borderTopColor: colors.border, backgroundColor: colors.surface, marginBottom: keyboardOverlap },
+                    ]}
                     onLayout={({ nativeEvent: { layout } }) => {
                       saveFooterHeightRef.current = layout.height;
                       reportFormHeight(layout.width, formContentHeightRef.current);

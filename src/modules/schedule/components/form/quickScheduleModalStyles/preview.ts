@@ -150,31 +150,19 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         minWidth: 0,
     },
         previewDateTimeValue: {
-        minHeight: 44,
-        flexDirection: "row",
-        alignItems: "center",
-        flexWrap: "wrap",
-        columnGap: 4,
-    },
-        previewDateTimeValueStacked: {
-        minHeight: 64,
         flexDirection: "column",
-        alignItems: "flex-start",
-        flexWrap: "nowrap",
-        rowGap: 0,
     },
         previewInlineField: {
+        minWidth: 0,
         minHeight: 44,
-        flexShrink: 1,
-        justifyContent: "center",
-    },
-        previewInlineFieldStacked: {
-        minHeight: 32,
-    },
-        previewInlineControl: {
+        paddingVertical: 8,
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
+    },
+        previewInlineCopy: {
+        minWidth: 0,
+        flexShrink: 1,
     },
         previewInlineContent: {
         flexShrink: 1,
@@ -189,11 +177,6 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         lineHeight: 19,
         fontWeight: "600",
         flexShrink: 1,
-    },
-        previewDateTimeSeparator: {
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "600",
     },
         previewInfoValueRow: {
         flexDirection: "row",
@@ -279,6 +262,14 @@ export function createPreviewStyles(options: QuickScheduleModalStylesOptions) {
         warningBadgeText: {
         fontSize: 9.5,
         fontWeight: "900",
+    },
+        previewSaveError: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "600",
     },
         previewButtons: {
         paddingTop: 8,

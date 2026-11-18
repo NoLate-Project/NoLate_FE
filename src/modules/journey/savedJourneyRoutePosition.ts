@@ -59,7 +59,8 @@ export function presentSavedJourneyRoutePosition(snapshot: AutomaticJourneySnaps
             + view.progress * layout.legs[i].fraction,waiting:false};
     }
     if (view.phase === 'FINAL_WALK') {
-        if (legs.length !== 3 || legs[1]?.kind !== 'BUS' || legs[2]?.kind !== 'WALK' || snapshot?.guidance?.activeLegIndex !== 2) return null;
+        if (legs.length !== 3 || !['BUS','SUBWAY'].includes(legs[1]?.kind) || legs[2]?.kind !== 'WALK'
+            || snapshot?.guidance?.activeLegIndex !== 2) return null;
         const metadata = automaticRecord(snapshot?.guidanceRoute);
         const routeLegs = metadata?.legs;
         if (!metadata || !binding || ['sessionId', 'scheduleId', 'generation', 'routeRevision', 'routeInputDigest']

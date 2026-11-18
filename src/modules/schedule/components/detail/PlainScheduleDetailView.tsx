@@ -1,6 +1,9 @@
 import ImportedTicketSummary from './ImportedTicketSummary';
-import React, { useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import ScheduleSharingInformation, { ScheduleDetailReadingRow } from './ScheduleSharingInformation';
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { AccessibilityInfo, Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
+import LoadingIndicator from "../../../../ui/LoadingIndicator";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 
 import { useTheme } from "../../../theme/ThemeContext";
@@ -9,9 +12,17 @@ import {
     type PlainScheduleDetailPresentation,
 } from "../../plainScheduleDetailPresentation";
 import type { ScheduleItem } from "../../types";
+import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotion";
+import {
+    SCHEDULE_EDITOR_EXIT_MS,
+    ScheduleDetailEditingContext,
+    ScheduleDetailEditResultContext,
+} from "../../../../routeSupport/schedule/ScheduleDetailEditorTransition";
 
 export const PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT = 60;
 export const PLAIN_SCHEDULE_DETAIL_CONTENT_GAP = 14;
+
+const routeConfirmationEntrance = FadeIn.duration(240).reduceMotion(ReduceMotion.System);
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -25,7 +36,8 @@ type Props = {
         statusLabel: string;
         actionLabel: string;
         pending: boolean;
-        onPress: () => void;
+        confirmed?: boolean;
+        onPress: (restoreFocus?: () => void) => void;
         participantContent?: React.ReactNode;
     };
     arrivalObservation?: React.ReactNode;
@@ -41,6 +53,22 @@ type DetailInfoRowProps = {
     featured?: boolean;
     last?: boolean;
 };
+
+type DetailSection = "title" | "time" | "location" | "notification" | "memo";
+
+function changedSections(previous: ScheduleItem, updated: ScheduleItem): DetailSection[] {
+    const before = buildPlainScheduleDetailPresentation(previous);
+    const after = buildPlainScheduleDetailPresentation(updated);
+    const sections: DetailSection[] = [];
+    if (before.title !== after.title || before.categoryTitle !== after.categoryTitle
+        || before.categoryColor !== after.categoryColor) sections.push("title");
+    if (before.dateLabel !== after.dateLabel || before.timeRangeLabel !== after.timeRangeLabel
+        || before.durationLabel !== after.durationLabel) sections.push("time");
+    if (after.location && before.location !== after.location) sections.push("location");
+    if (updated.notificationEnabled && before.notificationLabel !== after.notificationLabel) sections.push("notification");
+    if (after.notes && before.notes !== after.notes) sections.push("memo");
+    return sections;
+}
 
 function DetailInfoRow({
     testID,
@@ -75,19 +103,18 @@ function DetailInfoRow({
             <View style={styles.infoCopy}>
                 {!featured && (
                     <Text
-                        allowFontScaling={!largeText}
-                        style={[styles.infoLabel, largeText && styles.largeInfoLabel, { color: colors.textSecondary }]}
+                        maxFontSizeMultiplier={1.75}
+                        style={[styles.infoLabel, { color: colors.textSecondary }]}
                     >
                         {label}
                     </Text>
                 )}
                 <Text
-                    numberOfLines={largeText ? undefined : 2}
-                    allowFontScaling={!largeText}
+                    numberOfLines={featured || largeText ? undefined : 2}
+                    maxFontSizeMultiplier={1.8}
                     lineBreakStrategyIOS="hangul-word"
                     style={[
                         styles.infoValue,
-                        largeText && styles.scaledInfoValue,
                         { color: featured ? colors.textSecondary : colors.textPrimary },
                     ]}
                 >
@@ -96,7 +123,7 @@ function DetailInfoRow({
                 {secondaryValue ? (
                     <View style={[styles.infoSecondaryRow, largeText && styles.infoSecondaryRowLarge]}>
                         <Text
-                            allowFontScaling={!largeText}
+                            maxFontSizeMultiplier={1.8}
                             lineBreakStrategyIOS="hangul-word"
                             style={[
                                 styles.infoSecondaryValue,
@@ -109,8 +136,8 @@ function DetailInfoRow({
                         {badge ? (
                             <View style={[styles.infoBadge, { backgroundColor: colors.border }]}>
                                 <Text
-                                    allowFontScaling={!largeText}
-                                    style={[styles.infoBadgeText, largeText && styles.scaledBadgeText, { color: colors.textSecondary }]}
+                                    maxFontSizeMultiplier={1.75}
+                                    style={[styles.infoBadgeText, { color: colors.textSecondary }]}
                                 >
                                     {badge}
                                 </Text>
@@ -130,25 +157,29 @@ function DetailInfoRow({
     );
 }
 
-function ScheduleHero({ presentation }: { presentation: PlainScheduleDetailPresentation }) {
+function ScheduleHero({ presentation, receivedReading }: {
+    presentation: PlainScheduleDetailPresentation;
+    receivedReading: boolean;
+}) {
     const { colors } = useTheme();
+    const largeText = useWindowDimensions().fontScale > 1.35;
 
     return (
-        <View style={styles.hero}>
-            <View
+        <View style={[styles.hero, receivedReading && styles.receivedHero]}>
+            {!receivedReading && <View
                 accessible
                 accessibilityLabel={`카테고리 ${presentation.categoryTitle}`}
-                style={[styles.categoryChip, { borderColor: colors.border }]}
+                style={[styles.categoryChip, largeText && styles.categoryChipLarge, { borderColor: colors.border }]}
             >
                 <View style={[styles.categoryDot, { backgroundColor: presentation.categoryColor }]} />
-                <Text numberOfLines={1} style={[styles.categoryText, { color: colors.textPrimary }]}>
+                <Text numberOfLines={largeText ? undefined : 1} style={[styles.categoryText, { color: colors.textPrimary }]}>
                     {presentation.categoryTitle}
                 </Text>
-            </View>
+            </View>}
             <Text
                 accessibilityRole="header"
                 lineBreakStrategyIOS="hangul-word"
-                style={[styles.heroTitle, { color: colors.textPrimary }]}
+                style={[styles.heroTitle, receivedReading && styles.receivedTitle, { color: colors.textPrimary }]}
             >
                 {presentation.title}
             </Text>
@@ -171,10 +202,87 @@ export default function PlainScheduleDetailView({
     );
     const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
     const hasNotification = item.notificationEnabled === true;
+    const receivedReading = !largeTravelPlanText && Boolean(item.sharePermission && item.sharePermission !== "OWNER");
+    const editing = useContext(ScheduleDetailEditingContext);
+    const editResult = useContext(ScheduleDetailEditResultContext);
+    const reduceMotion = useSystemReduceMotion();
+    const handled = useRef<typeof editResult>(null);
+    const scroll = useRef<ScrollView>(null);
+    const routeButton = useRef<View>(null);
+    const page = useRef<View>(null);
+    const sections = useRef<Partial<Record<DetailSection, View | null>>>({});
+    const viewport = useRef({ offset: 0, height: 0 });
+    const [highlights, setHighlights] = useState<DetailSection[]>([]);
+    const glow = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (editing || !editResult || editResult === handled.current || editResult.updated.id !== item.id) {
+            setHighlights(current => current.length ? [] : current);
+            return;
+        }
+        const changed = changedSections(editResult.previous, editResult.updated);
+        if (!changed.length) {
+            handled.current = editResult;
+            return;
+        }
+        let active = true;
+        const timer = setTimeout(() => {
+            handled.current = editResult;
+            const content = page.current;
+            const target = sections.current[changed[0]];
+            if (target && content && viewport.current.height > 0) {
+                target.measureLayout(content, (_x, y, _width, height) => {
+                    if (!active) return;
+                    const top = y + contentTopInset;
+                    const { offset, height: visibleHeight } = viewport.current;
+                    const visibleTop = offset + contentTopInset;
+                    const visibleBottom = offset + visibleHeight - 12;
+                    const fits = height <= visibleHeight - contentTopInset - 12;
+                    const bottom = top + (fits ? height : Math.min(44, height));
+                    if (top < visibleTop || bottom > visibleBottom) {
+                        const nextOffset = top < visibleTop || !fits
+                            ? top - contentTopInset
+                            : bottom - visibleHeight + 12;
+                        scroll.current?.scrollTo({ y: Math.max(0, nextOffset), animated: false });
+                    }
+                });
+            }
+            if (reduceMotion) return;
+            setHighlights(changed);
+            glow.setValue(1);
+            Animated.timing(glow, { toValue: 0, duration: 180, useNativeDriver: true, isInteraction: false })
+                .start(({ finished }) => { if (active && finished) setHighlights([]); });
+        }, reduceMotion ? 0 : SCHEDULE_EDITOR_EXIT_MS);
+        return () => {
+            active = false;
+            clearTimeout(timer);
+            glow.stopAnimation();
+            glow.setValue(0);
+        };
+    }, [contentTopInset, editing, editResult, glow, item.id, reduceMotion]);
+
+    const section = (key: DetailSection, content: React.ReactNode) => (
+        <View ref={view => { sections.current[key] = view; }} collapsable={false}>
+            {content}
+            {highlights.includes(key) && (
+                <Animated.View
+                    testID={`schedule-edit-highlight-${key}`}
+                    pointerEvents="none"
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    style={[StyleSheet.absoluteFillObject, { backgroundColor: `${accent}26`, borderRadius: 12, opacity: glow }]}
+                />
+            )}
+        </View>
+    );
 
     return (
         <ScrollView
             testID="plain-schedule-detail"
+            ref={scroll}
+            onLayout={event => { viewport.current.height = event.nativeEvent.layout.height; }}
+            onScroll={event => { viewport.current.offset = event.nativeEvent.contentOffset.y; }}
+            scrollEventThrottle={16}
             style={[styles.root, { backgroundColor: colors.background }]}
             contentContainerStyle={[
                 styles.content,
@@ -185,10 +293,17 @@ export default function PlainScheduleDetailView({
             ]}
             showsVerticalScrollIndicator={false}
         >
-            <View testID="plain-schedule-detail-page" style={styles.pageContent}>
-                <ScheduleHero presentation={presentation} />
+            <View ref={page} collapsable={false} testID="plain-schedule-detail-page" style={styles.pageContent}>
+                {section("title", <ScheduleHero presentation={presentation} receivedReading={receivedReading} />)}
 
-                <View
+                {section("time", receivedReading ? (
+                    <View testID="plain-schedule-detail-time" accessible
+                        accessibilityLabel={`일시 ${presentation.dateLabel} ${presentation.timeRangeLabel}`}
+                        style={styles.receivedTime}>
+                        <Text style={[styles.receivedDate, { color: colors.textSecondary }]}>{presentation.dateLabel}</Text>
+                        <Text style={[styles.receivedTimeRange, { color: colors.textPrimary }]}>{presentation.timeRangeLabel}</Text>
+                    </View>
+                ) : <View
                     testID="plain-schedule-detail-info-group"
                     style={[
                         styles.infoGroup,
@@ -208,26 +323,30 @@ export default function PlainScheduleDetailView({
                         featured
                         last
                     />
-                </View>
+                </View>)}
                 {(presentation.location || hasNotification) ? (
-                    <View style={styles.additionalInfo}>
+                    <View style={!receivedReading && styles.additionalInfo}>
                         {presentation.location ? (
-                            <DetailInfoRow
+                            section("location", receivedReading ? (
+                                <ScheduleDetailReadingRow testID="plain-schedule-detail-location" label="장소" value={presentation.location} />
+                            ) : <DetailInfoRow
                                 testID="plain-schedule-detail-location"
                                 icon="location-outline"
                                 label="장소"
                                 value={presentation.location}
                                 last={!hasNotification}
-                            />
+                            />)
                         ) : null}
                         {hasNotification ? (
-                            <DetailInfoRow
+                            section("notification", receivedReading ? (
+                                <ScheduleDetailReadingRow testID="plain-schedule-detail-notification" label="알림" value={presentation.notificationLabel} />
+                            ) : <DetailInfoRow
                                 testID="plain-schedule-detail-notification"
                                 icon="notifications-outline"
                                 label="알림"
                                 value={presentation.notificationLabel}
                                 last
-                            />
+                            />)
                         ) : null}
                     </View>
                 ) : null}
@@ -248,7 +367,13 @@ export default function PlainScheduleDetailView({
                             ]}
                         >
                             <View style={[styles.travelPlanIcon, { backgroundColor: `${accent}1F` }]}>
-                                <Ionicons name="navigate-outline" size={18} color={accent} />
+                                {travelPlan.confirmed && !largeTravelPlanText ? (
+                                    <Reanimated.View entering={routeConfirmationEntrance} testID="plain-schedule-route-confirmed">
+                                        <Ionicons name="checkmark-circle-outline" size={18} color={accent} />
+                                    </Reanimated.View>
+                                ) : (
+                                    <Ionicons name="navigate-outline" size={18} color={accent} />
+                                )}
                             </View>
                             <View style={[styles.travelPlanCopy, largeTravelPlanText && styles.travelPlanCopyLarge]}>
                                 <Text style={[styles.travelPlanTitle, { color: colors.textPrimary }]}>내 이동 경로</Text>
@@ -261,7 +386,10 @@ export default function PlainScheduleDetailView({
                                 </Text>
                             </View>
                             <Pressable
-                                onPress={travelPlan.onPress}
+                                ref={routeButton}
+                                onPress={() => travelPlan.onPress(() => {
+                                    if (routeButton.current) AccessibilityInfo.sendAccessibilityEvent?.(routeButton.current, "focus");
+                                })}
                                 disabled={travelPlan.pending}
                                 accessibilityRole="button"
                                 accessibilityLabel={`내 이동 경로 ${travelPlan.actionLabel}`}
@@ -275,13 +403,13 @@ export default function PlainScheduleDetailView({
                                     },
                                 ]}
                             >
-                                {travelPlan.pending ? (
-                                    <ActivityIndicator size="small" color="#FFFFFF" style={styles.travelPlanActionIcon} />
-                                ) : (
-                                    <View style={styles.travelPlanActionIcon}>
+                                <View style={styles.travelPlanActionIcon} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                                    {travelPlan.pending ? (
+                                        <LoadingIndicator size="inline" tone="inverse" delayMs={150} />
+                                    ) : (
                                         <Ionicons name="map-outline" size={16} color="#FFFFFF" />
-                                    </View>
-                                )}
+                                    )}
+                                </View>
                                 <Text style={styles.travelPlanButtonText}>{travelPlan.actionLabel}</Text>
                             </Pressable>
                         </View>
@@ -295,7 +423,9 @@ export default function PlainScheduleDetailView({
                     </View>
                 ) : null}
 
-                {presentation.notes ? <View
+                {presentation.notes ? section("memo", receivedReading ? (
+                    <ScheduleDetailReadingRow testID="plain-schedule-detail-memo" label="메모" value={presentation.notes} />
+                ) : <View
                     testID="plain-schedule-detail-memo"
                     accessible
                     accessibilityLabel={`메모 ${presentation.notes}`}
@@ -304,7 +434,8 @@ export default function PlainScheduleDetailView({
                     <View style={[styles.memoDivider, { backgroundColor: colors.border }]} />
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>메모</Text>
                     <Text style={[styles.notesText, { color: colors.textPrimary }]}>{presentation.notes}</Text>
-                </View> : null}
+                </View>) : null}
+                <ScheduleSharingInformation item={item} inline />
             </View>
         </ScrollView>
     );
@@ -332,6 +463,11 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         letterSpacing: -0.3,
     },
+    receivedHero: { marginBottom: 10 },
+    receivedTitle: { marginTop: 0 },
+    receivedTime: { gap: 4, marginBottom: 14 },
+    receivedDate: { fontSize: 14, lineHeight: 20, fontWeight: "500" },
+    receivedTimeRange: { fontSize: 18, lineHeight: 24, fontWeight: "600", fontVariant: ["tabular-nums"] },
     sectionTitle: {
         marginBottom: 8,
         fontSize: 12,
@@ -355,10 +491,12 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     categoryDot: {
+        flexShrink: 0,
         width: 8,
         height: 8,
         borderRadius: 4,
     },
+    categoryChipLarge: { maxWidth: '100%', paddingVertical: 4 },
     categoryText: {
         flexShrink: 1,
         fontSize: 11,
@@ -411,19 +549,11 @@ const styles = StyleSheet.create({
         lineHeight: 17,
         fontWeight: "600",
     },
-    largeInfoLabel: {
-        fontSize: 20,
-        lineHeight: 26,
-    },
     infoValue: {
         marginTop: 2,
         fontSize: 14,
         lineHeight: 19,
         fontWeight: "600",
-    },
-    scaledInfoValue: {
-        fontSize: 25,
-        lineHeight: 34,
     },
     infoSecondaryRow: {
         marginTop: 6,
@@ -448,8 +578,6 @@ const styles = StyleSheet.create({
     infoSecondaryValueLarge: {
         flex: 0,
         maxWidth: "100%",
-        fontSize: 34,
-        lineHeight: 42,
     },
     infoBadge: {
         minHeight: 24,
@@ -463,10 +591,6 @@ const styles = StyleSheet.create({
         fontSize: 10.5,
         lineHeight: 15,
         fontWeight: "600",
-    },
-    scaledBadgeText: {
-        fontSize: 18,
-        lineHeight: 24,
     },
     travelPlanSection: {
         marginBottom: 14,

@@ -1,17 +1,26 @@
 import React from "react";
-import { Animated } from "react-native";
+import { Alert, Animated } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import { RouteSearchError, type RouteAlternativeOption } from "../src/modules/map/routingService";
+import { parseTransitOptionsFromOdsay } from "../src/modules/map/odsayApi";
 import { consumeRoutePlannerResult, getRouteCandidateListSnapshot, setRouteCandidateListSnapshot, setRoutePlannerInitial } from "../src/modules/schedule/routePlannerSession";
-import { buildRouteMetricChips, formatRouteTimeFare, sharesTransitDurationEstimate } from "../src/routeSupport/schedule/routeSelectRouteModel";
+import { buildRouteDropdownSummaryItems, buildRouteMetricChips, formatRouteTimeFare, sharesTransitDurationEstimate } from "../src/routeSupport/schedule/routeSelectRouteModel";
 import { useRouteSelectRouteController } from "../src/routeSupport/schedule/useRouteSelectRouteController";
 import { showRouteDetailInterstitialIfEligible } from "../src/modules/advertising/routeDetailInterstitial";
+import { buildOdsayTimetablePreviewInput, getOdsayTimetablePreview } from "../src/api/transitTimetablePreview";
+import { getRouteInfoFromRoute } from "../src/modules/schedule/routeInfo";
+import { useRoutePlannerPresentation } from "../src/modules/schedule/routePlanner/useRoutePlannerPresentation";
 
 const mockGetRoutes = jest.fn();
+const mockTimetablePreview = jest.fn();
 const mockRouter = { canGoBack: () => true, back: jest.fn(), push: jest.fn(), replace: jest.fn() };
 
 jest.mock("expo-router", () => ({ useRouter: () => mockRouter }));
+jest.mock("../src/api/api", () => ({
+    __esModule: true,
+    default: { post: (...args: unknown[]) => mockTimetablePreview(...args) },
+}));
 jest.mock("../src/modules/map/routingService", () => ({
     RouteSearchError: class extends Error {
         code: string;
@@ -22,6 +31,7 @@ jest.mock("../src/modules/map/routingService", () => ({
         }
     },
     getRouteAlternativeOptions: (...args: unknown[]) => mockGetRoutes(...args),
+    getRouteQualityNotice: jest.fn(),
     invalidateRouteSearch: jest.fn(),
 }));
 jest.mock("../src/modules/advertising/routeDetailInterstitial", () => ({
@@ -40,6 +50,32 @@ const originalOrigin = { name: "기존 출발지", lat: 37.49, lng: 126.93 };
 const nowon = { name: "노원역", lat: 37.656, lng: 127.063 };
 const destination = { name: "신림역", lat: 37.484, lng: 126.929 };
 
+test("시간표 상세에서 실제 승차 구간과 환승 도보·예상 대기를 구분한다", () => {
+    const boardingAt = "2026-11-15T07:55:00Z", firstArrival = "2026-11-15T08:43:00Z";
+    const transferAt = "2026-11-15T08:51:00Z", lastArrival = "2026-11-15T08:58:30Z";
+    const option: RouteAlternativeOption = {
+        ...route(),
+        transitLegs: [
+            { kind: "SUBWAY", label: "4호선", lineName: "4호선", durationMinutes: 47 },
+            { kind: "WALK", label: "환승 도보", durationMinutes: 3 },
+            { kind: "SUBWAY", label: "2호선", lineName: "2호선", durationMinutes: 7 },
+            { kind: "WALK", label: "목적지 도보", durationMinutes: 3 },
+        ],
+        odsayTimetablePreview: {
+            departureAt: "2026-11-15T07:50:00Z", arrivalAt: "2026-11-15T08:59:30Z",
+            rides: [{ boardingAt, arrivalAt: firstArrival }, { boardingAt: transferAt, arrivalAt: lastArrival }],
+            transferTimings: [{ previousArrivalAt: firstArrival, boardingAt: transferAt, walkingSeconds: 180 }],
+        },
+    };
+    const [firstRide, transfer, , destinationWalk] = buildRouteDropdownSummaryItems(option);
+    expect(firstRide.title).toContain("48분");
+    expect(firstRide.subtitle).toContain("하차 예정");
+    expect(transfer.title).toBe("환승 도보 3분");
+    expect(transfer.subtitle).toContain("예상 대기 5분");
+    expect(destinationWalk).toMatchObject({ title: "도보 1분", subtitle: "도착지까지" });
+    expect(buildRouteMetricChips(option)).toContainEqual({ key: "walk", label: "도보 4분" });
+});
+
 function route(minutes = 65): RouteAlternativeOption {
     return {
         id: `route-${minutes}`,
@@ -52,15 +88,147 @@ function route(minutes = 65): RouteAlternativeOption {
     };
 }
 
+function odsaySubway(): RouteAlternativeOption {
+    const [parsed] = parseTransitOptionsFromOdsay({ result: { paths: [{
+        pathType: 2, totalTime: 65, rps: [{
+            trafficType: 1, duration: 65, startName: "노원", endName: "사당", startID: 411, endID: 433, wayCode: 2,
+            lane: [{ name: "수도권 4호선", subwayCode: 4, subwayCityCode: 1000 }],
+            passStopList: { stations: [
+                { index: 0, stationName: "노원", stationID: 411 },
+                { index: 1, stationName: "창동", stationID: 412 },
+                { index: 2, stationName: "사당", stationID: 433 },
+            ] },
+        }],
+    }] } });
+    return { ...parsed, mode: "TRANSIT", transitServiceState: "unknown" };
+}
+
+function singleRideTimetable(departureAt: string, arrivalAt: string) {
+    return {
+        departureAt, arrivalAt, transferTimings: [],
+        rides: [{
+            boardingAt: new Date(Date.parse(departureAt) + 180_000).toISOString(),
+            arrivalAt: new Date(Date.parse(arrivalAt) - 60_000).toISOString(),
+        }],
+    };
+}
+
 beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(now);
     mockGetRoutes.mockReset();
+    mockTimetablePreview.mockReset();
 });
 
 afterEach(() => jest.useRealTimers());
 
+test("다음 운행일의 출발 또는 도착 목표에 ODsay 정차역 순서를 함께 보낸다", () => {
+    const option = odsaySubway();
+    const tomorrow = "2026-10-05T08:00:00+09:00";
+    expect(buildOdsayTimetablePreviewInput(option, { requestedDepartureAt: tomorrow }, nowon, destination))
+        .toMatchObject({ requestedDepartureAt: tomorrow, orderedStops: [["노원", "창동", "사당"]] });
+    expect(buildOdsayTimetablePreviewInput(option, { targetArrivalAt: tomorrow }, nowon, destination))
+        .toMatchObject({ targetArrivalAt: tomorrow, orderedStops: [["노원", "창동", "사당"]] });
+});
+
+test("모든 승차와 환승 여유가 확인된 ODsay 시간표만 채택한다", async () => {
+    const departureAt = "2026-10-03T16:29:30Z";
+    const arrivalAt = "2026-10-03T17:41:00Z";
+    const firstRide = { boardingAt: "2026-10-03T16:34:00Z", arrivalAt: "2026-10-03T17:28:00Z" };
+    const secondRide = { boardingAt: "2026-10-03T17:31:37Z", arrivalAt: "2026-10-03T17:40:00Z" };
+    const transfer = {
+        previousArrivalAt: firstRide.arrivalAt, boardingAt: secondRide.boardingAt,
+        walkingSeconds: 157, requiredMarginSeconds: 60,
+    };
+    const valid = { departureAt, arrivalAt, rides: [firstRide, secondRide], transferTimings: [transfer] };
+    const input = buildOdsayTimetablePreviewInput(odsaySubway(), { targetArrivalAt: arrivalAt }, nowon, destination)!;
+    const lookup = (preview: unknown) => {
+        mockTimetablePreview.mockResolvedValueOnce({ data: { success: true, data: { preview } } });
+        return getOdsayTimetablePreview({ ...input, nextStops: ["창동", "낙성대"] }).then(result => result.preview);
+    };
+    await expect(lookup(valid)).resolves.toEqual(valid);
+    await expect(lookup({ ...valid, rides: [firstRide] })).resolves.toBeUndefined();
+    await expect(lookup({ ...valid, transferTimings: undefined })).resolves.toBeUndefined();
+    await expect(lookup({ ...valid, transferTimings: [{ ...transfer, requiredMarginSeconds: undefined }] })).resolves.toBeUndefined();
+    await expect(lookup({ ...valid, transferTimings: [{ ...transfer, walkingSeconds: 158 }] })).resolves.toBeUndefined();
+});
+
+test("지도에서 출발 시각을 바꾸면 이전 시각 대신 새 ODsay 시간표를 표시하고 저장에 사용한다", async () => {
+    const option = odsaySubway();
+    const targetArrivalAt = new Date(arrival).toISOString();
+    const oldDeparture = "2026-10-03T16:29:30.000Z";
+    const explicitDeparture = "2026-10-03T16:32:00.000Z";
+    const explicitDepartureDate = new Date(explicitDeparture);
+    const newArrival = "2026-10-03T17:48:58.000Z";
+    const ride = { boardingAt: "2026-10-03T16:38:00.000Z", arrivalAt: "2026-10-03T17:44:00.000Z" };
+    const response = (preview: Record<string, unknown>) => ({ data: { success: true, data: { preview } } });
+    let resolveNewPreview!: (value: ReturnType<typeof response>) => void;
+    mockTimetablePreview
+        .mockResolvedValueOnce(response(singleRideTimetable(oldDeparture, targetArrivalAt)))
+        .mockReturnValueOnce(new Promise(resolve => { resolveNewPreview = resolve; }));
+    let presentation!: ReturnType<typeof useRoutePlannerPresentation>;
+    const setFocusedRouteStepId = jest.fn();
+    function MapHarness({ explicit }: { explicit: boolean }) {
+        presentation = useRoutePlannerPresentation({
+            destinationAddress: "", destinationDisplay: "신림역", destinationLat: destination.lat,
+            destinationLng: destination.lng, etaLoading: false, hasDestinationCoords: true, hasOriginCoords: true,
+            hasRouteReady: true, initial: { origin: nowon, destination, targetArrivalAt, travelMode: "TRANSIT" },
+            initialRouteDepartureAt: explicit ? explicitDepartureDate : previousDeparture,
+            hasExplicitDeparture: explicit, isBottomSheetHidden: false, isTransitMode: true, mapZoom: 12,
+            originAddress: "", originDisplay: "노원역", originLat: nowon.lat, originLng: nowon.lng,
+            qaLayerMode: "ALL", routeAlternatives: [option], routeSubmitPending: false,
+            selectedAlternativeId: option.id, sessionId: "map-preview", setFocusedRouteStepId,
+            transitRouteFilter: "ALL", transitWalkDetailOverlays: [], travelMode: "TRANSIT",
+        });
+        return null;
+    }
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<MapHarness explicit={false} />); });
+    expect(presentation.selectedRouteInfo?.departureTime).toBe(oldDeparture);
+    expect(presentation.canSubmitRoute).toBe(true);
+
+    await act(async () => { renderer.update(<MapHarness explicit />); });
+    expect(presentation.canSubmitRoute).toBe(false);
+    expect(presentation.selectedAlternative?.odsayTimetablePreview).toBeUndefined();
+    expect(mockTimetablePreview.mock.calls.map(([, body]) => [body.targetArrivalAt, body.requestedDepartureAt]))
+        .toEqual([[targetArrivalAt, undefined], [undefined, explicitDeparture]]);
+
+    await act(async () => { resolveNewPreview(response({ departureAt: explicitDeparture, arrivalAt: newArrival, rides: [ride], transferTimings: [] })); });
+    expect(presentation.canSubmitRoute).toBe(true);
+    expect(presentation.selectedTransitMeta?.combinedText).toContain("목적지 도착 (시간표 기준)");
+    expect(presentation.selectedTransitMeta?.arrivalText).toBe("오전 2:49");
+    expect(presentation.selectedCollapsedRouteSummary?.arrivalText).toContain("오전 2:49");
+    const restored = getRouteInfoFromRoute({ routeInfo: presentation.selectedRouteInfo });
+    expect(restored).toMatchObject({
+        provider: "odsay", timeBasis: "provider_schedule", providerTimeBasis: "timetable",
+        departureTime: explicitDeparture, arrivalTime: newArrival, totalDurationMinutes: 77, totalDurationSeconds: 4618,
+    });
+    expect(restored?.steps.find(step => step.type === "SUBWAY")?.scheduledRide).toEqual(ride);
+    act(() => renderer.unmount());
+});
+
 describe("route candidate timing", () => {
+    test("ODsay 목적지 도착만 가장 가까운 분으로 표시한다", () => {
+        const departureAt = "2026-11-16T09:10:52Z";
+        const arrivalAt = "2026-11-16T10:07:58Z";
+        const preview = singleRideTimetable(departureAt, arrivalAt);
+        const option = { ...odsaySubway(), odsayTimetablePreview: preview };
+
+        expect(formatRouteTimeFare(option, new Date(departureAt)))
+            .toContain("오후 6:10 출발 · 오후 7:08 예상 도착 (목적지)");
+        expect(option.odsayTimetablePreview.arrivalAt).toBe(arrivalAt);
+    });
+
+    test("자정을 넘긴 ODsay 도착은 다음날이라고 표시한다", () => {
+        const departureAt = "2026-11-16T14:09:22Z";
+        const arrivalAt = "2026-11-16T15:04:58Z";
+        const preview = singleRideTimetable(departureAt, arrivalAt);
+
+        expect(formatRouteTimeFare({ ...odsaySubway(), odsayTimetablePreview: preview }, new Date(departureAt)))
+            .toContain("오후 11:09 출발 · 다음날 오전 12:05 예상 도착 (목적지)");
+    });
+
     test("includes access, transfer and exit walking time from the legs instead of distance", () => {
         const transit = route(41);
         const legs: NonNullable<RouteAlternativeOption["transitLegs"]> = [
@@ -310,6 +478,30 @@ describe("route search departure context", () => {
         }
     });
 
+    test("지도를 열지 못하면 같은 후보의 안내를 표시하고 다시 열 수 있다", async () => {
+        const subway = route(14);
+        setRouteCandidateListSnapshot("timing-regression", {
+            alternatives: [subway], selectedRouteId: subway.id, transitFilter: "SUBWAY",
+            scrollY: 0, departureAt: previousDeparture,
+        });
+        mockRouter.replace.mockClear().mockImplementationOnce(() => { throw new Error("Navigation failed"); });
+        await act(async () => { renderer = TestRenderer.create(<Harness returnFromMap showResults />); });
+
+        await act(async () => current.openMapForOption(subway, 54));
+        expect(current.failedMapRouteId).toBe(subway.id);
+        expect(current.routeMapPending).toBe(false);
+        expect(current.selectedRouteId).toBe(subway.id);
+        expect(current.transitRouteFilter).toBe("SUBWAY");
+
+        await act(async () => current.openMapForOption(subway, 54));
+        expect(current.failedMapRouteId).toBeUndefined();
+        expect(mockRouter.replace).toHaveBeenCalledTimes(2);
+        expect(mockRouter.replace.mock.calls[0]).toEqual(mockRouter.replace.mock.calls[1]);
+        expect(getRouteCandidateListSnapshot("timing-regression")).toMatchObject({
+            selectedRouteId: subway.id, transitFilter: "SUBWAY", scrollY: 54,
+        });
+    });
+
     test("지도에서 지정한 출발 시각으로 조회하고 일정 도착 기준으로 덮어쓰지 않는다", async () => {
         const departure = new Date("2026-10-04T02:05:00+09:00");
         await act(async () => {
@@ -370,14 +562,46 @@ describe("route search departure context", () => {
         expect(current!.visibleRouteAlternatives.map((option) => option.id)).toEqual(hasRide ? [route().id] : []);
     });
 
+    test("빈 대중교통 응답에서 같은 장소의 도보 경로를 다시 조회한다", async () => {
+        const walkingRoute: RouteAlternativeOption = { ...route(9), mode: "WALK" };
+        mockGetRoutes.mockResolvedValueOnce([]).mockResolvedValueOnce([walkingRoute]);
+        await act(async () => { renderer = TestRenderer.create(<Harness />); });
+        expect(current.showTransitRecovery).toBe(true);
+        expect(current.visibleRouteAlternatives).toEqual([]);
+        const [origin, destination] = mockGetRoutes.mock.calls[0];
+
+        await act(async () => current.selectTravelMode("WALK"));
+        expect(mockGetRoutes).toHaveBeenLastCalledWith(origin, destination, "WALK", undefined);
+        expect(current.showTransitRecovery).toBe(false);
+        expect(current.visibleRouteAlternatives).toEqual([walkingRoute]);
+    });
+
     test.each(["NO_PROVIDER_ROUTE", "PROVIDER_UNAVAILABLE"] as const)(
         "대중교통 결과 없음과 제공사 오류를 구분한다 (%s)",
         async (code) => {
             mockGetRoutes.mockRejectedValue(new RouteSearchError(code, "조회 실패"));
             await act(async () => { renderer = TestRenderer.create(<Harness />); });
+            expect(current.routeErrorCode).toBe(code);
             expect(current!.showTransitRecovery).toBe(code === "NO_PROVIDER_ROUTE");
         },
     );
+
+    test("제공사 오류 뒤 다시 검색하면 같은 장소와 출발 시각으로 후보를 조회한다", async () => {
+        const candidate = route();
+        const requestedDepartureAt = new Date("2026-10-04T02:05:00+09:00").toISOString();
+        mockGetRoutes
+            .mockRejectedValueOnce(new RouteSearchError("PROVIDER_UNAVAILABLE", "조회 실패"))
+            .mockResolvedValueOnce([candidate]);
+        await act(async () => { renderer = TestRenderer.create(<Harness requestedDepartureAt={requestedDepartureAt} />); });
+        expect(current.routeErrorCode).toBe("PROVIDER_UNAVAILABLE");
+        const failedRequest = mockGetRoutes.mock.calls[0];
+
+        await act(async () => current.retryRouteSearch());
+
+        expect(mockGetRoutes.mock.calls).toEqual([failedRequest, failedRequest]);
+        expect(current.routeErrorCode).toBeUndefined();
+        expect(current.visibleRouteAlternatives).toEqual([candidate]);
+    });
 
     test("출발지를 바꾸면 14분 기준을 버리고 새 65분 경로를 다시 보정한다", async () => {
         await act(async () => { renderer = TestRenderer.create(<Harness />); });
@@ -395,6 +619,101 @@ describe("route search departure context", () => {
         act(() => current!.saveRouteOption(route(), 0));
         const result = consumeRoutePlannerResult("timing-regression");
         expect(result?.departureAt).toBe(new Date("2026-10-04T01:40:00+09:00").toISOString());
+    });
+
+    test("ODsay 추정 경로는 다른 시각으로 재검색하지 않고 선택한 소요시간으로 일정을 저장한다", async () => {
+        const odsayRoute: RouteAlternativeOption = {
+            ...route(),
+            provider: "odsay",
+            providerTimeBasis: "route_estimate",
+            transitServiceState: "unknown",
+        };
+        mockGetRoutes.mockResolvedValue([odsayRoute]);
+        await act(async () => { renderer = TestRenderer.create(<Harness origin={nowon} />); });
+        expect(mockGetRoutes).toHaveBeenCalledTimes(1);
+        expect(current.routeDepartureAt.toISOString())
+            .toBe(new Date("2026-10-04T01:45:00+09:00").toISOString());
+
+        act(() => current.saveRouteOption(odsayRoute, 0));
+        const result = consumeRoutePlannerResult("timing-regression");
+        expect(result?.departureAt).toBe(new Date("2026-10-04T01:40:00+09:00").toISOString());
+        expect(result?.route).toMatchObject({
+            routeInfo: { timeBasis: "estimated", arrivalTime: new Date(arrival).toISOString() },
+        });
+    });
+
+    test("시간표 없이 검증된 접근 도보를 목록과 저장에 같은 추정값으로 사용한다", async () => {
+        const candidate = odsaySubway();
+        const [ride] = candidate.transitLegs!;
+        mockGetRoutes.mockResolvedValue([{ ...candidate, minutes: 5, transitLegs: [
+            { ...ride, durationMinutes: 3 }, { kind: "WALK", label: "목적지 도보", durationMinutes: 2 },
+        ] }]);
+        mockTimetablePreview.mockResolvedValue({ data: { success: true,
+            data: { preview: null, missingEntranceWalk: { seconds: 103, distanceMeters: 112 } } } });
+        await act(async () => { renderer = TestRenderer.create(<Harness origin={nowon} showResults />); });
+        const [option] = current.visibleRouteAlternatives;
+        expect(option.minutes).toBe(7);
+        expect(option.odsayTimetablePreview).toBeUndefined();
+        expect(option.transitLegs?.[0]).toMatchObject({ kind: "WALK", durationSeconds: 103 });
+        act(() => current.saveRouteOption(option, 0));
+        expect(consumeRoutePlannerResult("timing-regression")).toMatchObject({
+            departureAt: new Date("2026-10-04T02:38:17+09:00").toISOString(), travelMinutes: 7,
+            route: { routeInfo: { timeBasis: "estimated", totalDurationSeconds: 403 } },
+        });
+    });
+
+    test.each([false, true])("ODsay 선택 화면과 저장이 같은 시간표를 사용한다 (출발 시각 지정 %s)", async (fixedDeparture) => {
+        const odsayRoute = odsaySubway();
+        const departureAt = "2026-10-03T16:29:30.000Z";
+        const arrivalAt = "2026-10-03T17:41:00.000Z";
+        mockGetRoutes.mockResolvedValue([odsayRoute]);
+        mockTimetablePreview.mockResolvedValue({ data: { success: true, data: { preview: singleRideTimetable(departureAt, arrivalAt) } } });
+        const requestedDepartureAt = fixedDeparture ? departureAt : undefined;
+        await act(async () => { renderer = TestRenderer.create(
+            <Harness origin={fixedDeparture ? originalOrigin : nowon} requestedDepartureAt={requestedDepartureAt} showResults />,
+        ); });
+
+        const [option] = current.visibleRouteAlternatives;
+        expect(mockTimetablePreview).toHaveBeenCalledTimes(1);
+        expect(mockTimetablePreview).toHaveBeenCalledWith("/api/routes/transit/timetable-preview",
+            expect.objectContaining({ nextStops: ["창동"], ...(fixedDeparture
+                ? { requestedDepartureAt: departureAt } : { targetArrivalAt: new Date(arrival).toISOString() }) }),
+            expect.objectContaining({ signal: expect.anything() }));
+        expect(formatRouteTimeFare(option, current.routeDepartureAt)).toContain("예상 도착 (목적지)");
+        act(() => current.saveRouteOption(option, 0));
+        expect(consumeRoutePlannerResult("timing-regression")).toMatchObject({
+            departureAt, travelMinutes: 72,
+            route: { routeInfo: { departureTime: departureAt, arrivalTime: arrivalAt,
+                timeBasis: "provider_schedule", totalDurationSeconds: 4290 } },
+        });
+    });
+
+    test("목록을 열어 둔 사이 시간표의 출발 시각이 지나면 추정 시각으로 바꿔 저장하지 않는다", async () => {
+        const departureAt = "2026-10-03T16:29:30.000Z";
+        const arrivalAt = "2026-10-03T17:41:00.000Z";
+        mockGetRoutes.mockResolvedValue([odsaySubway()]);
+        mockTimetablePreview.mockResolvedValue({ data: { success: true, data: { preview: singleRideTimetable(departureAt, arrivalAt) } } });
+        await act(async () => { renderer = TestRenderer.create(<Harness origin={nowon} showResults />); });
+        const [option] = current.visibleRouteAlternatives;
+        expect(option.odsayTimetablePreview?.departureAt).toBe(departureAt);
+
+        const clock = jest.spyOn(Date, "now").mockReturnValue(Date.parse(departureAt));
+        const alert = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+        try {
+            act(() => current.saveRouteOption(option, 0));
+            expect(consumeRoutePlannerResult("timing-regression")).toBeUndefined();
+            expect(alert).toHaveBeenCalledWith("출발 시각이 지났어요", expect.any(String), expect.any(Array));
+            const refreshedDeparture = "2026-10-03T16:33:00.000Z";
+            mockTimetablePreview.mockResolvedValue({ data: { success: true, data: { preview: singleRideTimetable(refreshedDeparture, arrivalAt) } } });
+            await act(async () => { alert.mock.lastCall?.[2]?.find(button => button.text === "다시 검색")?.onPress?.(); });
+            const [refreshedOption] = current.visibleRouteAlternatives;
+            expect(refreshedOption.odsayTimetablePreview?.departureAt).toBe(refreshedDeparture);
+            act(() => current.saveRouteOption(refreshedOption, 0));
+            expect(consumeRoutePlannerResult("timing-regression")?.departureAt).toBe(refreshedDeparture);
+        } finally {
+            alert.mockRestore();
+            clock.mockRestore();
+        }
     });
 
     test("수단 변경 후 돌아오면 새 응답으로 출발 기준을 다시 보정한다", async () => {

@@ -14,6 +14,7 @@ import {
     ROUTE_ALTERNATIVE_LIMIT_BY_MODE,
 } from "./tmapApiCore.ts";
 import { parseTransitPathCoords } from "./tmapRoadResponse";
+import { isRailKind } from "./transitRouteGeometry";
 import type {
     RoutePathCoord,
     TransitLegKind,
@@ -221,7 +222,10 @@ export function parseTransitLegPathGeometry(
     }
 
     if (isTransitRideKind(kind)) {
-        const direct = parseTransitDirectPathCoords(leg);
+        // Generic leg paths can be coarse route data. Rail requires the provider's passShape.
+        const direct = isRailKind(kind)
+            ? parseTransitPathCoords(leg?.passShape?.linestring ?? leg?.passShape?.coordinates, true)
+            : parseTransitDirectPathCoords(leg);
         if (direct) {
             return {
                 pathCoords: direct,

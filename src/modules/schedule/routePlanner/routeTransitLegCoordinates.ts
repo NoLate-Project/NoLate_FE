@@ -8,7 +8,6 @@ import { resolveTransitRouteNodeCoordinate } from '../../map/transitRouteGeometr
 import { type TransitStopMarkerKind } from '../../map/transitStopVisibility';
 import { TRANSIT_LEG_COLOR } from './presentation';
 import {
-  getMapBusRouteColor,
   type NormalizedRoute,
   SELECTED_ROUTE_COLOR,
   type TransitStopAnchor,
@@ -19,14 +18,16 @@ import {
   toRoutePathCoord,
 } from './routeMapCoordinate';
 import { createTransitStopAnchor } from './routeMapAnchors';
+import { hasTransitLegLineGeometry } from '../../map/transitRouteGeometry';
 import { normalizeDisplayPathCoords } from './routeDisplayPath';
 import {
   getTransitLegEndCoord,
   getTransitLegStartCoord,
 } from './routeTransitLegEndpoints';
 import {
-  compactTransitLineLabel,
+  findTransitRideLineLabel,
   getBusLineColor as getSharedBusLineColor,
+  getTransitBusLineColor,
   getSubwayLineColor as getSharedSubwayLineColor,
 } from '../routeInfo';
 
@@ -36,8 +37,8 @@ export {
 } from './routeTransitLegEndpoints';
 
 /** 지하철 노선명을 공용 노선 색상 정책으로 변환합니다. 입력 구간은 변경하지 않습니다. */
-export function getSubwayLineColor(lineName?: string): string {
-  return getSharedSubwayLineColor(lineName);
+export function getSubwayLineColor(lineName?: string, lineColor?: string): string {
+  return getSharedSubwayLineColor(lineName, lineColor);
 }
 
 /** 대중교통 구간의 수단·노선·API 색상을 조합해 카드와 타임라인용 색상을 결정합니다. 입력 구간은 변경하지 않습니다. */
@@ -46,24 +47,10 @@ export function getTransitLegVisualColor(
     label?: string;
   },
 ): string {
-  const lineLabel =
-    compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
-  if (leg.kind === 'SUBWAY') return getSubwayLineColor(lineLabel);
-  if (leg.kind === 'BUS')
-    return getSharedBusLineColor(lineLabel, leg.lineColor);
-  return TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR;
-}
-
-/** 대중교통 구간의 정보를 지도 노선 표현 정책에 맞는 색상으로 변환합니다. 입력 구간은 변경하지 않습니다. */
-export function getMapTransitLegVisualColor(
-  leg: Pick<TransitLegDetail, 'kind' | 'lineName' | 'lineColor'> & {
-    label?: string;
-  },
-): string {
-  const lineLabel =
-    compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
-  if (leg.kind === 'BUS') return getMapBusRouteColor(lineLabel);
-  if (leg.kind === 'SUBWAY') return getSubwayLineColor(lineLabel);
+  if (leg.kind === 'BUS') return getTransitBusLineColor(leg);
+  if (leg.kind === 'SUBWAY') {
+    return getSubwayLineColor(findTransitRideLineLabel(leg), leg.lineColor);
+  }
   return TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR;
 }
 
@@ -73,7 +60,7 @@ export function getTransitKindLineColor(
   lineLabel?: string,
   lineColor?: string,
 ): string {
-  if (kind === 'SUBWAY') return getSubwayLineColor(lineLabel);
+  if (kind === 'SUBWAY') return getSubwayLineColor(lineLabel, lineColor);
   if (kind === 'BUS') return getSharedBusLineColor(lineLabel, lineColor);
   return TRANSIT_LEG_COLOR[kind] ?? SELECTED_ROUTE_COLOR;
 }
@@ -119,6 +106,7 @@ export function getTransitLegStopAnchor(
       ? getTransitLegBoardCoord(leg)
       : getTransitLegAlightCoord(leg);
   const displayPath =
+    hasTransitLegLineGeometry(leg) &&
     Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2
       ? normalizeDisplayPathCoords(leg.pathCoords, leg.kind)
       : [];

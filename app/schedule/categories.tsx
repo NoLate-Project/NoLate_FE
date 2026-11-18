@@ -85,7 +85,7 @@ export default function ScheduleCategoriesScreen() {
         const parsed = raw ? Number(raw) : NaN;
         return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
     }, [params.calendarId]);
-    const calendarTitle = Array.isArray(params.calendarTitle)
+    const requestedCalendarTitle = Array.isArray(params.calendarTitle)
         ? params.calendarTitle[0]
         : params.calendarTitle;
     const insets = useSafeAreaInsets();
@@ -106,6 +106,7 @@ export default function ScheduleCategoriesScreen() {
     const [sharingCategory, setSharingCategory] = useState<ScheduleCategoryItem | null>(null);
     const [movingCategory, setMovingCategory] = useState<ScheduleCategoryItem | null>(null);
     const [calendarMemberships, setCalendarMemberships] = useState<ScheduleCalendar[]>([]);
+    const calendarTitle = calendarMemberships.find(calendar => calendar.id === calendarId)?.title ?? requestedCalendarTitle;
     const [calendarMembershipsLoaded, setCalendarMembershipsLoaded] = useState(false);
     const [moveCalendars, setMoveCalendars] = useState<ScheduleCalendar[]>([]);
     const [moveCalendarsLoading, setMoveCalendarsLoading] = useState(false);
@@ -378,7 +379,7 @@ export default function ScheduleCategoriesScreen() {
                 id: categoryList[sourceIndex + 1]?.id ?? categoryList[sourceIndex - 1]?.id,
             };
             clearMoveSheet();
-            setMoveNotice(`“${destination.title}”으로 일정 ${result.movedScheduleCount}개를 옮겼어요.`);
+            setMoveNotice(`“${destination.title}”에 일정 ${result.movedScheduleCount}개를 옮겼어요.`);
         } catch (error) {
             setMoveError(getErrorMessage(error));
         } finally {
@@ -588,18 +589,15 @@ export default function ScheduleCategoriesScreen() {
             Alert.alert("처리 중이에요", "카테고리 작업이 끝난 뒤 돌아가 주세요.");
             return;
         }
-        if (params.returnTo === "calendar-stack" && router.canGoBack()) {
+        if ((params.returnTo === "calendar-stack" || params.returnTo === "schedule-form") && router.canGoBack()) {
             router.back();
             return;
         }
         if (closeActiveScene()) return;
-        // Parameterized category screens use the router rather than the
-        // personal-category pre-mounted scene. Its caller may itself be an
-        // overlay, so the router's previous entry can still be the main calendar.
         const returnToCalendars = params.returnTo === "calendars" && calendarId !== null;
         runWithTransitionShell(
             returnToCalendars
-                ? { route: "/schedule/calendars", title: "캘린더 관리" }
+                ? { route: "/schedule/calendars", title: "공유 캘린더 관리" }
                 : { route: "/schedule", title: "일정", showBack: false },
             () => {
                 if (returnToCalendars) {
@@ -637,7 +635,7 @@ export default function ScheduleCategoriesScreen() {
                         accessibilityRole="button"
                         accessibilityLabel="공유 캘린더 관리"
                         onPress={() => runWithTransitionShell(
-                            { route: "/schedule/calendars", title: "공유 캘린더" },
+                            { route: "/schedule/calendars", title: "공유 캘린더 관리", returnToCurrentScene: true },
                             () => router.push("/schedule/calendars"),
                         )}
                         style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -652,11 +650,12 @@ export default function ScheduleCategoriesScreen() {
                 keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
                 contentContainerStyle={[
                     styles.content,
+                    !largeText && styles.contentStandard,
                     { paddingBottom: Math.max(insets.bottom, 16) + 20 },
                 ]}
             >
                 {calendarId !== null ? (
-                    <View style={styles.calendarContext}>
+                    <View style={[styles.calendarContext, !largeText && styles.calendarContextStandard]}>
                         <Ionicons accessible={false} name="calendar-outline" size={19} color={colors.textSecondary} />
                         <Text maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.calendarName, { color: colors.textPrimary }]}>
                             {calendarTitle || "공유 캘린더"}
@@ -664,7 +663,7 @@ export default function ScheduleCategoriesScreen() {
                     </View>
                 ) : null}
                 {canCreateCategory ? (
-                    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <View style={[styles.card, !largeText && styles.cardStandard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                         <Text accessibilityRole="header" maxFontSizeMultiplier={1.8} style={[styles.sectionTitle, { color: colors.textPrimary }]}>새 카테고리</Text>
                         <TextInput
                             accessibilityLabel="새 카테고리 이름"
@@ -677,7 +676,7 @@ export default function ScheduleCategoriesScreen() {
                             onChangeText={setNewTitle}
                             onSubmitEditing={createCategory}
                             maxLength={80}
-                            placeholder="카테고리 이름"
+                            placeholder={largeText ? "카테고리 이름" : "약속, 운동"}
                             placeholderTextColor={colors.inputPlaceholder}
                             style={[
                                 styles.input,
@@ -688,7 +687,7 @@ export default function ScheduleCategoriesScreen() {
                                 },
                             ]}
                         />
-                        <ColorPicker value={newColor} onChange={setNewColor} disabled={controlsBusy} />
+                        <ColorPicker value={newColor} onChange={setNewColor} disabled={controlsBusy} compact={!largeText} />
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel="카테고리 추가"
@@ -711,14 +710,14 @@ export default function ScheduleCategoriesScreen() {
                                 />
                             ) : (
                                 <Text maxFontSizeMultiplier={1.8} style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
-                                    추가
+                                    {largeText ? "추가" : "카테고리 추가"}
                                 </Text>
                             )}
                         </Pressable>
                     </View>
                 ) : null}
 
-                <View style={styles.listHeader}>
+                <View style={[styles.listHeader, !largeText && styles.listHeaderStandard, { borderBottomColor: colors.border }]}>
                     <Text accessibilityRole="header" maxFontSizeMultiplier={1.8} style={[styles.sectionTitle, { color: colors.textPrimary }]}>카테고리 목록</Text>
                     {loading || calendarAccessLoading ? (
                         <BrandedLoader
@@ -726,6 +725,8 @@ export default function ScheduleCategoriesScreen() {
                             variant="schedule"
                             accessibilityLabel="카테고리를 불러오고 있어요"
                         />
+                    ) : !largeText && !loadError ? (
+                        <Text style={[styles.listCount, { color: colors.textSecondary }]}>{categoryList.length}개</Text>
                     ) : null}
                 </View>
 
@@ -754,13 +755,13 @@ export default function ScheduleCategoriesScreen() {
                             key={category.id}
                             style={[
                                 styles.categoryCard,
+                                !largeText && (editing ? styles.editCardStandard : styles.categoryCardStandard),
                                 { backgroundColor: colors.surface, borderColor: colors.border },
                             ]}
                         >
                             {editing ? (
                                 <Animated.View entering={editorEntry} style={styles.editBody}>
                                     <TextInput
-                                        autoFocus={!largeText}
                                         maxFontSizeMultiplier={1.8}
                                         accessibilityLabel={`${category.title} 카테고리 이름 수정`}
                                         textContentType="none"
@@ -782,7 +783,7 @@ export default function ScheduleCategoriesScreen() {
                                             },
                                         ]}
                                     />
-                                    <ColorPicker value={editingColor} onChange={setEditingColor} disabled={controlsBusy} />
+                                    <ColorPicker value={editingColor} onChange={setEditingColor} disabled={controlsBusy} compact={!largeText} />
                                     <View style={styles.editActions}>
                                         <Pressable
                                             accessibilityRole="button"
@@ -821,9 +822,9 @@ export default function ScheduleCategoriesScreen() {
                                     </View>
                                 </Animated.View>
                             ) : (
-                                <View style={[styles.categoryRow, largeText && styles.categoryRowLarge]}>
+                                <View style={[styles.categoryRow, largeText ? styles.categoryRowLarge : styles.categoryRowStandard]}>
                                     <View style={styles.categoryInfo}>
-                                        <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
+                                        <View style={[styles.categoryDot, !largeText && styles.categoryDotStandard, { backgroundColor: category.color }]} />
                                         <View style={styles.categoryTitleWrap}>
                                             <View style={[styles.categoryTitleRow, largeText && styles.categoryTitleRowLarge]}>
                                                 <Text style={[styles.categoryTitle, largeText && styles.categoryTitleLarge, { color: colors.textPrimary }]} numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word">
@@ -873,7 +874,7 @@ export default function ScheduleCategoriesScreen() {
                                                     { opacity: controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
                                                 ]}
                                             >
-                                                <Ionicons accessible={false} name="ellipsis-horizontal" size={22} color={colors.textPrimary} />
+                                                <Ionicons accessible={false} name={largeText ? "ellipsis-horizontal" : "ellipsis-horizontal-outline"} size={22} color={colors.textPrimary} />
                                             </Pressable>
                                         ) : metadataWritable ? (
                                             <>
@@ -985,38 +986,55 @@ function ColorPicker({
     value,
     onChange,
     disabled = false,
+    compact = false,
 }: {
     value: string;
     onChange: (color: string) => void;
     disabled?: boolean;
+    compact?: boolean;
 }) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
+    const selectedIndex = CATEGORY_COLORS.indexOf(value.toLowerCase());
+    const colorName = CATEGORY_COLOR_LABELS[selectedIndex] ?? "사용자 지정";
+    const ringColor = mode === "dark" ? "#8AB8FF" : "#2864D4";
 
     return (
-        <View style={styles.colorRow}>
-            {CATEGORY_COLORS.map((color, index) => {
-                const selected = color === value;
-                const selectionBorder = {
-                    borderColor: selected ? colors.textPrimary : "transparent",
-                };
-                return (
-                    <Pressable
-                        key={color}
-                        accessibilityRole="radio"
-                        accessibilityLabel={`${CATEGORY_COLOR_LABELS[index]} 색상`}
-                        accessibilityState={{ selected, disabled }}
-                        disabled={disabled}
-                        onPress={() => onChange(color)}
-                        style={[
-                            styles.colorButton,
-                            disabled && styles.disabledControl,
-                            selectionBorder,
-                        ]}
-                    >
-                        <View style={[styles.colorSwatch, { backgroundColor: color }]} />
-                    </Pressable>
-                );
-            })}
+        <View>
+            {compact && <View style={styles.colorHeading}>
+                <Text style={[styles.colorLabel, { color: colors.textPrimary }]}>표시 색상</Text>
+                <Text style={[styles.colorLabel, { color: colors.textSecondary }]}>{colorName}</Text>
+            </View>}
+            <View style={[styles.colorRow, compact && styles.colorRowStandard]}>
+                {CATEGORY_COLORS.map((color, index) => {
+                    const selected = index === selectedIndex;
+                    const selectionBorder = {
+                        borderColor: selected && !compact ? colors.textPrimary : "transparent",
+                    };
+                    return (
+                        <Pressable
+                            key={color}
+                            accessibilityRole="radio"
+                            accessibilityLabel={`${CATEGORY_COLOR_LABELS[index]} 색상`}
+                            accessibilityState={{ selected, disabled }}
+                            disabled={disabled}
+                            onPress={() => onChange(color)}
+                            style={[
+                                styles.colorButton,
+                                disabled && styles.disabledControl,
+                                selectionBorder,
+                            ]}
+                        >
+                            {compact ? (
+                                <View style={[styles.colorRing, { borderColor: selected ? ringColor : "transparent" }]}>
+                                    <View style={[styles.colorSwatch, styles.colorSwatchStandard, { backgroundColor: color }]} />
+                                </View>
+                            ) : (
+                                <View style={[styles.colorSwatch, { backgroundColor: color }]} />
+                            )}
+                        </Pressable>
+                    );
+                })}
+            </View>
         </View>
     );
 }

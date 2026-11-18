@@ -9,6 +9,7 @@ final class NoLateE2ETests: XCTestCase {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let open = springboard.alerts.buttons["열기"]
         if open.waitForExistence(timeout: 2) { open.tap() }
+        if name.contains("testIsolatedSavedRouteNavigationEntry") { dismissTrackingPermissionIfPresent() }
         app.activate()
         for title in ["로그인을 확인해 주세요", "연결을 확인해 주세요"] {
             if app.alerts[title].exists { app.alerts[title].buttons["확인"].tap() }
@@ -28,8 +29,13 @@ final class NoLateE2ETests: XCTestCase {
             print(app.debugDescription)
             // A failed assertion after ARMED must not leave a server session
             // that rejects the next isolated Release run.
-            if name.contains("testIsolatedOdsaySubwayAutomaticPreparation") {
+            if name.contains("testIsolatedOdsaySubwayAutomaticPreparation") ||
+               name.contains("testIsolatedSavedRouteNavigationEntry") {
                 let stop = app.buttons["saved-detail-stop"]
+                if !stop.exists {
+                    let handle = app.buttons["schedule-route-sheet-handle"]
+                    if handle.exists { handle.tap() }
+                }
                 if stop.exists {
                     try? reveal(stop)
                     if stop.isHittable { stop.tap() }
@@ -90,6 +96,12 @@ final class NoLateE2ETests: XCTestCase {
             let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !prompt.exists }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         }
+    }
+
+    private func dismissTrackingPermissionIfPresent() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let deny = springboard.buttons["앱에 추적 금지 요청"]
+        if deny.waitForExistence(timeout: 2) { deny.tap() }
     }
 
     func testLoginInputAndValidation() throws {
@@ -278,6 +290,414 @@ final class NoLateE2ETests: XCTestCase {
             "The saved-route guidance state did not become \(title)")
     }
 
+    /// The saved-route departure action enters guidance on the same map. This
+    /// tap must not record a departure or arm the GPS session by itself.
+    func testIsolatedSavedRouteNavigationEntry() throws {
+        if ProcessInfo.processInfo.environment["E2E_BUS_GPS_REPLAY"] == "1" {
+            addUIInterruptionMonitor(withDescription: "Allow isolated route GPS") { alert in
+                for label in ["앱을 사용하는 동안 허용", "앱 사용 중에만 허용", "Allow While Using App"] {
+                    let allow = alert.buttons[label]
+                    if allow.exists { allow.tap(); return true }
+                }
+                return false
+            }
+        }
+        app.terminate()
+        app.activate()
+        dismissTrackingPermissionIfPresent()
+        let sharingNotice = app.alerts["공유 캘린더"]
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].waitForExistence(timeout: 3) {
+            sharingNotice.buttons["확인"].tap()
+        }
+        let environment = ProcessInfo.processInfo.environment
+        if let id = environment["E2E_SCHEDULE_ID"], id.range(of: "^[1-9][0-9]{0,15}$", options: .regularExpression) != nil {
+            let routeURL = URL(string: "nolate://schedule/\(id)")!
+            app.open(routeURL)
+            let email = app.textFields["이메일"]
+            var loggedIn = false
+            if email.waitForExistence(timeout: 10) {
+                replace(email, with: try XCTUnwrap(environment["E2E_EMAIL"]))
+                replaceSecure(app.secureTextFields["비밀번호"], with: try XCTUnwrap(environment["E2E_PASSWORD"]))
+                app.staticTexts["NoLate"].firstMatch.tap()
+                app.buttons["로그인"].tap()
+                loggedIn = true
+            }
+            dismissSyntheticPasswordSavePrompt()
+            let skipImport = app.buttons["일정 없이 시작하기"]
+            let hadOnboarding = skipImport.waitForExistence(timeout: 5)
+            if hadOnboarding {
+                skipImport.tap()
+                if skipImport.waitForExistence(timeout: 2) {
+                    let frame = skipImport.frame
+                    app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                                  dy: frame.midY / app.frame.height)).tap()
+                }
+            }
+            let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
+            let hadTour = skipTour.waitForExistence(timeout: 5)
+            if hadTour { skipTour.tap() }
+            if loggedIn || hadOnboarding || hadTour {
+                // iOS can show the password-save sheet after onboarding settles.
+                dismissSyntheticPasswordSavePrompt()
+                XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 30))
+                app.open(routeURL)
+            }
+        } else {
+            if app.staticTexts["위치 안내가 끝났어요"].exists {
+                let back = app.buttons["이전 화면으로 돌아가기"]
+                XCTAssertTrue(back.waitForExistence(timeout: 5))
+                back.tap()
+            }
+            let saved = isolatedSavedJourneyCard(expectedTitle: environment["E2E_EXPECTED_SCHEDULE_TITLE"]
+                ?? "격리 실제 ODsay 지하철 경로")
+            XCTAssertTrue(saved.waitForExistence(timeout: 25), "The isolated saved route must be visible")
+            let frame = saved.frame
+            app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                          dy: frame.midY / app.frame.height)).tap()
+        }
+        let depart = app.buttons["schedule-route-departure-action"]
+        if !depart.waitForExistence(timeout: 20) { dismissTrackingPermissionIfPresent() }
+        XCTAssertTrue(depart.waitForExistence(timeout: 20), "The saved transit route needs its primary departure action")
+        XCTAssertTrue(["지금 출발", "길안내 보기"].contains(depart.label),
+                      "A reopened saved route may preserve its navigation entry label")
+        XCTAssertTrue(depart.isEnabled, "The saved-route departure action must be tappable")
+        depart.tap()
+        let navigationReady = app.otherElements["schedule-route-navigation-ready"]
+        var openedExpanded = false
+        if !navigationReady.waitForExistence(timeout: 2), depart.exists {
+            // The compact scroll area can consume a tap while settling after
+            // the deep link. Use the same product action in the expanded sheet.
+            let handle = app.buttons["schedule-route-sheet-handle"]
+            XCTAssertTrue(handle.waitForExistence(timeout: 5))
+            handle.tap()
+            openedExpanded = true
+            let expandedDepart = app.buttons["schedule-route-departure-action"]
+            XCTAssertTrue(expandedDepart.waitForExistence(timeout: 5))
+            expandedDepart.tap()
+        }
+        let locationPermission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["앱을 사용하는 동안 허용"]
+        if locationPermission.waitForExistence(timeout: 2) { locationPermission.tap() }
+        XCTAssertTrue(navigationReady.waitForExistence(timeout: 10))
+        let prepare = app.buttons["schedule-route-guidance-entry"]
+        if openedExpanded {
+            let handle = app.buttons["schedule-route-sheet-handle"]
+            handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            if !prepare.waitForExistence(timeout: 3) {
+                handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+        }
+        XCTAssertTrue(prepare.waitForExistence(timeout: 10),
+                      "The compact route sheet must expose the guidance preparation action")
+        XCTAssertTrue(app.otherElements["saved-journey-route-bar"].waitForExistence(timeout: 5),
+                      "The compact route sheet must show the whole-route summary bar")
+        XCTAssertFalse(app.buttons["saved-detail-stop"].exists,
+                       "Entering navigation must not start the GPS session")
+        capture("isolated-navigation-ready-on-route-map")
+        let prepareFrame = prepare.frame
+        app.coordinate(withNormalizedOffset: CGVector(dx: prepareFrame.midX / app.frame.width,
+                                                      dy: prepareFrame.midY / app.frame.height)).tap()
+        XCTAssertTrue(app.otherElements["saved-detail-controls"].waitForExistence(timeout: 10),
+                      "The same route sheet must reveal the server/native preparation controls")
+        if environment["E2E_CLEAR_PENDING_GUIDANCE"] == "1" {
+            let stop = app.buttons["saved-detail-stop"]
+            if stop.exists {
+                stop.tap()
+                capture("isolated-navigation-live-session-cleared")
+                return
+            }
+            let restoreConsent = app.descendants(matching: .any)["saved-detail-restore-consent"].firstMatch
+            XCTAssertTrue(restoreConsent.waitForExistence(timeout: 10), "A pending guidance checkpoint must be present")
+            restoreConsent.tap()
+            let restore = app.buttons["saved-detail-restore"]
+            XCTAssertTrue(restore.waitForExistence(timeout: 10) && restore.isEnabled)
+            restore.tap()
+            XCTAssertTrue(stop.waitForExistence(timeout: 20))
+            stop.tap()
+            capture("isolated-navigation-pending-checkpoint-cleared")
+            return
+        }
+        XCTAssertTrue(app.staticTexts["saved-detail-walking-connected"].waitForExistence(timeout: 30),
+                      "Navigation entry must fetch the owned walking path without another button tap")
+        capture("isolated-navigation-preparation-in-route-sheet")
+        if environment["E2E_LOCKED_DEPARTURE_NOTICE"] == "1" {
+            let noticeSettings = app.buttons["saved-guidance-notice-expand"]
+            XCTAssertTrue(noticeSettings.waitForExistence(timeout: 10))
+            noticeSettings.tap()
+            let permission = app.buttons["saved-guidance-notice-permission"]
+            XCTAssertTrue(permission.waitForExistence(timeout: 5))
+            permission.tap()
+            let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let allow = springboard.alerts.buttons["허용"]
+            if allow.waitForExistence(timeout: 5) { allow.tap() }
+            let notifications = app.buttons["saved-guidance-notice-notifications"]
+            XCTAssertTrue(notifications.waitForExistence(timeout: 5))
+            notifications.tap()
+            let selected = expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: notifications)
+            XCTAssertEqual(XCTWaiter().wait(for: [selected], timeout: 10), .completed,
+                           "The product route sheet must select local notification guidance")
+            capture("isolated-navigation-notifications-selected")
+        }
+        let consent = app.descendants(matching: .any)["saved-detail-consent"].firstMatch
+        XCTAssertTrue(consent.waitForExistence(timeout: 10))
+        if environment["E2E_EXPECT_OFFICIAL_BUS"] == "1" {
+            let assessed = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: consent)
+            XCTAssertEqual(XCTWaiter().wait(for: [assessed], timeout: 20), .completed,
+                           "The real ODsay bus route must finish automatic native assessment")
+        }
+        consent.tap()
+        let startGuidance = app.buttons["saved-detail-prepare"]
+        XCTAssertTrue(startGuidance.waitForExistence(timeout: 10))
+        if !startGuidance.isEnabled && environment["E2E_EXPECT_OFFICIAL_BUS"] == "1" {
+            let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: startGuidance)
+            XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 10), .completed,
+                           "Consent must unlock the assessed bus guidance session")
+        }
+        if !startGuidance.isEnabled && environment["E2E_EXPECT_OFFICIAL_BUS"] != "1" {
+            let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: startGuidance)
+            _ = XCTWaiter().wait(for: [enabled], timeout: 15)
+        }
+        if !startGuidance.isEnabled && environment["E2E_EXPECT_OFFICIAL_BUS"] != "1" {
+            let assess = app.buttons["saved-detail-assess"]
+            if assess.exists && assess.isEnabled {
+                assess.tap()
+                let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: startGuidance)
+                _ = XCTWaiter().wait(for: [enabled], timeout: 15)
+            }
+        }
+        XCTAssertTrue(startGuidance.isEnabled, "Consent and automatic assessment should unlock guidance")
+        startGuidance.tap()
+        let stopGuidance = app.buttons["saved-detail-stop"]
+        XCTAssertTrue(stopGuidance.waitForExistence(timeout: 25),
+                      "The authenticated saved route must arm a native GPS guidance session")
+        XCTAssertTrue(app.staticTexts["saved-journey-instruction"].waitForExistence(timeout: 5),
+                      "The route header must announce the active guidance stage")
+        XCTAssertFalse(app.staticTexts["saved-detail-guidance-heading"].exists,
+                       "The expanded route sheet must not repeat the header's running status")
+        if environment["E2E_EXPECT_OFFICIAL_BUS"] == "1" {
+            let detailedBus = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@", "1711")).firstMatch
+            XCTAssertTrue(detailedBus.waitForExistence(timeout: 5),
+                          "The expanded time rail must show the actual bus line")
+            let sheetHandle = app.buttons["schedule-route-sheet-handle"]
+            XCTAssertTrue(sheetHandle.waitForExistence(timeout: 5))
+            sheetHandle.tap()
+            let routeBar = app.descendants(matching: .any)["saved-journey-route-bar"].firstMatch
+            XCTAssertTrue(routeBar.waitForExistence(timeout: 10),
+                          "The collapsed sheet must show whole-route progress during guidance")
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "1711")).firstMatch.exists,
+                          "The collapsed route summary must retain the bus line")
+            XCTAssertFalse(app.staticTexts["saved-detail-subway-signal"].exists,
+                           "A bus route must not show subway live train status")
+            capture("isolated-navigation-real-odsay-bus-armed")
+            sheetHandle.tap()
+            if environment["E2E_BUS_GPS_REPLAY"] == "1" {
+                let progress = app.staticTexts["saved-journey-progress"].firstMatch
+                NSLog("E2E_BUS_GPS_ARMED")
+                let waiting = expectation(for: NSPredicate(format: "label CONTAINS %@", "버스 대기"), evaluatedWith: progress)
+                XCTAssertEqual(XCTWaiter().wait(for: [waiting], timeout: 180), .completed,
+                               "Owned walking GPS must reach the actual 1711 boarding stop")
+                capture("isolated-navigation-real-odsay-bus-waiting")
+                NSLog("E2E_BUS_WAITING")
+                let riding = expectation(for: NSPredicate(format: "label CONTAINS %@", "버스로 이동 중"), evaluatedWith: progress)
+                XCTAssertEqual(XCTWaiter().wait(for: [riding], timeout: 150), .completed,
+                               "Independent bus motion and passenger GPS must confirm a shared ride")
+                capture("isolated-navigation-real-odsay-bus-riding")
+                if environment["E2E_BUS_FULL_TRIP"] == "1" {
+                    let alighting = expectation(for: NSPredicate(format: "label CONTAINS %@", "하차 준비"),
+                                                evaluatedWith: progress)
+                    XCTAssertEqual(XCTWaiter().wait(for: [alighting], timeout: 420), .completed,
+                                   "The verified 1711 journey must warn before the selected alighting stop")
+                    NSLog("E2E_BUS_ALIGHTING_NOTICE")
+                    capture("isolated-navigation-real-odsay-bus-alighting-notice")
+                    let nearStop = expectation(for: NSPredicate(format: "label CONTAINS %@", "정류장 근처"),
+                                               evaluatedWith: progress)
+                    XCTAssertEqual(XCTWaiter().wait(for: [nearStop], timeout: 180), .completed,
+                                   "The same vehicle must reach the selected alighting stop")
+                    NSLog("E2E_BUS_NEAR_STOP")
+                    capture("isolated-navigation-real-odsay-bus-near-stop")
+                    let instruction = app.staticTexts["saved-journey-instruction"]
+                    let finalWalking = expectation(for: NSPredicate(format: "label == %@", "목적지까지"),
+                                                   evaluatedWith: instruction)
+                    XCTAssertEqual(XCTWaiter().wait(for: [finalWalking], timeout: 150), .completed,
+                                   "Passenger dwell and independently departing bus must open final walking")
+                    NSLog("E2E_BUS_FINAL_WALK")
+                    capture("isolated-navigation-real-odsay-bus-final-walk")
+                    let ended = app.staticTexts["목적지에 도착했어요"]
+                    XCTAssertTrue(ended.waitForExistence(timeout: 180),
+                                  "Continuous final-walk GPS must complete without a manual stop")
+                    XCTAssertFalse(app.buttons["saved-detail-connect-walking"].exists,
+                                   "Completed guidance must not prompt for a new walking route")
+                    XCTAssertFalse(app.staticTexts["saved-detail-unsupported"].exists,
+                                   "Completed guidance must not present the preflight error")
+                    NSLog("E2E_BUS_DESTINATION_ARRIVED")
+                    capture("isolated-navigation-real-odsay-bus-arrived")
+                    return
+                }
+                if environment["E2E_BUS_LOCK_ACTIVITY"] == "1" {
+                    NSLog("E2E_BUS_LOCK_READY")
+                    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+                    let lockInstruction = springboard.staticTexts.matching(NSPredicate(
+                        format: "label == %@ OR label CONTAINS %@", "버스로 이동 중", "마지막 확인 · 1711")).firstMatch
+                    XCTAssertTrue(lockInstruction.waitForExistence(timeout: 60),
+                                  "The lock-screen Live Activity must show the fresh ride or its explicitly stale 1711 label")
+                    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    attachment.name = "isolated-navigation-real-odsay-bus-lock-screen"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    NSLog("E2E_BUS_LOCK_RIDE_CONTEXT_VISIBLE")
+                    return
+                }
+            }
+            stopGuidance.tap()
+            XCTAssertFalse(stopGuidance.waitForExistence(timeout: 10),
+                           "The isolated bus guidance session must stop cleanly")
+            return
+        }
+        let subwaySignal = app.staticTexts["saved-detail-subway-signal"]
+        let arrivalHint = app.staticTexts["saved-journey-instruction-arrival"]
+        XCTAssertTrue(subwaySignal.waitForExistence(timeout: 10)
+                      || (arrivalHint.waitForExistence(timeout: 2) && arrivalHint.label.contains("열차 도착까지")),
+                      "The saved subway route must explain live train input or show a bound arrival hint")
+        NSLog("E2E_SUBWAY_SIGNAL_%@", !subwaySignal.exists ? "ARRIVAL_HINT"
+              : subwaySignal.label.hasPrefix("경로와 일치하는 열차") ? "MATCHED" : "WAITING")
+        capture("isolated-navigation-gps-session-armed")
+        let locationAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.matching(
+            NSPredicate(format: "label CONTAINS %@", "위치를 사용하도록 허용")).firstMatch
+        if locationAlert.waitForExistence(timeout: 5) {
+            let choices = locationAlert.buttons.matching(NSPredicate(
+                format: "label CONTAINS %@ AND NOT label CONTAINS %@", "허용", "안 함")).allElementsBoundByIndex
+            XCTAssertFalse(choices.isEmpty, "The simulator must offer a location permission choice")
+            let allowed = choices.first(where: { $0.label.contains("사용") || $0.label.contains("동안") }) ?? choices[0]
+            allowed.tap()
+        }
+        if environment["E2E_WAIT_FOR_SUBWAY_RESPONSE"] == "1" {
+            if subwaySignal.exists && subwaySignal.label.hasPrefix("열차 위치를 확인 중") {
+                let answered = expectation(for: NSPredicate(format: "NOT (label BEGINSWITH %@)", "열차 위치를 확인 중"),
+                                           evaluatedWith: subwaySignal)
+                XCTAssertEqual(XCTWaiter().wait(for: [answered], timeout: 30), .completed,
+                               "The official subway observation request did not update its user-visible state")
+            }
+            let label = subwaySignal.exists ? subwaySignal.label : ""
+            NSLog("E2E_SUBWAY_RESPONSE_%@", arrivalHint.exists && arrivalHint.label.contains("열차 도착까지") ? "ARRIVAL_HINT"
+                  : label.hasPrefix("경로와 일치하는 열차") ? "MATCHED"
+                  : label.hasPrefix("현재 경로와 일치하는 최신 열차") ? "NO_FRESH_MATCH"
+                  : label.hasPrefix("이 경로의 실시간 열차") ? "ROUTE_UNSUPPORTED" : "TRANSPORT_UNAVAILABLE")
+            capture("isolated-navigation-official-train-response")
+        }
+        if environment["E2E_WAIT_FOR_SUBWAY_SIGNAL"] == "1" {
+            let matched = expectation(for: NSPredicate(format: "label BEGINSWITH %@", "경로와 일치하는 열차"),
+                                      evaluatedWith: subwaySignal)
+            XCTAssertEqual(XCTWaiter().wait(for: [matched], timeout: 240), .completed,
+                           "Official live train input never reached the native consumer")
+            capture("isolated-navigation-official-train-input")
+            stopGuidance.tap()
+            return
+        }
+        if environment["E2E_SIMULATE_MOVEMENT"] == "1" {
+            let sheetHandle = app.buttons["schedule-route-sheet-handle"]
+            XCTAssertTrue(sheetHandle.waitForExistence(timeout: 5))
+            sheetHandle.tap()
+            capture("isolated-navigation-map-before-movement")
+            XCTAssertFalse(app.staticTexts["위치 안내가 끝났어요"].exists,
+                           "The native guidance session must remain active before replaying GPS")
+            NSLog("E2E_GPS_ARMED")
+            if environment["E2E_LOCKED_DEPARTURE_NOTICE"] == "1" {
+                NSLog("E2E_NOTICE_LOCK_READY")
+                let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+                let stageNotice = springboard.staticTexts.matching(NSPredicate(
+                    format: "label CONTAINS %@ OR label CONTAINS %@ OR label CONTAINS %@",
+                    "이동을 감지했습니다. 강남까지 안내합니다.",
+                    "탑승할 노선을 확인해 주세요.", "탑승을 준비해 주세요.")).firstMatch
+                XCTAssertTrue(stageNotice.waitForExistence(timeout: 150),
+                              "Fresh background GPS must deliver the current boarding-stage notice to the lock screen")
+                XCTAssertTrue(springboard.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "강남")).firstMatch.exists,
+                              "The saved ODsay boarding station must appear in the lock-screen stage")
+                let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                attachment.name = "isolated-navigation-locked-departure-notice"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                NSLog("E2E_LOCKED_DEPARTURE_NOTICE_VISIBLE")
+                return
+            }
+            if environment["E2E_FULL_SUBWAY_FINAL_WALK"] == "1" {
+                let instruction = app.staticTexts["saved-journey-instruction"]
+                if let intermediate = environment["E2E_FULL_SUBWAY_INTERMEDIATE_NAME"] {
+                    let reached = expectation(for: NSPredicate(format: "label == %@", intermediate), evaluatedWith: instruction)
+                    XCTAssertEqual(XCTWaiter().wait(for: [reached], timeout: 180), .completed,
+                                   "Correlated passenger GPS and train must reach the intermediate station")
+                    NSLog("E2E_SUBWAY_INTERMEDIATE_REACHED")
+                    capture("isolated-navigation-subway-intermediate-station")
+                }
+                if let destination = environment["E2E_FULL_SUBWAY_DESTINATION_NAME"] {
+                    let reached = expectation(for: NSPredicate(format: "label == %@", destination), evaluatedWith: instruction)
+                    XCTAssertEqual(XCTWaiter().wait(for: [reached], timeout: 180), .completed,
+                                   "Same train and continuous GPS must reach the destination station")
+                    NSLog("E2E_SUBWAY_DESTINATION_REACHED")
+                    capture("isolated-navigation-subway-destination-station")
+                }
+                let finalWalking = expectation(for: NSPredicate(format: "label == %@", "목적지까지"),
+                                               evaluatedWith: instruction)
+                XCTAssertEqual(XCTWaiter().wait(for: [finalWalking], timeout: 300), .completed,
+                               "Confirmed passenger train and station-exit GPS must reach the final walking stage")
+                capture("isolated-navigation-subway-final-walk")
+                if environment["E2E_FULL_SUBWAY_LOCK_SCREEN"] == "1" {
+                    NSLog("E2E_SUBWAY_LOCK_READY")
+                    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+                    let lockInstruction = springboard.staticTexts["목적지까지"]
+                    XCTAssertTrue(lockInstruction.waitForExistence(timeout: 90),
+                                  "The final walking instruction must appear in the lock-screen Live Activity")
+                    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    attachment.name = "isolated-navigation-subway-final-walk-lock-screen"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    NSLog("E2E_SUBWAY_LOCK_FINAL_WALK_VISIBLE")
+                    return
+                }
+                if environment["E2E_FULL_SUBWAY_ARRIVAL"] == "1" {
+                    let ended = app.staticTexts["목적지에 도착했어요"]
+                    XCTAssertTrue(ended.waitForExistence(timeout: 240),
+                                  "Continuous destination GPS must reach an explicit arrival state without a manual stop")
+                    capture("isolated-navigation-subway-arrived")
+                    NSLog("E2E_SUBWAY_DESTINATION_ARRIVED")
+                    return
+                }
+                sheetHandle.tap()
+                XCTAssertTrue(stopGuidance.waitForExistence(timeout: 5))
+                stopGuidance.tap()
+                return
+            }
+            let simulateToBoarding = environment["E2E_SIMULATE_TO_BOARDING"] == "1"
+            Thread.sleep(forTimeInterval: simulateToBoarding ? 43 : 42)
+            if simulateToBoarding {
+                XCTAssertTrue(app.staticTexts["승차 지점 근처"].exists || app.staticTexts["승차 지점까지"].exists
+                              || app.staticTexts["탑승 대기"].exists
+                              || app.staticTexts["saved-journey-progress"].label.contains("열차 대기"),
+                              "Fresh location along the owned walking path must reach the boarding approach")
+            } else {
+                XCTAssertTrue(app.staticTexts["승차 지점까지"].waitForExistence(timeout: 5),
+                              "Real location updates on the owned walking path must advance guidance beyond departure waiting")
+                XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "도보 약")).firstMatch.exists,
+                              "Guidance must present remaining distance to the boarding point")
+            }
+            capture("isolated-navigation-after-simulated-movement")
+            sheetHandle.tap()
+            XCTAssertTrue(stopGuidance.waitForExistence(timeout: 5))
+            if simulateToBoarding {
+                if environment["E2E_EXPECT_SUBWAY_ARRIVAL_HINT"] == "1" {
+                    XCTAssertTrue(arrivalHint.waitForExistence(timeout: 10)
+                                  && arrivalHint.label.contains("열차 도착까지"),
+                                  "A bound platform arrival must reach the product route detail after GPS approach")
+                    capture("isolated-navigation-subway-arrival-hint")
+                } else {
+                    XCTAssertTrue(subwaySignal.waitForExistence(timeout: 5))
+                    NSLog("E2E_SUBWAY_SIGNAL_AFTER_MOVEMENT_%@",
+                          subwaySignal.label.hasPrefix("경로와 일치하는 열차") ? "MATCHED" : "WAITING")
+                }
+            }
+        }
+        stopGuidance.tap()
+    }
+
     /// The saved ODsay subway route must connect its two walking legs through the
     /// server before automatic guidance assessment. This does not forge GPS or boarding.
     func testIsolatedOdsaySubwayWalkingConnection() throws {
@@ -408,7 +828,14 @@ final class NoLateE2ETests: XCTestCase {
                       "The isolated route detail must still expose its explicit stop control")
         try reveal(stop)
         stop.tap()
-        assertGuidanceHeading("위치 안내가 끝났어요", timeout: 15)
+        let ended = app.staticTexts.matching(NSPredicate(format: "label IN %@", [
+            "위치 안내가 끝났어요", "위치 안내를 종료했어요",
+        ])).firstMatch
+        XCTAssertTrue(ended.waitForExistence(timeout: 15))
+        XCTAssertFalse(stop.exists)
+        if ended.label == "위치 안내를 종료했어요" {
+            XCTAssertTrue(app.buttons["schedule-guidance-ended-route-button"].exists)
+        }
         capture("isolated-automatic-guidance-explicit-stop")
     }
 
@@ -727,12 +1154,16 @@ final class NoLateE2ETests: XCTestCase {
         XCTAssertTrue(shareOpener.waitForExistence(timeout: 10))
         shareOpener.tap()
         XCTAssertTrue(app.staticTexts["공유함"].waitForExistence(timeout: 10))
+        app.buttons["공유 안전 관리"].tap()
+        XCTAssertTrue(app.staticTexts["공유 안전 관리"].waitForExistence(timeout: 10))
         app.buttons["내 신고 내역"].tap()
         XCTAssertTrue(app.staticTexts["내 신고 내역"].waitForExistence(timeout: 10))
-        app.buttons["공유함으로 돌아가기"].tap()
-        XCTAssertTrue(app.staticTexts["공유함"].waitForExistence(timeout: 10))
-        app.buttons["차단한 사용자 관리"].tap()
+        app.buttons["공유 안전 관리로 돌아가기"].tap()
+        XCTAssertTrue(app.staticTexts["공유 안전 관리"].waitForExistence(timeout: 10))
+        app.buttons["차단한 사용자"].tap()
         XCTAssertTrue(app.staticTexts["차단한 사용자"].waitForExistence(timeout: 10))
+        app.buttons["공유 안전 관리로 돌아가기"].tap()
+        XCTAssertTrue(app.staticTexts["공유 안전 관리"].waitForExistence(timeout: 10))
         app.buttons["공유함으로 돌아가기"].tap()
         XCTAssertTrue(app.staticTexts["공유함"].waitForExistence(timeout: 10))
         app.buttons["뒤로 가기"].tap()
@@ -1185,8 +1616,10 @@ final class NoLateE2ETests: XCTestCase {
             }
             XCTAssertEqual(field.value as? String, expected)
         }
-        XCTAssertTrue((host.textFields["승차권 출발 시각"].value as? String ?? "").hasSuffix("12:20"))
-        XCTAssertTrue((host.textFields["승차권 도착 시각"].value as? String ?? "").hasSuffix(ticketArrivalClock))
+        let departureTime = host.buttons["ticket-departure-time"]
+        let arrivalTime = host.buttons["ticket-arrival-time"]
+        XCTAssertTrue((departureTime.value as? String ?? "").hasSuffix("오후 12:20"))
+        XCTAssertTrue((arrivalTime.value as? String ?? "").hasSuffix(useBusTicket ? "오후 2:45" : "오후 1:12"))
         if useBusTicket { XCTAssertEqual(host.textFields["승차권 버스 등급"].value as? String, "우등") }
         else { XCTAssertEqual(host.textFields["승차권 열차번호"].value as? String, "615") }
         let save = host.buttons["ticket-review-save"]
@@ -1582,6 +2015,15 @@ final class NoLateE2ETests: XCTestCase {
         func pick(_ label: String, _ city: String?, _ query: String, _ result: String) {
             let opener = app.buttons[label]; XCTAssertTrue(opener.exists); opener.tap()
             if let city {
+                let cityPicker = app.buttons["intercity-city-picker"].firstMatch
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    cityPicker.exists && cityPicker.isEnabled
+                }, object: nil)
+                guard XCTWaiter.wait(for: [ready], timeout: 15) == .completed else {
+                    XCTFail("Railway region selection was unavailable")
+                    return
+                }
+                cityPicker.tap()
                 let cityList = app.descendants(matching: .any).matching(identifier: "intercity-city-list").firstMatch
                 XCTAssertTrue(cityList.waitForExistence(timeout: 15))
                 for _ in 0..<6 {
@@ -2866,7 +3308,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     environment["E2E_EXISTING_TITLE"] == "ETA E2E isolated fixture",
                     "Only the isolated fixture is authorized")
         let phase = try XCTUnwrap(environment["E2E_FIXTURE_PHASE"])
-        try require(["success", "reconnect", "early-transfer", "transfer-observed", "transfer-first-unobserved", "planned-postdeparture", "unknown", "missed", "recovered", "late", "contract-save"].contains(phase), "Unknown fixture phase")
+        try require(["success", "reconnect", "early-transfer", "dwell-transfer", "early-transfer-risk", "transfer-observed", "transfer-first-unobserved", "planned-postdeparture", "planned-alighting", "unknown", "missed", "recovered", "late", "contract-save"].contains(phase), "Unknown fixture phase")
         // An imminent fixture alarm may cover the calendar. Close its in-app
         // presentation only; never mark departure or turn off the automatic alarm.
         if app.buttons["알람 화면 닫기"].exists && app.buttons["경로 보기"].exists {
@@ -2901,21 +3343,50 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         let opener = route.exists ? route : labeled("출발지와 도착지 추가")
         try reveal(opener)
         try tap(opener)
-        for (target, station) in [("출발지", "노원역"), ("도착지", "신림역")] {
-            if !labeled("장소 검색 닫기").exists { try tap(app.textFields[target + " 검색"]) }
+        let search = app.textFields["route-search-input"]
+        let searchOpened = search.waitForExistence(timeout: 8)
+        let originFirst = !searchOpened || search.label == "출발지 검색"
+        let selections = originFirst ? [("출발지", "노원역"), ("도착지", "신림역")]
+            : [("도착지", "신림역"), ("출발지", "노원역")]
+        for (index, selection) in selections.enumerated() {
+            let (target, station) = selection
+            if !search.exists { try tap(app.textFields[target + " 검색"]) }
             try require(labeled("장소 검색 닫기").waitForExistence(timeout: 10), "Private recent-place sheet missing")
+            try require(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@", target + " 검색"), object: search
+            )], timeout: 8) == .completed, "Unexpected active place field: " + target)
             let recent = app.buttons[station + ", 최근 장소 선택"]
             try require(recent.waitForExistence(timeout: 15), "Public fixture recent place missing; do not search externally")
             try tap(recent)
+            if index == selections.count - 1 {
+                let transit = app.buttons["대중교통"]
+                // If the keyboard consumed the coordinate tap, retry only on the same open
+                // place picker. Never retry a scheduled save or substitute coordinates.
+                if !transit.waitForExistence(timeout: 3), search.exists, search.label == target + " 검색",
+                   recent.isHittable {
+                    recent.tap()
+                }
+                try require(transit.waitForExistence(timeout: 12), "Final place selection did not leave place search")
+            }
         }
+        try require(app.buttons["출발지 재선택, 현재 노원역"].exists &&
+                    app.buttons["도착지 재선택, 현재 신림역"].exists, "Do not query a different pair of endpoints")
         try tap(labeled("대중교통"))
         // The real formatter announces durations >= 60 minutes as hours + minutes.
         if realAutomatic {
+            let subwayFilter = app.buttons.matching(NSPredicate(
+                format: "label BEGINSWITH %@ AND label ENDSWITH %@", "지하철 ", " 경로 필터"
+            )).firstMatch
+            try require(subwayFilter.waitForExistence(timeout: 45), "Real subway route filter is unavailable")
+            if !subwayFilter.isSelected { try tap(subwayFilter) }
             let candidates = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", " 경로"))
             try require(candidates.firstMatch.waitForExistence(timeout: 45), "Real route search returned no candidates")
+            let list = app.scrollViews.firstMatch
             var matched = false
             for candidate in candidates.allElementsBoundByIndex.prefix(5) {
-                if candidate.value as? String != "expanded" { try tap(candidate) }
+                for _ in 0..<4 where !candidate.isHittable { list.swipeUp() }
+                if !candidate.isHittable { continue }
+                if !(candidate.value as? String ?? "").hasPrefix("expanded") { try tap(candidate) }
                 let line4 = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "4호선 ")).firstMatch
                 let line2 = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "2호선 ")).firstMatch
                 if line4.exists && line2.exists { matched = true; break }
@@ -2929,7 +3400,12 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                         app.staticTexts["2호선 9분"].firstMatch.exists, "Wrong transfer lines/durations")
         }
         capture("eta-private-created-route-selection")
-        try tap(labeled("이 경로 저장"))
+        let applyToDraft = app.buttons["이 경로를 일정에 적용"]
+        let applyRoute = applyToDraft.exists ? applyToDraft : labeled("이 경로 저장")
+        try require(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true"), object: applyRoute
+        )], timeout: 20) == .completed, "Route application did not become ready after timetable lookup")
+        try tap(applyRoute)
         try require(title.waitForExistence(timeout: 15), "Route did not return to the new draft")
         let summary = buttonBeginning("이동 경로 수정, ")
         try require(summary.label.contains("노원역") && summary.label.contains("신림역"), "Wrong selected endpoints")
@@ -3307,6 +3783,190 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         capture("eta-native-stopped-" + mode)
     }
 
+    func testVerifyIsolatedOdsayTimetableSelection() throws {
+        let persist = environment["E2E_DATED_TIMETABLE_SAVE"] == "1"
+        try require(environment["E2E_REAL_ISOLATED"] == "1" && environment["E2E_SCHEDULE_ID"] == "363" &&
+                    environment["E2E_EXISTING_TITLE"] == "ETA E2E real isolated fixture" &&
+                    environment["E2E_ALLOW_SAVE"] == (persist ? "1" : "0"), "Use only the scoped timetable fixture")
+        try openRealIsolatedDetail()
+        try tap(app.buttons["일정 수정"])
+        let route = app.buttons["location-input-pressable"]
+        try reveal(route)
+        try tap(route)
+        try tap(labeled("대중교통"))
+        if environment["E2E_REAL_BUS_PREVIEW"] == "1" {
+            try require(persist, "Bus preview verification requires its own private save")
+            try verifyAndSaveLiveBusOption()
+            return
+        }
+        if environment["E2E_WEEKEND_BUS_OPTIONS"] == "1" {
+            try require(persist, "Weekend bus verification requires its own private save")
+            try verifyAndSaveWeekendBusOption()
+            return
+        }
+        let subwayFilter = app.buttons.matching(NSPredicate(
+            format: "label BEGINSWITH %@ AND label ENDSWITH %@", "지하철 ", " 경로 필터"
+        )).firstMatch
+        try require(subwayFilter.waitForExistence(timeout: 45) && subwayFilter.isEnabled,
+                    "The actual ODsay search must offer a selectable subway route")
+        try tap(subwayFilter)
+        if environment["E2E_SEOLLEUNG_WALK_ONLY"] == "1" {
+            try require(persist && environment["E2E_SEOLLEUNG_ACCESS"] == "1", "Use the scoped access walk fixture")
+            let candidate = app.buttons["7분 경로"].firstMatch
+            try require(candidate.waitForExistence(timeout: 30), "The verified access walk should extend the route estimate to seven minutes")
+            let value = try XCTUnwrap(candidate.value as? String)
+            try require(!value.contains("시간표 기준"), "The walking estimate cannot be presented as a timetable")
+            capture("eta-odsay-missing-timetable-route")
+            let apply = labeled("이 경로를 일정에 적용")
+            try reveal(apply)
+            try tap(apply)
+            try require(app.textFields["일정 제목"].waitForExistence(timeout: 15) &&
+                        app.textFields["일정 제목"].value as? String == "ETA E2E real isolated fixture",
+                        "Must return to the private schedule draft")
+            try saveAndReopenPrivateScheduleEdit()
+            capture("eta-odsay-missing-timetable-reopened")
+            print("ETA_ODSAY_WALK_ESTIMATE_SAVED_AND_REOPENED")
+            return
+        }
+        // The route button exposes the visibly rendered timing in accessibilityValue.
+        let timing = app.buttons.matching(NSPredicate(
+            format: "value CONTAINS %@ AND value CONTAINS %@", "시간표 기준", "예상 도착"
+        )).firstMatch
+        try require(timing.waitForExistence(timeout: 30), "The selected route must display the server timetable")
+        let accessibilityValue = try XCTUnwrap(timing.value as? String)
+        let timetableStart = try XCTUnwrap(accessibilityValue.range(of: "시간표 기준"))
+        let timetableLabel = String(accessibilityValue[timetableStart.lowerBound...])
+        let walkingRange = try XCTUnwrap(timetableLabel.range(of: "도보 [0-9]+분", options: .regularExpression))
+        let walkingSummary = String(timetableLabel[walkingRange])
+        let transferWait = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "예상 대기")).firstMatch
+        let rideClock = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "하차 예정")).firstMatch
+        try require((timetableLabel.contains("환승 0회") || transferWait.exists) && rideClock.exists,
+                    "The timetable route must distinguish waiting from walking and riding")
+        capture("eta-odsay-timetable-selection")
+        let map = labeled("지도에서 경로 보기")
+        try reveal(map)
+        try tap(map)
+        let summary = labeled("경로 상세 펼치기")
+        try require(summary.waitForExistence(timeout: 25), "The selected ODsay route must open on the map")
+        let arrivalRange = try XCTUnwrap(timetableLabel.range(
+            of: "(?:다음날 )?(?:오전|오후) [0-9]+:[0-9]{2}(?= 예상 도착)", options: .regularExpression))
+        let arrivalClock = String(timetableLabel[arrivalRange])
+        try require((summary.value as? String)?.contains(arrivalClock + " 목적지 도착 (시간표 기준)") == true,
+                    "List and map must show the same ODsay route timetable arrival")
+        try require((summary.value as? String)?.contains(walkingSummary) == true,
+                    "List and map must show the same timetable walking total")
+        capture("eta-odsay-timetable-map")
+        let apply = labeled("선택한 경로를 일정에 적용")
+        let save = apply.exists ? apply : labeled("선택한 경로 저장")
+        try reveal(save)
+        try tap(save)
+        try require(app.textFields["일정 제목"].waitForExistence(timeout: 15), "Must return to the schedule draft")
+        try require(buttonBeginning("이동 경로 수정, ").exists, "The draft must contain the selected route")
+        let departureRange = try XCTUnwrap(timetableLabel.range(
+            of: "(?:오전|오후) [0-9]+:[0-9]{2}(?= 출발)", options: .regularExpression))
+        let departureClock = String(timetableLabel[departureRange])
+        let settingsClock = arrivalClock.hasPrefix("다음날 ") ? String(arrivalClock.dropFirst("다음날 ".count)) : arrivalClock
+        let settingsArrival = app.staticTexts[settingsClock + " 도착 예정"].firstMatch
+        try reveal(settingsArrival)
+        try require(settingsArrival.exists && app.staticTexts[departureClock].firstMatch.exists,
+                    "The alert settings must show the same departure and destination clocks as the selected route")
+        print("ETA_ODSAY_TIMETABLE_ALERT_SETTINGS_VERIFIED: " + departureClock + " / " + settingsClock)
+        capture("eta-odsay-timetable-applied-to-draft")
+        print("ETA_ODSAY_TIMETABLE_SELECTION_VERIFIED: " + timetableLabel)
+        print("ETA_ODSAY_TIMETABLE_MAP_VERIFIED: " + arrivalClock)
+        if persist {
+            try require(app.textFields["일정 제목"].value as? String == "ETA E2E real isolated fixture",
+                        "Only the synthetic schedule may be saved")
+            if let revised = environment["E2E_DATED_TIMETABLE_RESCHEDULE"], !revised.isEmpty {
+                let target = try XCTUnwrap(ISO8601DateFormatter().date(from: revised))
+                let day = seoulCalendar.dateComponents([.year, .month, .day], from: target)
+                let formatter = DateFormatter()
+                formatter.locale = Locale(identifier: "ko_KR")
+                formatter.timeZone = seoulCalendar.timeZone
+                formatter.dateFormat = "a h:mm"
+                try setStartTime(target, expectedClock: formatter.string(from: target),
+                                 expectedDay: "시작 날짜 \(day.year!). \(day.month!). \(day.day!).")
+                print("ETA_ODSAY_TIMETABLE_APPOINTMENT_CHANGED: " + revised)
+            }
+            try saveAndReopenPrivateScheduleEdit()
+            let compactSummary = app.buttons["schedule-route-compact-summary"]
+            let savedWalking = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                (compactSummary.exists && compactSummary.label.components(separatedBy: ", ").contains(walkingSummary)) ||
+                    self.app.staticTexts[walkingSummary].firstMatch.exists
+            }, object: nil)
+            try require(XCTWaiter.wait(for: [savedWalking], timeout: 10) == .completed,
+                        "The reopened schedule must show the timetable walking total")
+            capture("eta-odsay-timetable-reopened")
+            print("ETA_ODSAY_TIMETABLE_SAVED_AND_REOPENED")
+            print("ETA_ODSAY_TIMETABLE_WALKING_VERIFIED: " + walkingSummary)
+        }
+    }
+
+    private func verifyAndSaveWeekendBusOption() throws {
+        let busFilter = app.buttons.matching(NSPredicate(
+            format: "label BEGINSWITH %@ AND label ENDSWITH %@", "버스 ", " 경로 필터"
+        )).firstMatch
+        try require(busFilter.waitForExistence(timeout: 45) && busFilter.isEnabled,
+                    "The actual ODsay search must offer a selectable bus route")
+        try tap(busFilter)
+        let availableBus = app.staticTexts.matching(NSPredicate(
+            format: "label MATCHES %@", ".*(?<![0-9])360(?![0-9]).*"
+        )).firstMatch
+        try require(availableBus.waitForExistence(timeout: 20), "Expected the 360 weekend bus in the route details")
+        try require(!app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "8146")).firstMatch.exists,
+                    "A weekday-only bus must not be offered on Sunday")
+        try require(!app.buttons.matching(NSPredicate(format: "value CONTAINS %@", "시간표 기준")).firstMatch.exists,
+                    "An unverified future bus must remain a duration estimate")
+        capture("eta-odsay-weekend-bus-selection")
+        let apply = labeled("이 경로를 일정에 적용")
+        try reveal(apply)
+        try tap(apply)
+        try require(app.textFields["일정 제목"].waitForExistence(timeout: 15) &&
+                    app.textFields["일정 제목"].value as? String == "ETA E2E real isolated fixture",
+                    "Must return to the private schedule draft")
+        try saveAndReopenPrivateScheduleEdit()
+        capture("eta-odsay-weekend-bus-reopened")
+        print("ETA_ODSAY_WEEKEND_BUS_SAVED_AND_REOPENED")
+    }
+
+    private func verifyAndSaveLiveBusOption() throws {
+        let filter = app.buttons.matching(NSPredicate(
+            format: "label BEGINSWITH %@ AND label ENDSWITH %@", "버스 ", " 경로 필터"
+        )).firstMatch
+        try require(filter.waitForExistence(timeout: 45) && filter.isEnabled,
+                    "ODsay must offer a selectable bus route")
+        try tap(filter)
+        let timing = app.buttons.matching(NSPredicate(
+            format: "value CONTAINS %@ AND value CONTAINS %@", "실시간 반영", "예상 도착"
+        )).firstMatch
+        try require(timing.waitForExistence(timeout: 35), "No qualifying live bus preview on the selected route")
+        let label = try XCTUnwrap(timing.value as? String)
+        let ride = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "하차 예측")).firstMatch
+        try require(ride.exists, "The live route must show the boarding and alighting forecast")
+        capture("eta-odsay-live-bus-selection")
+        print("ETA_ODSAY_LIVE_BUS_SELECTION: " + label)
+        let apply = labeled("이 경로를 일정에 적용")
+        try reveal(apply)
+        try tap(apply)
+        try require(app.textFields["일정 제목"].waitForExistence(timeout: 15) &&
+                    app.textFields["일정 제목"].value as? String == "ETA E2E real isolated fixture",
+                    "Must return to the private schedule draft")
+        try saveAndReopenPrivateScheduleEdit()
+        capture("eta-odsay-live-bus-reopened")
+        print("ETA_ODSAY_LIVE_BUS_SAVED_AND_REOPENED")
+    }
+
+    private func saveAndReopenPrivateScheduleEdit() throws {
+        let commit = app.buttons["일정 수정 저장"]
+        try require(commit.exists && !app.buttons["일정 저장"].exists, "Only the existing private schedule may be saved")
+        try reveal(commit)
+        try tap(commit)
+        try require(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: commit)], timeout: 25) == .completed,
+            "Save uncertain; inspect private persistence without another save")
+        try openRealIsolatedDetail()
+    }
+
     /// Separate H2 DB, real route/timetable/arrival feeds and wall clock. Not a two-minute accuracy proof.
     func testVerifyIsolatedRealProviderEta() throws {
         try require(environment["E2E_REAL_ISOLATED"] == "1" && environment["E2E_SCHEDULE_ID"] == "363" &&
@@ -3332,8 +3992,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         }
         try openRealIsolatedDetail()
         // 이전 검증 회차가 펼친 시트 상태를 보존할 수 있다. 같은 요약 상태에서 새 값을 비교한다.
-        let collapse = app.buttons["schedule-route-sheet-collapse"]
-        if collapse.exists && collapse.isHittable { try tap(collapse) }
+        try collapseRealRouteSheetIfExpanded()
         let departure = try XCTUnwrap(environment["E2E_REAL_DEPARTURE_CLOCK"])
         let arrival = try XCTUnwrap(environment["E2E_REAL_ARRIVAL_CLOCK"])
         let minutes = try XCTUnwrap(environment["E2E_REAL_MINUTES"])
@@ -3353,14 +4012,25 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         let verifiedSummary = summary.label
         try tap(summary)
         let guidance = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "현재 보정 여정,")).firstMatch
-        try reveal(guidance)
-        try require(guidance.exists && guidance.isHittable && rides.allSatisfy { guidance.label.contains($0) },
+        try require(waitForVisibleRealRouteText(guidance) &&
+                    rides.allSatisfy { guidance.label.contains($0) },
                     "Expanded actual-provider evidence must retain per-train clocks and timing basis")
         let walkData = try XCTUnwrap(environment["E2E_REAL_WALK_TEXT"]?.data(using: .utf8))
         let walking = try XCTUnwrap(try JSONSerialization.jsonObject(with: walkData) as? [[String]])
         try require(walking.allSatisfy { tokens in (2...3).contains(tokens.count) &&
                     tokens.allSatisfy { guidance.label.contains($0) } },
                     "Expanded itinerary must preserve provider walking scopes, meters and verified seconds")
+        if let railData = environment["E2E_REAL_MATCHED_RAIL"]?.data(using: .utf8) {
+            let rows = try JSONDecoder().decode([[String]].self, from: railData)
+            for fields in rows {
+                try require(fields.count == 3, "Expected a ride identifier and two corrected clocks")
+                let row = app.descendants(matching: .any)[fields[0]].firstMatch
+                try require(row.exists && row.label.contains(fields[1]) &&
+                            row.label.contains(fields[2] + " 예상 하차"),
+                            "The matched rail does not display the accepted boarding and alighting: " + row.label)
+            }
+            print("ETA_REAL_ODSay_MATCHED_RAIL_VERIFIED")
+        }
         capture("eta-real-isolated-accepted")
         print("ETA_REAL_ISOLATED_UI_VERIFIED: " + verifiedSummary)
         if environment["E2E_REAL_AUTOMATIC"] == "1" {
@@ -3412,11 +4082,17 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
     /// Select the saved fixture's actual date, including a target after midnight.
     /// This only opens existing data; it never saves or changes a schedule/calendar style.
     private func openRealIsolatedDetail() throws {
+        if (environment["E2E_SEOLLEUNG_ACCESS"] == "1" || environment["E2E_REAL_AUTOMATIC"] == "1") &&
+            app.staticTexts["ETA E2E real isolated fixture"].firstMatch.exists && app.buttons["일정 수정"].exists {
+            return
+        }
+        let calendarAddButton = app.buttons["일정 추가"]
         if app.buttons["일정 수정"].exists {
             try require(app.staticTexts["ETA E2E real isolated fixture"].firstMatch.exists, "Unexpected detail")
             try tap(app.buttons["이전 화면으로 돌아가기"])
+            try require(calendarAddButton.waitForExistence(timeout: 12), "Calendar did not return after closing the fixture")
         }
-        if app.buttons["일정 추가"].exists {
+        if calendarAddButton.exists {
             let card = buttonBeginning("ETA E2E real isolated fixture,")
             if !card.exists {
                 let target = try configuration().target
@@ -3431,11 +4107,36 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                 try tap(detailed.exists ? detailed : stacked)
             }
             try require(card.waitForExistence(timeout: 20), "Fixture is absent from its saved target day")
-            try reveal(card)
+            // The day view may open below a midnight event. Reveal it in the direction of its actual frame.
+            try reveal(card, upward: card.frame.midY >= app.frame.minY)
             try tap(card)
         }
-        try require(app.staticTexts["ETA E2E real isolated fixture"].firstMatch.waitForExistence(timeout: 20) &&
-                    app.buttons["일정 수정"].exists, "The real-isolated detail did not open")
+        let title = app.staticTexts["ETA E2E real isolated fixture"].firstMatch
+        let edit = app.buttons["일정 수정"]
+        // The title can appear while the detail toolbar is still rendering.
+        let detailReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            title.exists && edit.exists
+        }, object: nil)
+        try require(XCTWaiter.wait(for: [detailReady], timeout: 20) == .completed,
+                    "The real-isolated detail did not open")
+    }
+
+    private func collapseRealRouteSheetIfExpanded() throws {
+        let handle = app.buttons["schedule-route-sheet-handle"]
+        if handle.exists && handle.value as? String == "expanded" {
+            try tap(handle)
+        }
+    }
+
+    private func waitForVisibleRealRouteText(_ element: XCUIElement) -> Bool {
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard element.exists else { return false }
+            let frame = element.frame
+            let sheetHandle = self.app.buttons["schedule-route-sheet-handle"]
+            return frame.height > 0 && sheetHandle.exists && frame.midY > sheetHandle.frame.maxY &&
+                self.app.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+        }, object: nil)
+        return XCTWaiter.wait(for: [visible], timeout: 10) == .completed
     }
 
     /// Actual rejected ODsay Worker result; this proves diagnostic delivery, not accepted ETA.
@@ -3444,8 +4145,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     environment["E2E_EXISTING_TITLE"] == "ETA E2E real isolated fixture",
                     "Explicit rejected real-provider isolation is required")
         try openRealIsolatedDetail()
-        let collapse = app.buttons["schedule-route-sheet-collapse"]
-        if collapse.exists && collapse.isHittable { try tap(collapse) }
+        try collapseRealRouteSheetIfExpanded()
         let departure = try XCTUnwrap(environment["E2E_REAL_DEPARTURE_CLOCK"])
         let summary = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@",
             "일정 상세 시트 펼치기, 예상 출발 " + departure)).firstMatch
@@ -3489,8 +4189,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             try tap(summary)
             let future = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@",
                 "미래 시간표 예측 · 실시간 미확인,")).firstMatch
-            try reveal(future)
-            try require(future.exists && future.isHittable && future.label.contains(futureSummary) &&
+            try require(waitForVisibleRealRouteText(future) && future.label.contains(futureSummary) &&
                         rides.allSatisfy { future.label.contains($0) }, "Expanded future timetable must preserve both train clocks")
         }
         capture("eta-real-odsay-diagnostic")
@@ -3545,15 +4244,14 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             let firstAlighting = try XCTUnwrap(environment["E2E_RIDE_FIRST_ALIGHTING"])
             let transferBoarding = try XCTUnwrap(environment["E2E_RIDE_TRANSFER_BOARDING"])
             let transferAlighting = try XCTUnwrap(environment["E2E_RIDE_TRANSFER_ALIGHTING"])
-            try require(label.contains("4012열차 · 첫 승차 실시간 반영 · \(firstBoarding) 승차 → \(firstAlighting) 하차 예측"),
+            try require(label.contains("4012열차 · 첫 승차 실시간 반영 · \(firstBoarding) 승차역 열차 도착 예측 → \(firstAlighting) 하차 예측"),
                         "First ride must show the exact once-adjusted predicted clocks")
             try require(label.contains("2012열차 · 시간표 · \(transferBoarding) 승차 → \(transferAlighting) 하차 예측"),
                         "Future transfer must show timetable clocks, not first-train delay or realtime")
             try tap(try XCTUnwrap(visible))
             let guidance = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "현재 보정 여정,")).firstMatch
-            try reveal(guidance)
-            try require(guidance.exists && guidance.isHittable &&
-                        guidance.label.contains("\(firstBoarding) 승차 → \(firstAlighting) 하차 예측") &&
+            try require(waitForVisibleRealRouteText(guidance) &&
+                        guidance.label.contains("\(firstBoarding) 승차역 열차 도착 예측 → \(firstAlighting) 하차 예측") &&
                         guidance.label.contains("2012열차 · 시간표 · \(transferBoarding) 승차 → \(transferAlighting) 하차 예측"),
                         "Expanded journey must retain exact first and transfer ride clocks")
             print("ETA_RIDE_TIMING_SYNTHETIC_UI_VERIFIED: first-live-and-transfer-timetable")
@@ -3567,25 +4265,26 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             print("ETA_WALK_BOUNDARY_SYNTHETIC_UI_VERIFIED: seconds-distance-unknown-platform")
         } else {
             let quality = environment["E2E_ARRIVAL_QUALITY_SCENARIO"] ?? ""
+            let timetablePreview = ["quality-unobserved", "quality-departed", "quality-stale"].contains(quality)
             let warnings = ["quality-unobserved": "미래 열차 실시간 미확인 · 시간표 예측 단계",
+                            "quality-departed": "미래 열차 실시간 미확인 · 시간표 예측 단계",
                             "quality-stale": "차량 관측정보 오래됨", "quality-unverified": "차량 관측시각 검증 불가",
                             "quality-error": "도착정보 API 오류", "quality-timeout": "도착정보 API 응답 지연",
                             "quota-arrival": "도착정보 API 한도 초과"]
             if let warning = warnings[quality] {
                 try require(label.contains(warning), "Arrival failure must retain its own diagnostic stage")
             }
-            if quality == "quality-unobserved" {
+            if timetablePreview {
                 try require(label.contains("미래 시간표 예측 · 실시간 미확인") && label.contains("4012열차 · 시간표") &&
                             label.contains("2012열차 · 시간표") && !label.contains("첫 승차 실시간 반영"),
-                            "A future unobserved train must show only separate timetable predictions")
+                            "The future train must show only separate timetable predictions")
                 try tap(try XCTUnwrap(visible))
                 let preview = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "미래 시간표 예측 · 실시간 미확인,")).firstMatch
-                try reveal(preview)
-                try require(preview.exists && preview.isHittable &&
+                try require(waitForVisibleRealRouteText(preview) &&
                             preview.label.contains("출발 알람은 기존 안전 시각을 유지"), "Expanded timetable preview must explain alarm protection")
                 print("ETA_FUTURE_TIMETABLE_SYNTHETIC_UI_VERIFIED: separate-preview-not-live")
             }
-            try require((label.contains("저장 경로 기준") || quality == "quality-unobserved") && !label.contains("현재 보정 여정"),
+            try require((label.contains("저장 경로 기준") || timetablePreview) && !label.contains("현재 보정 여정"),
                         "Quota failure must not masquerade as realtime accepted guidance")
         }
         capture(accepted ? "eta-quota-recovered" : "eta-quota-protected")
@@ -3598,7 +4297,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     environment["E2E_EXISTING_TITLE"] == "ETA E2E isolated fixture",
                     "Only the isolated fixture is authorized")
         let phase = try XCTUnwrap(environment["E2E_FIXTURE_PHASE"])
-        try require(["success", "reconnect", "early-transfer", "transfer-observed", "transfer-first-unobserved", "planned-postdeparture", "unknown", "missed", "recovered", "late"].contains(phase), "Unknown fixture phase")
+        try require(["success", "reconnect", "early-transfer", "dwell-transfer", "early-transfer-risk", "transfer-observed", "transfer-first-unobserved", "planned-postdeparture", "planned-alighting", "unknown", "missed", "recovered", "late"].contains(phase), "Unknown fixture phase")
         if app.buttons["알람 화면 닫기"].exists && app.buttons["경로 보기"].exists {
             try tap(app.buttons["알람 화면 닫기"])
         }
@@ -3607,7 +4306,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         // Keep the assertion on the visible detail rather than virtual calendar nodes.
         try require(app.staticTexts["ETA E2E isolated fixture"].firstMatch.waitForExistence(timeout: 20) &&
                     app.buttons["일정 수정"].exists, "Private fixture detail did not open")
-        if phase == "planned-postdeparture" {
+        if ["planned-postdeparture", "planned-alighting"].contains(phase) {
             let clock = try XCTUnwrap(environment["E2E_FIXTURE_PROVISIONAL_CLOCK"])
             let departure = try XCTUnwrap(environment["E2E_FIXTURE_DEPARTURE_CLOCK"])
             let guidance = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "계획 경로 기준 · 잠정 도착,")).firstMatch
@@ -3627,9 +4326,9 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             print("ETA_ISOLATED_PROVISIONAL_UI_VERIFIED: " + guidance.label)
             return
         }
-        let accepted = ["success", "reconnect", "early-transfer", "transfer-observed", "recovered"].contains(phase)
+        let accepted = ["success", "reconnect", "early-transfer", "dwell-transfer", "transfer-observed", "recovered"].contains(phase)
         let prefix = accepted ? "일정 상세 시트 펼치기, 권장 출발 " : "일정 상세 시트 펼치기, 예상 출발 "
-        let warning = phase == "missed" ? "환승 불가" : phase == "late" ? "정시 도착 불가" : phase == "unknown" ? "운행시각 미확인" : phase == "transfer-first-unobserved" ? "실시간 도착정보 없음" : nil
+        let warning = phase == "missed" ? "환승 불가" : phase == "late" ? "정시 도착 불가" : phase == "early-transfer-risk" ? "환승 가능 여부 미확인" : phase == "unknown" ? "운행시각 미확인" : phase == "transfer-first-unobserved" ? "실시간 도착정보 없음" : nil
         let summaries = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
         var visible: XCUIElement?
         let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -3642,6 +4341,14 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         try require(XCTWaiter.wait(for: [expected], timeout: 20) == .completed,
                     "Visible fixture ETA does not match the calculated phase")
         let summary = try XCTUnwrap(visible)
+        if phase == "early-transfer-risk" {
+            let estimatedDeparture = try XCTUnwrap(environment["E2E_FIXTURE_DEPARTURE_CLOCK"])
+            try require(summary.label.contains("예상 출발 " + estimatedDeparture),
+                        "The displayed estimate must match the saved route clock provided by the API")
+            try require(!summary.label.contains("환승 불가") && !summary.label.contains("현재 보정 여정"),
+                        "An early station arrival is neither a confirmed miss nor a live departure plan")
+            capture("eta-early-transfer-risk")
+        }
         if accepted {
             try require(!summary.label.contains("미확인") && !summary.label.contains("미지원") &&
                         !summary.label.contains("환승 불가"), "Unverified route must not look accepted")
@@ -3651,18 +4358,30 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             try require(summary.label.contains("권장 출발 " + departure), "Displayed departure differs from fixture calculation")
             try require(summary.label.contains("현재 이동 " + minutes + "분"), "Displayed duration is still the stored estimate")
             // Independent synthetic timetable expectations: never rescale the saved 48/8-minute rides.
-            // Earlier boarding shortens this ride's verified wait + train duration to 21 minutes.
-            let firstRide = phase == "transfer-observed" ? "7" : phase == "early-transfer" ? "21" : phase == "success" ? "22" : "25"
-            let secondRide = phase == "transfer-observed" ? "12" : ["success", "early-transfer"].contains(phase) ? "11" : "13"
+            let firstRide = environment["E2E_FIXTURE_FIRST_RIDE_MINUTES"] ??
+                (phase == "transfer-observed" ? "7" : phase == "dwell-transfer" ? "21" : phase == "success" ? "22" : "25")
+            let secondRide = phase == "dwell-transfer" ? "14" : phase == "transfer-observed" ? "12" : ["success", "early-transfer"].contains(phase) ? "11" : "13"
+            let onwardTiming = environment["E2E_FIXTURE_TRANSFER_WAIT"] ?? "약 " + secondRide + "분"
             try require(summary.label.contains("현재 보정 여정") &&
                         summary.label.contains("수도권 4호선 · 노원역→사당 · 약 " + firstRide + "분") &&
-                        summary.label.contains("수도권 2호선 · 사당→신림 · 약 " + secondRide + "분") &&
+                        summary.label.contains("수도권 2호선 · 사당→신림 · " + onwardTiming) &&
                         summary.label.contains("접근 도보 · 출발지→노원역 · 약 1분 51초") &&
                         summary.label.contains("환승 도보 · 사당 · 약 4분 3초") &&
                         summary.label.contains("도착 도보 · 신림→도착지 · 약 2분 51초"),
                         "Current journey segments still show the saved estimate or omit walking")
             try require(!summary.label.contains("약 48분") && !summary.label.contains("약 49분"),
                         "Saved first ride leaked into current timing")
+            if phase == "dwell-transfer" {
+                let transferRide = try XCTUnwrap(environment["E2E_FIXTURE_TRANSFER_RIDE_TEXT"])
+                let arrival = try XCTUnwrap(environment["E2E_FIXTURE_ARRIVAL_CLOCK"])
+                try require(summary.label.contains(transferRide) && summary.label.contains(arrival + " 도착"),
+                            "Schedule must show the later transfer and recalculated destination arrival")
+            }
+            if phase == "early-transfer" {
+                let firstRideText = try XCTUnwrap(environment["E2E_FIXTURE_FIRST_RIDE_TEXT"])
+                try require(summary.label.contains(firstRideText),
+                            "The first train clocks computed using scheduled station arrival must be visible")
+            }
             try require(summary.label.contains("도착 도보는 총시간에 포함돼요") &&
                         summary.label.contains("역 내부 이동 포함 범위는 확인되지 않았어요"),
                         "Egress inclusion must not imply verified station-interior coverage")
@@ -3686,13 +4405,15 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             try require(guidance.label.contains("지도에는 저장한 경로가 표시돼요"),
                         "Saved map must be explicitly distinguished from corrected guidance")
             if phase == "transfer-observed" {
-                try require(guidance.label.contains("2012열차 · 환승역 실시간 반영"),
-                            "Observed transfer train must be identified in the installed app")
+                try require(guidance.label.contains("4012열차 · 첫 승차 실시간 반영") &&
+                            guidance.label.contains("2012열차 · 환승역 실시간 반영") &&
+                            guidance.label.components(separatedBy: "승차역 열차 도착 예측").count == 3,
+                            "Both live clocks must identify their trains and describe station arrival")
                 for leg in [1, 3] {
                     let board = try XCTUnwrap(environment["E2E_RAIL_BOARD_\(leg)"])
                     let alight = try XCTUnwrap(environment["E2E_RAIL_ALIGHT_\(leg)"])
                     let row = app.descendants(matching: .any)["route-step-row-leg-\(leg)"].firstMatch
-                    try require(row.waitForExistence(timeout: 10) && row.label.contains(board) &&
+                    try require(row.waitForExistence(timeout: 10) && row.label.contains(board + " 열차 도착 예측") &&
                                 row.label.contains(alight + " 예상 하차") && row.label.contains("현재 보정 여정 기준"),
                                 "Saved timeline must show the corrected boarding and alighting clocks for leg \(leg)")
                     try require(!row.label.contains("48분") && !row.label.contains("8분"),
@@ -3770,20 +4491,39 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
     func testVerifyIncidentStationBoard() throws {
         let config = try configuration()
         try require(config.title == "ETA E2E calendar 1", "Expected the isolated incident fixture")
-        try testVerifySavedEtaJourney()
+        try require(app.buttons["일정 수정"].waitForExistence(timeout: 15), "Synthetic incident detail did not open")
         let summary = buttonBeginning("일정 상세 시트 펼치기,")
+        if environment["E2E_EXPECT_TMAP_UNSUPPORTED"] == "1" {
+            let fallback = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                summary.exists && summary.label.contains("예상 출발 08:55") &&
+                    summary.label.contains("재조회 미지원 · 경로 재선택 필요")
+            }, object: nil)
+            try require(XCTWaiter.wait(for: [fallback], timeout: 20) == .completed,
+                        "The saved Tmap route did not explain why the earlier departure was retained")
+            print("ETA_INCIDENT_TMAP_REFRESH_UNSUPPORTED_UI_VERIFIED")
+        }
         if summary.exists && summary.isHittable { try tap(summary) }
         let row = app.descendants(matching: .any)["route-step-row-incident-first-train"].firstMatch
+        let toOido = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "오이도행"))
+        let toSadang = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "사당행"))
+        let toDanggogae = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "당고개행"))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            row.exists && row.label.contains("오이도행") && row.label.contains("사당행")
+            row.exists && ((row.label.contains("오이도행") && row.label.contains("사당행")) ||
+                (toOido.firstMatch.exists && toSadang.firstMatch.exists))
         }, object: nil)
         try require(XCTWaiter.wait(for: [ready], timeout: 30) == .completed,
                     "The saved route did not render both distinct station arrivals")
-        try require(row.label.components(separatedBy: "오이도행").count == 2 && !row.label.contains("당고개행"),
+        let grouped = row.label.contains("오이도행")
+        try require((grouped ? row.label.components(separatedBy: "오이도행").count == 2 : toOido.count == 1) &&
+                    !row.label.contains("당고개행") && !toDanggogae.firstMatch.exists,
                     "Station board showed a duplicate or opposite-direction train")
-        let adjustedWait = (1...7).contains { row.label.contains(", \($0)분 · 오이도행") }
-        try require(adjustedWait && row.label.contains("갱신 지연") && row.label.contains("분 전 갱신") &&
-                    !row.label.contains("방금 갱신"),
+        let adjustedWait = (1...7).contains { minutes in
+            grouped ? row.label.contains(", \(minutes)분 · 오이도행") : app.staticTexts["\(minutes)분"].exists
+        }
+        let delayed = grouped ? row.label.contains("갱신 지연") : app.staticTexts["갱신 지연"].exists
+        let freshness = grouped ? row.label.contains("분 전 갱신") :
+            app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "분 전 갱신")).firstMatch.exists
+        try require(adjustedWait && delayed && freshness && !row.label.contains("방금 갱신"),
                     "Station board reused fresh-looking receipt time or the original wait")
         capture("incident-station-board-delayed-observation")
         print("ETA_INCIDENT_STATION_BOARD_UI_VERIFIED")

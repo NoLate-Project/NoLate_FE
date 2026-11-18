@@ -1,16 +1,19 @@
 import ImportedTicketSummary from '../../modules/schedule/components/detail/ImportedTicketSummary';
-import React, { useMemo, useEffect, useRef, useState } from 'react';
+import ScheduleSharingInformation from '../../modules/schedule/components/detail/ScheduleSharingInformation';
+import React, { useMemo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Reanimated, { Easing, FadeIn, FadeOut, Keyframe, ReduceMotion } from 'react-native-reanimated';
 import {
-  ActivityIndicator,
+  AccessibilityInfo,
   Animated,
   Pressable,
+  StyleSheet,
   Text,
   View,
   useWindowDimensions,
 } from 'react-native';
 
 import { SavedJourneyRouteTimeline } from '../../modules/journey/SavedJourneyRouteTimeline';
+import LoadingIndicator from '../../ui/LoadingIndicator';
 import ScheduleArrivalObservationAction from '../../modules/schedule/components/detail/ScheduleArrivalObservationAction';
 import { fromISO } from '../../../lib/util/data';
 import {
@@ -29,16 +32,23 @@ import { createScheduleDetailStyles } from './schedule-detail.styles';
 import type { ScheduleDetailPresentation } from './scheduleDetailPresentationModel';
 import { ScheduleRouteFacts } from './ScheduleRouteFacts';
 import { ScheduleDetailRouteQuickSummary } from './ScheduleDetailRouteQuickSummary';
-import { SavedJourneyGuidanceCard } from '../../modules/journey/SavedJourneyGuidanceCard';
+import { SavedJourneyInstruction } from '../../modules/journey/SavedJourneyGuidanceCard';
+import { presentPlannedJourneyRouteLayout } from '../../modules/journey/savedJourneyRouteLayout';
+import { SavedJourneyRouteBar } from '../../modules/journey/SavedJourneyRouteBar';
+import { useSavedJourneyGuidanceView } from '../../modules/journey/useSavedJourneyGuidanceView';
 import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
-import { useSavedJourneyBinding } from '../../modules/journey/useSavedJourneyBinding';
+import { journeyDisplayName } from '../../modules/journey/journeyRouteInput';
 import { SavedJourneyTrialControls } from '../../modules/journey/SavedJourneyTrialControls';
 import { isAutomaticJourneyEntryEnabled } from '../../modules/journey/journeyFeature';
+import { SAVED_JOURNEY_MOTION } from '../../modules/journey/savedJourneyMotion';
 
 type ScheduleDetailRouteSheetProps = {
   presentation: ScheduleDetailPresentation;
   companionCount: number;
-  renderRouteCompanions: (onFirstRowLayout: (row: View) => void) => React.ReactNode;
+  renderRouteCompanions: (
+    onFirstRowLayout: (row: View) => void,
+    onFailureLayout: (message: Text) => void,
+  ) => React.ReactNode;
 };
 
 /** 경로 요약과 펼친 상세 정보를 드래그 가능한 하단 시트로 표시한다. */
@@ -47,6 +57,7 @@ export function ScheduleDetailRouteSheet({
   companionCount,
   renderRouteCompanions,
 }: ScheduleDetailRouteSheetProps) {
+  const routePlannerButton = useRef<View>(null);
   const {
     completeDeparture,
     currentMemberDepartedAt,
@@ -72,8 +83,11 @@ export function ScheduleDetailRouteSheet({
     internalPreviewItem,
     isDark,
     journeyGuidanceAvailable,
+    guidanceResumeHandoff,
+    navigationMode,
     isPlainSchedule,
     item,
+    liveActivityEntry,
     largeRouteHeader,
     openCurrentRoutePlanner,
     participantDisclosureAnimatedStyle,
@@ -116,6 +130,7 @@ export function ScheduleDetailRouteSheet({
   const inspectedParticipantName = participantPresentations.find(
     participant => participant.memberId === inspectedTravelPlan?.memberId,
   )?.label ?? (inspectedParticipant && travelPlanParticipantLabel(inspectedParticipant));
+  const inspectedPlanTitle = inspectedParticipantName ? `${inspectedParticipantName}의 경로` : '동행자 경로';
   const arrivalSummary = routeArrivalSummary ? (
     <Text
       numberOfLines={largeRouteHeader ? undefined : 1}
@@ -130,42 +145,116 @@ export function ScheduleDetailRouteSheet({
     && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === presentation.currentMemberId
     ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
     [presentation.currentMemberId, inspectedTravelPlan, item.route, item.origin, item.destination, item.myTravelPlan?.memberId, item.ownerMemberId]);
-  const guidanceBinding = useSavedJourneyBinding(guidanceInput, String(item.id));
+  const guidance = useSavedJourneyGuidanceView(guidanceInput, String(item.id));
+  const guidanceBinding = guidance.binding;
   const authenticatedGuidanceEntry = isAutomaticJourneyEntryEnabled()
     && !internalPreviewItem && presentation.authoritativeDetailLoaded && !presentation.loadError
+    && (item.myTravelPlan?.travelMode ?? item.travelMode) === 'TRANSIT'
     && !presentation.offlineGuidancePreview && presentation.currentMemberId != null
     && !inspectedTravelPlan && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === presentation.currentMemberId;
   const guidancePrepared = (guidanceBinding?.savedRouteValidated === true && guidanceBinding.guidanceEnabled === true
-    && guidanceBinding.scheduleId === String(item.id)) || (presentation.offlineGuidancePreview && !!guidanceInput) || authenticatedGuidanceEntry;
+    && guidanceBinding.scheduleId === String(item.id)) || (presentation.offlineGuidancePreview && !!guidanceInput);
   const showsGuidanceControls = (presentation.offlineGuidancePreview || authenticatedGuidanceEntry) && !inspectedTravelPlan;
 
   const departureFailed = departureSubmissionStatus === 'failed' && !departureCompleted && !journeyGuidanceAvailable;
   const departureActionDisabled = departureActionPending || routeSavePending;
   const sharedDeparture = companionCount > 1;
-  const departureActionLabel = departureCompleted ? '길안내 보기' : '길안내 시작';
+  const departureActionLabel = departureCompleted ? '길안내 보기' : '지금 출발';
   const routeSaveSucceeded = routeSaveConfirmed && !routeSavePending && !canRetryRouteSave;
   const expanded = sheetMode === 'expanded';
-  const automaticGuidanceActive = !!guidanceBinding?.savedRouteValidated && !!guidanceBinding.guidanceEnabled
-    && guidanceBinding.scheduleId === String(item.id);
-  const actionInSummary = !expanded && !automaticGuidanceActive;
-  const showDepartureInHeader = expanded && hasDetailedRoute && !automaticGuidanceActive && !inspectedTravelPlan;
+  const { value: guidanceValue, stage: guidanceStage, position: guidancePosition, layout: guidanceLayout } = guidance;
+  const plannedGuidanceLayout = useMemo(() => guidanceInput && !largeRouteHeader
+    ? presentPlannedJourneyRouteLayout(guidanceInput, presentation.routeProgressSegments) : null,
+  [guidanceInput, largeRouteHeader, presentation.routeProgressSegments]);
+  const previousLocation = useRef<{ sessionId: string | null; unavailable: boolean } | null>(null);
+  const guidanceSessionId = guidanceBinding?.scheduleId === String(item.id) ? guidanceBinding.sessionId : null;
+  const locationUnavailable = !!guidanceStage && guidanceValue?.phase !== 'READY' && !guidancePosition;
+  const positionRecovered = !!guidancePosition && !!guidanceSessionId && previousLocation.current?.sessionId === guidanceSessionId
+    && previousLocation.current.unavailable;
+  useLayoutEffect(() => {
+    previousLocation.current = { sessionId: guidanceSessionId, unavailable: locationUnavailable };
+  }, [guidanceSessionId, locationUnavailable]);
+  const automaticGuidanceActive = !!guidanceBinding && (guidance.snapshot == null ||
+    (guidance.snapshot.sessionId === guidanceBinding.sessionId &&
+      (guidance.snapshot.status === 'ARMED' || guidance.snapshot.status === 'ACTIVE')));
+  const [recentGuidanceEnd, setRecentGuidanceEnd] = useState<{ scheduleId: string; reason: string }>();
+  const recentEndHere = navigationMode && recentGuidanceEnd?.scheduleId === String(item.id) && !automaticGuidanceActive;
+  useEffect(() => {
+    if (automaticGuidanceActive) setRecentGuidanceEnd(undefined);
+  }, [automaticGuidanceActive]);
+  const endedGuidance = recentEndHere || navigationMode && !!guidanceBinding
+    && guidance.snapshot?.sessionId === guidanceBinding.sessionId
+    && (guidance.snapshot.status === 'STOPPED' || guidance.snapshot.status === 'EXPIRED');
+  const arrivedGuidance = recentEndHere
+    ? recentGuidanceEnd?.reason === 'DESTINATION_ARRIVED'
+    : endedGuidance && guidance.snapshot?.status === 'STOPPED'
+      && guidance.snapshot.qualityReason === 'DESTINATION_ARRIVED';
+  const navigationReady = navigationMode && authenticatedGuidanceEntry && !automaticGuidanceActive && !guidanceResumeHandoff;
+  const navigationHeroActive = navigationReady || automaticGuidanceActive;
+  const firstBoardingName = journeyDisplayName(guidanceInput?.legs[1]?.stops?.[0]?.name);
+  const firstWalkMeters = guidanceInput?.legs[0]?.display?.distanceMeters;
+  const plannedWalk = typeof firstWalkMeters === 'number' && Number.isFinite(firstWalkMeters)
+    && firstWalkMeters > 0 && firstWalkMeters <= 100_000 ? ` · 도보 약 ${Math.ceil(firstWalkMeters / 10) * 10}m` : '';
+  const nextPlannedStep = firstBoardingName ? `${firstBoardingName}까지${plannedWalk}` : '첫 승차 지점까지 이동할 경로를 확인해요';
+  const actionInSummary = !expanded && !navigationHeroActive;
+  const showDepartureInHeader = expanded && hasDetailedRoute && !navigationHeroActive && !inspectedTravelPlan;
   const [openedGuidanceSchedule, setOpenedGuidanceSchedule] = useState<string>();
   const keepsGuidanceControls = showsGuidanceControls && (expanded || openedGuidanceSchedule === String(item.id));
+  const showGuidanceControlsFirst = navigationMode || navigationHeroActive || !hasDetailedRoute;
   useEffect(() => {
     if (expanded && showsGuidanceControls) setOpenedGuidanceSchedule(String(item.id));
   }, [expanded, showsGuidanceControls, item.id]);
   const { height: windowHeight } = useWindowDimensions();
   const scrollOffset = useRef(0);
+  const busBoardingOffset = useRef(new Animated.Value(0)).current;
   const revealRequest = useRef(0);
   const sheetHeader = useRef<View>(null);
   const savedRouteHeading = useRef<View>(null);
   const shouldRevealCompanion = useRef(false);
   const selectedStopRow = useRef<View>(null);
+  const currentGuidanceRow = useRef<View>(null);
+  const revealedActivityEntry = useRef<string | undefined>(undefined);
   useEffect(() => () => { revealRequest.current += 1; }, [expanded, routeDetailInfo]);
+
+  const currentActivityLeg = guidanceStage?.activeLegIndex;
+  const hasGuidanceStage = guidanceStage != null;
+  useEffect(() => {
+    if (!liveActivityEntry || !expanded || revealedActivityEntry.current === liveActivityEntry) return;
+    if (currentActivityLeg == null && hasGuidanceStage) {
+      // A confirmed unknown/ready state has no active row to reveal.
+      revealedActivityEntry.current = liveActivityEntry;
+      return;
+    }
+    if (currentActivityLeg == null) return;
+    const request = ++revealRequest.current;
+    const reveal = () => {
+      const scroll = sheetScrollRef.current;
+      const viewport = scroll?.getNativeScrollRef();
+      const row = currentGuidanceRow.current;
+      if (!scroll || !viewport || !row || request !== revealRequest.current) return;
+      viewport.measureInWindow((_x, top, _width, height) => {
+        row.measureInWindow((_rowX, rowTop, _rowWidth, rowHeight) => {
+          if (request !== revealRequest.current || row !== currentGuidanceRow.current || height <= 0 || rowHeight <= 0) return;
+          revealedActivityEntry.current = liveActivityEntry;
+          const remaining = Math.min(top + height, windowHeight) - sheetBottomPadding - 12;
+          const offset = rowTop < top + 12 || rowTop + rowHeight > remaining ? rowTop - top - 12 : 0;
+          if (Math.abs(offset) >= 1) {
+            scroll.scrollTo({ y: Math.max(0, scrollOffset.current + offset), animated: false });
+          }
+        });
+      });
+    };
+    if (reduceMotion) {
+      const frame = requestAnimationFrame(reveal);
+      return () => cancelAnimationFrame(frame);
+    }
+    const timer = setTimeout(reveal, SAVED_JOURNEY_MOTION.activityHandoffMs);
+    return () => clearTimeout(timer);
+  }, [currentActivityLeg, expanded, hasGuidanceStage, liveActivityEntry, reduceMotion, sheetBottomPadding, sheetScrollRef, windowHeight]);
 
   const hasSelectedRoutePassStop = selectedRoutePassStop != null;
   useEffect(() => {
-    if (!expanded || !hasSelectedRoutePassStop) return;
+    if (!expanded || !hasSelectedRoutePassStop || navigationReady) return;
     const request = ++revealRequest.current;
     const frame = requestAnimationFrame(() => {
       const scroll = sheetScrollRef.current;
@@ -190,7 +279,7 @@ export function ScheduleDetailRouteSheet({
       cancelAnimationFrame(frame);
       if (request === revealRequest.current) revealRequest.current += 1;
     };
-  }, [expanded, hasSelectedRoutePassStop, selectedRoutePassStop?.stepId, selectedRoutePassStop?.stopIndex, reduceMotion, sheetBottomPadding, sheetScrollRef]);
+  }, [expanded, hasSelectedRoutePassStop, navigationReady, selectedRoutePassStop?.stepId, selectedRoutePassStop?.stopIndex, reduceMotion, sheetBottomPadding, sheetScrollRef]);
 
   const openGuidanceControls = () => {
     sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -212,7 +301,7 @@ export function ScheduleDetailRouteSheet({
     });
   };
 
-  const revealSheetRow = (row: View, animated: boolean, boardingRow?: View) => {
+  const revealSheetRow = (row: Pick<View, 'measureInWindow'>, animated: boolean, boardingRow?: View) => {
     const scroll = sheetScrollRef.current;
     const viewport = scroll?.getNativeScrollRef();
     if (!expanded || !scroll || !viewport) return;
@@ -251,13 +340,15 @@ export function ScheduleDetailRouteSheet({
     revealSheetRow(row, !reduceMotion);
   };
 
-  const departureAction = !inspectedTravelPlan && !guidancePrepared && journeyGuidanceAvailable ? (
+  const departureAction = !inspectedTravelPlan && !navigationMode && !automaticGuidanceActive
+    && journeyGuidanceAvailable && authenticatedGuidanceEntry ? (
     <Pressable
       testID="schedule-route-departure-action"
       onPress={completeDeparture}
       disabled={departureActionDisabled}
       accessibilityRole="button"
       accessibilityLabel={departureActionLabel}
+      accessibilityHint="현재 경로에서 길안내 화면을 엽니다. 실제 출발은 위치로 확인합니다."
       accessibilityState={{ busy: departureActionDisabled, disabled: departureActionDisabled }}
       style={({ pressed }) => [
         styles.sheetDepartureAction,
@@ -318,7 +409,7 @@ export function ScheduleDetailRouteSheet({
         { opacity: pressed || departureActionDisabled ? 0.6 : 1 },
       ]}
     >
-      {departureActionPending ? <ActivityIndicator size="small" color={topCardAccentText} /> : (
+      {departureActionPending ? <LoadingIndicator size="inline" delayMs={150} /> : (
         <Ionicons
           name={departureFailed ? 'refresh-outline' : sharedDeparture ? 'time-outline' : 'notifications-off-outline'}
           size={18}
@@ -329,7 +420,8 @@ export function ScheduleDetailRouteSheet({
     </Pressable>
   ) : null;
 
-  const showExpandedStatus = !showDepartureInHeader || showRouteIdentityInSheet ||
+  const showDepartureInBody = !navigationHeroActive && !showDepartureInHeader;
+  const showExpandedStatus = showDepartureInBody || showRouteIdentityInSheet ||
     Boolean(arrivalSummary || (!sharedDeparture && manualDeparture) || item.myDepartedAt);
   const departureContext = (
     <View style={styles.expandedDepartureContext}>
@@ -359,6 +451,17 @@ export function ScheduleDetailRouteSheet({
     </View>
   );
 
+  const guidanceControls = keepsGuidanceControls ? (
+    <SavedJourneyTrialControls key={String(item.id)} input={guidanceInput} savedRoute={item.route} isDark={isDark}
+      autoPrepareRoute={navigationMode && !guidanceResumeHandoff}
+      statusShownInRouteHeader={endedGuidance || automaticGuidanceActive && !!guidanceStage && !!guidanceValue}
+      onTrialEnded={outcome => setRecentGuidanceEnd({ scheduleId: String(item.id), reason: outcome.reason })}
+      onViewSavedRoute={hasDetailedRoute ? showSavedRoute : undefined}
+      authenticatedSchedule={authenticatedGuidanceEntry || presentation.guidancePreviewAuthenticationSource
+        ? { scheduleId: String(item.id), memberId: presentation.currentMemberId! } : undefined}
+      previewAuthenticationSource={presentation.guidancePreviewAuthenticationSource} />
+  ) : null;
+
   return !isPlainSchedule ? (
     <Animated.View
       style={[
@@ -383,12 +486,19 @@ export function ScheduleDetailRouteSheet({
           >
             <Pressable
               testID="schedule-route-sheet-handle"
-              style={({ pressed }) => [styles.sheetHandleButton, { opacity: pressed ? 0.62 : 1 }]}
+              style={({ pressed }) => [styles.sheetHandleButton, automaticGuidanceActive && styles.guidanceSheetHandle,
+                { opacity: pressed ? 0.62 : 1 }]}
               accessibilityRole="button"
-              accessibilityLabel={expanded ? '경로 시트 접기' : '경로 시트 펼치기'}
+              accessibilityLabel={automaticGuidanceActive ? (expanded ? '저장 경로 접기' : '저장 경로 보기')
+                : expanded ? '경로 시트 접기' : '경로 시트 펼치기'}
               accessibilityState={{ expanded }}
               onPress={() => snapSheet(expanded ? 'compact' : 'expanded')}
             >
+              {automaticGuidanceActive && (
+                <Text maxFontSizeMultiplier={2} style={[styles.guidanceSheetLabel, { color: topCardAccentText }]}>
+                  {expanded ? '저장 경로 접기' : '저장 경로 보기'}
+                </Text>
+              )}
               <Animated.View style={sheetHandleAnimatedStyle} pointerEvents="none">
                 <Ionicons
                   name={sheetHandleAnimatedStyle ? 'chevron-up-outline' :
@@ -399,16 +509,55 @@ export function ScheduleDetailRouteSheet({
               </Animated.View>
             </Pressable>
           </View>
+          {navigationReady && (
+            <View testID="schedule-route-navigation-ready" style={navigationStyles.ready}>
+              <View style={navigationStyles.readyCopy}>
+                <Text accessibilityRole="header" style={[navigationStyles.readyTitle, { color: primaryText }]}>
+                  {arrivedGuidance ? '목적지에 도착했어요' : endedGuidance ? '위치 안내가 끝났어요' : '출발 전'}
+                </Text>
+                <Text style={[navigationStyles.readyNext, { color: topCardAccentText }]}>
+                  {endedGuidance ? '저장한 경로는 계속 볼 수 있어요' : nextPlannedStep}
+                </Text>
+                {expanded && !endedGuidance && <Text style={[navigationStyles.readyHint, { color: secondaryText }]}>
+                  안내를 준비하면 이동 중 위치로 출발을 확인해요
+                </Text>}
+              </View>
+            </View>
+          )}
+          {automaticGuidanceActive && guidanceStage && guidanceValue && (
+            <SavedJourneyInstruction stage={guidanceStage} value={guidanceValue} isDark={isDark} reduceMotion={reduceMotion}
+              legKind={guidanceStage.activeLegIndex == null ? undefined : guidanceInput?.legs[guidanceStage.activeLegIndex]?.kind} />
+          )}
           {inspectedTravelPlan && (
             <Reanimated.View
               entering={inspectedPlanEntrance}
               style={[styles.inspectedPlanBar, { backgroundColor: topCardControlBg }]}
             >
-              <View style={styles.inspectedPlanIdentity}>
+              <View
+                accessible
+                accessibilityRole="text"
+                accessibilityLabel={inspectedPlanTitle}
+                style={styles.inspectedPlanIdentity}
+              >
                 <Ionicons name="person-circle-outline" size={19} color={topCardAccentText} />
-                <Text maxFontSizeMultiplier={1.9} style={[styles.inspectedPlanText, { color: primaryText }]}>
-                  {inspectedParticipantName ? `${inspectedParticipantName}의 경로` : '동행자 경로'}
-                </Text>
+                {inspectedParticipantName && !largeRouteHeader ? (
+                  <View style={[styles.inspectedPlanTitle, styles.inspectedPlanTitleRow]}>
+                    <Text
+                      numberOfLines={1}
+                      maxFontSizeMultiplier={1.9}
+                      style={[styles.inspectedPlanText, styles.inspectedPlanName, { color: primaryText }]}
+                    >
+                      {inspectedParticipantName}
+                    </Text>
+                    <Text numberOfLines={1} maxFontSizeMultiplier={1.9} style={[styles.inspectedPlanText, { color: primaryText }]}>
+                      의 경로
+                    </Text>
+                  </View>
+                ) : (
+                  <Text maxFontSizeMultiplier={1.9} style={[styles.inspectedPlanText, styles.inspectedPlanTitle, { color: primaryText }]}>
+                    {inspectedPlanTitle}
+                  </Text>
+                )}
               </View>
               <Pressable
                 onPress={returnToOwnTravelPlan}
@@ -423,11 +572,11 @@ export function ScheduleDetailRouteSheet({
               </Pressable>
             </Reanimated.View>
           )}
-          {showsGuidanceControls && !expanded && (
+          {showsGuidanceControls && navigationReady && !expanded && (
             <Pressable
               testID="schedule-route-guidance-entry"
               accessibilityRole="button"
-              accessibilityLabel="위치 안내"
+              accessibilityLabel="위치 안내 준비"
               accessibilityHint="같은 경로 시트에서 안내 설정을 엽니다"
               onPress={openGuidanceControls}
               style={({ pressed }) => [
@@ -437,7 +586,7 @@ export function ScheduleDetailRouteSheet({
               ]}
             >
               <Ionicons name="navigate-outline" size={16} color={topCardAccentText} />
-              <Text maxFontSizeMultiplier={2} style={[styles.sheetDepartureActionText, { color: primaryText }]}>위치 안내</Text>
+              <Text maxFontSizeMultiplier={2} style={[styles.sheetDepartureActionText, { color: primaryText }]}>위치 안내 준비</Text>
               <Ionicons name="chevron-up-outline" size={15} color={secondaryText} />
             </Pressable>
           )}
@@ -462,7 +611,7 @@ export function ScheduleDetailRouteSheet({
               <View style={styles.sheetRouteSaveFeedbackMessage}>
                 <View style={styles.sheetRouteSaveFeedbackIcon} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                   {routeSavePending ? (
-                    <ActivityIndicator size="small" color={topCardAccentText} />
+                    <LoadingIndicator size="inline" delayMs={150} />
                   ) : routeSaveSucceeded ? (
                     <Reanimated.View entering={confirmationCheckIn}>
                       <Ionicons name="checkmark-circle-outline" size={20} color={topCardAccentText} />
@@ -506,8 +655,11 @@ export function ScheduleDetailRouteSheet({
         <View style={styles.sheetContent}>
         <ScheduleDetailRouteQuickSummary
           presentation={presentation}
-          automaticGuidanceActive={automaticGuidanceActive}
-          automaticRouteInput={automaticGuidanceActive ? guidanceInput : null}
+          automaticGuidanceActive={navigationHeroActive}
+          automaticRouteSummary={navigationHeroActive && guidanceInput && (
+            <SavedJourneyRouteBar input={guidanceInput} position={expanded ? null : guidancePosition}
+              layout={guidanceLayout ?? plannedGuidanceLayout} compact isDark={isDark} showCopy={false} recovery={positionRecovered} />
+          )}
           departureAction={actionInSummary ? departureAction : null}
         />
         <Animated.ScrollView
@@ -519,8 +671,14 @@ export function ScheduleDetailRouteSheet({
             { paddingBottom: sheetBottomPadding },
           ]}
           showsVerticalScrollIndicator={false}
-          onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
-          onScrollBeginDrag={() => { revealRequest.current += 1; }}
+          onScroll={event => {
+            scrollOffset.current = event.nativeEvent.contentOffset.y;
+            if (expanded && !largeRouteHeader) busBoardingOffset.setValue(scrollOffset.current);
+          }}
+          onScrollBeginDrag={() => {
+            revealRequest.current += 1;
+            revealedActivityEntry.current = liveActivityEntry;
+          }}
           scrollEventThrottle={16}
           bounces={false}
           scrollEnabled={sheetMode === 'expanded'}
@@ -528,13 +686,7 @@ export function ScheduleDetailRouteSheet({
           importantForAccessibility={expanded ? 'auto' : 'no-hide-descendants'}
         >
           <ImportedTicketSummary route={item.route} showBooking={sheetMode === 'expanded'} />
-          {sheetMode === 'expanded' && <SavedJourneyGuidanceCard input={guidanceInput} scheduleId={String(item.id)} isDark={isDark} />}
-          {keepsGuidanceControls
-            ? <SavedJourneyTrialControls key={String(item.id)} input={guidanceInput} savedRoute={item.route} isDark={isDark}
-                onViewSavedRoute={hasDetailedRoute ? showSavedRoute : undefined}
-                authenticatedSchedule={authenticatedGuidanceEntry || presentation.guidancePreviewAuthenticationSource
-                ? { scheduleId: String(item.id), memberId: presentation.currentMemberId! } : undefined}
-                previewAuthenticationSource={presentation.guidancePreviewAuthenticationSource} /> : null}
+          {showGuidanceControlsFirst && guidanceControls}
           <View
             onLayout={handleExpandedContentLayout}
             pointerEvents={sheetMode === 'expanded' ? 'auto' : 'none'}
@@ -584,7 +736,7 @@ export function ScheduleDetailRouteSheet({
                     </View>
                   </View>}
 
-                  {!showDepartureInHeader && departureContext}
+                  {showDepartureInBody && departureContext}
                   {arrivalSummary}
                   {!sharedDeparture && manualDeparture}
                   {!hasDetailedRoute && (
@@ -631,7 +783,7 @@ export function ScheduleDetailRouteSheet({
                       ]}
                     >
                       <Ionicons
-                        name="swap-horizontal"
+                        name="swap-horizontal-outline"
                         size={15}
                         color={topCardAccentText}
                       />
@@ -764,7 +916,10 @@ export function ScheduleDetailRouteSheet({
                       ) : null}
                       {!inspectedTravelPlan && (
                         <Pressable
-                          onPress={openCurrentRoutePlanner}
+                          ref={routePlannerButton}
+                          onPress={() => openCurrentRoutePlanner(() => {
+                            if (routePlannerButton.current) AccessibilityInfo.sendAccessibilityEvent?.(routePlannerButton.current, 'focus');
+                          })}
                           disabled={routeSavePending}
                           accessibilityRole="button"
                           accessibilityLabel={
@@ -792,10 +947,7 @@ export function ScheduleDetailRouteSheet({
                           ]}
                         >
                           {routeSavePending ? (
-                            <ActivityIndicator
-                              size="small"
-                              color={primaryText}
-                            />
+                            <LoadingIndicator size="inline" delayMs={150} />
                           ) : (
                             <Ionicons
                               name="map-outline"
@@ -826,6 +978,8 @@ export function ScheduleDetailRouteSheet({
               {hasDetailedRoute && routeDetailInfo ? (
                 <SavedJourneyRouteTimeline
                   input={guidanceInput}
+                  guidance={guidance}
+                  currentGuidanceRowRef={currentGuidanceRow}
                   scheduleId={String(item.id)}
                   routeInfo={routeDetailInfo}
                   selectedStepId={selectedRouteStepId}
@@ -843,7 +997,15 @@ export function ScheduleDetailRouteSheet({
                   secondaryTextColor={secondaryText}
                   compact
                   inlineStationRail
+                  showEstimatedClockHeading={!largeRouteHeader && displayTravelMode === 'TRANSIT'}
+                  busBoardingScroll={expanded && !largeRouteHeader ? {
+                    ref: sheetScrollRef,
+                    offset: busBoardingOffset,
+                    surface: (isDark ? styles.panelOpaqueBackdropDark : styles.panelOpaqueBackdropLight).backgroundColor,
+                    border: sheetBorder,
+                  } : undefined}
                   realtimeArrivalsEnabled={!internalPreviewItem && !routeDetailInfo.matchedTimeline}
+                  realtimeArrivalsActive={expanded}
                 />
               ) : (
                 <Text style={[styles.sheetEmptyText, { color: secondaryText }]}>
@@ -860,6 +1022,7 @@ export function ScheduleDetailRouteSheet({
                   />
                 </View>
               )}
+              {expanded && <ScheduleSharingInformation item={item} />}
               {sharedDeparture && (
                 <View
                   style={[
@@ -914,13 +1077,14 @@ export function ScheduleDetailRouteSheet({
                   {manualDeparture}
                   {participantsExpanded ? (
                     <View style={styles.sheetParticipantExpandedContent}>
-                      {renderRouteCompanions(revealFirstCompanion)}
+                      {renderRouteCompanions(revealFirstCompanion, message => revealSheetRow(message, !reduceMotion))}
                     </View>
                   ) : null}
                 </View>
               )}
             </>
           </View>
+          {!showGuidanceControlsFirst && guidanceControls}
         </Animated.ScrollView>
         </View>
       </View>
@@ -952,4 +1116,12 @@ const styles = createScheduleDetailStyles({
   APP_ACCENT_BLUE,
   IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT,
   SHEET_HANDLE_HEIGHT,
+});
+
+const navigationStyles = StyleSheet.create({
+  ready: { paddingHorizontal: 16, paddingVertical: 5 },
+  readyCopy: { gap: 2 },
+  readyTitle: { fontSize: 18, fontWeight: '700' },
+  readyNext: { fontSize: 14, fontWeight: '600' },
+  readyHint: { fontSize: 12, lineHeight: 18, marginTop: 3 },
 });

@@ -204,8 +204,14 @@ public final class NoLateLiveActivityModule: Module {
     AsyncFunction("stopAutomaticJourney") {
       return await NoLateJourneyAutomaticRuntime.shared.stop()
     }
+    AsyncFunction("clearAutomaticJourneyArrivalHandoff") {
+      await NoLateJourneyAutomaticRuntime.shared.clearArrivalHandoff()
+    }
     AsyncFunction("restoreAutomaticJourney") { (routeJSON: String, bindingJSON: String) in
       return await NoLateJourneyAutomaticRuntime.shared.restore(routeJSON: routeJSON, bindingJSON: bindingJSON)
+    }
+    AsyncFunction("readSavedAutomaticJourneyCheckpointRoute") { (bindingJSON: String) in
+      return await NoLateJourneyAutomaticRuntime.shared.readSavedCheckpointRoute(bindingJSON: bindingJSON)
     }
     AsyncFunction("reconcileAutomaticJourneyTerminal") { (bindingJSON: String) in
       return await NoLateJourneyAutomaticRuntime.shared.reconcileTerminal(bindingJSON: bindingJSON)

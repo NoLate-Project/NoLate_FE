@@ -505,6 +505,7 @@ export function useRoutePlannerController() {
     isRouteDetailMode,
     isTransitDetailMode,
     lastCameraActionKeyRef,
+    mapCamera,
     mapRef,
     originLat,
     originLng,

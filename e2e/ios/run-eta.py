@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import urllib.request
+from eta_fixture_scope import DATED_TIMETABLE_API_BASES, INCIDENT_API_BASE, PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE, REAL_ALTERNATE_API_BASE, require_memory_fixture_api
 from eta_timetable_preview import preview_exclusion
 from eta_diagnostic_warning import diagnostic_warning
 
@@ -36,6 +37,7 @@ METHODS += ('testVerifyProtectedRealEtaDiagnostic',)
 METHODS += ('testVerifyIsolatedRealProviderEta',)
 METHODS += ('testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback')
 METHODS += ('testVerifyIsolatedRealProviderDiagnostic',)
+METHODS += ('testVerifyIsolatedOdsayTimetableSelection',)
 METHODS += ('testVerifyIsolatedRealProviderObservationExpiry',)
 METHODS += ('testVerifyIsolatedQuotaEta',)
 SAVE_METHODS += ('testCommitNaverComparisonJourney',)
@@ -64,9 +66,10 @@ parser.add_argument('--inspect-odsay-after-login', action='store_true')
 parser.add_argument('--assert-quota-failure', action='store_true')
 parser.add_argument('--inspect-tmap-after-login', action='store_true')
 parser.add_argument('--expected-diagnostic', choices=('TRANSIT_ARRIVAL_UNAVAILABLE', 'TRANSIT_ARRIVAL_OUT_OF_HORIZON'))
-parser.add_argument('--api-base', choices=('http://127.0.0.1:5522', 'http://127.0.0.1:5523'), default='http://127.0.0.1:5522')
-parser.add_argument('--fixture-phase', choices=('success', 'reconnect', 'early-transfer', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture', 'unknown', 'missed', 'recovered', 'late'))
+parser.add_argument('--api-base', choices=('http://127.0.0.1:5522', PRIVATE_API_BASE, INCIDENT_API_BASE, REAL_ALTERNATE_API_BASE, QUOTA_ALTERNATE_API_BASE, *DATED_TIMETABLE_API_BASES), default='http://127.0.0.1:5522')
+parser.add_argument('--fixture-phase', choices=('success', 'reconnect', 'early-transfer', 'dwell-transfer', 'early-transfer-risk', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture', 'planned-alighting', 'unknown', 'missed', 'recovered', 'late'))
 parser.add_argument('--fixture-evidence', type=Path, help='Private H2 phase result; verifies exact displayed time/duration')
+parser.add_argument('--fixture-first-timetable-alighting', action='store_true')
 parser.add_argument('--natural-evidence', type=Path, help='Private natural due-time Worker result')
 parser.add_argument('--native-evidence', type=Path, help='Private Worker result, followed by actual native OS delivery')
 parser.add_argument('--native-mode', choices=('inspect', 'foreground', 'background', 'terminated', 'locked', 'state'))
@@ -78,10 +81,35 @@ parser.add_argument('--real-isolated-previous-evidence', type=Path,
                     help='Accepted pre-departure evaluation from the same private real-provider run')
 parser.add_argument('--quota-evidence', type=Path, help='Synthetic quota Worker evidence; never actual provider acceptance')
 args = parser.parse_args()
+if args.fixture_first_timetable_alighting and args.fixture_phase != 'early-transfer':
+    parser.error('Timetable alighting requires the early-transfer fixture')
+timetable_method = 'testVerifyIsolatedOdsayTimetableSelection'
+timetable_save = (args.only == timetable_method and args.allow_save and args.api_base in DATED_TIMETABLE_API_BASES
+                  and args.real_isolated and not args.real_automatic)
+if args.api_base in DATED_TIMETABLE_API_BASES and (
+        not args.real_isolated or args.real_automatic or (args.allow_save and not timetable_save) or
+        args.only not in ('testLoginDedicatedEtaAccount', timetable_method)):
+    parser.error('The next-day timetable port accepts its synthetic login or read-only draft check')
+if args.only == 'testVerifyIsolatedOdsayTimetableSelection' and (
+        not args.real_isolated or args.api_base not in (PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE, *DATED_TIMETABLE_API_BASES)
+        or (args.allow_save and not timetable_save) or args.schedule_id != 363
+        or args.title != 'ETA E2E real isolated fixture' or args.existing_title != args.title):
+    parser.error('ODsay timetable selection requires the private read-only draft')
+incident_methods = ('testVerifyIncidentCalendarDeparture', 'testVerifyIncidentStationBoard')
+if args.api_base == INCIDENT_API_BASE and (
+        args.only not in (*incident_methods, 'testLoginDedicatedEtaAccount') or args.real_isolated or args.allow_save
+        or args.title != 'ETA E2E calendar 1'):
+    parser.error('The alternate port is reserved for the synthetic incident')
 quota_ui = args.only == 'testVerifyIsolatedQuotaEta'
+alternate_fixture_assertion = args.only == 'testVerifyIsolatedEtaFixture' and args.fixture_phase in ('early-transfer', 'dwell-transfer', 'planned-alighting')
+if args.api_base == QUOTA_ALTERNATE_API_BASE and (
+        (args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedQuotaEta', 'testVerifyIsolatedNativeAlarmState')
+         and not alternate_fixture_assertion)
+        or args.real_isolated or args.allow_save or args.title != 'ETA E2E isolated fixture'):
+    parser.error('The alternate synthetic port requires an approved private fixture assertion')
 quota_expected = {}
 if quota_ui:
-    if (args.api_base != 'http://127.0.0.1:5523' or args.schedule_id != 363 or
+    if (args.api_base not in (PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE) or args.schedule_id != 363 or
             args.title != 'ETA E2E isolated fixture' or args.quota_evidence is None):
         parser.error('Quota UI verification is restricted to the private H2 fixture')
     quota_path = args.quota_evidence.resolve(strict=True)
@@ -92,7 +120,7 @@ if quota_ui:
             quota.get('database') != 'H2_MEMORY_ONLY' or quota.get('physicalTransitHttpCalls') != 0 or
             quota.get('processed') != 1 or quota.get('scenario') not in
             ('quota-route', 'quota-timetable', 'quota-arrival', 'quota-recovered', 'optimization-timeout',
-             'quality-unobserved', 'quality-stale', 'quality-unverified', 'quality-error', 'quality-timeout') or
+             'quality-unobserved', 'quality-departed', 'quality-stale', 'quality-unverified', 'quality-error', 'quality-timeout') or
             dt.datetime.fromisoformat(quota['targetArrivalAt']) != dt.datetime.fromisoformat(args.target_arrival)):
         parser.error('Wrong quota evidence scope or classification')
     accepted_quota = quota['scenario'] in ('quota-recovered', 'optimization-timeout')
@@ -118,10 +146,12 @@ elif args.quota_evidence is not None:
 real_expected = {}
 if args.real_automatic and not args.real_isolated:
     parser.error('Automatic real delivery requires explicit real isolation')
+if args.api_base == REAL_ALTERNATE_API_BASE and (not args.real_isolated or args.real_automatic):
+    parser.error('The alternate real port is restricted to manual real isolation')
 if args.real_isolated:
     automatic_methods = ('testCreateIsolatedEtaJourney', 'testObserveIsolatedNativeAlarmDelivery', 'testVerifyIsolatedNativeAlarmState') if args.real_automatic else ()
-    if (args.api_base != 'http://127.0.0.1:5523' or args.title != 'ETA E2E real isolated fixture' or
-            args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry', 'testInspectEtaJourney') + automatic_methods):
+    if (args.api_base not in (PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE, *DATED_TIMETABLE_API_BASES) or args.title != 'ETA E2E real isolated fixture' or
+            args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry', 'testVerifyIsolatedOdsayTimetableSelection', 'testInspectEtaJourney') + automatic_methods):
         parser.error('Real isolation is restricted to its explicit account-296 methods on the separate memory DB')
     if args.only in ('testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback'):
         if args.real_isolated_evidence is None or args.real_isolated_previous_evidence is None:
@@ -208,15 +238,17 @@ if args.real_isolated:
                          'TEST_RUNNER_E2E_REAL_DEPARTURE_CLOCK': dt.datetime.fromisoformat(diagnostic['recommendedDepartureAt']).astimezone(
                              dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
         future = (diagnostic.get('effectiveSnapshot') or {}).get('effectiveTransitRoute')
-        if not diagnostic['failureReason'].startswith('TRANSIT_TRAIN_NOT_YET_OBSERVED:'):
+        timetable_preview = diagnostic['failureReason'].startswith(
+            ('TRANSIT_TRAIN_NOT_YET_OBSERVED:', 'TRANSIT_ARRIVAL_SOURCE_STALE:')) and (
+            diagnostic.get('source') == 'TIMETABLE_PROVIDER' and future is not None)
+        if not timetable_preview:
             real_expected['TEST_RUNNER_E2E_REAL_FORBID_FUTURE_PREVIEW'] = '1'
-        withheld_future = (preview_exclusion(diagnostic, future) if future is not None and
-                           diagnostic['failureReason'].startswith('TRANSIT_TRAIN_NOT_YET_OBSERVED:') else None)
+        withheld_future = preview_exclusion(diagnostic, future) if timetable_preview else None
         if withheld_future:
             # The API intentionally hides departed or late timetable candidates.
             # Test that absence; never weaken production freshness/visibility to display it.
             real_expected['TEST_RUNNER_E2E_REAL_FUTURE_WITHHELD'] = withheld_future
-        elif diagnostic['failureReason'].startswith('TRANSIT_TRAIN_NOT_YET_OBSERVED:'):
+        elif timetable_preview:
             future = diagnostic['effectiveSnapshot']['effectiveTransitRoute']
             def seoul_clock(value, seconds=False):
                 return dt.datetime.fromisoformat(value).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S' if seconds else '%H:%M')
@@ -259,12 +291,40 @@ if args.real_isolated:
         rides = [s['rideTiming'] for s in isolated['effectiveSnapshot']['effectiveTransitRoute']['segments'] if s['kind'] == 'SUBWAY']
         if len(rides) < 2:
             parser.error('Actual first and transfer timetable evidence is required')
+        ride_basis_labels = {
+            'TIMETABLE': '시간표',
+            'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE': '첫 승차 실시간 반영',
+            'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE': '환승역 실시간 반영',
+            'TRANSFER_ALIGHTING_REALTIME': '하차역 실시간 예측',
+            'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME': '승하차역 실시간 예측',
+            'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING': '승차역 실시간 · 하차역 시간표',
+        }
+        def boarding_clock_label(timing):
+            if timing['basis'] in ('FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME',
+                                   'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
+                                   'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE'):
+                return '승차역 열차 도착 예측'
+            return '승차'
         real_expected['TEST_RUNNER_E2E_REAL_RIDE_TEXT'] = json.dumps([
             timing['timetable']['trainNumber'] + '열차 · ' +
-            ('첫 승차 실시간 반영' if index == 0 else '시간표') + ' · ' +
+            ride_basis_labels[timing['basis']] + ' · ' +
             dt.datetime.fromisoformat(timing['predictedBoardingAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S') +
-            ' 승차 → ' + dt.datetime.fromisoformat(timing['predictedArrivalAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S') +
-            ' 하차 예측' for index, timing in enumerate(rides)], ensure_ascii=False)
+            ' ' + boarding_clock_label(timing) + ' → ' +
+            dt.datetime.fromisoformat(timing['predictedArrivalAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S') +
+            ' 하차 예측' for timing in rides], ensure_ascii=False)
+        effective_snapshot = isolated['effectiveSnapshot']
+        if (args.api_base == REAL_ALTERNATE_API_BASE and isolated.get('journeyProvider') == 'odsay'
+                and effective_snapshot.get('routeChanged') is False):
+            station_zone = dt.timezone(dt.timedelta(hours=9))
+            real_expected['TEST_RUNNER_E2E_REAL_MATCHED_RAIL'] = json.dumps([
+                [
+                    f"route-step-row-odsay-leg-{segment['sequence']}",
+                    dt.datetime.fromisoformat(segment['rideTiming']['predictedBoardingAt']).astimezone(station_zone).strftime('%H:%M') +
+                    (' 열차 도착 예측' if boarding_clock_label(segment['rideTiming']) == '승차역 열차 도착 예측' else ''),
+                    dt.datetime.fromisoformat(segment['rideTiming']['predictedArrivalAt']).astimezone(station_zone).strftime('%H:%M'),
+                ]
+                for segment in effective_snapshot['effectiveTransitRoute']['segments'] if segment['kind'] == 'SUBWAY'
+            ])
         # Compare original WALK distance with the rendered itinerary, not just the ETA clocks.
         walking = []
         for segment in isolated['effectiveSnapshot']['effectiveTransitRoute']['segments']:
@@ -359,7 +419,7 @@ native_methods = ('testInspectIsolatedNativeAlarm', 'testObserveIsolatedNativeAl
 native_expected = {}
 if args.only in native_methods:
     native_title = 'ETA E2E real isolated fixture' if args.real_automatic else 'ETA E2E isolated fixture'
-    if args.api_base != 'http://127.0.0.1:5523' or args.schedule_id != 363 or args.title != native_title:
+    if args.api_base not in (PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE) or args.schedule_id != 363 or args.title != native_title:
         parser.error('Native delivery tests require the isolated H2 fixture only')
     if args.native_evidence is None or args.native_mode is None:
         parser.error('Explicit native evidence and mode are required')
@@ -414,8 +474,8 @@ if args.only in native_methods:
 elif args.native_evidence is not None or args.native_mode is not None:
     parser.error('Native arguments are scoped to their explicit test methods')
 private_target_save = args.only == 'testSaveIsolatedEtaTarget'
-if args.only in ('testVerifyIncidentCalendarDeparture', 'testVerifyIncidentStationBoard') and (
-        args.api_base != 'http://127.0.0.1:5523' or args.title != 'ETA E2E calendar 1' or args.allow_save):
+if args.only in incident_methods and (
+        args.api_base not in (PRIVATE_API_BASE, INCIDENT_API_BASE) or args.title != 'ETA E2E calendar 1' or args.allow_save):
     parser.error('Incident UI verification requires the read-only private H2 fixture')
 private_notice = args.only == 'testDismissPrivateSharingDisabledNotice'
 private_create = args.only == 'testCreateIsolatedEtaJourney'
@@ -429,7 +489,8 @@ unlocated_route_test = args.only in ('testSaveUnlocatedDestinationRoute', 'testV
 if unlocated_route_test and (args.api_base != 'http://127.0.0.1:5523' or args.title != 'ETA E2E unlocated' or
                              args.schedule_id != 363 or args.existing_title != 'E2E 도착지만 저장'):
     parser.error('Unlocated-destination route E2E is restricted to its private H2 fixture')
-if args.fixture_phase is not None and (args.only != 'testVerifyIsolatedEtaFixture' or args.api_base != 'http://127.0.0.1:5523'):
+if args.fixture_phase is not None and (args.only != 'testVerifyIsolatedEtaFixture' or (
+        args.api_base != PRIVATE_API_BASE and not (args.api_base == QUOTA_ALTERNATE_API_BASE and alternate_fixture_assertion))):
     parser.error('Mock fixture assertions require the private H2 server and their explicit UI method')
 if args.only == 'testVerifyIsolatedEtaFixture' and args.fixture_phase is None:
     parser.error('Explicit fixture phase is required')
@@ -473,20 +534,52 @@ if args.fixture_phase:
         parser.error('Fixture phase was not processed exactly once')
     if dt.datetime.fromisoformat(evidence['targetArrivalAt']) != dt.datetime.fromisoformat(args.target_arrival):
         parser.error('UI target must match the actual private schedule')
-    if args.fixture_phase in ('success', 'reconnect', 'early-transfer', 'transfer-observed', 'recovered'):
+    if args.fixture_phase in ('success', 'reconnect', 'early-transfer', 'dwell-transfer', 'transfer-observed', 'recovered'):
         # These expectations are independent of the returned ETA values.
         epoch = dt.datetime.fromisoformat(evidence['epoch'])
         fixture_expected = {
             'TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK': epoch.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
             'TEST_RUNNER_E2E_FIXTURE_MINUTES': '27' if args.fixture_phase == 'transfer-observed' else
-                '41' if args.fixture_phase in ('success', 'early-transfer') else '46',
+                '28' if args.fixture_phase == 'early-transfer' else '41' if args.fixture_phase == 'success' else '46',
         }
+        transfers = [leg['transferTiming'] for leg in evidence['effectiveSnapshot']['effectiveTransitRoute']['segments']
+                     if leg.get('transferTiming')]
+        if len(transfers) == 1:
+            transfer = transfers[0]
+            elapsed = dt.datetime.fromisoformat(transfer['boardingAt']) - dt.datetime.fromisoformat(transfer['previousArrivalAt'])
+            wait = int(elapsed.total_seconds()) - transfer['walkingSeconds']
+            if wait > 0:
+                minutes, seconds = divmod(wait, 60)
+                duration = ' '.join(part for part in (f'{minutes}분' if minutes else '', f'{seconds}초' if seconds else '') if part)
+                fixture_expected['TEST_RUNNER_E2E_FIXTURE_TRANSFER_WAIT'] = f'환승 대기 약 {duration}'
+        if args.fixture_phase == 'dwell-transfer':
+            zone = dt.timezone(dt.timedelta(hours=9))
+            clock_at = lambda seconds: (epoch + dt.timedelta(seconds=seconds)).astimezone(zone).strftime('%H:%M:%S')
+            fixture_expected.update(
+                TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK=clock_at(0)[:5],
+                TEST_RUNNER_E2E_FIXTURE_MINUTES='44',
+                TEST_RUNNER_E2E_FIXTURE_TRANSFER_RIDE_TEXT=f'2014열차 · 시간표 · {clock_at(2100)} 승차 → {clock_at(2581)} 하차 예측',
+                TEST_RUNNER_E2E_FIXTURE_ARRIVAL_CLOCK=clock_at(2752)[:5],
+            )
+        if args.fixture_phase == 'early-transfer':
+            fallback = args.fixture_first_timetable_alighting
+            board, alight = [(epoch + dt.timedelta(seconds=offset)).astimezone(
+                dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S') for offset in (197, 800 if fallback else 700)]
+            source = '승차역 실시간 · 하차역 시간표' if fallback else '승하차역 실시간 예측'
+            fixture_expected['TEST_RUNNER_E2E_FIXTURE_MINUTES'] = '46' if fallback else '28'
+            fixture_expected['TEST_RUNNER_E2E_FIXTURE_FIRST_RIDE_MINUTES'] = '12' if fallback else '10'
+            fixture_expected['TEST_RUNNER_E2E_FIXTURE_FIRST_RIDE_TEXT'] = (
+                f'4012열차 · {source} · {board} 승차역 열차 도착 예측 → {alight} 하차 예측')
         if args.fixture_phase == 'transfer-observed':
             for leg, board, alight in ((1, 210, 513), (3, 960, 1441)):
                 for event, offset in (('BOARD', board), ('ALIGHT', alight)):
                     fixture_expected[f'TEST_RUNNER_E2E_RAIL_{event}_{leg}'] = (
                         epoch + dt.timedelta(seconds=offset)).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')
-    elif args.fixture_phase == 'planned-postdeparture':
+    elif args.fixture_phase == 'early-transfer-risk':
+        estimated = dt.datetime.fromisoformat(evidence['targetArrivalAt']) - dt.timedelta(minutes=65)
+        fixture_expected = {'TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK':
+                            estimated.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
+    elif args.fixture_phase in ('planned-postdeparture', 'planned-alighting'):
         prediction = evidence.get('provisionalPrediction') or {}
         if prediction.get('basis') != 'MATCHED_TRAIN_REALTIME' or not prediction.get('predictedArrivalAt'):
             parser.error('A same-train post-departure observation is required')
@@ -511,7 +604,7 @@ if args.only != 'testInspectEtaJourney' and target <= dt.datetime.now(dt.timezon
     parser.error('Target arrival is too close or already past; do not create a stale comparison')
 if args.only in SAVE_METHODS and not args.allow_save:
     parser.error('Final UI save requires --allow-save')
-if args.allow_save and args.only not in SAVE_METHODS:
+if args.allow_save and args.only not in SAVE_METHODS and not timetable_save:
     parser.error('--allow-save is valid only for the final UI save method')
 if args.inspect_odsay_after_login and (args.only != 'testLoginDedicatedEtaAccount' or args.schedule_id != 363):
     parser.error('Combined read-only search requires explicit login and schedule 363')
@@ -522,7 +615,7 @@ if args.inspect_tmap_after_login and (args.only != 'testLoginDedicatedEtaAccount
 if args.inspect_tmap_after_login and args.inspect_odsay_after_login:
     parser.error('A single run must select exactly one provider-search follow-up')
 if args.existing_title is not None or args.schedule_id is not None:
-    titles = ('ETA E2E 1004 0030', 'ETA E2E 1004 transfer') + (('ETA E2E isolated fixture',) if args.api_base.endswith(':5523') else ())
+    titles = ('ETA E2E 1004 0030', 'ETA E2E 1004 transfer') + (('ETA E2E isolated fixture',) if args.api_base in (PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE) else ())
     if args.real_isolated:
         titles = ('ETA E2E real isolated fixture',)
     real_comparison_edit = (args.only == 'testRescheduleNaverComparisonJourney' and
@@ -541,13 +634,15 @@ if len(selected) != 1 or selected[0]['state'] != 'Booted' or selected[0]['name']
     raise SystemExit('The approved simulator is not booted with the expected identity')
 subprocess.run(['xcrun', 'simctl', 'get_app_container', args.device, 'com.anonymous.nolatefe', 'app'],
                check=True, stdout=subprocess.DEVNULL, timeout=30)
-with urllib.request.urlopen(args.api_base + '/health/readiness', timeout=5) as response:
-    if response.status != 200 or json.loads(response.read()).get('status') != 'UP':
-        raise SystemExit('Local backend is not ready; no UI writes attempted')
-    if args.real_isolated and response.headers.get('X-NoLate-Eta-Real-Isolation') != 'h2-real-providers':
-        raise SystemExit('Real-isolated marker missing; refuse an unknown or mock server')
-    if args.api_base.endswith(':5523') and not args.real_isolated and response.headers.get('X-NoLate-Eta-Fixture') != 'h2-memory-only':
-        raise SystemExit('Private fixture marker missing; refuse to use an unknown server')
+private_fixture = args.api_base in (PRIVATE_API_BASE, INCIDENT_API_BASE, QUOTA_ALTERNATE_API_BASE) and not args.real_isolated
+if private_fixture:
+    require_memory_fixture_api(args.api_base)
+else:
+    with urllib.request.urlopen(args.api_base + '/health/readiness', timeout=5) as response:
+        if response.status != 200 or json.loads(response.read()).get('status') != 'UP':
+            raise SystemExit('Local backend is not ready; no UI writes attempted')
+        if args.real_isolated and response.headers.get('X-NoLate-Eta-Real-Isolation') != 'h2-real-providers':
+            raise SystemExit('Real-isolated marker missing; refuse an unknown or mock server')
 
 args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
 env = os.environ.copy()
@@ -557,6 +652,7 @@ env.update({
     'TEST_RUNNER_E2E_ETA_TITLE': args.title,
     'TEST_RUNNER_E2E_ETA_TARGET_ISO8601': args.target_arrival,
     'TEST_RUNNER_E2E_ALLOW_SAVE': '1' if args.allow_save else '0',
+    'TEST_RUNNER_E2E_DATED_TIMETABLE_SAVE': '1' if timetable_save else '0',
     'TEST_RUNNER_E2E_EXISTING_TITLE': args.existing_title or '',
     'TEST_RUNNER_E2E_SCHEDULE_ID': str(args.schedule_id or ''),
     'TEST_RUNNER_E2E_RESTART_ONLY': '1' if args.only == 'testRestartDedicatedEtaApp' else '0',
@@ -568,7 +664,7 @@ env.update({
     'TEST_RUNNER_E2E_PRIVATE_TARGET_SAVE': '1' if private_target_save else '0',
     'TEST_RUNNER_E2E_PRIVATE_NOTICE': '1' if private_notice else '0',
     'TEST_RUNNER_E2E_PRIVATE_CREATE': '1' if private_create else '0',
-    'TEST_RUNNER_E2E_PRIVATE_LOGIN': '1' if args.api_base.endswith(':5523') and args.only == 'testLoginDedicatedEtaAccount' else '0',
+    'TEST_RUNNER_E2E_PRIVATE_LOGIN': '1' if (private_fixture or args.real_isolated) and args.only == 'testLoginDedicatedEtaAccount' else '0',
     'TEST_RUNNER_E2E_NATURAL_UI': '1' if natural_ui else '0',
     'TEST_RUNNER_E2E_REAL_AUTOMATIC': '1' if args.real_automatic else '0',
 })
@@ -576,6 +672,8 @@ env.update(fixture_expected)
 env.update(native_expected)
 env.update(real_expected)
 env.update(quota_expected)
+if args.only == 'testVerifyIsolatedOdsayTimetableSelection':
+    env['TEST_RUNNER_E2E_REAL_ISOLATED'] = '1'
 if args.only == 'testLoginDedicatedEtaAccount':
     if args.credentials is None:
         parser.error('Explicit synthetic credentials are required for UI login')
@@ -615,6 +713,13 @@ if args.fixture_phase or private_target_save or natural_ui or quota_ui:
         reset = subprocess.run(navigation, env=env, stdout=log, stderr=subprocess.STDOUT)
     if reset.returncode:
         raise SystemExit('Private navigation reset failed; inspect its result bundle')
+    subprocess.run(['xcrun', 'simctl', 'openurl', args.device, 'nolate://schedule/363'], check=True)
+elif args.real_isolated and (
+        (args.only == 'testVerifyIsolatedOdsayTimetableSelection'
+         and env.get('TEST_RUNNER_E2E_SEOLLEUNG_ACCESS') == '1')
+        or (args.real_automatic and args.only == 'testVerifyIsolatedRealProviderEta')):
+    # An accepted observation has a short lifetime. Open the normal detail route
+    # without relying on the calendar mode or scrolling to the synthetic event.
     subprocess.run(['xcrun', 'simctl', 'openurl', args.device, 'nolate://schedule/363'], check=True)
 with (args.output / 'run.log').open('w') as log:
     result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT)

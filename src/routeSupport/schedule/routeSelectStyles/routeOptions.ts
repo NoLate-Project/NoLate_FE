@@ -96,6 +96,12 @@ const routeOptionsStyles = {
         flexDirection: "column",
         alignItems: "stretch",
     },
+    routeCardMapError: {
+        paddingHorizontal: 14,
+        paddingBottom: 12,
+        fontSize: 13,
+        lineHeight: 18,
+    },
     routeCardSecondaryButton: {
         flex: 1,
         minHeight: 44,
@@ -111,6 +117,10 @@ const routeOptionsStyles = {
         fontSize: 14,
         fontWeight: "800",
         letterSpacing: 0,
+    },
+    routeCardMapReturnHighlight: {
+        borderWidth: 1.5,
+        borderRadius: 13,
     },
     routeCardPrimaryButton: {
         flex: 1.15,

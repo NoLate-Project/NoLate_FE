@@ -30,26 +30,32 @@ export function prefetchesAdjacentMonths(mode: CalendarViewMode): boolean {
     return mode !== "week";
 }
 
-/** 상세형은 큰 월 제목을 상단 pill로 올려 달력 영역을 더 넓게 쓴다. */
-export function usesMonthInPrimaryPill(mode: CalendarViewMode): boolean {
-    return mode === "detail";
+/** 달력 안에서 월 제목을 읽을 수 없는 기본 목록형에도 현재 월을 표시한다. */
+export function usesMonthInPrimaryPill(mode: CalendarViewMode, fontScale = 1): boolean {
+    return mode === "detail" || (mode === "list" && fontScale <= 1.35);
+}
+
+/** The expanded mode label has room for its icon at standard text on wider phones. */
+export function showsCalendarToolbarModeIcon(width: number, fontScale: number): boolean {
+    return width >= 390 && fontScale <= 1;
 }
 
 /** 상세형 pill과 요일 행 사이에만 숨 쉴 공간을 더한다. */
 export function getPrimaryPillWeekdayGap(mode: CalendarViewMode): number {
-    return usesMonthInPrimaryPill(mode) ? 6 : 0;
+    return mode === "detail" ? 6 : 0;
 }
 
 /** 스택형은 스크롤 중에도 현재 월을 알 수 있도록 큰 월 제목을 유지한다. */
 export function showsStickyMonthTitle(mode: CalendarViewMode): boolean {
-    return !usesMonthInPrimaryPill(mode);
+    return mode !== "detail";
 }
 
 export const CALENDAR_VIEW_OPTIONS: Array<{
     value: CalendarViewModePreference;
     label: string;
+    subtitle: string;
 }> = [
-    { value: "stack", label: "스택형" },
-    { value: "detail", label: "상세형" },
-    { value: "list", label: "목록형" },
+    { value: "stack", label: "스택형", subtitle: "날짜 칸 안에 일정" },
+    { value: "detail", label: "상세형", subtitle: "월 달력과 선택한 날의 일정" },
+    { value: "list", label: "목록형", subtitle: "날짜순 일정 목록" },
 ];

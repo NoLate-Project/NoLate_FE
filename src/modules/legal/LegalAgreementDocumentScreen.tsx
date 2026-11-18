@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
+import { useIsFocused } from "@react-navigation/native";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AccessibilityInfo, BackHandler, Pressable, ScrollView, StatusBar, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -12,6 +13,8 @@ import { useTheme } from "../theme/ThemeContext";
 import BrandedLoader from "../../ui/BrandedLoader";
 import { useScreenFirstPaintPerformance } from "../performance/useScreenFirstPaintPerformance";
 import { useImmediateNavigationTransition } from "../performance/ImmediateNavigationTransition";
+import { usePreMountedSceneActivity } from "../performance/preMountedSceneActivity";
+import { useSystemReduceMotion } from "../performance/useSystemReduceMotion";
 
 type LegalAgreementDocumentScreenProps = {
     fallback: LegalDocument;
@@ -28,8 +31,14 @@ export default function LegalAgreementDocumentScreen({
 }: LegalAgreementDocumentScreenProps) {
     useScreenFirstPaintPerformance(route);
     const router = useRouter();
+    const routeFocused = useIsFocused();
+    const sceneActive = usePreMountedSceneActivity();
+    const visible = sceneActive ?? routeFocused;
     const { closeActiveScene } = useImmediateNavigationTransition();
     const insets = useSafeAreaInsets();
+    const { fontScale } = useWindowDimensions();
+    const reduceMotion = useSystemReduceMotion();
+    const animateSectionJump = !reduceMotion && fontScale <= 1.35;
     const { colors, mode } = useTheme();
     const { isAuthenticated, isCurationCompleted } = useAuth();
     const [document, setDocument] = useState(fallback);
@@ -38,26 +47,98 @@ export default function LegalAgreementDocumentScreen({
     const [reloadKey, setReloadKey] = useState(0);
 
     const [contentsOpen, setContentsOpen] = useState(false);
-    const [expandedSection, setExpandedSection] = useState<number>();
+    const [headerHeight, setHeaderHeight] = useState(0);
+    const [viewportHeight, setViewportHeight] = useState(0);
+    const [selectedSection, setSelectedSection] = useState<number>();
+    const [expandedSections, setExpandedSections] = useState<ReadonlySet<number>>(() => new Set());
+    const [highlightedSection, setHighlightedSection] = useState<number>();
     const scrollRef = useRef<ScrollView>(null);
-    const contentRef = useRef<View>(null);
-    const activeSectionRef = useRef<number | undefined>(undefined);
-    const sections = useRef(new Map<number, View>());
+    const contentsScrollRef = useRef<ScrollView>(null);
+    const contentsButtonRef = useRef<View>(null);
+    const contentsRowRef = useRef<View>(null);
+    const contentsFocusFrame = useRef<number | undefined>(undefined);
+    const [compactTitleVisible, setCompactTitleVisible] = useState(false);
+    const titleBottom = useRef(Number.POSITIVE_INFINITY);
+    const pendingSection = useRef<number | undefined>(undefined);
+    const scrollOffset = useRef(0);
+    const activeSectionJump = useRef<{ index: number; offset: number } | undefined>(undefined);
+    const sectionScrollFrame = useRef<number | undefined>(undefined);
+    const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const sectionTitles = useRef(new Map<number, View | Text>());
+    const sectionOffsets = useRef(new Map<number, number>());
+    const accent = mode === "dark" ? "#A4C8FF" : "#235FB9";
+    const accentSurface = mode === "dark" ? "#253653" : "#EDF4FF";
 
-    const scrollToSection = (index: number) => {
-        const content = contentRef.current;
-        const section = sections.current.get(index);
-        if (!content || !section) return;
-        section.measureLayout(content, (_left, top) => {
-            scrollRef.current?.scrollTo({ y: Math.max(top - 8, 0), animated: false });
-        }, () => undefined);
+    const finishSectionJump = useCallback((index: number) => {
+        activeSectionJump.current = undefined;
+        const target = sectionTitles.current.get(index);
+        if (target) AccessibilityInfo.sendAccessibilityEvent(target, "focus");
+        setHighlightedSection(index);
+        if (highlightTimer.current !== undefined) clearTimeout(highlightTimer.current);
+        highlightTimer.current = setTimeout(() => setHighlightedSection(undefined), 900);
+    }, []);
+
+    const scrollToPendingSection = useCallback(() => {
+        if (pendingSection.current === undefined) return;
+        if (sectionScrollFrame.current !== undefined) cancelAnimationFrame(sectionScrollFrame.current);
+        sectionScrollFrame.current = requestAnimationFrame(() => {
+            sectionScrollFrame.current = undefined;
+            const index = pendingSection.current;
+            if (index === undefined) return;
+            const top = sectionOffsets.current.get(index);
+            if (top === undefined) return;
+            pendingSection.current = undefined;
+            const offset = Math.max(styles.content.paddingTop + top - 8, 0);
+            const animated = animateSectionJump && Math.abs(offset - scrollOffset.current) > 1;
+            if (animated) activeSectionJump.current = { index, offset };
+            scrollRef.current?.scrollTo({ y: offset, animated });
+            if (!animated) finishSectionJump(index);
+        });
+    }, [animateSectionJump, finishSectionJump]);
+
+    useLayoutEffect(() => {
+        if (!contentsOpen) scrollToPendingSection();
+    }, [contentsOpen, expandedSections, scrollToPendingSection]);
+
+    useEffect(() => () => {
+        if (sectionScrollFrame.current !== undefined) cancelAnimationFrame(sectionScrollFrame.current);
+        if (contentsFocusFrame.current !== undefined) cancelAnimationFrame(contentsFocusFrame.current);
+        if (highlightTimer.current !== undefined) clearTimeout(highlightTimer.current);
+    }, []);
+
+    const focusContentsRow = (offset: number) => {
+        if (contentsFocusFrame.current !== undefined) cancelAnimationFrame(contentsFocusFrame.current);
+        contentsFocusFrame.current = requestAnimationFrame(() => {
+            contentsFocusFrame.current = undefined;
+            contentsScrollRef.current?.scrollTo({ y: offset, animated: false });
+            if (contentsRowRef.current) AccessibilityInfo.sendAccessibilityEvent(contentsRowRef.current, "focus");
+        });
     };
 
-    const selectSection = (index: number) => {
+    const dismissContents = useCallback(() => {
         setContentsOpen(false);
-        activeSectionRef.current = index;
-        if (collapsibleSections) setExpandedSection(index);
-        requestAnimationFrame(() => scrollToSection(index));
+        if (contentsFocusFrame.current !== undefined) cancelAnimationFrame(contentsFocusFrame.current);
+        contentsFocusFrame.current = requestAnimationFrame(() => {
+            contentsFocusFrame.current = undefined;
+            if (contentsButtonRef.current) AccessibilityInfo.sendAccessibilityEvent(contentsButtonRef.current, "focus");
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!visible || !contentsOpen) return;
+        const back = BackHandler.addEventListener("hardwareBackPress", () => {
+            dismissContents();
+            return true;
+        });
+        return () => back.remove();
+    }, [contentsOpen, dismissContents, visible]);
+
+    const selectSection = (index: number) => {
+        activeSectionJump.current = undefined;
+        setContentsOpen(false);
+        setSelectedSection(index);
+        pendingSection.current = index;
+        if (collapsibleSections) setExpandedSections(current => current.has(index) ? current : new Set([...current, index]));
     };
 
     useEffect(() => {
@@ -88,6 +169,11 @@ export default function LegalAgreementDocumentScreen({
     }, [fallback, loadDocument, reloadKey]);
 
     const goBack = () => {
+        if (contentsOpen) {
+            dismissContents();
+            return;
+        }
+        activeSectionJump.current = undefined;
         if (closeActiveScene()) return;
         if (router.canGoBack()) router.back();
         else router.replace(isAuthenticated ? getPostAuthRoute(isCurationCompleted) : "/auth/login");
@@ -96,53 +182,104 @@ export default function LegalAgreementDocumentScreen({
     return (
         <View style={[styles.root, { backgroundColor: colors.background }]}>
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
-            <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+            <View onLayout={event => setHeaderHeight(event.nativeEvent.layout.height)}
+                style={[styles.header, { paddingTop: insets.top + 8 }]}>
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="이전 화면으로 돌아가기"
                         onPress={goBack}
-                        style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface2, opacity: pressed ? 0.55 : 1 }]}
+                        style={({ pressed }) => [styles.backButton, { opacity: pressed ? 0.55 : 1 }]}
                     >
-                        <Ionicons name="chevron-back-outline" size={22} color={colors.textPrimary} />
+                        <Ionicons accessible={false} importantForAccessibility="no" name="chevron-back-outline" size={22} color={colors.textPrimary} />
                     </Pressable>
-                <Text style={[styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {document.title}
-                </Text>
+                <View style={styles.headerTitleSlot}>
+                    {compactTitleVisible && (
+                        <Animated.Text testID="legal-compact-title" entering={compactTitleIn} exiting={compactTitleOut}
+                            accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                            style={[styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                            {document.title}
+                        </Animated.Text>
+                    )}
+                </View>
                 <Pressable
+                    ref={contentsButtonRef}
                     accessibilityRole="button"
                     accessibilityState={{ expanded: contentsOpen }}
                     accessibilityLabel="문서 목차"
-                    onPress={() => setContentsOpen(open => !open)}
-                    style={styles.contentsButton}
+                    onPress={contentsOpen ? dismissContents : () => {
+                        activeSectionJump.current = undefined;
+                        setContentsOpen(true);
+                    }}
+                    style={({ pressed }) => [styles.contentsButton,
+                        (contentsOpen || pressed) && { backgroundColor: accentSurface }]}
                 >
-                    <Text style={[styles.contentsLabel, { color: colors.textPrimary }]}>목차</Text>
-                    <Ionicons name={contentsOpen ? "chevron-up-outline" : "chevron-down-outline"} size={14} color={colors.textSecondary} />
+                    <Ionicons accessible={false} importantForAccessibility="no" name="list-outline" size={18} color={accent} />
+                    <Text style={[styles.contentsLabel, { color: accent }]}>목차</Text>
                 </Pressable>
             </View>
 
             {contentsOpen && (
-                <Animated.View entering={sectionIn} exiting={sectionOut} style={[styles.contents, { borderColor: colors.border }]}>
-                    <ScrollView keyboardShouldPersistTaps="handled">
-                        {document.sections.map((section, index) => (
-                            <Pressable key={index} accessibilityRole="button" onPress={() => selectSection(index)} style={styles.contentsRow}>
-                                <Text style={[styles.contentsLabel, { color: colors.textPrimary }]}>{section.title}</Text>
-                            </Pressable>
-                        ))}
+                <View pointerEvents="box-none" style={[styles.contentsOverlay, { top: headerHeight }]}>
+                <Pressable accessible={false} importantForAccessibility="no" onPress={dismissContents} style={StyleSheet.absoluteFill} />
+                <Animated.View entering={sectionIn} onAccessibilityEscape={dismissContents}
+                    style={[styles.contents, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                    <Text accessibilityRole="header" style={[styles.contentsCount, { color: colors.textSecondary }]}>
+                        {document.sections.length}개 조항
+                    </Text>
+                    <ScrollView ref={contentsScrollRef} keyboardShouldPersistTaps="handled">
+                        {document.sections.map((section, index) => {
+                            const selected = selectedSection === index;
+                            const focusOnOpen = index === (selectedSection ?? 0);
+                            return (
+                                <Pressable key={index} testID={`legal-contents-${index}`} accessibilityRole="button"
+                                    ref={focusOnOpen ? contentsRowRef : undefined}
+                                    onLayout={focusOnOpen ? event => focusContentsRow(event.nativeEvent.layout.y) : undefined}
+                                    accessibilityState={{ selected }}
+                                    onPress={() => selectSection(index)}
+                                    style={({ pressed }) => [styles.contentsRow, (pressed || selected) && { backgroundColor: accentSurface }]}>
+                                    <Text style={[styles.contentsLabel, { color: selected ? accent : colors.textPrimary }]}>{section.title}</Text>
+                                </Pressable>
+                            );
+                        })}
                     </ScrollView>
                 </Animated.View>
+                </View>
             )}
             <ScrollView
                 ref={scrollRef}
+                onLayout={event => setViewportHeight(event.nativeEvent.layout.height)}
+                accessibilityElementsHidden={contentsOpen}
+                importantForAccessibility={contentsOpen ? "no-hide-descendants" : "auto"}
+                scrollEventThrottle={16}
+                onScrollBeginDrag={() => { activeSectionJump.current = undefined; }}
+                onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+                    const { y } = contentOffset;
+                    scrollOffset.current = y;
+                    setCompactTitleVisible(y >= titleBottom.current);
+                    const jump = activeSectionJump.current;
+                    if (jump) {
+                        const reachableOffset = Math.min(jump.offset, Math.max(0, contentSize.height - layoutMeasurement.height));
+                        if (Math.abs(y - reachableOffset) <= 1) finishSectionJump(jump.index);
+                    }
+                }}
                 contentContainerStyle={[
                     styles.content,
                     { paddingBottom: Math.max(insets.bottom, 18) + 24 },
                 ]}
             >
-                <View ref={contentRef} collapsable={false} style={styles.document}>
-                <Text style={[styles.eyebrow, { color: colors.textSecondary }]}>
-                    시행일 {document.effectiveDate} · 버전 {document.version}
-                </Text>
-                <Text accessibilityRole="header" style={[styles.title, { color: colors.textPrimary }]}>{document.title}</Text>
+                <View style={styles.document}>
+                <View accessible accessibilityLabel={`시행일 ${document.effectiveDate}, 버전 ${document.version}`} style={styles.metadata}>
+                    <Text style={[styles.effectiveDate, { color: colors.textSecondary }]}>시행일 {document.effectiveDate}</Text>
+                    <Text style={[styles.version, { color: colors.textSecondary, backgroundColor: colors.surface2 }]}>
+                        v{document.version}
+                    </Text>
+                </View>
+                <Text testID="legal-document-title" accessibilityRole="header"
+                    onLayout={event => {
+                        const { y, height } = event.nativeEvent.layout;
+                        titleBottom.current = styles.content.paddingTop + y + height;
+                    }}
+                    style={[styles.title, { color: colors.textPrimary }]}>{document.title}</Text>
                 <Text style={[styles.summary, { color: colors.textSecondary }]}>{document.summary}</Text>
 
                 {loading ? (
@@ -189,40 +326,58 @@ export default function LegalAgreementDocumentScreen({
                 ) : null}
 
                 {document.sections.map((section, index) => {
-                    const expanded = !collapsibleSections || expandedSection === index;
+                    const expanded = !collapsibleSections || expandedSections.has(index);
+                    const highlight = highlightedSection === index ? { backgroundColor: accentSurface } : undefined;
                     return (
                         <View
                             key={`${section.title}-${index}`}
-                            ref={view => {
-                                if (view) sections.current.set(index, view);
-                                else sections.current.delete(index);
+                            onLayout={event => {
+                                sectionOffsets.current.set(index, event.nativeEvent.layout.y);
+                                if (pendingSection.current === index) scrollToPendingSection();
                             }}
-                            collapsable={false}
-                            onLayout={() => {
-                                if (activeSectionRef.current === index) {
-                                    activeSectionRef.current = undefined;
-                                    scrollToSection(index);
-                                }
-                            }}
-                            style={[styles.section, { borderColor: colors.border }]}
+                            style={[
+                                styles.section,
+                                { borderColor: colors.border },
+                                // Allow even a short final article to align below the fixed header.
+                                index === document.sections.length - 1 && selectedSection !== undefined
+                                    ? { minHeight: Math.max(0, viewportHeight - Math.max(insets.bottom, 18) - 16) }
+                                    : undefined,
+                            ]}
                         >
                             {collapsibleSections ? (
                                 <Pressable
+                                    ref={view => {
+                                        if (view) sectionTitles.current.set(index, view);
+                                        else sectionTitles.current.delete(index);
+                                    }}
                                     accessibilityRole="button"
                                     accessibilityState={{ expanded }}
-                                    accessibilityLabel={section.title}
+                                    accessibilityLabel={`${section.title}, ${section.body.length}개 항목`}
                                     testID={`legal-article-${index}`}
-                                    onPress={() => setExpandedSection(expanded ? undefined : index)}
-                                    style={styles.sectionButton}
+                                    onPress={() => setExpandedSections(current => {
+                                        const next = new Set(current);
+                                        if (next.has(index)) next.delete(index);
+                                        else next.add(index);
+                                        return next;
+                                    })}
+                                    style={[styles.sectionButton, highlight]}
                                 >
-                                    <Text style={[styles.sectionTitle, styles.sectionButtonTitle, { color: colors.textPrimary }]}>{section.title}</Text>
-                                    <Ionicons name={expanded ? "chevron-up-outline" : "chevron-down-outline"} size={16} color={colors.textSecondary} />
+                                    <View style={styles.sectionButtonTitle}>
+                                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{section.title}</Text>
+                                        <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{section.body.length}개 항목</Text>
+                                    </View>
+                                    <Ionicons accessible={false} importantForAccessibility="no" name={expanded ? "chevron-up-outline" : "chevron-down-outline"} size={16} color={colors.textSecondary} />
                                 </Pressable>
-                            ) : <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.textPrimary }]}>{section.title}</Text>}
+                            ) : (
+                                <Text testID={`legal-article-${index}`} ref={view => {
+                                    if (view) sectionTitles.current.set(index, view);
+                                    else sectionTitles.current.delete(index);
+                                }} accessibilityRole="header" style={[styles.sectionTitle, { color: colors.textPrimary }, highlight]}>{section.title}</Text>
+                            )}
                             {expanded && (
                                 <Animated.View entering={collapsibleSections ? sectionIn : undefined} style={styles.paragraphs}>
                                     {section.body.map((paragraph, paragraphIndex) => (
-                                        <Text key={paragraphIndex} style={[styles.paragraph, { color: colors.textSecondary }]}>{paragraph}</Text>
+                                        <Text key={paragraphIndex} style={[styles.paragraph, { color: colors.textPrimary }]}>{paragraph}</Text>
                                     ))}
                                 </Animated.View>
                             )}
@@ -236,7 +391,8 @@ export default function LegalAgreementDocumentScreen({
 }
 
 const sectionIn = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
-const sectionOut = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
+const compactTitleIn = FadeIn.duration(140).reduceMotion(ReduceMotion.System);
+const compactTitleOut = FadeOut.duration(140).reduceMotion(ReduceMotion.System);
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
@@ -249,16 +405,26 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
     },
     backButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-    headerTitle: { flex: 1, minWidth: 0, textAlign: "center", fontSize: 17, fontWeight: "900" },
-    contentsButton: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8 },
+    headerTitleSlot: { flex: 1, minWidth: 0 },
+    headerTitle: { textAlign: "center", fontSize: 17, fontWeight: "900" },
+    contentsButton: { minHeight: 44, borderRadius: 9, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8 },
     contentsLabel: { fontSize: 14, fontWeight: "600" },
-    contents: { maxHeight: "35%", paddingHorizontal: 18, borderBottomWidth: StyleSheet.hairlineWidth },
-    contentsRow: { minHeight: 44, justifyContent: "center", paddingVertical: 8 },
+    contentsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
+    contents: {
+        maxHeight: "58%", marginHorizontal: 12, paddingHorizontal: 9, paddingVertical: 7,
+        borderWidth: StyleSheet.hairlineWidth, borderRadius: 13,
+        shadowColor: "#15243A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 14,
+        elevation: 4,
+    },
+    contentsCount: { paddingHorizontal: 8, paddingVertical: 5, fontSize: 12, fontWeight: "700" },
+    contentsRow: { minHeight: 44, justifyContent: "center", paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8 },
     document: { gap: 12 },
     content: { paddingHorizontal: 18, paddingTop: 18, gap: 12 },
-    eyebrow: { fontSize: 12, lineHeight: 17, fontWeight: "900" },
-    title: { fontSize: 28, lineHeight: 35, fontWeight: "900" },
-    summary: { fontSize: 14, lineHeight: 21, fontWeight: "700", marginBottom: 4 },
+    metadata: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, justifyContent: "space-between" },
+    effectiveDate: { fontSize: 12, lineHeight: 17, fontWeight: "500" },
+    version: { fontSize: 11, lineHeight: 16, fontWeight: "600", borderRadius: 5, paddingVertical: 3, paddingHorizontal: 6 },
+    title: { fontSize: 26, lineHeight: 34, fontWeight: "800" },
+    summary: { fontSize: 14, lineHeight: 22, fontWeight: "500", marginBottom: 4 },
     loading: {
         minHeight: 48,
         borderWidth: StyleSheet.hairlineWidth,
@@ -286,6 +452,7 @@ const styles = StyleSheet.create({
     sectionTitle: { fontSize: 16, lineHeight: 22, fontWeight: "900" },
     sectionButton: { minHeight: 44, gap: 12, flexDirection: "row", alignItems: "center" },
     sectionButtonTitle: { flex: 1 },
+    sectionCount: { fontSize: 12, lineHeight: 17, marginTop: 2 },
     paragraphs: { gap: 8 },
     paragraph: { fontSize: 15, lineHeight: 23 },
 });

@@ -383,8 +383,14 @@ describe('calendar search open motion', () => {
     expect(nativeClose).not.toContain('contentHandoffDelayFraction');
     expect(nativeClose).not.toContain('bridgeReleaseDelay');
     expect(nativeClose).toMatch(
-      /contentVisible = false\s+collapsedContentVisible = true\s+phase = \.collapsed\s+}\s+model\.handleOpenChange\(false\)/,
+      /contentVisible = false\s+collapsedContentVisible = true\s+phase = \.collapsed\s+}[\s\S]*?model\.searchQuery = ""[\s\S]*?model\.handleOpenChange\(false\)/,
     );
+    const nativeSearchClose = sourceBetween(
+      nativeSource,
+      'private func closeSearchActionIfNeeded()',
+      'private func selectMode(',
+    );
+    expect(nativeSearchClose).not.toContain('model.searchQuery = ""');
     expect(nativeClose).not.toContain('contentFadeDuration');
   });
 

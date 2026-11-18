@@ -173,14 +173,8 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         lineHeight: 19,
         fontWeight: "800",
     },
-        sectionDescription: {
-        marginTop: 2,
-        fontSize: 12,
-        lineHeight: 17,
-        fontWeight: "500",
-    },
         inputWrap: {
-        minHeight: 142,
+        minHeight: 124,
         borderRadius: 14,
         borderWidth: 1,
         paddingHorizontal: 14,
@@ -189,7 +183,7 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
     },
         input: {
         flex: 1,
-        minHeight: 96,
+        minHeight: 82,
         fontSize: 15,
         lineHeight: 22,
         fontWeight: "400",
@@ -208,5 +202,21 @@ export function createShellInputStyles(options: QuickScheduleModalStylesOptions)
         fontWeight: "600",
     },
         counterPillLarge: { position: "relative", alignSelf: "flex-end", right: 0, bottom: 0, marginTop: 6 },
+        textSampleButton: {
+        minHeight: 44,
+        alignSelf: "flex-start",
+        justifyContent: "center",
+        marginTop: 5,
+    },
+        textSampleButtonLabel: {
+        fontSize: 12,
+        fontWeight: "700",
+        lineHeight: 16,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 13,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: "hidden",
+    },
     });
 }

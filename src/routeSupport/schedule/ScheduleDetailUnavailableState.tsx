@@ -77,7 +77,7 @@ export function ScheduleDetailUnavailableState({
             onPress={() => setRetryKey(value => value + 1)}
             style={styles.missingRetryButton}
           >
-            <Ionicons name="refresh" size={17} color="#FFFFFF" />
+            <Ionicons name="refresh-outline" size={17} color="#FFFFFF" />
             <Text style={styles.missingRetryText}>다시 시도</Text>
           </Pressable>
         </View>

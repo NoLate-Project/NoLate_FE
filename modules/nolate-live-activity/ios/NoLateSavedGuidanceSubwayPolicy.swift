@@ -16,6 +16,35 @@ enum NoLateSavedGuidanceSubwayPolicy {
     let trains: [NoLateJourneySubwayRideCore.Train]
     let validUntil: Double
   }
+  /// A bound response can report that the provider answered but no fresh train
+  /// matched this saved service. That is different from a network/contract failure.
+  static func unavailableStatus(_ data: Data, session: NoLateJourneyAutomaticSession) -> String {
+    guard data.count <= 262_144,
+      let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+      root["success"] as? Bool == true, let body = root["data"] as? [String: Any],
+      integer(body["schemaVersion"]) == 2,
+      body["sessionId"] as? String == session.binding.sessionId,
+      integer(body["generation"]) == session.binding.generation,
+      integer(body["routeRevision"]) == session.binding.routeRevision,
+      body["routeInputDigest"] as? String == session.binding.routeInputDigest,
+      integer(body["subwayLegIndex"]) == Int64(session.requestedSubwayLegIndex ?? -1),
+      body["identityEvidence"] as? String == "OWNED_AUTOMATIC_SESSION_TRAIN_REFERENCES",
+      body["navigationReady"] as? Bool == false,
+      body["passengerBoardingConfirmed"] as? Bool == false,
+      body["passengerPosition"] is NSNull,
+      body["passengerRemainingStops"] is NSNull,
+      body["nativeInput"] is NSNull,
+      integer(body["matchingTrainCount"]) == 0,
+      let result = body["status"] as? String else { return "SUBWAY_INPUT_UNAVAILABLE" }
+    switch result {
+    case "SERVICE_PATTERN_OR_FRESHNESS_MISMATCH", "TRAIN_OBSERVATIONS_UNAVAILABLE":
+      return "SUBWAY_INPUT_NO_FRESH_MATCH"
+    case "STATION_CROSSWALK_REQUIRED", "RAW_SUBWAY_IDENTIFIERS_REQUIRED",
+         "RAW_SUBWAY_STATIONS_REQUIRED", "UNSUPPORTED_PROVIDER":
+      return "SUBWAY_INPUT_ROUTE_UNSUPPORTED"
+    default: return "SUBWAY_INPUT_UNAVAILABLE"
+    }
+  }
   static func decode(_ data: Data, session: NoLateJourneyAutomaticSession, now: Double) -> Input? {
     guard data.count <= 262_144, now.isFinite, now < session.binding.expiresAtEpochSeconds,
       session.binding.syncScope == "AUTHENTICATED", session.binding.savedRouteValidated == true,

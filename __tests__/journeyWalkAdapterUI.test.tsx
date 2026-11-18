@@ -1,6 +1,6 @@
 import React from 'react';
 import Renderer, { act } from 'react-test-renderer';
-import Screen from '../app/internal/journey-walk-adapter';
+import Screen from './fixtures/journey/journey-walk-adapter';
 jest.mock('expo-router', () => ({ Redirect: 'Redirect' }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
 const runtime = globalThis as typeof globalThis & { __DEV__: boolean; IS_REACT_ACT_ENVIRONMENT: boolean };

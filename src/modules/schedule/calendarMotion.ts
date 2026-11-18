@@ -22,6 +22,12 @@ export const CALENDAR_DEPTH_MOTION = Object.freeze({
     bezier: CALENDAR_DEPTH_BEZIER,
 });
 
+export const CALENDAR_YEAR_MOTION = Object.freeze({
+    monthSelectionMs: 220,
+    closeMs: 180,
+    selectedDayMarkerMs: 240,
+});
+
 export type DetailMonthSwipeDirection = -1 | 1;
 
 /**
@@ -245,7 +251,8 @@ export const CALENDAR_PRIMARY_PILL_LAYOUT = Object.freeze({
     combinedMonthEstimatedCharacterWidth: 12,
     monthMinWidth: 132,
     dayMinWidth: 84,
-    viewportReservedWidth: 172,
+    // 150pt actions, 16pt left inset, 8–16pt right inset, and separation.
+    viewportReservedWidth: 188,
     minimumSafeWidth: 44,
 });
 
@@ -316,12 +323,15 @@ export type DetailMonthPanelMetrics = {
     fixedChromeHeight: number;
     weekCount: number;
     defaultDayHeight: number;
+    prefersCompactGrid?: boolean;
 };
 
 /** 상세형은 빈 일정에서도 선택일 패널이 실제 월 화면의 45%를 차지한다. */
 export const DETAIL_MONTH_PANEL_LAYOUT = Object.freeze({
     minimumPanelRatio: 0.45,
     maximumCalendarRatio: 0.55,
+    compactCalendarRatio: 0.47,
+    minimumCompactDayHeight: 44,
 });
 
 /**
@@ -353,7 +363,15 @@ export function resolveDetailMonthPanelLayout(
         1 - DETAIL_MONTH_PANEL_LAYOUT.minimumPanelRatio
     );
     const naturalCalendarHeight = fixedChromeHeight + weekCount * defaultDayHeight;
-    const calendarHeight = Math.min(maximumCalendarHeight, naturalCalendarHeight);
+    // Use the proposal's shorter calendar where its date targets fit. A short
+    // viewport or a six-week month can retain more room for those targets.
+    const compactCalendarHeight = metrics.prefersCompactGrid
+        ? Math.max(
+            viewportHeight * DETAIL_MONTH_PANEL_LAYOUT.compactCalendarRatio,
+            fixedChromeHeight + weekCount * DETAIL_MONTH_PANEL_LAYOUT.minimumCompactDayHeight
+        )
+        : maximumCalendarHeight;
+    const calendarHeight = Math.min(maximumCalendarHeight, naturalCalendarHeight, compactCalendarHeight);
     const panelHeight = viewportHeight - calendarHeight;
     const dayHeight = Math.max(
         0,

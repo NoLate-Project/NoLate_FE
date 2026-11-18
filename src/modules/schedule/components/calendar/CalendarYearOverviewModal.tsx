@@ -10,10 +10,12 @@ import {
     useWindowDimensions,
     View,
 } from "react-native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
-import { getYearTodayScrollOffset } from "../../calendarNavigation";
+import { getYearMonthSelection, getYearTodayScrollOffset } from "../../calendarNavigation";
+import { CALENDAR_YEAR_MOTION } from "../../calendarMotion";
 import type { ScheduleItem } from "../../types";
 import { getFloatingActionBarClearance } from "../shared/floatingActionBarLayout";
 import {
@@ -22,6 +24,7 @@ import {
     type CalendarYearScheduleCounts,
 } from "./calendarYearScheduleDensity";
 import { getCalendarTodayAccent } from "./calendarTodayAccent";
+import type { CalendarDatePoint } from "./CalendarYearDateHandoff";
 
 type Props = {
     year: number;
@@ -31,13 +34,15 @@ type Props = {
     presentationRequest?: number;
     todayRequest?: number;
     reduceMotionEnabled?: boolean;
+    visible?: boolean;
     items?: ScheduleItem[];
-    onSelectMonth: (year: number, month: number) => void;
+    onSelectMonth: (year: number, month: number, from?: CalendarDatePoint) => void;
     onVisibleYearChange?: (year: number) => void;
 };
 
 const YEAR_OVERVIEW_CHROME_CLEARANCE = 63;
 const YEAR_OVERVIEW_MIN_TOP_CLEARANCE = 103;
+const selectedMarkerEntry = FadeIn.duration(CALENDAR_YEAR_MOTION.selectedDayMarkerMs).reduceMotion(ReduceMotion.System);
 
 export function getYearOverviewTopClearance(
     topInset: number,
@@ -67,6 +72,7 @@ function getMonthCells(year: number, month: number, firstDay: 0 | 1) {
 
 type YearMonthPreviewProps = {
     twoColumns: boolean;
+    standard: boolean;
     dayFontScale: number;
     year: number;
     month: number;
@@ -78,15 +84,19 @@ type YearMonthPreviewProps = {
     textPrimary: string;
     selectedDayBg: string;
     selectedDayText: string;
+    borderColor: string;
+    markerAnimationKey?: number;
     mode: "light" | "dark";
     scheduleCountsByDate: CalendarYearScheduleCounts;
-    onSelectMonth: (year: number, month: number) => void;
+    handoffDay?: number;
+    onSelectMonth: (year: number, month: number, from?: CalendarDatePoint) => void;
     onLayout?: (event: LayoutChangeEvent) => void;
     testID?: string;
 };
 
 const YearMonthPreview = React.memo(function YearMonthPreview({
     twoColumns,
+    standard,
     dayFontScale,
     year,
     month,
@@ -98,12 +108,35 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
     textPrimary,
     selectedDayBg,
     selectedDayText,
+    borderColor,
+    markerAnimationKey,
     mode,
     scheduleCountsByDate,
+    handoffDay,
     onSelectMonth,
     onLayout,
     testID,
 }: YearMonthPreviewProps) {
+    const handoffSource = useRef<View>(null);
+    const selectMonth = () => {
+        const source = handoffSource.current;
+        if (!source) {
+            onSelectMonth(year, month);
+            return;
+        }
+        let measured = false;
+        const fallback = setTimeout(() => {
+            if (measured) return;
+            measured = true;
+            onSelectMonth(year, month);
+        }, 48);
+        source.measureInWindow((x, y, width, height) => {
+            if (measured) return;
+            measured = true;
+            clearTimeout(fallback);
+            onSelectMonth(year, month, width > 0 && height > 0 ? { x: x + width / 2, y: y + height / 2 } : undefined);
+        });
+    };
     const cells = React.useMemo(
         () => getMonthCells(year, month, firstDay),
         [firstDay, month, year]
@@ -131,13 +164,17 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
     const selectedDayIsToday = selectedDay !== null
         && todayDay !== null
         && selectedDay === todayDay;
+    const selectedMonthTint = standard
+        ? (mode === "dark" ? "#263B5C" : "#EEF4FF")
+        : (mode === "dark" ? "#9ABEFF20" : "#286AFF12");
 
     return (
         <Pressable
             testID={testID}
-            onPress={() => onSelectMonth(year, month)}
+            onPress={selectMonth}
             onLayout={onLayout}
             accessibilityRole="button"
+            accessibilityState={{ selected: isSelectedMonth }}
             accessibilityLabel={[
                 `${year}년 ${month}월 보기`,
                 scheduleSummary.dayCount > 0
@@ -155,19 +192,27 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
             ].filter(Boolean).join(", ")}
             style={({ pressed }) => [
                 styles.monthPreview,
-                twoColumns && styles.monthPreviewWide,
-                { opacity: pressed ? 0.55 : 1 },
+                twoColumns ? styles.monthPreviewWide : styles.monthPreviewThreeColumns,
+                standard && styles.standardMonth,
+                isSelectedMonth && (standard ? styles.standardSelectedMonth : styles.selectedMonth),
+                {
+                    opacity: pressed ? 0.55 : 1,
+                    backgroundColor: isSelectedMonth ? selectedMonthTint : undefined,
+                    borderColor: standard && isSelectedMonth ? borderColor : "transparent",
+                    borderBottomColor: !standard && isSelectedMonth ? "transparent" : borderColor,
+                },
             ]}
         >
             <Text
                 maxFontSizeMultiplier={twoColumns ? 1.3 : 1.15}
                 style={[
                     styles.monthTitle,
+                    !twoColumns && styles.monthTitleThreeColumns,
                     {
-                        color: isCurrentMonth
+                        color: standard ? textPrimary : isCurrentMonth
                             ? calendarAccentColor
                             : isSelectedMonth
-                                ? selectedDayBg
+                                ? todayAccentColor
                                 : textPrimary,
                     },
                 ]}
@@ -187,7 +232,8 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                         : 0;
                     const density = getCalendarYearScheduleDensityPresentation(
                         scheduleCount,
-                        mode
+                        mode,
+                        standard
                     );
                     const showDensity = density !== null && !isSelectedDay && !isToday;
                     const badgeFill = isToday
@@ -209,6 +255,8 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                         <View key={cellIndex} style={[styles.dayCell, twoColumns && styles.dayCellWide]}>
                             {day !== null && (
                                 <View
+                                    ref={day === handoffDay ? handoffSource : undefined}
+                                    collapsable={day !== handoffDay}
                                     testID={density
                                         ? `calendar-year-schedule-density-${dateKey}`
                                         : undefined}
@@ -216,19 +264,31 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                                         styles.dayBadge,
                                         twoColumns && styles.dayBadgeWide,
                                         showDensity && styles.scheduleDensityBadge,
+                                        standard && styles.standardDayBadge,
                                         (showDensity || isSelectedDay || isToday) && {
-                                            backgroundColor: badgeFill,
+                                            backgroundColor: isSelectedDay && markerAnimationKey !== undefined ? undefined : badgeFill,
                                             borderColor: "transparent",
                                         },
+                                        !standard && selectedDayIsToday && isSelectedDay && { borderColor: selectedDayBg },
                                     ]}
                                 >
+                                    {isSelectedDay && markerAnimationKey !== undefined && (
+                                        <Animated.View key={markerAnimationKey} entering={selectedMarkerEntry}
+                                            style={[styles.selectedMarkerFill, standard && styles.standardDayBadge, { backgroundColor: badgeFill }]} />
+                                    )}
+                                    {standard && isToday && isSelectedDay && (
+                                        <View pointerEvents="none"
+                                            style={[styles.standardTodaySelectedOutline, { borderColor: selectedDayBg }]} />
+                                    )}
                                     <Text
                                         maxFontSizeMultiplier={dayFontScale}
                                         style={[
                                             styles.dayText,
+                                            standard && styles.standardDayText,
                                             showDensity
-                                            && density.level >= 2
+                                            && !standard && density.level >= 2
                                             && styles.scheduleDensityTextStrong,
+                                            standard && (isToday || isSelectedDay) && styles.standardMarkedDayText,
                                             { color: badgeTextColor },
                                         ]}
                                     >
@@ -252,6 +312,7 @@ function CalendarYearOverviewModal({
     presentationRequest = 0,
     todayRequest = 0,
     reduceMotionEnabled = false,
+    visible = true,
     items = [],
     onSelectMonth,
     onVisibleYearChange,
@@ -259,7 +320,8 @@ function CalendarYearOverviewModal({
     const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
     const { width, fontScale } = useWindowDimensions();
-    const twoColumns = fontScale > 1.25;
+    const standard = fontScale <= 1.25;
+    const twoColumns = !standard || width <= 360;
     const dayFontScale = twoColumns ? (width >= 360 ? 1.6 : 1.35) : 1.05;
     const selectedDate = new Date(`${selectedDay}T00:00:00`);
     const today = new Date();
@@ -267,8 +329,13 @@ function CalendarYearOverviewModal({
     const todayMonth = today.getMonth() + 1;
     const todayDate = today.getDate();
     const currentYear = todayYear;
-    const calendarAccentColor = mode === "dark" ? "#ff453a" : "#ff3b30";
-    const todayAccentColor = getCalendarTodayAccent(mode);
+    const calendarAccentColor = !standard
+        ? (mode === "dark" ? "#ff453a" : "#ff3b30")
+        : (mode === "dark" ? "#ff9ca4" : "#aa3a3d");
+    const todayAccentColor = standard ? "#205DD1" : getCalendarTodayAccent(mode);
+    const dateInk = standard ? (mode === "dark" ? "#EEF3FC" : "#172131") : colors.textPrimary;
+    const dateSurface = standard ? (mode === "dark" ? "#1A222F" : "#FFFFFF") : colors.selectedDayText;
+    const gridBorder = standard ? (mode === "dark" ? "#374458" : "#E8EBEF") : colors.border;
     const visibleYears = React.useMemo(() => Array.from(new Set([
         currentYear - 2,
         currentYear - 1,
@@ -280,7 +347,7 @@ function CalendarYearOverviewModal({
         year + 1,
     ])).sort((left, right) => left - right), [currentYear, year]);
     const scrollRef = useRef<ScrollView>(null);
-    const yearOffsetsRef = useRef<Record<number, number>>({});
+    const yearSectionsRef = useRef<Partial<Record<number, { y: number; height: number }>>>({});
     const todayMonthGridOffsetRef = useRef<{ year: number; offset: number } | null>(null);
     const todayMonthOffsetRef = useRef<{ key: string; offset: number } | null>(null);
     const pendingInitialYearScrollRef = useRef(true);
@@ -300,7 +367,7 @@ function CalendarYearOverviewModal({
 
     if (visibleYearsLayoutKeyRef.current !== visibleYearsLayoutKey) {
         visibleYearsLayoutKeyRef.current = visibleYearsLayoutKey;
-        yearOffsetsRef.current = {};
+        yearSectionsRef.current = {};
         todayMonthGridOffsetRef.current = null;
         todayMonthOffsetRef.current = null;
         pendingInitialYearScrollRef.current = true;
@@ -309,8 +376,8 @@ function CalendarYearOverviewModal({
     const tryScrollToInitialYear = React.useCallback(() => {
         if (!pendingInitialYearScrollRef.current || !scrollRef.current) return;
 
-        const sectionOffset = yearOffsetsRef.current[year];
-        if (!Number.isFinite(sectionOffset)) return;
+        const sectionOffset = yearSectionsRef.current[year]?.y;
+        if (sectionOffset === undefined) return;
 
         pendingInitialYearScrollRef.current = false;
         scrollRef.current.scrollTo({
@@ -334,7 +401,7 @@ function CalendarYearOverviewModal({
     const tryScrollToToday = React.useCallback(() => {
         if (!pendingTodayScrollRef.current) return;
 
-        const yearOffset = yearOffsetsRef.current[todayYear];
+        const yearOffset = yearSectionsRef.current[todayYear]?.y ?? Number.NaN;
         const monthGridLayout = todayMonthGridOffsetRef.current;
         const monthLayout = todayMonthOffsetRef.current;
         const targetOffset = getYearTodayScrollOffset(
@@ -385,41 +452,29 @@ function CalendarYearOverviewModal({
         scheduleTodayScroll();
     }, [scheduleTodayScroll, todayMonthKey]);
 
-    const lastNotifiedVisibleYearRef = useRef<number | null>(null);
+    const lastVisibleYearsRef = useRef(new Set<number>());
     const handleYearScroll = React.useCallback((
         event: NativeSyntheticEvent<NativeScrollEvent>
     ) => {
-        if (!onVisibleYearChange) return;
+        if (!visible || !onVisibleYearChange) return;
 
-        const focusY = event.nativeEvent.contentOffset.y
-            + event.nativeEvent.layoutMeasurement.height * 0.28;
-        let nextVisibleYear: number | null = null;
-        let nextVisibleYearOffset = Number.NEGATIVE_INFINITY;
-
-        visibleYears.forEach((sectionYear) => {
-            const sectionOffset = yearOffsetsRef.current[sectionYear];
-            if (
-                Number.isFinite(sectionOffset)
-                && sectionOffset <= focusY
-                && sectionOffset > nextVisibleYearOffset
-            ) {
-                nextVisibleYear = sectionYear;
-                nextVisibleYearOffset = sectionOffset;
-            }
+        const { contentOffset, layoutMeasurement } = event.nativeEvent;
+        const viewportTop = contentOffset.y;
+        const viewportBottom = viewportTop + layoutMeasurement.height;
+        const yearsInViewport = visibleYears.filter((sectionYear) => {
+            const section = yearSectionsRef.current[sectionYear];
+            return section && section.y < viewportBottom && section.y + section.height > viewportTop;
         });
-
-        if (
-            nextVisibleYear === null
-            || lastNotifiedVisibleYearRef.current === nextVisibleYear
-        ) return;
-
-        lastNotifiedVisibleYearRef.current = nextVisibleYear;
-        onVisibleYearChange(nextVisibleYear);
-    }, [onVisibleYearChange, visibleYears]);
+        const previousYears = lastVisibleYearsRef.current;
+        lastVisibleYearsRef.current = new Set(yearsInViewport);
+        yearsInViewport.forEach((sectionYear) => {
+            if (!previousYears.has(sectionYear)) onVisibleYearChange(sectionYear);
+        });
+    }, [onVisibleYearChange, visible, visibleYears]);
 
     React.useEffect(() => {
-        lastNotifiedVisibleYearRef.current = null;
-    }, [presentationRequest, year]);
+        lastVisibleYearsRef.current.clear();
+    }, [presentationRequest, visible, year]);
 
     React.useEffect(() => {
         const presentationKey = `${year}:${presentationRequest}`;
@@ -474,6 +529,7 @@ function CalendarYearOverviewModal({
                 }}
                 contentContainerStyle={[
                     styles.content,
+                    !twoColumns && styles.contentThreeColumns,
                     styles.floatingBarContentEnd,
                 ]}
             >
@@ -488,10 +544,10 @@ function CalendarYearOverviewModal({
                             testID={sectionYear === todayYear
                                 ? "calendar-year-today-section"
                                 : undefined}
-                            style={styles.yearSection}
+                            style={[styles.yearSection, !twoColumns && styles.yearSectionThreeColumns]}
                             onLayout={(event) => {
-                                const sectionOffset = event.nativeEvent.layout.y;
-                                yearOffsetsRef.current[sectionYear] = sectionOffset;
+                                const { y, height } = event.nativeEvent.layout;
+                                yearSectionsRef.current[sectionYear] = { y, height };
                                 if (sectionYear === year) scheduleInitialYearScroll();
                                 if (sectionYear === todayYear) scheduleTodayScroll();
                             }}
@@ -499,7 +555,11 @@ function CalendarYearOverviewModal({
                             <View style={[styles.yearHeader, { borderBottomColor: colors.border }]}>
                                 <Text
                                     maxFontSizeMultiplier={1.45}
-                                    style={[styles.yearTitle, { color: sectionYearColor }]}
+                                    style={[
+                                        styles.yearTitle,
+                                        !twoColumns && styles.yearTitleThreeColumns,
+                                        { color: sectionYearColor },
+                                    ]}
                                 >
                                     {sectionYear}년
                                 </Text>
@@ -509,7 +569,7 @@ function CalendarYearOverviewModal({
                                 testID={sectionYear === todayYear
                                     ? "calendar-year-today-month-grid"
                                     : undefined}
-                                style={styles.monthGrid}
+                                style={[styles.monthGrid, !twoColumns && styles.monthGridThreeColumns]}
                                 onLayout={sectionYear === todayYear
                                     ? handleTodayMonthGridLayout
                                     : undefined}
@@ -528,6 +588,7 @@ function CalendarYearOverviewModal({
                                         <YearMonthPreview
                                             key={monthKey}
                                             twoColumns={twoColumns}
+                                            standard={standard}
                                             dayFontScale={dayFontScale}
                                             year={sectionYear}
                                             month={month}
@@ -536,11 +597,16 @@ function CalendarYearOverviewModal({
                                             todayDay={isCurrentMonth ? todayDate : null}
                                             calendarAccentColor={calendarAccentColor}
                                             todayAccentColor={todayAccentColor}
-                                            textPrimary={colors.textPrimary}
-                                            selectedDayBg={colors.selectedDayBg}
-                                            selectedDayText={colors.selectedDayText}
+                                            textPrimary={dateInk}
+                                            selectedDayBg={standard ? dateInk : colors.selectedDayBg}
+                                            selectedDayText={dateSurface}
+                                            borderColor={gridBorder}
+                                            markerAnimationKey={visible && !reduceMotionEnabled && isSelectedMonth ? presentationRequest : undefined}
                                             mode={mode}
                                             scheduleCountsByDate={scheduleCountsByDate}
+                                            handoffDay={standard && visible && !reduceMotionEnabled
+                                                ? Number(getYearMonthSelection(sectionYear, month, selectedDay).slice(8))
+                                                : undefined}
                                             onSelectMonth={onSelectMonth}
                                             onLayout={isCurrentMonth ? handleTodayMonthLayout : undefined}
                                             testID={isCurrentMonth

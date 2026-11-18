@@ -4,10 +4,10 @@ import { Platform, Pressable, ScrollView, Switch, Text, TextInput, useWindowDime
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
 
-import { formatRouteClock, formatRouteDuration } from "../../routeInfo";
+import { formatRouteClock, formatRouteDuration, isOdsayTimetableRouteInfo, roundRouteArrivalMinute } from "../../routeInfo";
 import { SCHEDULE_ALERT_MODE_PRESENTATION } from "../../scheduleAlertMode";
 import type { ScheduleAlertMode } from "../../types";
-import { getQuickSchedulePreviewRouteInfo, type QuickSchedulePreviewDraft as PreviewDraft, type QuickSchedulePreviewField as PreviewField } from "../../quickScheduleDraft";
+import { getQuickSchedulePreviewRouteInfo, hasQuickScheduleLocationChanged, type QuickSchedulePreviewDraft as PreviewDraft, type QuickSchedulePreviewField as PreviewField } from "../../quickScheduleDraft";
 import { createQuickScheduleModalStyles } from "./QuickScheduleModal.styles";
 import AlarmSoundSettings from "./AlarmSoundSettings";
 import { ScheduleRouteDraftNotice, type ScheduleRouteDraftChange } from "./ScheduleRouteDraftNotice";
@@ -93,12 +93,16 @@ export function QuickScheduleEditStep({
   const largeText = useWindowDimensions().fontScale > 1.35;
   const isTextEdit = editingField === "title" || editingField === "memo";
   const isLocationEdit = editingField === "location";
+  const clearsRoute = isLocationEdit && notificationRouteReady && hasQuickScheduleLocationChanged(previewDraft.location, editingValue);
+  const locationRouteAction = notificationRouteReady && !clearsRoute ? "경로 변경" : "경로 찾기";
   const isNotificationEdit = editingField === "notification";
   const notificationNeedsRoute = isNotificationEdit && !notificationRouteReady;
   const notificationEnabled = isNotificationEdit && editingValue !== "none";
   const notificationRouteInfo = isNotificationEdit ? getQuickSchedulePreviewRouteInfo(previewDraft) : undefined;
   const departure = notificationRouteInfo?.departureTime;
-  const arrival = notificationRouteInfo?.arrivalTime;
+  const arrival = isOdsayTimetableRouteInfo(notificationRouteInfo)
+    ? roundRouteArrivalMinute(notificationRouteInfo?.arrivalTime)?.toISOString()
+    : notificationRouteInfo?.arrivalTime;
   const scheduleStart = dateFromDraftTime(previewDraft.date, previewDraft.time);
   const arrivalMs = arrival ? new Date(arrival).getTime() : NaN;
   const hasDifferentArrival = Number.isFinite(arrivalMs)
@@ -133,6 +137,7 @@ export function QuickScheduleEditStep({
       )}
       {isLocationEdit && (
         <View style={styles.routeEditPanel}>
+          <Text style={[styles.locationEditLabel, { color: colors.textSecondary }]}>도착지</Text>
           <TextInput
             accessibilityLabel="빠른 일정 목적지"
             value={editingValue === "장소 미정" ? "" : editingValue}
@@ -143,10 +148,25 @@ export function QuickScheduleEditStep({
             selectionColor={BLUE}
             style={[styles.editInput, styles.locationEditInput, { color: colors.textPrimary, backgroundColor: inputBackground, borderColor: previewDividerColor }]}
           />
-          {notificationRouteReady && (
-            <Text lineBreakStrategyIOS="hangul-word" style={[styles.locationEditHint, { color: colors.textSecondary }]}>
-              장소를 바꾸면 경로와 출발 알림을 다시 설정해야 해요.
-            </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={locationRouteAction}
+            onPress={onOpenRoutePlanner}
+            style={({ pressed }) => [styles.locationRouteAction, { borderBottomColor: previewDividerColor, opacity: pressed ? 0.72 : 1 }]}
+          >
+            <Ionicons accessible={false} name="navigate-outline" size={18} color={BLUE} />
+            <Text style={[styles.locationRouteActionText, { color: colors.textPrimary }]}>{locationRouteAction}</Text>
+            <Ionicons accessible={false} name="chevron-forward-outline" size={14} color={previewChevronColor} />
+          </Pressable>
+          {clearsRoute && (
+            <View style={styles.locationEditHint}>
+              <Ionicons accessible={false} name="information-circle-outline" size={16} color={warningTextColor} />
+              <Text lineBreakStrategyIOS="hangul-word" style={[styles.locationEditHintText, { color: warningTextColor }]}>
+                {previewDraft.notificationLeadMinutes === undefined
+                  ? "기존 경로가 해제돼요."
+                  : "기존 경로와 출발 알림이 해제돼요."}
+              </Text>
+            </View>
           )}
         </View>
       )}
@@ -308,10 +328,10 @@ export function QuickScheduleEditStep({
         <Pressable
           onPress={notificationNeedsRoute ? onOpenRoutePlanner : onConfirm}
           accessibilityRole="button"
-          accessibilityLabel={notificationNeedsRoute ? "빠른 일정 경로 설정" : "수정 확인"}
+          accessibilityLabel={notificationNeedsRoute ? "빠른 일정 경로 설정" : clearsRoute ? "장소만 적용" : "수정 확인"}
           style={({ pressed }) => [styles.primaryButton, styles.editPrimaryButton, isNotificationEdit && largeText && styles.previewButtonLarge, { opacity: pressed ? 0.78 : 1 }]}
         >
-          <Text style={styles.primaryButtonText}>{notificationNeedsRoute ? "경로 설정" : "적용"}</Text>
+          <Text style={styles.primaryButtonText}>{notificationNeedsRoute ? "경로 설정" : clearsRoute ? "장소만 적용" : "적용"}</Text>
         </Pressable>
       </View>
     </View>

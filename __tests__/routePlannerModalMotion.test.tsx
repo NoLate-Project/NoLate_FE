@@ -5,6 +5,7 @@ import { RoutePlannerModals } from '../src/modules/schedule/routePlanner/RoutePl
 import { RoutePlannerMapHeader } from '../src/modules/schedule/routePlanner/RoutePlannerMapHeader';
 import { RoutePlannerAlternativeSection } from '../src/modules/schedule/routePlanner/RoutePlannerAlternativeSection';
 import { RoutePlannerBottomSheet } from '../src/modules/schedule/routePlanner/RoutePlannerBottomSheet';
+import { useRoutePlannerCameraSync } from '../src/modules/schedule/routePlanner/useRoutePlannerCameraSync';
 import { useRoutePlannerSubmissionActions } from '../src/modules/schedule/routePlanner/useRoutePlannerSubmissionActions';
 import { consumeScheduleRouteUpdatePayload, getRoutePlannerInitial } from '../src/modules/schedule/routePlannerSession';
 import type { RoutePlannerController } from '../src/modules/schedule/routePlanner/useRoutePlannerController';
@@ -14,9 +15,86 @@ jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('../src/ui/BrandedLoader', () => 'BrandedLoader');
 jest.mock('../src/modules/schedule/components/route/RouteStepTimeline', () => 'RouteStepTimeline');
+jest.mock('../src/api/api', () => ({ __esModule: true, default: { post: jest.fn() } }));
 jest.mock('../src/modules/map/routingService', () => ({
   shouldShowRequiredMapAttribution: () => false,
 }));
+
+it('fits the full route once the moving sheet has reached its viewport', async () => {
+  const fitToCoordinates = jest.fn();
+  const animateCameraTo = jest.fn();
+  type CameraOptions = Parameters<typeof useRoutePlannerCameraSync>[0];
+  const options: Omit<CameraOptions, 'bottomSheetSnap' | 'isBottomSheetCollapsed' | 'reduceMotion' |
+    'transitMapBottomOcclusionHeight' | 'visibleBottomSheetHeight'> = {
+    activeTarget: null,
+    bottomPanelHeight: 420,
+    bottomSheetCollapsedOffset: 320,
+    bottomSheetExpandedOffset: 40,
+    bottomSheetMiddleOffset: 180,
+    cameraQaStateRef: { current: { cameraMode: 'ROUTE_OVERVIEW', autoFitSuppressed: false, reason: 'INITIAL_ROUTE_FIT' } },
+    destinationLat: 37.4979,
+    destinationLng: 127.0276,
+    etaLoading: false,
+    hasBottomSheetMeasured: true,
+    hasRouteReady: true,
+    insetsTop: 0,
+    isBottomSheetHidden: false,
+    isMapInitialized: true,
+    isQaCameraLocked: false,
+    isRouteDetailMode: true,
+    isTransitDetailMode: false,
+    lastCameraActionKeyRef: { current: '' },
+    mapRef: { current: { fitToCoordinates, animateCameraTo, animateRegionTo: jest.fn(), resizeMap: jest.fn(), zoomBy: jest.fn() } },
+    originLat: 37.5547,
+    originLng: 126.9707,
+    requestedTransitDepartureAt: new Date('2026-11-17T00:00:00Z'),
+    routeRefreshTick: 0,
+    runCameraActionAfterDirectionPrewarm: (_key, _center, _zoom, action) => action(),
+    transitConnectorOverlays: [],
+    transitWalkDetailOverlays: [],
+    travelMode: 'WALK',
+    windowHeight: 780,
+    windowWidth: 375,
+  };
+
+  function CameraHarness({
+    visibleHeight,
+    snap = 'expanded',
+    reduceMotion = false,
+  }: { visibleHeight: number; snap?: CameraOptions['bottomSheetSnap']; reduceMotion?: boolean }) {
+    useRoutePlannerCameraSync({
+      ...options,
+      bottomSheetSnap: snap,
+      isBottomSheetCollapsed: snap !== 'expanded',
+      reduceMotion,
+      transitMapBottomOcclusionHeight: visibleHeight,
+      visibleBottomSheetHeight: visibleHeight,
+    });
+    return null;
+  }
+
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(async () => { renderer = TestRenderer.create(<CameraHarness visibleHeight={100} />); });
+    await act(async () => { renderer!.update(<CameraHarness visibleHeight={240} />); });
+    expect(fitToCoordinates).not.toHaveBeenCalled();
+
+    await act(async () => { renderer!.update(<CameraHarness visibleHeight={378} />); });
+    await act(async () => { renderer!.update(<CameraHarness visibleHeight={380} />); });
+    expect(fitToCoordinates).toHaveBeenCalledTimes(1);
+
+    await act(async () => { renderer!.update(<CameraHarness visibleHeight={240} snap="collapsed" />); });
+    expect(fitToCoordinates).toHaveBeenCalledTimes(1);
+    await act(async () => { renderer!.update(<CameraHarness visibleHeight={100} snap="collapsed" />); });
+    expect(fitToCoordinates).toHaveBeenCalledTimes(2);
+
+    options.lastCameraActionKeyRef.current = '';
+    await act(async () => { renderer!.update(<CameraHarness visibleHeight={100} reduceMotion />); });
+    expect(animateCameraTo).toHaveBeenCalledWith(expect.objectContaining({ duration: 0 }));
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
 
 it('updates both planner modals when the system motion preference changes', async () => {
   const originalPlatform = Platform.OS;
@@ -152,10 +230,13 @@ it.each([false, true])('keeps search feedback in the sheet and settles the new r
     const animatedResult = () => renderer!.root.findAll(node => node.props.entering?.duration === 160);
     expect(animatedResult()).toHaveLength(0);
     await act(async () => {
-      renderer!.update(renderSheet({ ...controller, etaLoading: true, selectedAlternative: undefined }));
+      renderer!.update(renderSheet({ ...controller, etaLoading: true }));
     });
     expect(renderer!.root.findByProps({ accessibilityRole: 'progressbar' }).props.accessibilityLabel)
       .toBe('경로를 찾고 있어요, 11월 15일 오후 1:30 출발');
+    expect(renderer!.root.findByType('BrandedLoader' as never).props).toMatchObject({
+      size: 'button', settleMark: true,
+    });
     await act(async () => { renderer!.update(renderSheet(controller)); });
     expect(renderer!.root.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(0);
     expect(animatedResult().length > 0).toBe(!reduceMotion);
@@ -181,7 +262,8 @@ it.each([
       visibleAlternatives: [route],
       selectedAlternative: route,
       selectedTransitMeta: { combinedText: '예상 소요 시간 · 1,500원', fareText: '1,500원' },
-      selectedRouteInfo: { id, totalDurationMinutes: minutes, steps: [{ id: 'leg-1', type: 'SUBWAY' }] },
+      selectedRouteInfo: { id, departureTime: new Date(2026, 10, 15, 13, 19).toISOString(),
+        totalDurationMinutes: minutes, steps: [{ id: 'leg-1', type: 'SUBWAY' }] },
       transitDetailSummaryPalette: {},
       routeDetailSummarySurface: {},
     } as unknown as RoutePlannerController;
@@ -195,10 +277,12 @@ it.each([
   try {
     await act(async () => { renderer = TestRenderer.create(render('route-a', 41)); });
     expect(content().props.entering).toBeUndefined();
-    expect(renderer!.root.findAllByType(Text).map(node => node.props.children))
-      .toEqual(['예상 41분', '1,500원']);
+    const departureBasis = renderer!.root.findAllByType(Text)
+      .find(node => node.props.testID === 'route-planner-departure-basis');
+    expect(React.Children.toArray(departureBasis?.props.children).join('')).toBe('13:19 출발 기준');
     const first = timeline();
     expect(first.props.showEstimatedClockHeading).toBe(true);
+    expect(first.props.realtimeArrivalsActive).toBe(bottomSheetSnap !== 'collapsed');
     await act(async () => renderer!.update(render('route-a', 42)));
     expect(timeline()).toBe(first);
     expect(content().props.entering).toBeUndefined();
@@ -238,6 +322,9 @@ it('keeps the route action mounted and disabled while a new route is loading', a
     canSubmitRoute: true,
     routeSubmitPending: false,
     selectedRouteDuration: '41분',
+    selectedRouteInfo: { id: route.id, departureTime: new Date(2026, 10, 15, 13, 19).toISOString(), steps: [] },
+    selectedTransitMeta: { fareText: '1,500원' },
+    selectedCollapsedRouteSummary: { arrivalText: '오후 2:00 예상 도착' },
     snapBottomSheetTo,
   } as unknown as RoutePlannerController;
   let renderer: ReactTestRenderer | undefined;
@@ -247,25 +334,47 @@ it('keeps the route action mounted and disabled while a new route is loading', a
     await act(async () => { renderer = TestRenderer.create(<RoutePlannerBottomSheet controller={controller} />); });
     const initialAction = action();
     expect(initialAction?.props.disabled).toBe(false);
+    const footerSummary = () => renderer!.root.findAllByProps({ testID: 'route-planner-footer-summary' });
+    expect(footerSummary()[0].findAllByType(Text).map(node => node.props.children))
+      .toEqual(['오후 2:00 예상 도착', '총 41분 · 1,500원']);
     const accessWalk = () => renderer!.root.findAllByProps({ testID: 'route-planner-overview-access-walk' });
     expect(accessWalk()).toHaveLength(0);
     await act(async () => {
-      renderer!.update(<RoutePlannerBottomSheet controller={{ ...controller, bottomSheetSnap: 'collapsed' }} />);
+      renderer!.update(<RoutePlannerBottomSheet controller={{
+        ...controller,
+        bottomSheetSnap: 'collapsed',
+        focusedTransitLegIndex: 1,
+        selectedTransitProgressSegments: [
+          { key: 'walk', kind: 'WALK', label: '5분', minutes: 5, isRide: false, color: '#687588', flex: 5 },
+          { key: 'rail', kind: 'SUBWAY', lineLabel: '4호선', label: '20분', minutes: 20, isRide: true, color: '#00A4E3', flex: 20 },
+        ],
+      }} />);
     });
     const disclosure = renderer!.root.findAll(node =>
       node.props.accessibilityLabel === '경로 상세 펼치기' && typeof node.props.onPress === 'function')[0];
-    expect(disclosure.props.accessibilityValue).toEqual({ text: '예상 41분' });
-    expect(accessWalk()[0].props.accessibilityLabel).toBe('서울역 4호선, 도보 340m · 5분');
+    expect(disclosure.props.accessibilityValue).toEqual({ text: '예상 41분, 13:19 출발 기준 · 오후 2:00 예상 도착, 이동 경로, 도보 5분, 4호선 20분, 지도 선택: 4호선 20분' });
+    expect(renderer!.root.findAllByProps({ testID: 'route-planner-overview-scroll' }).length).toBeGreaterThan(0);
+    expect(footerSummary()).toHaveLength(0);
+    expect(accessWalk()[0].props.accessibilityLabel).toBe('서울역 출발, 서울역 4호선, 도보 340m · 5분');
     expect(renderer!.root.findAllByProps({ accessibilityLabel: '지도에서 전체 경로 보기' })).toHaveLength(0);
+    const collapsedHandle = renderer!.root.findAll(node =>
+      node.props.testID === 'route-planner-overview-handle' && typeof node.props.onPress === 'function')[0];
+    expect(collapsedHandle.props.accessibilityState).toEqual({ expanded: false });
+    act(() => collapsedHandle.props.onPress());
     act(() => disclosure.props.onPress());
     expect(snapBottomSheetTo).toHaveBeenCalledWith('expanded');
+    const segments = renderer!.root.findAll(node =>
+      node.props.testID === 'route-planner-overview-segments' && typeof node.props.onPress === 'function')[0];
+    act(() => segments.props.onPress());
+    expect(snapBottomSheetTo).toHaveBeenCalledTimes(3);
     expect(action()).toBe(initialAction);
     await act(async () => {
       renderer!.update(<RoutePlannerBottomSheet controller={{
-        ...controller, selectedAlternative: undefined, visibleAlternatives: [],
+        ...controller, visibleAlternatives: [],
         routeAlternatives: [], etaLoading: true, canSubmitRoute: false,
       }} />);
     });
+    expect(renderer!.root.findAllByProps({ testID: 'route-planner-overview-segments' })).toHaveLength(0);
     expect(action()).toBe(initialAction);
     expect(action()?.props.disabled).toBe(true);
     expect(action()?.props.accessibilityState).toEqual({ disabled: true, busy: false });
@@ -415,8 +524,8 @@ it.each([true, false])('applies the currently selected candidate to the schedule
   const resetTimer = { current: null as ReturnType<typeof setTimeout> | null };
   const pending = { current: false };
   let actions: ReturnType<typeof useRoutePlannerSubmissionActions>;
-  const route = (id: string, minutes: number) => ({
-    id, minutes, mode: 'TRANSIT', pathCoords: [{ lat: 37.55, lng: 126.97 }, { lat: 37.49, lng: 127.03 }],
+  const route = (id: string, minutes: number, odsayTimetablePreview?: { departureAt: string; arrivalAt: string }) => ({
+    id, minutes, mode: 'TRANSIT', pathCoords: [{ lat: 37.55, lng: 126.97 }, { lat: 37.49, lng: 127.03 }], odsayTimetablePreview,
   });
   function Harness({ candidate, departureAt }: { candidate: ReturnType<typeof route>; departureAt: string }) {
     actions = useRoutePlannerSubmissionActions({
@@ -445,6 +554,17 @@ it.each([true, false])('applies the currently selected candidate to the schedule
     await act(async () => {
       renderer = TestRenderer.create(<Harness candidate={route('mixed', 41)} departureAt="2026-11-15T13:19:00+09:00" />);
     });
+    const scheduledDeparture = '2026-11-15T13:20:00+09:00';
+    const subway = route('odsay-subway', 40, { departureAt: scheduledDeparture, arrivalAt: startAt });
+    await act(async () => renderer!.update(<Harness candidate={subway} departureAt={scheduledDeparture} />));
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.parse(scheduledDeparture));
+    try {
+      act(() => actions.submit());
+      expect(consumeScheduleRouteUpdatePayload(sessionId, item)).toBeUndefined();
+      expect(back).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+    }
     const bus = route('bus', 38);
     const departureAt = '2026-11-15T13:22:00+09:00';
     await act(async () => renderer!.update(<Harness candidate={bus} departureAt={departureAt} />));

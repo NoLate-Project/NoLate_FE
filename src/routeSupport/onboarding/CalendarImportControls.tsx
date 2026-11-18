@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, ComponentRef, Ref } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -26,16 +26,19 @@ export function CandidateRow({
   candidate,
   selected,
   onPress,
+  buttonRef,
 }: {
   candidate: DeviceCalendarCandidate;
   selected: boolean;
   onPress: () => void;
+  buttonRef?: Ref<ComponentRef<typeof Pressable>>;
 }) {
   const { colors, mode } = useTheme();
   const styles = createCalendarImportStyles(colors, mode);
 
   return (
     <Pressable
+      ref={buttonRef}
       accessibilityRole="checkbox"
       accessibilityLabel={`${candidate.title}, ${formatCandidateDate(
         candidate,
@@ -130,13 +133,7 @@ export function DefaultOriginPicker({
         </View>
       ) : null}
 
-      <View
-        style={[
-          styles.originSearchRow,
-          selected && styles.originSearchRowSelected,
-        ]}
-      >
-        <Ionicons accessible={false} importantForAccessibility="no" name="search-outline" size={18} color={colors.textSecondary} />
+      <View style={styles.originSearchRow}>
         <TextInput
           value={query}
           onChangeText={onQueryChange}
@@ -144,15 +141,16 @@ export function DefaultOriginPicker({
           editable={!searching}
           returnKeyType="search"
           autoCorrect={false}
-          placeholder="집, 회사 또는 도로명 주소 검색"
-          placeholderTextColor={colors.textDisabled}
-          style={styles.originSearchInput}
+          placeholder="장소 또는 주소 검색"
+          placeholderTextColor={colors.textSecondary}
+          style={[styles.originSearchInput, selected && styles.originSearchInputSelected]}
           accessibilityLabel="기본 출발지 검색"
         />
         <Pressable
           disabled={searching || !query.trim()}
           accessibilityRole="button"
           accessibilityLabel="출발지 검색"
+          accessibilityState={{ busy: searching, disabled: searching || !query.trim() }}
           onPress={onSearch}
           style={({ pressed }) => [
             styles.originSearchButton,
@@ -163,7 +161,7 @@ export function DefaultOriginPicker({
           {searching ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
-            <Ionicons accessible={false} importantForAccessibility="no" name="arrow-forward-outline" size={17} color="#FFFFFF" />
+            <Text style={styles.originSearchButtonText}>검색</Text>
           )}
         </Pressable>
       </View>
@@ -278,17 +276,20 @@ export function PrimaryButton({
   disabled,
   loading,
   onPress,
+  buttonRef,
 }: {
   label: string;
   disabled?: boolean;
   loading?: boolean;
   onPress: () => void;
+  buttonRef?: Ref<ComponentRef<typeof Pressable>>;
 }) {
   const { colors, mode } = useTheme();
   const styles = createCalendarImportStyles(colors, mode);
 
   return (
     <Pressable
+      ref={buttonRef}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: Boolean(disabled) }}

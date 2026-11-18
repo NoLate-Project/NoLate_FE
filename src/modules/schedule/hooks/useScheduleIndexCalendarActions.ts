@@ -1,13 +1,9 @@
 import {
   useCallback,
-  useEffect,
   useMemo,
-  useRef,
-  useState,
   type Dispatch,
   type SetStateAction,
 } from 'react';
-import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import {
@@ -19,8 +15,6 @@ import type { ScheduleItem } from '../types';
 import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
 
 type UseScheduleIndexCalendarActionsParams = {
-  isFocused: boolean;
-  calendarScopeSelectorVisible: boolean;
   calendarShareTarget: ScheduleCalendar | null;
   closeToolbarMenu: (onClosed?: () => void) => void;
   firstDayStorageKey: string;
@@ -33,12 +27,8 @@ type UseScheduleIndexCalendarActionsParams = {
 
 /**
  * 캘린더 선택기에서 실행되는 설정·공유·경로 설정 이동 동작을 제공한다.
- * 선택기 닫힘 시점과 iOS/Android 모달 표시 차이를 흡수해 화면 컴포넌트가
- * 플랫폼별 타이밍을 직접 다루지 않도록 한다.
  */
 export function useScheduleIndexCalendarActions({
-  isFocused,
-  calendarScopeSelectorVisible,
   calendarShareTarget,
   closeToolbarMenu,
   firstDayStorageKey,
@@ -67,39 +57,6 @@ export function useScheduleIndexCalendarActions({
   const openCalendarScopeSelector = useCallback(() => {
     closeToolbarMenu(() => setCalendarScopeSelectorVisible(true));
   }, [closeToolbarMenu, setCalendarScopeSelectorVisible]);
-
-  const managePending = useRef(false);
-  const managerOpened = useRef(false);
-  const [returningFromManager, setReturningFromManager] = useState(false);
-
-  const openCalendarManagerAfterDismiss = useCallback(() => {
-    if (!managePending.current) return;
-    managePending.current = false;
-    router.push({ pathname: '/schedule/calendars', params: { from: 'calendar-scope' } });
-  }, [router]);
-
-  const openCalendarManagerFromSelector = useCallback(() => {
-    managePending.current = true;
-    setReturningFromManager(true);
-    setCalendarScopeSelectorVisible(false);
-  }, [setCalendarScopeSelectorVisible]);
-
-  useEffect(() => {
-    if (Platform.OS === 'ios' || calendarScopeSelectorVisible || !returningFromManager) return;
-    const task = setTimeout(openCalendarManagerAfterDismiss, 360);
-    return () => clearTimeout(task);
-  }, [calendarScopeSelectorVisible, openCalendarManagerAfterDismiss, returningFromManager]);
-
-  useEffect(() => {
-    if (!returningFromManager) return;
-    if (!isFocused) {
-      managerOpened.current = true;
-    } else if (managerOpened.current) {
-      managerOpened.current = false;
-      setCalendarScopeSelectorVisible(true);
-      setReturningFromManager(false);
-    }
-  }, [isFocused, returningFromManager, setCalendarScopeSelectorVisible]);
 
   /** 공유 캘린더의 기본 공개 범위를 서버와 로컬 목록에 동시에 반영한다. */
   const updateSharedCalendarContentMode = useCallback(
@@ -148,9 +105,6 @@ export function useScheduleIndexCalendarActions({
   );
 
   return {
-    openCalendarManagerAfterDismiss,
-    openCalendarManagerFromSelector,
-    returningFromManager,
     handleFirstDayChange,
     openAccountSettings,
     openCalendarScopeSelector,

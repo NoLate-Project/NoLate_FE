@@ -110,6 +110,28 @@ describe("getPaddedBoundsCamera", () => {
         expect(south.y).toBeLessThanOrEqual(viewport.height - viewport.padding.bottom);
     });
 
+    it("지도에서 측정한 배율로 화면 여백을 계산해 경로 끝점을 가리지 않는다", () => {
+        const bounds = { minLat: 37.4979, maxLat: 37.5547, minLng: 126.9706, maxLng: 127.0276 };
+        const compactViewport = {
+            width: 375, height: 667,
+            padding: { top: 170, right: 64, bottom: 360, left: 64 },
+        };
+        const latitude = 37.5263;
+        const zoom = 11;
+        const worldScale = 1.5;
+        const metersPerPixel = 156_543.033928 * Math.cos(latitude * Math.PI / 180) / (2 ** zoom * worldScale);
+        const camera = getPaddedBoundsCamera(bounds, compactViewport, {
+            wholeZoomLevels: true,
+            cameraScaleSample: { latitude, zoom, metersPerPixel },
+        });
+        if (!camera) throw new Error("camera is required");
+        const projectedCamera = { ...camera, zoom: camera.zoom + Math.log2(worldScale) };
+        const north = projectToViewport({ latitude: bounds.maxLat, longitude: bounds.minLng }, projectedCamera, compactViewport);
+        const south = projectToViewport({ latitude: bounds.minLat, longitude: bounds.maxLng }, projectedCamera, compactViewport);
+        expect(north.y).toBeGreaterThanOrEqual(compactViewport.padding.top);
+        expect(south.y).toBeLessThanOrEqual(compactViewport.height - compactViewport.padding.bottom);
+    });
+
     it("잘못된 화면 크기는 카메라를 만들지 않는다", () => {
         expect(getPaddedBoundsCamera(
             { minLat: 37.5, maxLat: 37.6, minLng: 126.9, maxLng: 127 },

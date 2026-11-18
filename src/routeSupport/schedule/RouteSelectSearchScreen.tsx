@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
     AccessibilityInfo,
     Animated,
@@ -43,6 +44,7 @@ import type { RouteSelectController } from "./useRouteSelectController";
 
 type RouteSelectSearchScreenProps = {
     controller: RouteSelectController;
+    mapButton: React.Ref<View>;
 };
 
 const searchResultsEntrance = FadeIn.duration(120).reduceMotion(ReduceMotion.System);
@@ -73,7 +75,7 @@ function SearchFavoriteButton({
         >
             {saving
                 ? <BrandedLoader size="button" variant="route" accessibilityLabel="즐겨찾기를 저장하고 있어요" />
-                : <Ionicons accessible={false} name={saved ? "checkmark-circle-outline" : "star-outline"} size={21} color={color} />}
+                : <Ionicons accessible={false} name={saved ? "pencil-outline" : "star-outline"} size={21} color={color} />}
         </Pressable>
     );
 }
@@ -81,6 +83,7 @@ function SearchFavoriteButton({
 /** 출발지·도착지 검색과 최근 장소·즐겨찾기 선택 화면을 표시한다. */
 export function RouteSelectSearchScreen({
     controller,
+    mapButton,
 }: RouteSelectSearchScreenProps) {
     const {
         statusBarStyle,
@@ -100,11 +103,13 @@ export function RouteSelectSearchScreen({
         favoriteCategories,
         searchResults,
         searchError,
+        retryPlaceSearch,
         searching,
         currentLocationPending,
         activeTargetLabel,
         activeSearchText,
         showingSearchResults,
+        returnsToScheduleDraft,
         goToScheduleList,
         openPlaceSettings,
         removeRecentPlace,
@@ -130,13 +135,23 @@ export function RouteSelectSearchScreen({
     const { fontScale } = useWindowDimensions();
     const searchHeight = Math.max(48, Math.ceil(22 * fontScale + 14));
     const stackLocationActions = fontScale > 1.35;
+    const managePlacesButton = useRef<View>(null);
+    const returningFromPlaceSettings = useRef(false);
+    useFocusEffect(useCallback(() => {
+        if (!returningFromPlaceSettings.current) return;
+        const frame = requestAnimationFrame(() => {
+            returningFromPlaceSettings.current = false;
+            if (managePlacesButton.current) AccessibilityInfo.sendAccessibilityEvent?.(managePlacesButton.current, "focus");
+        });
+        return () => cancelAnimationFrame(frame);
+    }, []));
     const targetWithObjectParticle = activeTarget === "origin" ? "출발지를" : "도착지를";
     const [targetTabsWidth, setTargetTabsWidth] = useState(0);
     const targetTabProgress = useSharedValue(activeTarget === "destination" ? 1 : 0);
     const targetTabWidth = Math.max(0, (targetTabsWidth - targetTabInset * 2) / 2);
     useEffect(() => {
         targetTabProgress.value = withTiming(activeTarget === "destination" ? 1 : 0, {
-            duration: 160,
+            duration: 180,
             easing: Easing.out(Easing.cubic),
             reduceMotion: ReduceMotion.System,
         });
@@ -220,6 +235,7 @@ export function RouteSelectSearchScreen({
                         return (
                             <Pressable
                                 key={target}
+                                testID={`route-search-tab-${target}`}
                                 accessibilityRole="tab"
                                 accessibilityState={{ selected }}
                                 accessibilityLabel={label}
@@ -245,6 +261,7 @@ export function RouteSelectSearchScreen({
                     </Pressable>
                     <View style={[styles.searchModeSearchBox, { backgroundColor: routeUi.surface, borderColor: routeUi.border, height: searchHeight }]}>
                         <TextInput
+                            testID="route-search-input"
                             value={activeSearchText}
                             onChangeText={(text) => handleSearchChange(activeTarget, text)}
                             accessibilityLabel={`${activeTargetLabel} 검색`}
@@ -276,20 +293,23 @@ export function RouteSelectSearchScreen({
                             </Pressable>
                         )}
                     </View>
-                    <Pressable
-                        onPress={goToScheduleList}
-                        accessibilityRole="button"
-                        accessibilityLabel="일정 목록으로 이동"
-                        style={[styles.scheduleListIconButton,
-                            { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
-                    >
-                        <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
-                    </Pressable>
+                    {!returnsToScheduleDraft && (
+                        <Pressable
+                            onPress={goToScheduleList}
+                            accessibilityRole="button"
+                            accessibilityLabel="일정 목록으로 이동"
+                            style={[styles.scheduleListIconButton,
+                                { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
+                        >
+                            <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
+                        </Pressable>
+                    )}
                 </View>
 
                 <View style={[styles.searchModeActionRow, stackLocationActions && styles.searchModeActionRowStacked]}>
                     <Pressable
                         onPress={applyCurrentLocationToActiveTarget}
+                        testID="route-search-current-location"
                         accessibilityRole="button"
                         accessibilityLabel={`${targetWithObjectParticle} 현재 위치로 설정`}
                         accessibilityState={{
@@ -312,6 +332,8 @@ export function RouteSelectSearchScreen({
                         <Text style={[styles.searchModeActionText, { color: routeUi.textPrimary }]}>내 위치</Text>
                     </Pressable>
                     <Pressable
+                        ref={mapButton}
+                        testID="route-search-map-picker"
                         onPress={openMapForPointSelection}
                         accessibilityRole="button"
                         accessibilityLabel={`${targetWithObjectParticle} 지도에서 선택`}
@@ -337,8 +359,12 @@ export function RouteSelectSearchScreen({
                         <Text maxFontSizeMultiplier={1.8} style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>
                             {showingSearchResults ? "검색 결과" : "즐겨찾기"}
                         </Text>
-                        {!showingSearchResults && <Pressable
-                            onPress={openPlaceSettings}
+                        {(!showingSearchResults || !stackLocationActions) && <Pressable
+                            ref={managePlacesButton}
+                            onPress={() => {
+                                returningFromPlaceSettings.current = !stackLocationActions;
+                                openPlaceSettings();
+                            }}
                             accessibilityRole="button"
                             accessibilityLabel="내 장소 관리"
                             style={[styles.favoriteManageButton, stackLocationActions && styles.favoriteManageButtonStacked]}
@@ -360,26 +386,44 @@ export function RouteSelectSearchScreen({
                                 </View>
                             )}
                             {!searching && searchError && (
-                                <View style={styles.searchModeEmptyRow}>
-                                    <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
-                                        주소 검색에 실패했습니다. 네트워크를 확인해 주세요.
+                                <View style={styles.searchModeEmptyRow} accessibilityLiveRegion="polite">
+                                    <Text style={[
+                                        stackLocationActions ? styles.recentEmptyText : styles.placeSearchStatusTitle,
+                                        { color: stackLocationActions ? routeUi.textSecondary : routeUi.textPrimary },
+                                    ]}>
+                                        {stackLocationActions
+                                            ? "주소 검색에 실패했습니다. 네트워크를 확인해 주세요."
+                                            : "장소를 불러오지 못했어요"}
                                     </Text>
                                     <Pressable
                                         accessibilityRole="button"
                                         accessibilityLabel="주소 다시 검색"
-                                        onPress={() => handleSearchChange(activeTarget, activeSearchText)}
-                                        style={[styles.emptyRetryButton, { backgroundColor: routeUi.accentBlue }]}
+                                        accessibilityHint="입력한 검색어로 다시 검색합니다"
+                                        onPress={retryPlaceSearch}
+                                        style={[
+                                            styles.emptyRetryButton,
+                                            !stackLocationActions && styles.placeSearchRetry,
+                                            { backgroundColor: stackLocationActions ? routeUi.accentBlue : routeUi.surface2 },
+                                        ]}
                                     >
-                                        <Ionicons name="refresh" size={15} color="#FFFFFF" />
-                                        <Text style={styles.emptyRetryText}>다시 검색</Text>
+                                        <Ionicons name="refresh-outline" size={15} color={stackLocationActions ? "#FFFFFF" : routeUi.textPrimary} />
+                                        <Text style={[styles.emptyRetryText, !stackLocationActions && { color: routeUi.textPrimary }]}>다시 검색</Text>
                                     </Pressable>
                                 </View>
                             )}
                             {!searching && !searchError && searchResults.length === 0 && (
-                                <View style={styles.searchModeEmptyRow}>
-                                    <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
-                                        검색 결과가 없습니다.
+                                <View style={styles.searchModeEmptyRow} accessibilityLiveRegion="polite">
+                                    <Text style={[
+                                        stackLocationActions ? styles.recentEmptyText : styles.placeSearchStatusTitle,
+                                        { color: stackLocationActions ? routeUi.textSecondary : routeUi.textPrimary },
+                                    ]}>
+                                        {stackLocationActions ? "검색 결과가 없습니다." : "검색 결과가 없어요"}
                                     </Text>
+                                    {!stackLocationActions && (
+                                        <Text style={[styles.searchingText, { color: routeUi.textSecondary }]}>
+                                            장소명이나 주소를 바꿔 보세요.
+                                        </Text>
+                                    )}
                                 </View>
                             )}
                             {searchResults.length > 0 && (
@@ -457,7 +501,7 @@ export function RouteSelectSearchScreen({
                                             { backgroundColor: routeUi.surface, borderColor: routeUi.borderStrong },
                                         ]}
                                     >
-                                        <Ionicons name="refresh" size={14} color={routeUi.accentBlue} />
+                                        <Ionicons name="refresh-outline" size={14} color={routeUi.accentBlue} />
                                         <Text style={[styles.favoriteRetryText, { color: routeUi.accentBlue }]}>다시 시도</Text>
                                     </Pressable>
                                 </View>
@@ -498,7 +542,7 @@ export function RouteSelectSearchScreen({
                                     >
                                         {tab.kind === "default-address" ? (
                                             <Ionicons
-                                                name={selected ? "home" : "home-outline"}
+                                                name="home-outline"
                                                 size={14}
                                                 color={selected ? routeUi.accentBlue : routeUi.textSecondary}
                                             />
@@ -603,7 +647,7 @@ export function RouteSelectSearchScreen({
                                                     accessibilityLabel={`${getPlaceDisplayText(place)} 기본 출발지`}
                                                     style={styles.searchModeFavoriteButton}
                                                 >
-                                                    <Ionicons name="home" size={20} color={routeUi.accentBlue} />
+                                                    <Ionicons name="home-outline" size={20} color={routeUi.accentBlue} />
                                                 </View>
                                             ) : activeTarget === "origin" ? (
                                                 <Pressable
@@ -644,7 +688,7 @@ export function RouteSelectSearchScreen({
                                                         accessibilityLabel="즐겨찾기를 해제하고 있어요"
                                                     />
                                                 ) : (
-                                                    <Ionicons name="star" size={21} color={routeUi.accentBlue} />
+                                                    <Ionicons name="star-outline" size={21} color={routeUi.accentBlue} />
                                                 )}
                                             </Pressable>
                                         </View>
@@ -745,7 +789,7 @@ export function RouteSelectSearchScreen({
                                                 accessibilityLabel={`${getPlaceDisplayText(place)} 최근 검색에서 삭제`}
                                                 style={styles.searchModeRemoveButton}
                                             >
-                                                <Text style={[styles.searchModeRemoveText, { color: routeUi.textSecondary }]}>×</Text>
+                                                <Ionicons name="close-outline" size={20} color={routeUi.textSecondary} />
                                             </Pressable>
                                         </View>
                                     );

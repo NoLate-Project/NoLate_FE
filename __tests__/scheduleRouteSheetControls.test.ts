@@ -53,7 +53,7 @@ describe('schedule route sheet controls', () => {
     expect(detailSource).toContain(
       'configureParticipantDisclosureAnimation(nextExpanded)',
     );
-    expect(detailSource).toContain('{renderRouteCompanions(revealFirstCompanion)}');
+    expect(detailSource).toContain('renderRouteCompanions(revealFirstCompanion,');
   });
 
   test('compact sheet keeps the safe area while removing forced body slack', () => {

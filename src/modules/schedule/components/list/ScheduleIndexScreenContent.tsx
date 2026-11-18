@@ -1,9 +1,11 @@
 import { createScheduleIndexStyles } from '../../../../routeSupport/schedule/index.styles';
 import React from 'react';
-import { Animated, StatusBar, View } from 'react-native';
+import { Animated, StatusBar, type Text, View, useWindowDimensions } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import CalendarWrapper from '../calendar/CalendarWrapper';
 import CalendarYearOverviewModal from '../calendar/CalendarYearOverviewModal';
+import { CalendarYearDateHandoff, CalendarYearDateTargets, type CalendarDatePoint } from '../calendar/CalendarYearDateHandoff';
+import { getYearMonthSelection } from '../../calendarNavigation';
 import CalendarScopeSheet from '../calendar/CalendarScopeSheet';
 import ScheduleRouteFocusBoundary from '../ScheduleRouteFocusBoundary';
 import { type CalendarViewModePreference } from '../calendar/viewMode';
@@ -138,7 +140,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     categoryError,
     scheduleCalendars,
     activeCalendarScope,
-    setActiveCalendarScope,
+    changeCalendarScope,
     calendarShareTarget,
     setCalendarShareTarget,
     firstDay,
@@ -208,7 +210,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     loadYearOverviewSchedules,
     yearOverviewItems,
     writableCategories,
-    openCategoryManager,
+    openFormCategoryManager,
     handleQuickAnalyze,
     handleVisibleMonthChange,
     handleSelectDay,
@@ -225,16 +227,29 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     registerDetailMonthMotionCancel,
     handleDetailMonthMotionActiveChange,
     selectOverviewMonth,
-    openCalendarManagerAfterDismiss,
-    openCalendarManagerFromSelector,
-    returningFromManager,
     updateSharedCalendarContentMode,
     handleFirstDayChange,
     bottomLeftActions,
     bottomRightActions,
     renderMonthAgendaPanelContent,
   } = controller;
+  const { fontScale } = useWindowDimensions();
+  const yearDateTargets = React.useRef(new Map<string, View | Text>()).current;
+  const yearHandoffMonthLayer = React.useRef<View>(null);
+  const [yearHandoff, setYearHandoff] = React.useState<{ day: string; from: CalendarDatePoint } | null>(null);
+  const clearYearHandoff = React.useCallback(() => setYearHandoff(null), []);
+  const handleYearMonthPress = React.useCallback((year: number, month: number, from?: CalendarDatePoint) => {
+    const day = getYearMonthSelection(year, month, selectedDay);
+    if (selectOverviewMonth(year, month) && from && !reduceMotionEnabled && fontScale <= 1.25) {
+      setYearHandoff({ day, from });
+    }
+  }, [fontScale, reduceMotionEnabled, selectOverviewMonth, selectedDay]);
+  const showYearHandoff = isFocused && !reduceMotionEnabled && fontScale <= 1.25;
+  React.useEffect(() => {
+    if (!showYearHandoff) clearYearHandoff();
+  }, [clearYearHandoff, showYearHandoff]);
   return (
+    <CalendarYearDateTargets.Provider value={yearDateTargets}>
     <ScheduleRouteFocusBoundary
       focused={isFocused}
       testID="schedule-index-route-root"
@@ -310,6 +325,8 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
       >
         <View style={styles.displayStack}>
           <Animated.View
+            ref={yearHandoffMonthLayer}
+            collapsable={false}
             pointerEvents={
               !isAnyDepthTransitionActive &&
               calendarDepth === 'month' &&
@@ -393,54 +410,56 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
               </Reanimated.View>
             </Reanimated.View>
 
-            <Reanimated.View
-              collapsable={false}
-              style={[styles.monthAgendaSlot, monthAgendaSlotAnimatedStyle]}
-            >
-              <Animated.View
-                pointerEvents={
-                  monthAgendaIsOpen && !isMonthViewTransitionActive
-                    ? 'auto'
-                    : 'none'
-                }
-                accessibilityElementsHidden={
-                  !monthAgendaIsOpen || isMonthViewTransitionActive
-                }
-                importantForAccessibility={
-                  monthAgendaIsOpen && !isMonthViewTransitionActive
-                    ? 'auto'
-                    : 'no-hide-descendants'
-                }
-                style={[
-                  styles.monthAgendaMotion,
-                  { opacity: monthAgendaPanelOpacity },
-                ]}
+            {(monthAgendaIsOpen || isMonthViewTransitionActive) && (
+              <Reanimated.View
+                collapsable={false}
+                style={[styles.monthAgendaSlot, monthAgendaSlotAnimatedStyle]}
               >
-                {outgoingMonthAgendaPanelKind && (
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.monthAgendaSwapLayer,
-                      { opacity: monthAgendaSwapOutgoingOpacity },
-                    ]}
-                  >
-                    {renderMonthAgendaPanelContent(
-                      outgoingMonthAgendaPanelKind,
-                    )}
-                  </Animated.View>
-                )}
                 <Animated.View
+                  pointerEvents={
+                    monthAgendaIsOpen && !isMonthViewTransitionActive
+                      ? 'auto'
+                      : 'none'
+                  }
+                  accessibilityElementsHidden={
+                    !monthAgendaIsOpen || isMonthViewTransitionActive
+                  }
+                  importantForAccessibility={
+                    monthAgendaIsOpen && !isMonthViewTransitionActive
+                      ? 'auto'
+                      : 'no-hide-descendants'
+                  }
                   style={[
-                    styles.monthAgendaCurrentLayer,
-                    outgoingMonthAgendaPanelKind
-                      ? { opacity: monthAgendaSwapIncomingOpacity }
-                      : null,
+                    styles.monthAgendaMotion,
+                    { opacity: monthAgendaPanelOpacity },
                   ]}
                 >
-                  {renderMonthAgendaPanelContent(retainedMonthAgendaPanelKind)}
+                  {outgoingMonthAgendaPanelKind && (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.monthAgendaSwapLayer,
+                        { opacity: monthAgendaSwapOutgoingOpacity },
+                      ]}
+                    >
+                      {renderMonthAgendaPanelContent(
+                        outgoingMonthAgendaPanelKind,
+                      )}
+                    </Animated.View>
+                  )}
+                  <Animated.View
+                    style={[
+                      styles.monthAgendaCurrentLayer,
+                      outgoingMonthAgendaPanelKind
+                        ? { opacity: monthAgendaSwapIncomingOpacity }
+                        : null,
+                    ]}
+                  >
+                    {renderMonthAgendaPanelContent(retainedMonthAgendaPanelKind)}
+                  </Animated.View>
                 </Animated.View>
-              </Animated.View>
-            </Reanimated.View>
+              </Reanimated.View>
+            )}
           </Animated.View>
 
           {isDayLayerVisible && (
@@ -527,11 +546,17 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
           topInset={insets.top + CALENDAR_CONTEXT_HEIGHT}
           presentationRequest={yearOverviewPresentationRequest}
           todayRequest={yearTodayRequest}
+          visible={yearOverviewVisible}
           reduceMotionEnabled={reduceMotionEnabled}
-          onSelectMonth={selectOverviewMonth}
+          onSelectMonth={handleYearMonthPress}
           onVisibleYearChange={loadYearOverviewSchedules}
         />
       </Animated.View>
+
+      {showYearHandoff && yearHandoff && (
+        <CalendarYearDateHandoff request={yearHandoff} targets={yearDateTargets} monthLayer={yearHandoffMonthLayer}
+          preferAgenda={calendarViewMode === 'list'} dark={mode === 'dark'} onFinish={clearYearHandoff} />
+      )}
 
       <GlobalFloatingActionBar
         leftActions={bottomLeftActions}
@@ -547,15 +572,12 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         reduceMotionEnabled={reduceMotionEnabled}
         calendars={scheduleCalendars}
         value={activeCalendarScope}
-        onChange={setActiveCalendarScope}
+        onChange={changeCalendarScope}
         onShareCalendar={setCalendarShareTarget}
         onCloseShare={() => setCalendarShareTarget(null)}
-        onManageCalendars={openCalendarManagerFromSelector}
-        preserveSelectionPosition={returningFromManager}
         firstDay={firstDay}
         onChangeFirstDay={handleFirstDayChange}
         onClose={() => setCalendarScopeSelectorVisible(false)}
-        onDismiss={openCalendarManagerAfterDismiss}
         shareContent={calendarShareTarget ? (
           <ShareInvitationSheet
             embedded
@@ -614,7 +636,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         onRetryCategories={retryCategoryLoad}
         defaultDay={selectedDay}
         initialValues={formInitialValues}
-        onManageCategories={openCategoryManager}
+        onManageCategories={openFormCategoryManager}
         presentation="morph"
         sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
         sourceWidth={addMenuSourceWidth}
@@ -628,5 +650,6 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         onMorphReady={handleAddModalMorphReady}
       />
     </ScheduleRouteFocusBoundary>
+    </CalendarYearDateTargets.Provider>
   );
 }

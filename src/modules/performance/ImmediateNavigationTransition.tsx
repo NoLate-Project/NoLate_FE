@@ -29,6 +29,7 @@ export type NavigationTransitionShell = {
   showBack?: boolean;
   sceneKey?: string;
   onSceneClose?: () => void;
+  returnToCurrentScene?: boolean;
 };
 
 export type PreMountedNavigationScene = {
@@ -47,6 +48,7 @@ type TransitionContextValue = {
     navigationAction: () => void,
   ): void;
   closeActiveScene(): boolean;
+  discardSceneReturn(destination: string): void;
   getPreviousSceneRoute(): string | undefined;
 };
 
@@ -58,6 +60,12 @@ const PREMOUNTED_SHELLS: NavigationTransitionShell[] = [
   },
   { route: '/notifications', title: '알림' },
   { route: '/share/inbox', title: '공유함' },
+  { route: '/schedule/calendars', title: '공유 캘린더 관리' },
+  {
+    route: '/onboarding/calendar-import',
+    title: '캘린더 가져오기',
+    backAccessibilityLabel: '프로필로 돌아가기',
+  },
   {
     route: '/schedule/[id]',
     title: '일정 상세',
@@ -87,6 +95,12 @@ export function ImmediateNavigationTransitionProvider({
     sceneActivityRefs.current[scene.route] ??= createSceneActivityStore();
   }
   const activeOverlayRef = useRef<ActiveOverlay | null>(null);
+  const sceneReturnRef = useRef<{
+    scene: ActiveOverlay;
+    source: string;
+    destination: string;
+    destinationFocused: boolean;
+  } | null>(null);
   const sceneHistoryRef = useRef<ActiveOverlay[]>([]);
   const underlyingRouteRef = useRef('/');
   const nextIdRef = useRef(1);
@@ -142,6 +156,18 @@ export function ImmediateNavigationTransitionProvider({
     });
   }, []);
 
+  const restoreScene = useCallback((previous: ActiveOverlay, from: string) => {
+    if (!sceneRefs.current[previous.route]) return false;
+    const current = activeOverlayRef.current;
+    if (current) clearOverlay(current.id);
+    const scene = { ...previous, id: nextIdRef.current++ };
+    activeOverlayRef.current = scene;
+    beginNavigationMeasurement('SCENE', from, scene.route);
+    setNativeOverlayVisibility('scene', scene.route, true);
+    completeVisibleScene(scene.route);
+    return true;
+  }, [clearOverlay, completeVisibleScene, setNativeOverlayVisibility]);
+
   const closeActiveScene = useCallback(() => {
     const current = activeOverlayRef.current;
     if (!current || current.kind !== 'scene') return false;
@@ -172,6 +198,11 @@ export function ImmediateNavigationTransitionProvider({
     () => sceneHistoryRef.current.at(-1)?.route,
     [],
   );
+  const discardSceneReturn = useCallback((destination: string) => {
+    if (sceneReturnRef.current?.destination !== destination) return;
+    sceneReturnRef.current = null;
+    sceneHistoryRef.current = [];
+  }, []);
 
   const runWithTransitionShell = useCallback<
     TransitionContextValue['runWithTransitionShell']
@@ -236,6 +267,14 @@ export function ImmediateNavigationTransitionProvider({
       cancelAnimationFrame(completionFrameRef.current);
     }
     const previous = activeOverlayRef.current;
+    if (shell.returnToCurrentScene && previous?.kind === 'scene') {
+      sceneReturnRef.current = {
+        scene: previous,
+        source: underlyingRouteRef.current,
+        destination: shell.route,
+        destinationFocused: false,
+      };
+    }
     if (previous) {
       setNativeOverlayVisibility(previous.kind, previous.route, false);
     }
@@ -255,6 +294,7 @@ export function ImmediateNavigationTransitionProvider({
       try {
         navigationAction();
       } catch (error) {
+        discardSceneReturn(shell.route);
         clearOverlay(next.id);
         throw error;
       }
@@ -263,11 +303,25 @@ export function ImmediateNavigationTransitionProvider({
     if (fallbackTimerRef.current !== null) {
       clearTimeout(fallbackTimerRef.current);
     }
-    fallbackTimerRef.current = setTimeout(() => clearOverlay(next.id), 3_000);
+    fallbackTimerRef.current = setTimeout(() => {
+      const sceneReturn = sceneReturnRef.current;
+      if (
+        activeOverlayRef.current?.id === next.id
+        && sceneReturn?.destination === shell.route
+        && !sceneReturn.destinationFocused
+        && sceneReturn.source === underlyingRouteRef.current
+      ) {
+        sceneReturnRef.current = null;
+        if (restoreScene(sceneReturn.scene, shell.route)) return;
+      }
+      clearOverlay(next.id);
+    }, 3_000);
   }, [
     clearOverlay,
     completeVisibleScene,
+    discardSceneReturn,
     preMountedScenes,
+    restoreScene,
     setNativeOverlayVisibility,
   ]);
 
@@ -275,14 +329,22 @@ export function ImmediateNavigationTransitionProvider({
     () => ({
       runWithTransitionShell,
       closeActiveScene,
+      discardSceneReturn,
       getPreviousSceneRoute,
     }),
-    [closeActiveScene, getPreviousSceneRoute, runWithTransitionShell],
+    [closeActiveScene, discardSceneReturn, getPreviousSceneRoute, runWithTransitionShell],
   );
 
   useEffect(() => subscribeToFocusedDestination(route => {
     underlyingRouteRef.current = route;
     const current = activeOverlayRef.current;
+    const sceneReturn = sceneReturnRef.current;
+    if (sceneReturn?.destination === route) {
+      sceneReturn.destinationFocused = true;
+    } else if (sceneReturn?.destinationFocused && sceneReturn.source === route) {
+      sceneReturnRef.current = null;
+      if (restoreScene(sceneReturn.scene, sceneReturn.destination)) return;
+    }
     if (!current) return;
     if (current.kind === 'shell' && current.route === route) {
       requestAnimationFrame(() => clearOverlay(current.id));
@@ -292,7 +354,14 @@ export function ImmediateNavigationTransitionProvider({
       sceneHistoryRef.current = [];
       requestAnimationFrame(() => clearOverlay(current.id));
     }
-  }), [clearOverlay]);
+  }), [clearOverlay, restoreScene]);
+
+  useEffect(() => {
+    const sceneReturn = sceneReturnRef.current;
+    if (sceneReturn && !preMountedScenes.some(scene => scene.route === sceneReturn.scene.route)) {
+      discardSceneReturn(sceneReturn.destination);
+    }
+  }, [discardSceneReturn, preMountedScenes]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener(
@@ -365,6 +434,7 @@ export function useImmediateNavigationTransition() {
         navigationAction: () => void,
       ) => navigationAction(),
       closeActiveScene: () => false,
+      discardSceneReturn: () => undefined,
       getPreviousSceneRoute: () => undefined,
     };
   }

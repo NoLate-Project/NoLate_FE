@@ -34,8 +34,32 @@ export function createEditStyles(options: QuickScheduleModalStylesOptions) {
         justifyContent: "flex-start",
         paddingTop: 2,
     },
+        locationEditLabel: {
+        marginBottom: 4,
+        fontSize: 12,
+        fontWeight: "600",
+    },
+        locationRouteAction: {
+        minHeight: 44,
+        flexDirection: "row",
+        alignItems: "center",
+        paddingHorizontal: 4,
+        gap: 8,
+        borderBottomWidth: 1,
+    },
+        locationRouteActionText: {
+        flex: 1,
+        fontSize: 14,
+        fontWeight: "600",
+    },
         locationEditHint: {
         marginTop: 8,
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 5,
+    },
+        locationEditHintText: {
+        flex: 1,
         fontSize: 12,
         fontWeight: "500",
     },

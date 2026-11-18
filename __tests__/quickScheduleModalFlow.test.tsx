@@ -1,8 +1,10 @@
 import React from "react";
-import { Alert, StyleSheet, Text } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
+import apiClient from "../src/api/api";
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
+import { QuickScheduleModalShell } from "../src/modules/schedule/components/form/QuickScheduleModalShell";
 import { getRoutePlannerInitial, setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 import type { ScheduleCategory, ScheduleParseResult } from "../src/modules/schedule/types";
@@ -32,6 +34,7 @@ jest.mock("expo-av", () => ({
 }));
 jest.mock("../src/modules/schedule/components/form/QuickScheduleLogoLoader", () => "QuickScheduleLogoLoader");
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
+jest.mock("../src/api/api", () => ({ __esModule: true, default: { post: jest.fn() } }));
 
 function parsed(overrides: Partial<ScheduleParseResult> = {}): ScheduleParseResult {
     return {
@@ -104,6 +107,7 @@ describe("QuickScheduleModal flow", () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
+        jest.mocked(apiClient.post).mockReset();
         mockRouterPush.mockReset();
         mockPathname = "/schedule";
         alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
@@ -228,7 +232,7 @@ describe("QuickScheduleModal flow", () => {
         return button;
     }
 
-    test("장소 행은 목적지만 수정하고 알림의 명시적 CTA만 경로 화면을 연다", async () => {
+    test("미리보기의 장소와 알림 행은 각각 편집을 먼저 연다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
 
         await act(async () => {
@@ -236,6 +240,8 @@ describe("QuickScheduleModal flow", () => {
         });
         expect(mockRouterPush).not.toHaveBeenCalled();
         expect(renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 목적지" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "경로 찾기" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "장소만 적용" })).toHaveLength(0);
 
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 미리보기로 돌아가기" }).props.onPress();
@@ -268,7 +274,7 @@ describe("QuickScheduleModal flow", () => {
             renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 목적지" }).props.onChangeText("용산역");
         });
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "수정 확인" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "장소만 적용" }).props.onPress();
         });
 
         expect(renderer!.root.findAllByProps({ children: "장소가 바뀌어 이전 경로를 해제했어요." }).length).toBeGreaterThan(0);
@@ -305,6 +311,58 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findAllByProps({ children: "일정을 저장하면 새 경로가 반영돼요." }).length).toBeGreaterThan(0);
     });
 
+    test("장소 수정에서 경로 찾기를 취소하면 장소 초안을 복원하고 새 경로에만 반영한다", async () => {
+        const initial = parsedWithReadyRoute();
+        const rerender = await renderAndAnalyze(jest.fn().mockResolvedValue(initial));
+        const openPlace = () => renderer!.root.findByProps({ accessibilityLabel: "장소 수정" }).props.onPress();
+        const destination = () => renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 목적지" });
+        const openRoute = () => renderer!.root.findByProps({ accessibilityLabel: "경로 찾기" }).props.onPress();
+
+        await act(async () => openPlace());
+        await act(async () => destination().props.onChangeText("서울 역"));
+        expect(renderer!.root.findByProps({ accessibilityLabel: "경로 변경" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "장소만 적용" })).toHaveLength(0);
+
+        await act(async () => destination().props.onChangeText("용산역"));
+        expect(renderer!.root.findByProps({ accessibilityLabel: "장소만 적용" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ children: "기존 경로와 출발 알림이 해제돼요." }).length).toBeGreaterThan(0);
+        await act(async () => openRoute());
+        const canceledSession = mockRouterPush.mock.calls.at(-1)?.[0].params.sessionId;
+        expect(mockRouterPush).toHaveBeenLastCalledWith({
+            pathname: "/schedule/route-select",
+            params: { sessionId: canceledSession, entrySource: "quick-schedule-location" },
+        });
+        expect(getRoutePlannerInitial(canceledSession)).toMatchObject({ destination: { name: "용산역" }, route: undefined });
+        mockPathname = "/schedule/route-select";
+        await rerender();
+        mockPathname = "/schedule";
+        await rerender();
+        expect(destination().props.value).toBe("용산역");
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "일정 미리보기로 돌아가기" }).props.onPress());
+        expect(renderer!.root.findByProps({ accessibilityLabel: "장소 수정" }).props.accessibilityValue.text).toBe("서울역");
+        const previousNotification = renderer!.root.findByProps({ accessibilityLabel: "알림 수정" }).props.accessibilityValue.text;
+        expect(previousNotification).not.toContain("없음");
+
+        await act(async () => openPlace());
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "경로 변경" }).props.onPress());
+        const appliedSession = mockRouterPush.mock.calls.at(-1)?.[0].params.sessionId;
+        expect(getRoutePlannerInitial(appliedSession)).toMatchObject({ destination: initial.destination, route: initial.route });
+        mockPathname = "/schedule/route-select";
+        await rerender();
+        setRoutePlannerResult(appliedSession, {
+            origin: initial.origin,
+            destination: { name: "용산역", lat: 37.529, lng: 126.964 },
+            travelMode: "TRANSIT",
+            travelMinutes: 30,
+            departureAt: "2026-07-17T10:30:00.000Z",
+            route: initial.route,
+        });
+        mockPathname = "/schedule";
+        await rerender();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "장소 수정" }).props.accessibilityValue.text).toBe("용산역");
+        expect(renderer!.root.findByProps({ accessibilityLabel: "알림 수정" }).props.accessibilityValue.text).toBe("없음, 알림 미설정");
+    });
+
     test("분석 신뢰도 수치는 숨기고 장소와 알림을 일정 정보로 보여준다", async () => {
         await renderAndAnalyze(
             jest.fn().mockResolvedValue(
@@ -325,12 +383,31 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findByProps({ accessibilityLabel: "알림 수정" })).toBeDefined();
     });
 
-    test("분석에 사용한 문장과 열린 미리보기 항목의 현재 값을 제공한다", async () => {
+    test("접힌 원문을 펼칠 때만 첫 문장을 스크롤로 드러낸다", async () => {
+        await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
+        const scrollTo = jest.spyOn(ScrollView.prototype, "scrollTo").mockImplementation(() => {});
+        try {
+            const root = renderer!.root;
+            const scroll = root.findByProps({ testID: "quick-preview-scroll" });
+            const toggle = root.findByProps({ testID: "quick-schedule-preview-source-summary" });
+            const section = root.findByProps({ testID: "quick-schedule-preview-source-section" });
+            act(() => scroll.props.onLayout({ nativeEvent: { layout: { height: 260 } } }));
+            act(() => scroll.props.onScroll({ nativeEvent: { contentOffset: { y: 180 } } }));
+            act(() => toggle.props.onPress());
+            const layout = { nativeEvent: { layout: { y: 400, height: 220 } } };
+            act(() => section.props.onLayout(layout));
+            expect(scrollTo).toHaveBeenCalledWith({ y: 284, animated: expect.any(Boolean) });
+            act(() => section.props.onLayout(layout));
+            expect(scrollTo).toHaveBeenCalledTimes(1);
+        } finally {
+            scrollTo.mockRestore();
+        }
+    });
+
+    test("분석에 사용한 문장은 펼친 원문에서, 미리보기 항목의 값은 해당 행에서 제공한다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" }).props.accessibilityValue).toEqual({
-            text: "7월 17일 오후 8시 서울역 약속",
-        });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" }).props.accessibilityValue).toBeUndefined();
         expect(renderer!.root.findByProps({ accessibilityLabel: "제목 수정" }).props.accessibilityValue).toEqual({
             text: "서울역 약속",
         });
@@ -344,7 +421,7 @@ describe("QuickScheduleModal flow", () => {
             text: "서울역",
         });
         expect(renderer!.root.findByProps({ accessibilityLabel: "알림 수정" }).props.accessibilityValue).toEqual({
-            text: "없음, 경로 설정 필요",
+            text: "없음",
         });
         expect(renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.accessibilityValue).toEqual({
             text: "없음",
@@ -372,6 +449,8 @@ describe("QuickScheduleModal flow", () => {
             const action = renderer!.root.findByProps({ accessibilityLabel: `${field} 수정` });
             expect(action.findAllByProps({ name: "pencil-outline", accessible: false }).length).toBeGreaterThan(0);
         }
+        expect(StyleSheet.flatten(renderer!.root.findByProps({ testID: "quick-schedule-preview-date-time" }).props.style))
+            .toMatchObject({ flexDirection: "column" });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "quick-schedule-preview-edit-button" }).props.style({ pressed: false }),
         )).toMatchObject({ flex: 1, height: 46 });
@@ -383,6 +462,12 @@ describe("QuickScheduleModal flow", () => {
         )).toMatchObject({ flexDirection: "row", alignItems: "center", gap: 8 });
         expect(findButtonByText("입력 수정")).toBeDefined();
         expect(findButtonByText("일정 저장")).toBeDefined();
+    });
+
+    test("요청한 출발 알림에 경로가 없으면 미리보기에서 경로 필요를 표시한다", async () => {
+        await renderAndAnalyze(jest.fn().mockResolvedValue(parsed({ notificationEnabled: true, notificationLeadMinutes: 30 })));
+        const notification = renderer!.root.findByProps({ accessibilityLabel: "알림 수정" });
+        expect(notification.props.accessibilityValue).toEqual({ text: "없음, 경로 설정 필요" });
     });
 
     test("제목 옆 선택 박스에서 쓰기 가능한 카테고리를 고르고 그대로 저장한다", async () => {
@@ -607,7 +692,7 @@ describe("QuickScheduleModal flow", () => {
         ).toHaveLength(0);
     });
 
-    test("날짜와 시간은 같은 일시 행에서 각각 해당 편집기를 연다", async () => {
+    test("날짜와 시간은 각각 해당 편집기를 연다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
 
         await act(async () => {
@@ -624,7 +709,56 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findByProps({ mode: "time" })).toBeDefined();
     });
 
-    test("명시적 종료 시간이 있으면 날짜와 시간을 독립 버튼인 두 줄로 보여준다", async () => {
+    test("빠른 일정의 목표 시각을 수정해 저장하면 같은 ODsay 경로를 조회한다", async () => {
+        jest.setSystemTime(new Date("2026-11-15T10:30:00Z"));
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        const base = parsedWithReadyRoute();
+        const { routeInfo } = base.route as { routeInfo: Record<string, unknown> };
+        await renderAndAnalyze(jest.fn().mockResolvedValue(parsedWithReadyRoute({
+            startAt: "2026-11-22T10:50:00Z",
+            route: {
+                id: "odsay-subway", mode: "TRANSIT", provider: "odsay", source: "api", minutes: 30,
+                transitLegs: [{
+                    kind: "SUBWAY", startName: "남영", endName: "서울역", label: "1호선",
+                    navigationEvidence: {
+                        provider: "odsay", version: 1,
+                        subwayIdentifiers: { startID: "133", endID: "132", lanes: [{ sourceIndex: 0, subwayCityCode: "1000", subwayCode: "1" }] },
+                        stopOccurrences: [
+                            { name: "남영", routingStationID: "133", providerSequence: 0, sourceIndex: 0 },
+                            { name: "서울역", routingStationID: "132", providerSequence: 1, sourceIndex: 1 },
+                        ],
+                    },
+                }],
+                routeInfo: { ...routeInfo, provider: "odsay", providerTimeBasis: "timetable", timeBasis: "provider_schedule",
+                    departureTime: "2026-11-22T10:17:00Z", arrivalTime: "2026-11-22T10:47:00Z",
+                    steps: [{ id: "rail", type: "SUBWAY", title: "1호선", durationMinutes: 28 }],
+                },
+            },
+        })), onSave);
+        jest.mocked(apiClient.post).mockResolvedValue({ data: { success: true, data: { preview: {
+            departureAt: "2026-11-22T10:11:45Z", arrivalAt: "2026-11-22T10:40:00Z",
+            rides: [{ boardingAt: "2026-11-22T10:13:00Z", arrivalAt: "2026-11-22T10:40:00Z" }],
+            transferTimings: [],
+        } } } });
+
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "시간 수정" }).props.onPress());
+        await act(async () => renderer!.root.findByProps({ mode: "time" }).props.onChange(
+            { type: "set" }, new Date("2026-11-22T10:44:00Z"),
+        ));
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "수정 확인" }).props.onPress());
+        await act(async () => findButtonByText("일정 저장").props.onPress());
+
+        expect(apiClient.post).toHaveBeenCalledTimes(1);
+        expect(apiClient.post).toHaveBeenCalledWith("/api/routes/transit/timetable-preview", expect.objectContaining({
+            targetArrivalAt: "2026-11-22T10:44:00.000Z", orderedStops: [["남영", "서울역"]],
+        }), expect.anything());
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+            startAt: "2026-11-22T10:44:00.000Z", departAt: "2026-11-22T10:11:45.000Z",
+            travelMinutes: 29, notificationEnabled: true, notificationLeadMinutes: 30,
+        }));
+    });
+
+    test("명시적 종료 시간이 있어도 날짜와 전체 시간 범위를 각각 읽고 편집할 수 있다", async () => {
         await renderAndAnalyze(
             jest.fn().mockResolvedValue(
                 parsed({
@@ -640,8 +774,8 @@ describe("QuickScheduleModal flow", () => {
 
         expect(dateButton.props.accessibilityValue).toEqual({ text: "2026년 7월 17일 (금)" });
         expect(timeButton.props.accessibilityValue).toEqual({ text: "오후 8:00 ~ 오후 9:00" });
-        expect(dateButton.props.hitSlop).toEqual({ top: 6, bottom: 6, left: 4, right: 4 });
-        expect(timeButton.props.hitSlop).toEqual({ top: 6, bottom: 6, left: 4, right: 4 });
+        expect(StyleSheet.flatten(dateButton.props.style({ pressed: false })).minHeight).toBe(44);
+        expect(StyleSheet.flatten(timeButton.props.style({ pressed: false })).minHeight).toBe(44);
         expect(dateTimeGroup.findAll(node => node.props.children === "·")).toHaveLength(0);
     });
 
@@ -656,16 +790,43 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findByProps({ accessibilityLabel: "일정 미리보기로 돌아가기" })).toBeDefined();
     });
 
-    test("원문 수정은 분석에 사용한 문장을 보존하고 입력 단계로 돌아간다", async () => {
+    test("입력 방식 탭을 본문 스크롤 영역 밖에 유지한다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" }).props.onPress();
+        });
+
+        const root = renderer!.root;
+        const inputScroll = root.findAllByProps({ testID: "quick-schedule-input-scroll" })[0];
+        expect(root.findAllByProps({ accessibilityRole: "tab" }).length).toBeGreaterThanOrEqual(3);
+        expect(inputScroll.findAllByProps({ accessibilityRole: "tab" })).toHaveLength(0);
+    });
+
+    test("붙여넣은 내용의 공백과 줄바꿈을 미리보기와 입력 복귀에서 보존한다", async () => {
+        const analyze = jest.fn().mockResolvedValue(parsed());
+        await renderAndAnalyze(analyze);
 
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" }).props.onPress();
         });
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장" }).props.value).toBe(
-            "7월 17일 오후 8시 서울역 약속",
-        );
+        const input = () => renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장" });
+        expect(input().props.value).toBe("7월 17일 오후 8시 서울역 약속");
+
+        const pasted = "\n  7월 17일 오후 8시\n서울역 약속  \n";
+        await act(async () => { input().props.onChangeText(pasted); });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" }).props.onPress();
+        });
+        expect(analyze).toHaveBeenLastCalledWith(pasted.trim(), expect.objectContaining({ inputMode: "text" }));
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-source-summary" }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-source-text" }).props.children).toBe(pasted);
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" }).props.onPress();
+        });
+        expect(input().props.value).toBe(pasted);
     });
 
     test("빈 빠른 일정은 확인 없이 닫는다", async () => {
@@ -791,6 +952,7 @@ describe("QuickScheduleModal flow", () => {
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.onPress();
         });
+        expect(renderer!.root.findByProps({ placeholder: "메모 입력" }).props.value).toBe("");
         await act(async () => {
             renderer!.root.findByProps({ placeholder: "메모 입력" }).props.onChangeText("예약자 이름 확인");
         });
@@ -941,6 +1103,46 @@ describe("QuickScheduleModal flow", () => {
                 accessibilityLabel: "교통 확인 시작 시점",
             }).props.accessibilityRole,
         ).toBe("radiogroup");
+    });
+
+    test("알림 편집 중 경로를 바꿔도 선택한 시점과 알람 방식이 남는다", async () => {
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        const rerender = await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()), onSave);
+        const firstRoute = await completeRouteFromNotification(rerender);
+        const checkTime = "출발 10분 전부터 교통 확인";
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "출발 알림 받기" }).props.onValueChange(true);
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: checkTime }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "출발 알람 선택" }).props.onPress();
+        });
+        mockPathname = "/schedule/route-select";
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 경로 변경" }).props.onPress();
+        });
+        await rerender();
+        const sessionId = mockRouterPush.mock.calls.at(-1)?.[0].params.sessionId as string;
+        const routeInfo = { ...firstRoute.route.routeInfo, id: "rerouted", totalDurationMinutes: 44 };
+        setRoutePlannerResult(sessionId, { ...firstRoute, travelMinutes: 44, route: { routeInfo } });
+        mockPathname = "/schedule";
+        await rerender();
+
+        expect(renderer!.root.findByProps({ accessibilityLabel: checkTime }).props.accessibilityState).toEqual({ checked: true });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "출발 알람 선택" }).props.accessibilityState).toEqual({ checked: true });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "수정 확인" }).props.onPress();
+        });
+        await act(async () => {
+            findButtonByText("일정 저장").props.onPress();
+            await Promise.resolve();
+        });
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+            travelMinutes: 44,
+            notificationEnabled: true,
+            notificationLeadMinutes: 10,
+            alertMode: "ALARM",
+        }));
     });
 
     test("10분·30분·1시간 라디오는 선택 상태를 하나씩 전환하고 적용값을 저장한다", async () => {
@@ -1203,14 +1405,85 @@ describe("QuickScheduleModal flow", () => {
 
         expect(onAnalyze).toHaveBeenCalledTimes(1);
         expect(renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장" })).toBeDefined();
-        await act(async () => jest.advanceTimersByTime(120));
+        await act(async () => jest.advanceTimersByTime(119));
+        expect(renderer!.root.findAllByProps({ testID: "quick-schedule-loading" })).toHaveLength(0);
+        await act(async () => jest.advanceTimersByTime(1));
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "빠른 일정 문장" })).toHaveLength(0);
-        expect(renderer!.root.findByProps({ settleOnly: true })).toBeDefined();
+        expect(renderer!.root.findByProps({ settleOnly: true, settleDelayMs: 90, settleDurationMs: 320 })).toBeDefined();
+        const waitingCardFrame = renderer!.root.findByType(QuickScheduleModalShell).props.cardMotionStyle.__mockFactory();
         await act(async () => {
             resolveAnalysis(parsed());
             await Promise.resolve();
         });
         expect(findButtonByText("일정 저장")).toBeDefined();
+        const previewCardFrame = renderer!.root.findByType(QuickScheduleModalShell).props.cardMotionStyle.__mockFactory();
+        expect(waitingCardFrame).toMatchObject({
+            top: previewCardFrame.top,
+            height: previewCardFrame.height,
+            width: previewCardFrame.width,
+        });
+    });
+
+    test("확인 취소는 입력을 유지하고 이전 요청의 늦은 결과를 무시한다", async () => {
+        let resolveCancelled!: (result: ScheduleParseResult) => void;
+        const onAnalyze = jest.fn()
+            .mockImplementationOnce(() => new Promise<ScheduleParseResult>(resolve => { resolveCancelled = resolve; }))
+            .mockResolvedValueOnce(parsed({ title: "다시 확인한 일정" }));
+        await renderAndAnalyze(onAnalyze);
+        await act(async () => jest.advanceTimersByTime(120));
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "확인 취소" }).props.onPress();
+        });
+        expect(Alert.alert).not.toHaveBeenCalled();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장" }).props.value)
+            .toBe("7월 17일 오후 8시 서울역 약속");
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" }).props.onPress();
+        });
+        await act(async () => {
+            resolveCancelled(parsed({ title: "취소한 결과" }));
+        });
+
+        expect(onAnalyze).toHaveBeenCalledTimes(2);
+        expect(renderer!.root.findAllByProps({ children: "취소한 결과" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ children: "다시 확인한 일정" }).length).toBeGreaterThan(0);
+    });
+
+    test("빠른 분석 응답은 미리보기 이후에도 대기 화면을 띄우지 않는다", async () => {
+        await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
+        await act(async () => jest.advanceTimersByTime(540));
+        expect(renderer!.root.findAllByProps({ testID: "quick-schedule-loading" })).toHaveLength(0);
+        expect(findButtonByText("일정 저장")).toBeDefined();
+    });
+
+    test("저장 실패 후 수정한 장소와 펼친 원문을 유지하고 같은 초안으로 재시도한다", async () => {
+        const onSave = jest.fn().mockRejectedValueOnce(new Error("Service unavailable")).mockResolvedValueOnce(undefined);
+        const onFeedback = jest.fn(() => { throw new Error("Feedback unavailable"); });
+        await renderAndAnalyze(
+            jest.fn().mockResolvedValue({ ...parsedWithReadyRoute(), analysisId: "retry-review" }),
+            onSave,
+            undefined,
+            onFeedback,
+        );
+        const root = renderer!.root;
+        await act(async () => root.findByProps({ accessibilityLabel: "장소 수정" }).props.onPress());
+        await act(async () => root.findByProps({ accessibilityLabel: "빠른 일정 목적지" }).props.onChangeText("용산역"));
+        await act(async () => root.findByProps({ accessibilityLabel: "장소만 적용" }).props.onPress());
+        await act(async () => root.findByProps({ testID: "quick-schedule-preview-source-summary" }).props.onPress());
+        await act(async () => findButtonByText("일정 저장").props.onPress());
+
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(root.findByProps({ testID: "quick-schedule-save-error" }).props.children).toBe("일정을 저장하지 못했어요.");
+        expect(root.findByProps({ accessibilityLabel: "장소 수정" }).props.accessibilityValue.text).toBe("용산역");
+        expect(root.findByProps({ testID: "quick-schedule-preview-source-text" }).props.children)
+            .toBe("7월 17일 오후 8시 서울역 약속");
+        await act(async () => findButtonByText("다시 저장").props.onPress());
+        expect(onSave).toHaveBeenCalledTimes(2);
+        expect(onSave.mock.calls[1]).toEqual(onSave.mock.calls[0]);
+        expect(onFeedback).toHaveBeenCalledWith(expect.objectContaining({ analysisId: "retry-review", outcome: "SAVED" }));
+        expect(findButtonByText("캘린더에서 보기")).toBeDefined();
     });
 
     test("저장 버튼을 빠르게 연속으로 눌러도 생성 요청은 한 번만 보낸다", async () => {
@@ -1231,9 +1504,14 @@ describe("QuickScheduleModal flow", () => {
         });
 
         expect(onSave).toHaveBeenCalledTimes(1);
+        const saving = renderer!.root.findAllByProps({ testID: "quick-schedule-loading" })[0];
+        expect(saving.props.accessibilityLabel).toBe("일정 저장 중. 서울역 약속");
+        expect(saving.findByProps({ settleOnly: true, settleDurationMs: 320 })).toBeDefined();
         await act(async () => {
             resolveSave();
             await Promise.resolve();
         });
+        expect(renderer!.root.findAllByProps({ testID: "quick-schedule-loading" })).toHaveLength(0);
+        expect(findButtonByText("캘린더에서 보기")).toBeDefined();
     });
 });

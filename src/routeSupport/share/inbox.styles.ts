@@ -22,6 +22,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   headerButton: {
     width: 46,
     height: 46,
@@ -41,12 +45,17 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
+  tabSurfaceStandard: {
+    borderWidth: 0,
+    borderRadius: 14,
+  },
   tabBar: {
     flex: 1,
     flexDirection: 'row',
     gap: 4,
     padding: 4,
   },
+  tabBarStandard: { padding: 3 },
   tabButton: {
     flex: 1,
     minHeight: 44,
@@ -57,6 +66,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  tabButtonStandard: { borderRadius: 11 },
   tabLabelRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -86,12 +96,14 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingHorizontal: 18,
   },
+  contentBelowSearch: { paddingTop: 0 },
   searchTools: {
     minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
+  pinnedSearchTools: { marginTop: 18, marginBottom: 8, marginHorizontal: 18 },
   searchField: {
     flex: 1,
     minWidth: 0,
@@ -103,6 +115,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 9,
   },
+  searchFieldStandard: { borderWidth: 0, borderRadius: 12 },
   searchInput: {
     flex: 1,
     minWidth: 0,
@@ -124,6 +137,10 @@ const styles = StyleSheet.create({
     height: 48,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  filterButtonStandard: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
   },
   filterCount: {
     position: 'absolute',
@@ -160,8 +177,6 @@ const styles = StyleSheet.create({
   calendarManageAction: {
     minHeight: 44,
     paddingVertical: 6,
-    borderWidth: 1,
-    borderRadius: 17,
     paddingHorizontal: 11,
     flexDirection: 'row',
     alignItems: 'center',
@@ -185,84 +200,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0,
   },
-  shareCardStack: {
-    gap: 10,
-  },
-  calendarList: {
-    gap: 10,
-    paddingTop: 4,
-  },
-  shareCard: {
-    minHeight: 82,
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 16,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  calendarShareCard: {
-    minHeight: 108,
-  },
-  shareCardRail: {
-    position: 'absolute',
-    top: 14,
-    bottom: 14,
-    left: 0,
-    width: 4,
-    borderTopRightRadius: 2,
-    borderBottomRightRadius: 2,
-  },
-  shareCardOpenButton: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 82,
-    justifyContent: 'center',
-    paddingVertical: 13,
-    paddingLeft: 20,
-    paddingRight: 2,
-  },
-  calendarCardOpenButton: {
-    minHeight: 108,
+  calendarShareOpenButton: {
+    paddingVertical: 15,
   },
   shareCardCopy: {
     flex: 1,
     minWidth: 0,
   },
-  cardEyebrowRow: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  calendarCardMeta: { marginTop: 5, marginBottom: 0, justifyContent: 'space-between' },
   cardStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 },
   stackedCardLine: { flex: 0 },
-  stackedCardTime: { marginLeft: 0, flexShrink: 1 },
-  stackedCardStatus: { maxWidth: '100%' },
-  cardEyebrow: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '700',
-    letterSpacing: 0,
-  },
-  cardTopStatus: {
-    maxWidth: '48%',
-    flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  cardTopStatusText: {
-    flexShrink: 1,
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '800',
-    letterSpacing: 0,
-  },
   titleLine: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -280,24 +226,33 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
   },
-  scheduleTitleTimeRow: {
-    minWidth: 0,
+  shareListRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  scheduleTitleLine: {
+  shareListOpenButton: {
     flex: 1,
     minWidth: 0,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  shareListDetails: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    gap: 8,
+  },
+  shareListRail: {
+    width: 3,
+    borderRadius: 2,
+  },
+  shareListRelation: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2,
   },
   scheduleTimeRange: {
-    flexShrink: 0,
-    marginLeft: 12,
     fontSize: 13,
     lineHeight: 19,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
   },
   scheduleCardBottomLine: {
@@ -684,6 +639,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  pinnedErrorPosition: { position: 'absolute', left: 18, right: 18 },
+  pinnedError: { marginBottom: 0, paddingVertical: 4, borderRadius: 12 },
+  pinnedRetry: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 6 },
   inlineErrorText: {
     flex: 1,
     minWidth: 0,
@@ -704,12 +662,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  standardEmptyState: {
+    minHeight: 0,
+    paddingHorizontal: 6,
+    marginTop: 34,
+    marginBottom: 24,
+    gap: 10,
+  },
   emptyIcon: {
     width: 54,
     height: 54,
     borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  standardEmptyIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
   },
   emptyTitle: {
     marginTop: 14,
@@ -719,6 +689,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     textAlign: 'center',
   },
+  standardEmptyText: { marginTop: 0, fontWeight: '700', lineHeight: 22 },
   emptyDescription: {
     marginTop: 5,
     fontSize: 13,
@@ -727,6 +698,23 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     textAlign: 'center',
   },
+  emptyActions: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginTop: 12,
+    gap: 8,
+  },
+  standardEmptyActions: { marginTop: 0, gap: 6 },
+  emptyAction: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  standardEmptyActionText: { fontSize: 13, lineHeight: 18, fontWeight: '700' },
   stateView: {
     minHeight: 260,
     paddingHorizontal: 30,

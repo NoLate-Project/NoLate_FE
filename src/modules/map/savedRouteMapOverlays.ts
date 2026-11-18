@@ -1,11 +1,13 @@
-import { isTransitRideKind } from "./transitModes";
+import { intercityRideColor, isTransitRideKind } from "./transitModes";
 import type {
     TravelMode,
 } from "../schedule/types";
 import {
-    getBusLineColor,
+    findTransitRideLineLabel,
+    getTransitBusLineColor,
     getRouteStepColor,
     getSubwayLineColor,
+    hasRenderableRouteStepGeometry,
     type RouteInfo,
     type RouteStep,
 } from "../schedule/routeInfo";
@@ -32,6 +34,7 @@ import {
 
 
 import {
+    hasTransitLegLineGeometry,
     routeCoordDistanceMeters,
     TRANSIT_CONNECTOR_POLICY,
 } from "./transitRouteGeometry";
@@ -49,6 +52,7 @@ import {
     isFiniteNumber,
     isTrustedStoredWalkGeometrySource,
     mapCoords,
+    routeCoords,
     toMapCoord,
     type RestorablePathOverlay,
     type StoredPathOverlay,
@@ -56,15 +60,11 @@ import {
 
 /** 저장 경로에서 `getLegLineColor`에 필요한 값을 계산하며 사용 가능한 최선의 대체값을 선택합니다. */
 export function getLegLineColor(leg: TransitLegDetail): string {
-    if (leg.kind === "BUS") return getBusLineColor(leg.lineName ?? leg.label, leg.lineColor);
+    if (leg.kind === "BUS") return getTransitBusLineColor(leg);
     if (leg.kind === "SUBWAY") {
-        const explicit = leg.lineColor?.trim();
-        if (explicit && /^#?[0-9A-Fa-f]{6}$/.test(explicit)) {
-            return explicit.startsWith("#") ? explicit : `#${explicit}`;
-        }
-        return getSubwayLineColor(leg.lineName ?? leg.label);
+        return getSubwayLineColor(findTransitRideLineLabel(leg), leg.lineColor);
     }
-    return leg.kind === "ETC" ? ETC_GUIDE_COLOR : WALK_GUIDE_COLOR;
+    return leg.kind === "ETC" ? ETC_GUIDE_COLOR : intercityRideColor(leg.kind) ?? WALK_GUIDE_COLOR;
 }
 
 /** 영속화된 지도 데이터를 `parseStoredPathOverlays` 규칙으로 검증해 현재 오버레이 형식으로 복원합니다. */
@@ -353,7 +353,7 @@ export function buildRouteInfoPathOverlays(
     );
     const overlays = movementSteps.flatMap((step, index): TmapPathOverlay[] => {
         const coords = compactConsecutiveMapCoords(mapCoords(step.coordinates));
-        if (coords.length < 2) return [];
+        if (!hasRenderableRouteStepGeometry(step, coords.length)) return [];
 
         const mode = routeInfoStepMode(step);
         const overlay = styleNonTransitOverlay({
@@ -613,6 +613,7 @@ export function getStoredTransitOverlayAssignments(
             const walk = leg.kind === "WALK";
             if (leg.kind !== "ETC" && isWalkOverlay(overlay) !== walk) return [];
             if (overlay.coords.length < 2) return [];
+            if (!hasTransitLegLineGeometry(legs[leg.legIndex], routeCoords(overlay.coords))) return [];
             const hasExplicitProvenance = overlay.geometrySource !== undefined ||
                 overlay.transitLegIndex !== undefined;
             if (hasExplicitProvenance && (

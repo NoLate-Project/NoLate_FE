@@ -38,10 +38,10 @@ export function validateIntercityJourneyTiming(journey: IntercityJourney, target
 
 function connectionLegs(option: RouteAlternativeOption): TransitLegDetail[] {
     if (option.transitLegs?.length) {
-        const legs = option.transitLegs.map(leg => ({ ...leg }));
-        const sum = legs.reduce((total, leg) => total + legSeconds(leg), 0);
+        const legs = option.transitLegs.map(leg => ({ ...leg, durationSeconds: legSeconds(leg) }));
+        const sum = legs.reduce((total, leg) => total + leg.durationSeconds, 0);
         // Unexplained time must not shift the chosen ride in the restored timeline.
-        if (!Number.isInteger(sum) || sum !== seconds(option) || legs.some(leg => !Number.isInteger(legSeconds(leg)) || legSeconds(leg) < 0)) fail('연결 경로의 구간 시간이 일치하지 않습니다. 다시 조회해 주세요.');
+        if (!Number.isInteger(sum) || sum !== seconds(option) || legs.some(leg => !Number.isInteger(leg.durationSeconds) || leg.durationSeconds < 0)) fail('연결 경로의 구간 시간이 일치하지 않습니다. 다시 조회해 주세요.');
         return legs;
     }
     if (option.mode === 'WALK' && option.pathCoords && option.pathCoords.length >= 2) return [{ kind: 'WALK', label: '도보', durationSeconds: seconds(option), durationMinutes: seconds(option) / 60, pathCoords: option.pathCoords, distanceMeters: option.distanceMeters }];

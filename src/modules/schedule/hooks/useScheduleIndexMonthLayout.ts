@@ -116,7 +116,8 @@ export function useScheduleIndexMonthLayout({
   reduceMotionEnabled,
   setMonthDisplayHeight,
 }: UseScheduleIndexMonthLayoutParams) {
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight, fontScale } = useWindowDimensions();
+  const prefersCompactGrid = fontScale <= 1;
   /**
    * 보기 모드와 기준 월에 필요한 달력 전체 높이 및 날짜 셀 높이를 계산한다.
    * 상세 모드에서는 사용 가능한 뷰포트에 맞춰 날짜 셀을 재배치하고, 일정 목록
@@ -156,6 +157,7 @@ export function useScheduleIndexMonthLayout({
           fixedChromeHeight,
           weekCount,
           defaultDayHeight: CALENDAR_DAY_HEIGHTS.detail,
+          prefersCompactGrid,
         });
         panelCalendarHeight = detailLayout.calendarHeight;
         dayHeight = detailLayout.dayHeight;
@@ -180,6 +182,7 @@ export function useScheduleIndexMonthLayout({
       monthDisplayHeightRef,
       windowHeight,
       monthDisplayLayoutAnchorDay,
+      prefersCompactGrid,
     ],
   );
 

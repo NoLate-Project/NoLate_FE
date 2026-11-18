@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, StyleSheet, Text, useWindowDimensions } from "react-native";
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import CalendarYearOverviewModal from "../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
@@ -76,6 +76,44 @@ describe("CalendarYearOverviewModal Today focus", () => {
             />
         );
     }
+
+    test("연도 경계에서 화면에 들어온 해의 일정을 바로 조회한다", async () => {
+        const loadYear = jest.fn();
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <CalendarYearOverviewModal
+                    year={2026}
+                    selectedDay="2026-07-15"
+                    firstDay={0}
+                    onSelectMonth={jest.fn()}
+                    onVisibleYearChange={loadYear}
+                />,
+            );
+        });
+        const root = renderer!.root;
+        const targetYear = root.findAllByType(View).find(
+            node => node.props.onLayout && node.findAllByType(Text).some(
+                text => React.Children.toArray(text.props.children).join("") === "2027년",
+            ),
+        );
+        root.findByProps({ testID: "calendar-year-today-section" }).props.onLayout({
+            nativeEvent: { layout: { y: 0, height: 1000 } },
+        });
+        targetYear!.props.onLayout({ nativeEvent: { layout: { y: 1000, height: 1000 } } });
+        const scroll = root.findByType(ScrollView);
+        const moveTo = (y: number) => scroll.props.onScroll({
+            nativeEvent: { contentOffset: { y }, layoutMeasurement: { height: 400 } },
+        });
+
+        moveTo(600);
+        expect(loadYear.mock.calls).toEqual([[2026]]);
+        moveTo(700);
+        moveTo(710);
+        expect(loadYear.mock.calls).toEqual([[2026], [2027]]);
+        moveTo(600);
+        moveTo(700);
+        expect(loadYear.mock.calls).toEqual([[2026], [2027], [2027]]);
+    });
 
     test("레이아웃보다 먼저 Today 요청이 와도 현재 월 위치가 준비되면 이동한다", async () => {
         await act(async () => {
@@ -163,6 +201,8 @@ describe("CalendarYearOverviewModal Today focus", () => {
 
     test.each([
         [393, 1, "31%", 1.05],
+        [360, 1, "48%", 1.6],
+        [320, 1, "48%", 1.35],
         [393, 2, "48%", 1.6],
         [320, 2, "48%", 1.35],
     ])("연간 월과 날짜 크기를 화면과 글자 크기에 맞춘다 (%s, %s)", async (width, fontScale, monthWidth, dayScale) => {
@@ -207,6 +247,25 @@ describe("CalendarYearOverviewModal Today focus", () => {
         expect(scrollTo).toHaveBeenLastCalledWith({ y: 640, animated: false });
     });
 
+    test("선택한 월의 배경과 접근성 상태를 함께 강조한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(calendar(0, true));
+        });
+        const monthButton = (label: string) => renderer!.root.findAll(node =>
+            node.props.accessibilityRole === "button"
+            && node.props.accessibilityLabel === label
+            && typeof node.props.style === "function"
+        )[0];
+        const selected = monthButton("2025년 12월 보기");
+        const current = monthButton("2026년 7월 보기");
+        expect(selected.props.accessibilityState.selected).toBe(true);
+        expect(current.props.accessibilityState.selected).toBe(false);
+        expect(StyleSheet.flatten(selected.props.style({ pressed: false }))).toMatchObject({
+            backgroundColor: "#EEF4FF",
+            borderColor: "#E8EBEF",
+        });
+    });
+
     test("일정 개수에 따라 빨간색 밀도를 높이고 파란 오늘 표시를 우선한다", async () => {
         const item = (id: string, day: number, hour: number): ScheduleItem => ({
             id,
@@ -239,23 +298,23 @@ describe("CalendarYearOverviewModal Today focus", () => {
         const todayBadge = densityBadge("2026-07-15");
 
         expect(StyleSheet.flatten(lightBadge.props.style)).toMatchObject({
-            backgroundColor: "#FFE6E3",
-            borderRadius: 2,
+            backgroundColor: "#FFE8E3",
+            borderRadius: 4,
         });
         expect(StyleSheet.flatten(mediumBadge.props.style)).toMatchObject({
-            backgroundColor: "#FFB5AE",
-            borderRadius: 2,
+            backgroundColor: "#FFD4CC",
+            borderRadius: 4,
         });
         expect(StyleSheet.flatten(strongBadge.props.style)).toMatchObject({
-            backgroundColor: "#F24A3F",
-            borderRadius: 2,
+            backgroundColor: "#FFC5BD",
+            borderRadius: 4,
         });
         expect(StyleSheet.flatten(
             strongBadge.findAllByType(Text)[0].props.style
-        ).color).toBe("#FFFFFF");
+        ).color).toBe("#77202B");
         expect(StyleSheet.flatten(todayBadge.props.style)).toMatchObject({
-            backgroundColor: "#2979FF",
-            borderRadius: 7.5,
+            backgroundColor: "#205DD1",
+            borderRadius: 4,
         });
         expect(renderer!.root.findAllByProps({
             testID: "calendar-year-schedule-marker-dot",
@@ -272,8 +331,9 @@ describe("CalendarYearOverviewModal Today focus", () => {
             );
     });
 
-    test("다크 모드에서는 오늘 원형에 밝은 NoLate 파랑을 사용한다", async () => {
+    test.each([[1, "#205DD1"], [2, "#4B9DFF"]])("다크 모드 오늘 배지가 글자 크기별 색을 사용한다 (%s)", async (fontScale, accent) => {
         mockThemeMode = "dark";
+        mockWindowDimensions = { ...mockWindowDimensions, fontScale };
         const items: ScheduleItem[] = [{
             id: "dark-today",
             title: "오늘 일정",
@@ -294,6 +354,6 @@ describe("CalendarYearOverviewModal Today focus", () => {
             testID: "calendar-year-schedule-density-2026-07-15",
         })[0];
         expect(StyleSheet.flatten(todayBadge.props.style).backgroundColor)
-            .toBe("#4B9DFF");
+            .toBe(accent);
     });
 });

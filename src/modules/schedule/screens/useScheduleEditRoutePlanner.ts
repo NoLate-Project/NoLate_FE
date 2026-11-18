@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { useRouter } from "expo-router";
+import { Keyboard } from "react-native";
 
 import type { TravelMode } from "../types";
 import type { ScheduleRouteDraftChange } from "../components/form/ScheduleRouteDraftNotice";
 import { buildRoutePlannerPlace, buildScheduleRoutePlannerInitial, consumeRoutePlannerResult,
     observeRoutePlannerReturn, setRoutePlannerInitial } from "../routePlannerSession";
 import { startOfLocalScheduleDay } from "../scheduleFormDate";
+import { getRouteInfoFromRoute, isSameScheduleDraftRoute, type RouteInfo } from "../routeInfo";
 import { mergeDateTime } from "./scheduleEditPresentation";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
+const KEYBOARD_HIDE_TIMEOUT_MS = 420;
+
 type ScheduleEditRoutePlannerInput = {
     pathname: string;
     router: ReturnType<typeof useRouter>;
@@ -30,6 +34,7 @@ type ScheduleEditRoutePlannerInput = {
     travelMinutes?: number;
     departAt?: string;
     route: unknown;
+    routeInfo?: RouteInfo;
     allDay: boolean;
     startDay: Date;
     startTime: Date;
@@ -51,11 +56,14 @@ type ScheduleEditRoutePlannerInput = {
 /** 일정 폼과 경로 선택 화면 사이의 세션 생성·초기화·복귀 결과 반영을 관리합니다. */
 export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput) {
     const [routeDraftChange, setRouteDraftChange] = useState<ScheduleRouteDraftChange>();
+    const [routeReturn, setRouteReturn] = useState<{ sessionId: string; changed: boolean }>();
+    const cancelPendingRouteOpen = useRef<(() => void) | undefined>(undefined);
+    useEffect(() => () => cancelPendingRouteOpen.current?.(), []);
     const {
         pathname, router, routePlannerSessionId, setRoutePlannerSessionId, routePlannerAwayRef,
         routeTimingTargetArrivalRef, pendingRouteTimingTargetArrivalRef, markFormDirty,
         originText, originAddress, originLat, originLng, destinationText, destinationAddress,
-        destinationLat, destinationLng, travelMode, travelMinutes, departAt, route, allDay,
+        destinationLat, destinationLng, travelMode, travelMinutes, departAt, route, routeInfo, allDay,
         startDay, startTime, setOriginText, setOriginAddress, setOriginLat, setOriginLng,
         setDestinationText, setDestinationAddress, setDestinationLat, setDestinationLng,
         setTravelMode, setTravelMinutes, setDepartAt, setRoute, setNotificationEnabled,
@@ -63,6 +71,8 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
     // 현재 입력한 장소와 일정 시작 시각을 경로 선택 화면에 그대로 전달한다.
     /** 현재 장소와 이동 정보를 세션에 저장한 뒤 경로 탐색 화면으로 이동합니다. */
     const openRoutePlanner = useCallback(() => {
+        if (cancelPendingRouteOpen.current) return;
+
         const nextOrigin = buildRoutePlannerPlace({
             name: originText,
             address: originAddress,
@@ -80,8 +90,7 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
         const targetArrivalAt = allDay
             ? startOfLocalScheduleDay(startDay)
             : mergeDateTime(startDay, startTime);
-        pendingRouteTimingTargetArrivalRef.current = targetArrivalAt.toISOString();
-        setRoutePlannerInitial(sessionId, { ...buildScheduleRoutePlannerInitial({
+        const initial = buildScheduleRoutePlannerInitial({
             origin: nextOrigin,
             destination: nextDestination,
             travelMode,
@@ -92,13 +101,37 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name ?? nextOrigin?.name,
             targetArrivalAt,
-        }), returnToScheduleDraft: true });
+        });
 
         // setState가 실제 화면 전환보다 먼저 반영될 수 있다. 경로 화면 진입을 확인하기 전에는
         // 아직 비어 있는 세션 결과를 소비하지 않는다.
-        routePlannerAwayRef.current = false;
-        setRoutePlannerSessionId(sessionId);
-        router.push({ pathname: "/schedule/route-select", params: { sessionId } });
+        const open = () => {
+            pendingRouteTimingTargetArrivalRef.current = targetArrivalAt.toISOString();
+            setRoutePlannerInitial(sessionId, { ...initial, returnToScheduleDraft: true });
+            routePlannerAwayRef.current = false;
+            setRoutePlannerSessionId(sessionId);
+            router.push({ pathname: "/schedule/route-select", params: { sessionId } });
+        };
+        if (!Keyboard.isVisible()) {
+            Keyboard.dismiss();
+            open();
+            return;
+        }
+
+        // iOS가 전환 직전의 입력 초점을 저장하기 전에 키보드를 닫는다.
+        const openAfterKeyboardHide = () => {
+            if (!cancelPendingRouteOpen.current) return;
+            cancelPendingRouteOpen.current();
+            open();
+        };
+        const subscription = Keyboard.addListener("keyboardDidHide", openAfterKeyboardHide);
+        const timeout = setTimeout(openAfterKeyboardHide, KEYBOARD_HIDE_TIMEOUT_MS);
+        cancelPendingRouteOpen.current = () => {
+            subscription.remove();
+            clearTimeout(timeout);
+            cancelPendingRouteOpen.current = undefined;
+        };
+        Keyboard.dismiss();
     }, [
         destinationAddress,
         destinationLat,
@@ -167,10 +200,15 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
         const selectedTargetArrivalAt = pendingRouteTimingTargetArrivalRef.current;
         pendingRouteTimingTargetArrivalRef.current = undefined;
         setRoutePlannerSessionId(undefined);
+        const nextRoute = result && getRouteInfoFromRoute(result.route, result);
+        const changed = result != null && (travelMode !== result.travelMode || !isSameScheduleDraftRoute(routeInfo, nextRoute));
+        setRouteReturn({ sessionId: routePlannerSessionId, changed });
         if (!result) return;
 
         markFormDirty();
-        setRouteDraftChange(previous => ({ kind: "applied", revision: (previous?.revision ?? 0) + 1 }));
+        if (changed) {
+            setRouteDraftChange(previous => ({ kind: "applied", revision: (previous?.revision ?? 0) + 1 }));
+        }
         setOriginText(result.origin?.name ?? "");
         setOriginAddress(result.origin?.address);
         setOriginLat(result.origin?.lat);
@@ -188,6 +226,7 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
         markFormDirty,
         pathname,
         pendingRouteTimingTargetArrivalRef,
+        routeInfo,
         routePlannerAwayRef,
         routePlannerSessionId,
         routeTimingTargetArrivalRef,
@@ -204,7 +243,8 @@ export function useScheduleEditRoutePlanner(input: ScheduleEditRoutePlannerInput
         setRoutePlannerSessionId,
         setTravelMinutes,
         setTravelMode,
+        travelMode,
     ]);
 
-    return { openRoutePlanner, clearRoute, routeDraftChange };
+    return { openRoutePlanner, clearRoute, routeDraftChange, routeReturn };
 }

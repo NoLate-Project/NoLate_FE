@@ -13,6 +13,7 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
     },
+    headerStandard: { borderBottomWidth: 0 },
     headerIconButton: {
         width: 44,
         height: 44,
@@ -63,6 +64,7 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         flexDirection: "row",
     },
+    filterBarStandard: { borderRadius: 14 },
     filterButton: {
         flex: 1,
         minHeight: 44,
@@ -75,12 +77,21 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         gap: 7,
     },
+    filterButtonStandard: { borderRadius: 11 },
     filterText: {
         fontSize: 14,
         fontWeight: "700",
         letterSpacing: 0,
     },
     filterCount: { fontSize: 12, fontWeight: "800" },
+    filterCountBadge: {
+        minWidth: 21,
+        minHeight: 20,
+        paddingHorizontal: 5,
+        borderRadius: 10,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     listPane: { flex: 1 },
     listContent: {
         paddingHorizontal: 16,
@@ -105,6 +116,7 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         flexShrink: 0,
     },
+    rowIconStandard: { borderRadius: 12 },
     rowContent: {
         flex: 1,
         minWidth: 0,
@@ -116,6 +128,7 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     rowTitle: { fontSize: 15, fontWeight: "700" },
+    rowTitleStandard: { fontSize: 16, lineHeight: 21 },
     rowTitleUnread: { fontWeight: "800" },
     rowBody: {
         marginTop: 4,
@@ -124,8 +137,11 @@ const styles = StyleSheet.create({
         fontWeight: "400",
         letterSpacing: 0,
     },
+    rowBodyStandard: { fontSize: 13, lineHeight: 18, marginTop: 3 },
+    rowTime: { marginTop: 2, fontSize: 12, lineHeight: 17, fontVariant: ["tabular-nums"] },
     rowIndicators: { width: 20, gap: 3, alignItems: "center", flexShrink: 0 },
     unreadDot: { width: 6, height: 6, borderRadius: 3 },
+    readFailureFooter: { paddingHorizontal: 16 },
     errorBanner: {
         minHeight: 48,
         marginTop: 8,
@@ -164,6 +180,16 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         marginBottom: 18,
     },
+    standardEmptyIcon: { borderRadius: 16, marginBottom: 14 },
+    emptyErrorRetry: {
+        minHeight: 44,
+        paddingHorizontal: 16,
+        marginTop: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 10,
+    },
     readCheck: {
         position: "absolute",
         right: -5,
@@ -172,6 +198,7 @@ const styles = StyleSheet.create({
         height: 24,
         borderRadius: 12,
         borderWidth: 2,
+        backgroundColor: "#2463DB",
         alignItems: "center",
         justifyContent: "center",
     },

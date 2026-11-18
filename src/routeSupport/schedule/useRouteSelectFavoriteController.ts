@@ -58,7 +58,6 @@ import {
 } from "./routeSelectPlaceModel";
 
 type RouteSelectFavoriteControllerOptions = {
-  activeTarget: RoutePointTarget;
   applyPlaceToTarget: (target: RoutePointTarget, place: Place) => void;
   clearSearch: () => void;
   destinationHasCoordinatesRef: MutableRefObject<boolean>;
@@ -81,7 +80,6 @@ type RouteSelectFavoriteControllerOptions = {
  * 장소 입력 상태는 상위 컨트롤러가 소유하고, 이 훅은 명시적으로 전달받은 갱신 함수만 사용한다.
  */
 export function useRouteSelectFavoriteController({
-  activeTarget,
   applyPlaceToTarget,
   clearSearch,
   destinationHasCoordinatesRef,
@@ -477,21 +475,15 @@ export function useRouteSelectFavoriteController({
             : await saveFavoriteDeparturePlace({ ...place, name: label }, { cacheBeforeSave: false });
           if (!defaultOrigin) throw new Error("기본 주소를 저장하지 못했어요.");
           favoriteMutationRevisionRef.current += 1;
-          if (activeTarget !== "origin") {
-            // Keep the currently entered origin when choosing a destination.
-            originTouchedRef.current = true;
-            setOriginUsesDefault(false);
-          }
+          // Saving from a search row must leave the current search and route draft intact.
+          originTouchedRef.current = true;
+          setOriginUsesDefault(false);
           setFavoritePlaces(current =>
             upsertFavoritePlace(
               current.map(item => ({ ...item, defaultOrigin: false })),
               { ...defaultOrigin, defaultOrigin: true },
             ),
           );
-          if (activeTarget === "origin") {
-            applyPlaceToTarget("origin", defaultOrigin);
-            setOriginUsesDefault(true);
-          }
         } else {
           const saved = existing?.id
             ? await updateFavoritePlaceToApi(existing.id, { label, categoryId: categoryId ?? null })
@@ -519,8 +511,6 @@ export function useRouteSelectFavoriteController({
       }
     },
     [
-      activeTarget,
-      applyPlaceToTarget,
       originTouchedRef,
       saveFavoriteAsDefaultOrigin,
       setOriginUsesDefault,

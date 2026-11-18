@@ -48,6 +48,22 @@ final class NoLateJourneyBusAlightingPolicyTests: XCTestCase {
     XCTAssertEqual(P.notice(route:route,ride:snapshot(780),now:1021)?.kind,"NEAR_STOP")
     XCTAssertEqual(P.notice(route:route,ride:snapshot(800),now:1021)?.remainingMeters,0)
   }
+  func testOfficialBusAdmissionKeepsAlightingAndFinalWalkWhenShapeRepeatsAdjacentVertices() throws {
+    let routeJSON = try json { legs in
+      legs[1]["coordinates"] = [self.point(200),self.point(600),self.point(600),self.point(1000)].map {
+        ["latitude":$0.latitude,"longitude":$0.longitude]
+      }
+      legs[2]["stopEvidenceProvider"] = "odsay"
+      legs[2]["stopEvidenceVersion"] = 1
+    }
+    let proof = NoLateJourneyRouteNormalizer.OfficialBusAdmission(schemaVersion:1,
+      identityEvidence:"OFFICIAL_STOP_SHAPE_CROSSWALK",busLegIndex:1,routeId:"999999999",
+      direction:"합성 동쪽 방면",stationCount:2,firstStopSequence:0,lastStopSequence:2)
+    XCTAssertNil(P.prepare(json:routeJSON,ride:ride()))
+    let admitted = try XCTUnwrap(P.prepare(json:routeJSON,ride:ride(),officialBusAdmission:proof))
+    XCTAssertEqual(admitted.targetAlong,800,accuracy:0.01)
+    XCTAssertNotNil(NoLateJourneyFinalWalkCore.prepare(json:routeJSON,ride:ride(),officialBusAdmission:proof))
+  }
   func testNoticeNeverExtendsTTLAndRejectsUnconfirmedStaleFutureOrUnreliableRide() throws {
     let route = try XCTUnwrap(P.prepare(json:json(),ride:ride()))
     let s=snapshot(600)

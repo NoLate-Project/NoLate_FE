@@ -7,6 +7,7 @@ import {
     ScrollView,
     StyleSheet,
     Text,
+    useWindowDimensions,
     View,
 } from "react-native";
 import Animated, { Easing as ReanimatedEasing, FadeInDown, ReduceMotion } from "react-native-reanimated";
@@ -75,14 +76,25 @@ export default function CategoryMoveSheet({
     const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
     const reduceMotion = useSystemReduceMotion();
+    const { fontScale } = useWindowDimensions();
+    const largeText = fontScale > 1.35;
     const titleRef = useRef<Text>(null);
+    const scrollRef = useRef<ScrollView>(null);
+    const scrollContent = useRef<View>(null);
+    const selectedGroup = useRef<View>(null);
+    const scrollOffset = useRef(0);
+    const viewportHeight = useRef(0);
+    const pendingReveal = useRef<CategoryMoveDestinationId | null>(null);
     const isDark = mode === "dark";
     const accent = isDark ? "#8CB7FF" : "#2463DB";
     const neutral = isDark ? colors.surface2 : "#F1F5FA";
     const selectedCalendar = calendars.find(calendar => calendar.id === selectedDestinationId);
     const busy = loadingPreview || moving;
     const canConfirm = !!category && !!selectedCalendar && !!preview && !previewError && !busy;
-    const confirmationLabel = category && selectedCalendar ? `${category.title} 카테고리 이동` : "이 캘린더로 이동";
+    const categoryTitle = category?.title.trim();
+    const confirmationLabel = categoryTitle && selectedCalendar
+        ? `${categoryTitle}${categoryTitle.endsWith("카테고리") ? "" : " 카테고리"} 이동`
+        : "이 캘린더로 이동";
     const destinationMemberCount = preview?.destinationCalendarMemberCount ?? selectedCalendar?.memberCount;
     const {
         retainedDirectShareCount, retainedDirectScheduleShareCount, sourceCalendarMemberCount,
@@ -99,6 +111,85 @@ export default function CategoryMoveSheet({
     const exactDeltaAvailable = gainedAccessMemberCount !== undefined && lostAccessMemberCount !== undefined;
     const showAudienceNotice = !exactDeltaAvailable && sourceCalendarMemberCount !== undefined && destinationMemberCount !== undefined;
 
+    const revealReview = () => {
+        const destinationId = selectedDestinationId;
+        if (largeText || destinationId === null || pendingReveal.current !== destinationId) return;
+        requestAnimationFrame(() => {
+            const group = selectedGroup.current;
+            const content = scrollContent.current;
+            if (!group || !content) return;
+            group.measureLayout(content, (_x, y, _width, groupHeight) => {
+                const height = viewportHeight.current;
+                if (pendingReveal.current !== destinationId || height <= 0) return;
+                pendingReveal.current = null;
+                const offset = scrollOffset.current;
+                const margin = 8;
+                const bottom = y + groupHeight;
+                if (y >= offset && bottom <= offset + height) return;
+                const target = y < offset
+                    ? y - margin
+                    : Math.min(y - margin, bottom + margin - height);
+                scrollRef.current?.scrollTo({ y: Math.max(0, target), animated: !reduceMotion });
+            });
+        });
+    };
+
+    const confirmation = selectedCalendar ? (
+        <View key={loadingPreview ? "loading" : selectedDestinationId}
+            style={sheetStyles.previewSection}
+            onLayout={loadingPreview ? undefined : revealReview}
+        >
+            {loadingPreview ? (
+                <View style={[sheetStyles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <BrandedLoader
+                        size="button"
+                        variant="schedule"
+                        accessibilityLabel="카테고리 이동 내용을 확인하고 있어요"
+                    />
+                    <Text style={[sheetStyles.stateText, { color: colors.textSecondary }]}>포함된 일정을 확인하고 있어요.</Text>
+                </View>
+            ) : previewError ? (
+                <View
+                    accessibilityRole="alert"
+                    style={[sheetStyles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                >
+                    <Text style={[sheetStyles.stateText, { color: colors.textSecondary }]}>{previewError}</Text>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="카테고리 이동 내용 다시 확인하기"
+                        onPress={() => {
+                            pendingReveal.current = selectedDestinationId;
+                            onRetryPreview();
+                        }}
+                        style={sheetStyles.inlineButton}
+                    >
+                        <Text style={[sheetStyles.inlineButtonText, { color: accent }]}>다시 시도</Text>
+                    </Pressable>
+                </View>
+            ) : preview ? (
+                <Animated.View entering={confirmationIn} key={selectedDestinationId}
+                    style={[sheetStyles.confirmCard, { backgroundColor: neutral, borderColor: colors.border }]}
+                >
+                    <Text accessibilityRole="header" style={[sheetStyles.confirmTitle, { color: colors.textPrimary }]}>이동 전 확인</Text>
+                    <ImpactRow label="함께 이동할 일정" value={`${preview.scheduleCount}개`} />
+                    <ImpactRow label="이동 후 공유 범위" value={contentModeLabel(selectedCalendar.defaultContentMode)}
+                        detail={[audienceTotals, accessDelta].filter(Boolean).join("\n")} />
+                    <ImpactRow label="기존 직접 공유"
+                        value={retainedDirectScheduleShareCount
+                            ? `일정 직접 공유 ${retainedDirectScheduleShareCount}건 유지`
+                            : "기존 보기·편집 권한 유지"}
+                        detail={retainedDirectShareCount === undefined ? undefined : `카테고리 직접 공유 ${retainedDirectShareCount}명`} />
+                    {showAudienceNotice && (
+                        <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>{CATEGORY_MOVE_CALENDAR_AUDIENCE_NOTICE}</Text>
+                    )}
+                    {preview.sameNameCategory && (
+                        <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>{CATEGORY_MOVE_SAME_NAME_NOTICE}</Text>
+                    )}
+                </Animated.View>
+            ) : null}
+        </View>
+    ) : null;
+
     return (
         <Modal
             visible={visible}
@@ -107,6 +198,8 @@ export default function CategoryMoveSheet({
             presentationStyle="overFullScreen"
             onDismiss={onDismiss}
             onShow={() => {
+                scrollOffset.current = 0;
+                pendingReveal.current = null;
                 if (titleRef.current) AccessibilityInfo.sendAccessibilityEvent?.(titleRef.current, "focus");
             }}
             onRequestClose={() => {
@@ -152,9 +245,15 @@ export default function CategoryMoveSheet({
                     </View>
 
                     <ScrollView
+                        ref={scrollRef}
+                        innerViewRef={scrollContent as React.RefObject<View>}
                         style={sheetStyles.scroll}
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={sheetStyles.content}
+                        onLayout={event => { viewportHeight.current = event.nativeEvent.layout.height; }}
+                        onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+                        onScrollBeginDrag={() => { pendingReveal.current = null; }}
+                        scrollEventThrottle={16}
                     >
                         {category && (
                             <View style={[sheetStyles.source, { borderColor: colors.border }]}>
@@ -211,89 +310,51 @@ export default function CategoryMoveSheet({
                             <View style={sheetStyles.optionList}>
                                 {calendars.map((calendar) => {
                                     const selected = calendar.id === selectedDestinationId;
+                                    const showInlineReview = selected && !largeText;
                                     const role = calendar.myRole === "OWNER" ? "내가 소유한 캘린더" : "편집 가능한 캘린더";
                                     return (
-                                        <Pressable
+                                        <View
                                             key={calendar.id}
-                                            accessibilityRole="radio"
-                                            accessibilityLabel={`${calendar.title}, ${role}`}
-                                            accessibilityState={{ checked: selected, disabled: moving }}
-                                            disabled={moving}
-                                            onPress={() => onSelectDestination(calendar.id)}
-                                            style={({ pressed }) => [
-                                                sheetStyles.calendarOption,
-                                                {
-                                                    backgroundColor: selected ? `${accent}14` : colors.surface,
-                                                    borderColor: selected ? accent : colors.border,
-                                                    opacity: pressed || moving ? 0.65 : 1,
-                                                },
-                                            ]}
+                                            ref={showInlineReview ? selectedGroup : undefined}
+                                            collapsable={showInlineReview ? false : undefined}
                                         >
-                                            <View style={[sheetStyles.calendarDot, { backgroundColor: calendar.color }]} />
-                                            <View style={sheetStyles.calendarCopy}>
-                                                <Text style={[sheetStyles.calendarTitle, { color: colors.textPrimary }]}>
-                                                    {calendar.title}
-                                                </Text>
-                                                <Text style={[sheetStyles.calendarMeta, { color: colors.textSecondary }]}>
-                                                    {role}
-                                                </Text>
-                                            </View>
-                                            {selected ? <Ionicons accessible={false} name="checkmark-circle-outline" size={22} color={accent} /> : null}
-                                        </Pressable>
+                                            <Pressable
+                                                accessibilityRole="radio"
+                                                accessibilityLabel={`${calendar.title}, ${role}`}
+                                                accessibilityState={{ checked: selected, disabled: moving }}
+                                                disabled={moving}
+                                                onPress={() => {
+                                                    if (!selected) pendingReveal.current = calendar.id;
+                                                    onSelectDestination(calendar.id);
+                                                }}
+                                                style={({ pressed }) => [
+                                                    sheetStyles.calendarOption,
+                                                    {
+                                                        backgroundColor: selected ? `${accent}14` : colors.surface,
+                                                        borderColor: selected ? accent : colors.border,
+                                                        opacity: pressed || moving ? 0.65 : 1,
+                                                    },
+                                                ]}
+                                            >
+                                                <View style={[sheetStyles.calendarDot, { backgroundColor: calendar.color }]} />
+                                                <View style={sheetStyles.calendarCopy}>
+                                                    <Text style={[sheetStyles.calendarTitle, { color: colors.textPrimary }]}>
+                                                        {calendar.title}
+                                                    </Text>
+                                                    <Text style={[sheetStyles.calendarMeta, { color: colors.textSecondary }]}>
+                                                        {role}
+                                                    </Text>
+                                                </View>
+                                                {selected ? <Ionicons accessible={false} name="checkmark-circle-outline" size={22} color={accent} /> : null}
+                                            </Pressable>
+                                            {showInlineReview && confirmation}
+                                        </View>
                                     );
                                 })}
                             </View>
                         )}
 
-                        {selectedCalendar ? (
-                            <View style={sheetStyles.previewSection}>
-                                {loadingPreview ? (
-                                    <View style={[sheetStyles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                                        <BrandedLoader
-                                            size="button"
-                                            variant="schedule"
-                                            accessibilityLabel="카테고리 이동 내용을 확인하고 있어요"
-                                        />
-                                        <Text style={[sheetStyles.stateText, { color: colors.textSecondary }]}>포함된 일정을 확인하고 있어요.</Text>
-                                    </View>
-                                ) : previewError ? (
-                                    <View
-                                        accessibilityRole="alert"
-                                        style={[sheetStyles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                                    >
-                                        <Text style={[sheetStyles.stateText, { color: colors.textSecondary }]}>{previewError}</Text>
-                                        <Pressable
-                                            accessibilityRole="button"
-                                            accessibilityLabel="카테고리 이동 내용 다시 확인하기"
-                                            onPress={onRetryPreview}
-                                            style={sheetStyles.inlineButton}
-                                        >
-                                            <Text style={[sheetStyles.inlineButtonText, { color: accent }]}>다시 시도</Text>
-                                        </Pressable>
-                                    </View>
-                                ) : preview ? (
-                                    <Animated.View entering={confirmationIn} key={selectedDestinationId}
-                                        style={[sheetStyles.confirmCard, { backgroundColor: neutral, borderColor: colors.border }]}
-                                    >
-                                        <Text accessibilityRole="header" style={[sheetStyles.confirmTitle, { color: colors.textPrimary }]}>이동 전 확인</Text>
-                                        <ImpactRow label="함께 이동할 일정" value={`${preview.scheduleCount}개`} />
-                                        <ImpactRow label="이동 후 공유 범위" value={contentModeLabel(selectedCalendar.defaultContentMode)}
-                                            detail={[audienceTotals, accessDelta].filter(Boolean).join("\n")} />
-                                        <ImpactRow label="기존 직접 공유"
-                                            value={retainedDirectScheduleShareCount
-                                                ? `일정 직접 공유 ${retainedDirectScheduleShareCount}건 유지`
-                                                : "기존 보기·편집 권한 유지"}
-                                            detail={retainedDirectShareCount === undefined ? undefined : `카테고리 직접 공유 ${retainedDirectShareCount}명`} />
-                                        {showAudienceNotice && (
-                                            <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>{CATEGORY_MOVE_CALENDAR_AUDIENCE_NOTICE}</Text>
-                                        )}
-                                        {preview.sameNameCategory && (
-                                            <Text style={[sheetStyles.mergeCaption, { color: colors.textSecondary }]}>{CATEGORY_MOVE_SAME_NAME_NOTICE}</Text>
-                                        )}
-                                    </Animated.View>
-                                ) : null}
-                            </View>
-                        ) : null}
+                        {largeText && confirmation}
                     </ScrollView>
 
                     {!loadingCalendars && !calendarError && calendars.length > 0 ? (

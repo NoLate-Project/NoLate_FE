@@ -46,10 +46,24 @@ it("saved input preserves raw coordinates and rejects competing containers", () 
 const arrival = { providerRouteId: "999999", directionLabel: "합성 동쪽 방면", sourceUpdatedAt: 1020, expectedAt: 1140, validUntil: 1140 };
 it("shows only native validated arrival on fresh approach or waiting, without rebasing source expiry", () => {
     expect(presentSavedJourneyGuidance(snapshot({ arrivalStatus: "WAITING_INFORMATION", arrival }), binding, 1021)?.arrival)
-        .toEqual({ directionLabel: "합성 동쪽 방면", remainingSeconds: 119 });
+        .toEqual({ kind: "BUS", directionLabel: "합성 동쪽 방면", remainingSeconds: 119 });
     expect(presentSavedJourneyGuidance(snapshot({ arrivalStatus: "WAITING_INFORMATION", arrival }), binding, 1035)?.arrival).toBeUndefined();
     const freshGPS = snapshot({ observedAt: 1130, validUntil: 1145, arrivalStatus: "WAITING_INFORMATION", arrival });
     expect(presentSavedJourneyGuidance(freshGPS, binding, 1140)?.arrival).toBeUndefined();
+});
+it("shows a bound subway platform ETA with train wording while leaving boarding unconfirmed", () => {
+    const trainArrival = { ...arrival, providerRouteId: "2호선", directionLabel: "성수행",
+        kind: "SUBWAY", busLegIndex: 1 };
+    expect(presentSavedJourneyGuidance(snapshot({ arrivalStatus: "WAITING_INFORMATION", arrival: trainArrival }), binding, 1021)?.arrival)
+        .toEqual({ kind: "SUBWAY", directionLabel: "성수행", remainingSeconds: 119 });
+    expect(presentSavedJourneyGuidance(snapshot({ arrivalStatus: "WAITING_INFORMATION",
+        arrival: { ...trainArrival, busLegIndex: 3 } }), binding, 1021)?.arrival).toBeUndefined();
+    const nearPlatform = snapshot({ phase: "WALKING_TO_STOP", activeLegIndex: 0, walkProgress: 0.95,
+        arrivalStatus: "WAITING_INFORMATION", arrival: trainArrival });
+    expect(presentSavedJourneyGuidance(nearPlatform, binding, 1021)?.arrival)
+        .toEqual({ kind: "SUBWAY", directionLabel: "성수행", remainingSeconds: 119 });
+    expect(presentSavedJourneyGuidance(snapshot({ phase: "WALKING_TO_STOP", activeLegIndex: 0, walkProgress: 0.89,
+        arrivalStatus: "WAITING_INFORMATION", arrival: trainArrival }), binding, 1021)?.arrival).toBeUndefined();
 });
 it.each(["WALKING_TO_STOP", "BOARDING_CANDIDATE", "UNAVAILABLE", "READY"])("never exposes cached ETA during %s", phase => {
     expect(presentSavedJourneyGuidance(snapshot({ phase, arrivalStatus: "WAITING_INFORMATION", arrival }), binding, 1021)?.arrival).toBeUndefined();

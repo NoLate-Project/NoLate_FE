@@ -1,13 +1,21 @@
 import { getRouteEndpointMarkerPresentation } from "../src/modules/map/routeMarkerPresentation";
 
 const origin = { lat: 37.5547, lng: 126.9706 };
-const nearbyDestination = { lat: 37.5714, lng: 126.9769 };
+const nearbyDestination = { lat: 37.5624, lng: 126.9769 };
 
 describe("route endpoint marker presentation", () => {
     it("저배율에서 가까운 출발·도착 라벨을 축약한다", () => {
         const presentation = getRouteEndpointMarkerPresentation(origin, nearbyDestination, 12);
         expect(presentation.showLabels).toBe(false);
         expect(presentation.markerScale).toBe(0.84);
+    });
+
+    it("서울역에서 강남역까지 전체 경로를 보여주는 저배율에서도 두 핀이 떨어져 있으면 라벨을 유지한다", () => {
+        const gangnam = { lat: 37.4979, lng: 127.0276 };
+        expect(getRouteEndpointMarkerPresentation(origin, gangnam, 10)).toMatchObject({
+            showLabels: true,
+            markerScale: 0.84,
+        });
     });
 
     it("확대하면 같은 경로의 핀 라벨을 다시 표시한다", () => {

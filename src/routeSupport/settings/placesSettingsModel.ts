@@ -4,13 +4,22 @@ import type { FavoritePlace } from "../../api/favoritePlaces";
 import { findMatchingFavoritePlace } from "../../modules/schedule/favoritePlaceSelection";
 import type { Place } from "../../modules/schedule/types";
 
-export const CATEGORY_COLORS = ["#2563EB", "#7C3AED", "#DB2777", "#EA580C", "#16A34A", "#0891B2"];
+export const CATEGORY_COLOR_OPTIONS = [
+    { color: "#2563EB", label: "파랑" },
+    { color: "#7C3AED", label: "보라" },
+    { color: "#DB2777", label: "분홍" },
+    { color: "#EA580C", label: "주황" },
+    { color: "#16A34A", label: "초록" },
+    { color: "#0891B2", label: "청록" },
+] as const;
 
 export type SearchMode = "favorite" | "default";
 
 export type PlaceEditorSheet = {
     kind: "placeEditor";
+    fromSearch?: true;
     place: Place;
+    placeName?: string;
     favoriteId?: string;
     label: string;
     categoryId?: string;
@@ -24,6 +33,7 @@ export type SheetState =
         categoryId?: string;
         name: string;
         color: string;
+        returnToPlaceEditor?: PlaceEditorSheet;
     }
     | null;
 

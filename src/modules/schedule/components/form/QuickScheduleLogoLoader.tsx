@@ -1,14 +1,13 @@
 import { createQuickScheduleLogoLoaderStyles } from "./QuickScheduleLogoLoader.styles";
 import { Ionicons } from "@expo/vector-icons";
-import React, { type ComponentProps, useEffect } from "react";
-import { Image, StyleSheet, View } from "react-native";
+import React, { type ComponentProps, type ReactNode, useEffect, useLayoutEffect, useRef } from "react";
+import { Animated, Easing as NativeEasing, Image, Platform, StyleSheet, View, type ImageSourcePropType } from "react-native";
 import Reanimated, {
     cancelAnimation,
     Easing,
     ReduceMotion,
     type SharedValue,
     useAnimatedStyle,
-    useReducedMotion,
     useSharedValue,
     withDelay,
     withRepeat,
@@ -16,9 +15,13 @@ import Reanimated, {
 } from "react-native-reanimated";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotion";
 
 const CALENDAR_LOGO_DARK = require("../../../../../assets/curation/calendar-sync-3d-device-dark.png");
 const CALENDAR_LOGO_LIGHT = require("../../../../../assets/curation/calendar-sync-3d-device-light.png");
+const APP_LOGO_FACE = require("../../../../../assets/curation/nolate-logo.png");
+const IOS_STARTUP_LOGO = { uri: "SplashScreenLogo" };
+const STARTUP_LOGO_SIZE = 82;
 
 const CYAN = "#67E4FF";
 const SECONDARY_PARTICLE = "#9CBFFF";
@@ -37,6 +40,10 @@ type Props = {
     variant?: LogoLoaderVariant;
     settleOnly?: boolean;
     settleDelayMs?: number;
+    settleDurationMs?: number;
+    hideBeforeSettle?: boolean;
+    useAppLogoFace?: boolean;
+    appLogoFaceSize?: number;
 };
 
 type OrbitSpec = {
@@ -116,23 +123,29 @@ export default function QuickScheduleLogoLoader({
     variant = "schedule",
     settleOnly = false,
     settleDelayMs = 0,
+    settleDurationMs = 300,
+    hideBeforeSettle = false,
+    useAppLogoFace = false,
+    appLogoFaceSize = 76,
 }: Props) {
     const { mode } = useTheme();
-    const reduceMotionEnabled = useReducedMotion();
+    const reduceMotionEnabled = useSystemReduceMotion();
     const orbitProgress = useSharedValue(settleOnly && reduceMotionEnabled ? 1 : 0);
+    const skippedSettle = useRef(false);
     const isDark = mode === "dark";
     const palette = isDark ? DARK_PALETTE : LIGHT_PALETTE;
     const satellites = SATELLITES[variant];
-    const logoSource = isDark ? CALENDAR_LOGO_DARK : CALENDAR_LOGO_LIGHT;
+    const logoSource = useAppLogoFace ? APP_LOGO_FACE : isDark ? CALENDAR_LOGO_DARK : CALENDAR_LOGO_LIGHT;
 
     useEffect(() => {
         cancelAnimation(orbitProgress);
 
         if (settleOnly) {
-            orbitProgress.value = reduceMotionEnabled ? 1 : 0;
-            if (!reduceMotionEnabled) {
+            if (reduceMotionEnabled) skippedSettle.current = true;
+            orbitProgress.value = skippedSettle.current ? 1 : 0;
+            if (!skippedSettle.current) {
                 const settle = withTiming(1, {
-                    duration: 300,
+                    duration: settleDurationMs,
                     easing: Easing.out(Easing.cubic),
                     reduceMotion: ReduceMotion.System,
                 });
@@ -156,7 +169,7 @@ export default function QuickScheduleLogoLoader({
         );
 
         return () => cancelAnimation(orbitProgress);
-    }, [orbitProgress, reduceMotionEnabled, settleOnly, settleDelayMs]);
+    }, [orbitProgress, reduceMotionEnabled, settleOnly, settleDelayMs, settleDurationMs]);
 
     const haloAnimatedStyle = useAnimatedStyle(() => {
         const wave = (Math.sin(orbitProgress.value * Math.PI * 4) + 1) / 2;
@@ -167,14 +180,16 @@ export default function QuickScheduleLogoLoader({
     });
     const logoFloatAnimatedStyle = useAnimatedStyle(() => {
         if (settleOnly) {
-            const remaining = 1 - orbitProgress.value;
+            const progress = reduceMotionEnabled ? 1 : orbitProgress.value;
+            const remaining = 1 - progress;
             return {
+                opacity: hideBeforeSettle ? Math.min(1, progress * 8) : 1,
                 transform: [
                     { perspective: 480 },
                     { translateY: 7 * remaining },
                     { rotateY: `${-28 * remaining}deg` },
                     { rotateX: `${17 * remaining}deg` },
-                    { scale: 1 - 0.10 * remaining },
+                    { scale: (useAppLogoFace ? appLogoFaceSize / LOGO_SIZE : 1) * (1 - 0.10 * remaining) },
                 ],
             };
         }
@@ -216,7 +231,7 @@ export default function QuickScheduleLogoLoader({
             importantForAccessibility={settleOnly ? "no-hide-descendants" : "auto"}
             accessibilityRole={settleOnly ? undefined : "progressbar"}
             accessibilityLabel={settleOnly ? undefined : accessibilityLabel}
-            style={[styles.stage, settleOnly && { height: 126 }]}
+            style={[styles.stage, settleOnly && { height: useAppLogoFace ? 110 : 126 }]}
         >
             {!settleOnly && <>
             <Reanimated.View
@@ -330,89 +345,14 @@ export default function QuickScheduleLogoLoader({
                 pointerEvents="none"
                 style={[styles.logoFloatLayer, settleOnly && { top: 18 }, logoFloatAnimatedStyle]}
             >
-                <View
-                    testID="quick-schedule-logo-depth-far"
-                    style={[
-                        styles.logoDepthFar,
-                        {
-                            backgroundColor: palette.logoDepthFar,
-                            borderColor: palette.logoDepthBorder,
-                        },
-                    ]}
+                <LogoFace
+                    palette={palette}
+                    source={logoSource}
+                    useAppLogoFace={useAppLogoFace}
+                    reflection={settleOnly && !reduceMotionEnabled
+                        ? <Reanimated.View style={[styles.settleReflection, settleReflectionStyle]} />
+                        : undefined}
                 />
-                <View
-                    testID="quick-schedule-logo-depth-near"
-                    style={[
-                        styles.logoDepthNear,
-                        {
-                            backgroundColor: palette.logoDepthNear,
-                            borderColor: palette.logoDepthBorder,
-                        },
-                    ]}
-                />
-                <View
-                    testID="quick-schedule-logo-static-layer"
-                    pointerEvents="none"
-                    collapsable={false}
-                    style={[
-                        styles.logoStaticLayer,
-                        {
-                            backgroundColor: palette.logoBase,
-                            shadowColor: palette.logoShadow,
-                            shadowOpacity: palette.logoShadowOpacity,
-                        },
-                    ]}
-                >
-                    <View style={styles.logoImageMask}>
-                        <Image
-                            testID="quick-schedule-app-logo"
-                            source={logoSource}
-                            resizeMode="cover"
-                            fadeDuration={0}
-                            accessibilityIgnoresInvertColors
-                            style={[
-                                styles.calendarLogoImageCrop,
-                                { opacity: palette.logoImageOpacity },
-                            ]}
-                        />
-                    </View>
-                    <View
-                        testID="quick-schedule-logo-glass-treatment"
-                        pointerEvents="none"
-                        accessible={false}
-                        accessibilityElementsHidden
-                        importantForAccessibility="no-hide-descendants"
-                        style={styles.logoGlassTreatment}
-                    >
-                        <View
-                            testID="quick-schedule-logo-color-wash"
-                            style={[
-                                StyleSheet.absoluteFillObject,
-                                { backgroundColor: palette.logoWash },
-                            ]}
-                        />
-                        <View
-                            testID="quick-schedule-logo-sheen"
-                            style={[styles.logoSheen, { backgroundColor: palette.logoSheen }]}
-                        />
-                        {settleOnly && !reduceMotionEnabled && (
-                            <Reanimated.View style={[styles.settleReflection, settleReflectionStyle]} />
-                        )}
-                        <View
-                            style={[
-                                styles.logoLowerBloom,
-                                { backgroundColor: palette.logoLowerBloom },
-                            ]}
-                        />
-                        <View
-                            style={[styles.logoTopEdge, { backgroundColor: palette.logoTopEdge }]}
-                        />
-                    </View>
-                    <View
-                        pointerEvents="none"
-                        style={[styles.logoEdge, { borderColor: palette.logoEdge }]}
-                    />
-                </View>
             </Reanimated.View>
 
             {!settleOnly && <>
@@ -445,6 +385,212 @@ export default function QuickScheduleLogoLoader({
             </Reanimated.View>
             </>}
         </View>
+    );
+}
+
+/** Drive the first-screen motion without a JavaScript timer. */
+export function StartupLogoLoader({ delayMs, durationMs }: { delayMs: number; durationMs: number }) {
+    const { mode } = useTheme();
+    const reduceMotion = useSystemReduceMotion();
+    const usesNativeArtwork = Platform.OS === "ios";
+    const progress = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
+    const skippedMotion = useRef(false);
+
+    useLayoutEffect(() => {
+        if (reduceMotion) {
+            skippedMotion.current = true;
+            progress.setValue(1);
+        }
+        if (skippedMotion.current) return;
+
+        // Include the initial hold in the frames sent to the native driver.
+        const totalDurationMs = delayMs + durationMs;
+        const settle = usesNativeArtwork
+            ? NativeEasing.inOut(NativeEasing.quad)
+            : NativeEasing.out(NativeEasing.cubic);
+        const animation = Animated.timing(progress, {
+            duration: totalDurationMs,
+            easing: elapsed => settle(Math.max(0, (elapsed * totalDurationMs - delayMs) / durationMs)),
+            toValue: 1,
+            useNativeDriver: true,
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [delayMs, durationMs, progress, reduceMotion, usesNativeArtwork]);
+
+    const reflection = !reduceMotion && (
+        <Animated.View style={[styles.settleReflection, {
+            opacity: progress.interpolate({
+                inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, 0.34, 0.48, 0.34, 0],
+            }),
+            transform: [
+                { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-58, 98] }) },
+                { rotate: "23deg" },
+            ],
+        }]} />
+    );
+
+    if (usesNativeArtwork) {
+        // UIKit and React Native display the same asset at the same size before movement begins.
+        const inputRange = [0, 0.45, 1];
+        return (
+            <Animated.View
+                testID="startup-logo-stage"
+                pointerEvents="none"
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={[startupStyles.mark, {
+                    transform: [
+                        { perspective: 480 },
+                        { rotateY: progress.interpolate({ inputRange, outputRange: ["0deg", "-16deg", "0deg"] }) },
+                        { rotateX: progress.interpolate({ inputRange, outputRange: ["0deg", "10deg", "0deg"] }) },
+                        { scale: progress.interpolate({ inputRange, outputRange: [1, 0.96, 1] }) },
+                    ],
+                }]}
+            >
+                <Image
+                    testID="startup-native-logo"
+                    source={IOS_STARTUP_LOGO}
+                    resizeMode="contain"
+                    fadeDuration={0}
+                    accessibilityIgnoresInvertColors
+                    style={startupStyles.mark}
+                />
+                {reflection && <View style={startupStyles.reflectionMask}>{reflection}</View>}
+            </Animated.View>
+        );
+    }
+
+    const inputRange = [0, 1];
+    const scale = STARTUP_LOGO_SIZE / LOGO_SIZE;
+    return (
+        <View
+            testID="startup-logo-stage"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[styles.stage, { height: 110 }]}
+        >
+            <Animated.View
+                pointerEvents="none"
+                style={[styles.logoFloatLayer, { top: 18, transform: [
+                    { perspective: 480 },
+                    { translateY: progress.interpolate({ inputRange, outputRange: [7, 0] }) },
+                    { rotateY: progress.interpolate({ inputRange, outputRange: ["-28deg", "0deg"] }) },
+                    { rotateX: progress.interpolate({ inputRange, outputRange: ["17deg", "0deg"] }) },
+                    { scale: progress.interpolate({ inputRange, outputRange: [scale * 0.9, scale] }) },
+                ] }]}
+            >
+                <LogoFace
+                    palette={mode === "dark" ? DARK_PALETTE : LIGHT_PALETTE}
+                    source={APP_LOGO_FACE}
+                    useAppLogoFace
+                    reflection={reflection}
+                />
+            </Animated.View>
+        </View>
+    );
+}
+
+const startupStyles = StyleSheet.create({
+    mark: { width: STARTUP_LOGO_SIZE, height: STARTUP_LOGO_SIZE },
+    reflectionMask: { position: "absolute", top: 1, left: 3, right: 3, bottom: 5, borderRadius: 24, overflow: "hidden" },
+});
+
+function LogoFace({
+    palette,
+    source,
+    useAppLogoFace,
+    reflection,
+}: {
+    palette: typeof DARK_PALETTE;
+    source: ImageSourcePropType;
+    useAppLogoFace: boolean;
+    reflection?: ReactNode;
+}) {
+    return (
+        <>
+            <View
+                testID="quick-schedule-logo-depth-far"
+                style={[
+                    styles.logoDepthFar,
+                    {
+                        backgroundColor: palette.logoDepthFar,
+                        borderColor: palette.logoDepthBorder,
+                    },
+                ]}
+            />
+            <View
+                testID="quick-schedule-logo-depth-near"
+                style={[
+                    styles.logoDepthNear,
+                    {
+                        backgroundColor: palette.logoDepthNear,
+                        borderColor: palette.logoDepthBorder,
+                    },
+                ]}
+            />
+            <View
+                testID="quick-schedule-logo-static-layer"
+                pointerEvents="none"
+                collapsable={false}
+                style={[
+                    styles.logoStaticLayer,
+                    {
+                        backgroundColor: palette.logoBase,
+                        shadowColor: palette.logoShadow,
+                        shadowOpacity: palette.logoShadowOpacity,
+                    },
+                ]}
+            >
+                <View style={styles.logoImageMask}>
+                    <Image
+                        testID="quick-schedule-app-logo"
+                        source={source}
+                        resizeMode="cover"
+                        fadeDuration={0}
+                        accessibilityIgnoresInvertColors
+                        style={[
+                            useAppLogoFace ? styles.appLogoFace : styles.calendarLogoImageCrop,
+                            { opacity: useAppLogoFace ? 1 : palette.logoImageOpacity },
+                        ]}
+                    />
+                </View>
+                <View
+                    testID="quick-schedule-logo-glass-treatment"
+                    pointerEvents="none"
+                    accessible={false}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    style={styles.logoGlassTreatment}
+                >
+                    {!useAppLogoFace && <View
+                        testID="quick-schedule-logo-color-wash"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            { backgroundColor: palette.logoWash },
+                        ]}
+                    />}
+                    <View
+                        testID="quick-schedule-logo-sheen"
+                        style={[styles.logoSheen, { backgroundColor: palette.logoSheen }]}
+                    />
+                    {reflection}
+                    {!useAppLogoFace && <View
+                        style={[
+                            styles.logoLowerBloom,
+                            { backgroundColor: palette.logoLowerBloom },
+                        ]}
+                    />}
+                    <View
+                        style={[styles.logoTopEdge, { backgroundColor: palette.logoTopEdge }]}
+                    />
+                </View>
+                <View
+                    pointerEvents="none"
+                    style={[styles.logoEdge, { borderColor: palette.logoEdge }]}
+                />
+            </View>
+        </>
     );
 }
 

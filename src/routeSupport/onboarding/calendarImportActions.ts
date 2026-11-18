@@ -21,6 +21,7 @@ import {
 } from '../../modules/onboarding/calendarImportRouteEnrichment';
 import {
   buildSchedulePayloadFromCandidate,
+  getCalendarProviderLabel,
   type DeviceCalendarCandidate,
 } from '../../modules/onboarding/deviceCalendarImport';
 import { useScheduleStore } from '../../modules/schedule/store';
@@ -256,7 +257,12 @@ export function createCalendarImportActions({
       setNotificationReadyCount(enabledNotificationCount);
       setFailedImportCount(failureCount);
       try {
-        await recordCalendarImportCompleted(successCount);
+        await recordCalendarImportCompleted(
+          successCount,
+          skippedCount,
+          failureCount,
+          [...new Set(selectedCandidates.map(candidate => getCalendarProviderLabel(candidate.provider)))],
+        );
       } catch (error) {
         // 연결 이력 저장이 실패해도 이미 생성된 일정을 다시 보내 중복시키지 않는다.
         console.warn(

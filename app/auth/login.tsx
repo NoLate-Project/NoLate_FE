@@ -7,6 +7,7 @@ import {
     findNodeHandle,
     Alert,
     BackHandler,
+    Keyboard,
     Linking,
     Pressable,
     Platform,
@@ -14,11 +15,13 @@ import {
     StyleSheet,
     Text,
     TextInput,
+    useWindowDimensions,
     View,
     ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
 import {
     getSnsRegistrationStatus,
@@ -67,6 +70,7 @@ import {
 
 type SocialProvider = "naver" | "kakao" | "apple";
 const ACCOUNT_SUPPORT_EMAIL = "support@nolate.jinuk.dev";
+const loginFeedbackEntry = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 
 type SocialButtonProps = {
     label: string;
@@ -85,12 +89,17 @@ export default function Login() {
     const { shareToken } = useLocalSearchParams<{ shareToken?: string | string[] }>();
     const { syncAuthentication } = useAuth();
     const { colors, mode } = useTheme();
+    const { fontScale } = useWindowDimensions();
+    const standardLayout = fontScale <= 1.35;
     const styles = createStyles(colors, mode);
     const { login: { email: id, password: pwd }, setLogin, clear: clearDrafts } = useAuthFormDrafts();
     const [passwordHelpOpen, setPasswordHelpOpen] = useState(false);
     const emailInput = useRef<TextInput>(null);
     const passwordInput = useRef<TextInput>(null);
+    const loginActionRef = useRef<View>(null);
+    const [passwordFocused, setPasswordFocused] = useState(false);
     const errorMessageRef = useRef<Text>(null);
+    const loginInFlight = useRef(false);
     const [submitting, setSubmitting] = useState(false);
     const [loginError, setLoginError] = useState<{ title: string; message: string }>();
     const [restoringSession, setRestoringSession] = useState(true);
@@ -98,6 +107,7 @@ export default function Login() {
     const [pendingSocialProfile, setPendingSocialProfile] = useState<SocialSdkLoginResult | null>(null);
     const [socialSignupSubmitting, setSocialSignupSubmitting] = useState(false);
     const pendingShareToken = normalizeShareToken(shareToken);
+    const loginBusy = restoringSession || submitting || socialSubmittingProvider !== null;
 
     const finishAuthentication = useCallback(async (member: MemberDto) => {
         const authenticatedMember = requireAuthenticatedMember(member);
@@ -174,7 +184,7 @@ export default function Login() {
     }, [finishAuthentication, syncAuthentication]);
 
     const onLogin = async () => {
-        if (submitting || restoringSession || socialSubmittingProvider) return;
+        if (loginInFlight.current || restoringSession || socialSubmittingProvider) return;
 
         setLoginError(undefined);
         const email = normalizeSignupEmail(id);
@@ -193,6 +203,8 @@ export default function Login() {
         }
 
         try {
+            loginInFlight.current = true;
+            if (standardLayout) Keyboard.dismiss();
             setSubmitting(true);
             const member = await loginMember({ email, password });
             await finishAuthentication(member);
@@ -206,12 +218,13 @@ export default function Login() {
                 if (target != null) AccessibilityInfo.setAccessibilityFocus(target);
             });
         } finally {
+            loginInFlight.current = false;
             setSubmitting(false);
         }
     };
 
     const onSocialLogin = async (provider: SocialProvider) => {
-        if (socialSubmittingProvider || submitting || restoringSession) return;
+        if (socialSubmittingProvider || loginInFlight.current || restoringSession) return;
 
         try {
             setSocialSubmittingProvider(provider);
@@ -331,6 +344,7 @@ export default function Login() {
     return (
         <AuthScreen
             subtitle="늦지 않게, 오늘의 이동을 준비하세요."
+            keyboardRevealRef={standardLayout && passwordFocused ? loginActionRef : undefined}
         >
             <AuthInput
                 label="이메일"
@@ -339,24 +353,34 @@ export default function Login() {
                 inputRef={emailInput}
                 onChangeText={value => { setLogin(current => ({ ...current, email: value })); setLoginError(undefined); }}
                 maxLength={MAX_EMAIL_LENGTH}
-                editable={!restoringSession && !submitting && !socialSubmittingProvider}
+                editable={!loginBusy}
                 placeholder="you@example.com"
                 autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
                 keyboardType="email-address"
                 autoComplete="email"
                 textContentType="emailAddress"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => passwordInput.current?.focus()}
             />
             <AuthInput
                 label="비밀번호"
                 icon="lock-closed-outline"
                 value={pwd}
                 inputRef={passwordInput}
+                onFocus={() => setPasswordFocused(true)}
+                onBlur={() => setPasswordFocused(false)}
                 onChangeText={value => { setLogin(current => ({ ...current, password: value })); setLoginError(undefined); }}
-                editable={!restoringSession && !submitting && !socialSubmittingProvider}
+                editable={!loginBusy}
                 placeholder="비밀번호"
                 secureTextEntry
                 autoComplete="password"
                 textContentType="password"
+                returnKeyType="go"
+                submitBehavior="submit"
+                onSubmitEditing={onLogin}
             />
 
             <Pressable
@@ -377,13 +401,22 @@ export default function Login() {
                 </View>
             )}
             {loginError && (
-                <View style={{ gap: 4, paddingVertical: 4 }}>
-                    <Text style={{ color: mode === "dark" ? "#FF9C96" : "#B42318", fontWeight: "700" }}>{loginError.title}</Text>
-                    <Text ref={errorMessageRef} accessibilityRole="alert" style={{ color: colors.textSecondary }}>{loginError.message}</Text>
-                </View>
+                <Animated.View
+                    entering={standardLayout ? loginFeedbackEntry : undefined}
+                    style={[styles.loginError, standardLayout && styles.loginErrorInset]}
+                >
+                    {!standardLayout && <Text style={styles.loginErrorTitle}>{loginError.title}</Text>}
+                    <Text
+                        ref={errorMessageRef}
+                        accessibilityRole="alert"
+                        accessibilityLiveRegion="polite"
+                        style={[standardLayout && styles.loginErrorMessage, { color: standardLayout ? styles.loginErrorTitle.color : colors.textSecondary }]}
+                    >{loginError.message}</Text>
+                </Animated.View>
             )}
             <AuthPrimaryButton
-                disabled={submitting || restoringSession || Boolean(socialSubmittingProvider)}
+                buttonRef={loginActionRef}
+                disabled={loginBusy}
                 loading={submitting || restoringSession}
                 onPress={onLogin}
                 label={restoringSession ? "로그인 상태 확인 중" : submitting ? "로그인 중" : "로그인"}
@@ -401,7 +434,7 @@ export default function Login() {
                     symbol="N"
                     symbolColor="#FFFFFF"
                     markStyle={styles.naverMark}
-                    disabled={restoringSession || submitting || Boolean(socialSubmittingProvider)}
+                    disabled={loginBusy}
                     loading={socialSubmittingProvider === "naver"}
                     onPress={() => onSocialLogin("naver")}
                 />
@@ -410,7 +443,7 @@ export default function Login() {
                     symbol="K"
                     symbolColor="#191600"
                     markStyle={styles.kakaoMark}
-                    disabled={restoringSession || submitting || Boolean(socialSubmittingProvider)}
+                    disabled={loginBusy}
                     loading={socialSubmittingProvider === "kakao"}
                     onPress={() => onSocialLogin("kakao")}
                 />
@@ -419,7 +452,7 @@ export default function Login() {
                         label="Apple"
                         icon="logo-apple"
                         markStyle={styles.appleMark}
-                        disabled={restoringSession || submitting || Boolean(socialSubmittingProvider)}
+                        disabled={loginBusy}
                         loading={socialSubmittingProvider === "apple"}
                         onPress={() => onSocialLogin("apple")}
                     />
@@ -428,17 +461,23 @@ export default function Login() {
 
             <Pressable
                 accessibilityRole="button"
-                onPress={() => router.push({
-                    pathname: "/auth/signup",
-                    params: pendingShareToken ? { shareToken: pendingShareToken } : {},
-                })}
+                accessibilityState={{ disabled: loginBusy }}
+                disabled={loginBusy}
+                onPress={() => {
+                    if (loginBusy || loginInFlight.current) return;
+                    router.push({
+                        pathname: "/auth/signup",
+                        params: pendingShareToken ? { shareToken: pendingShareToken } : {},
+                    });
+                }}
                 style={({ pressed }) => [
                     styles.signUpLink,
-                    { opacity: pressed ? 0.62 : 1 },
+                    { opacity: loginBusy || pressed ? 0.62 : 1 },
                 ]}
             >
                 <Text style={styles.signUpHint}>처음이신가요?</Text>
                 <Text style={styles.signUpText}>회원가입</Text>
+                {standardLayout && <Ionicons accessible={false} name="arrow-forward-outline" size={16} color={colors.textSecondary} />}
             </Pressable>
 
             <View style={styles.legalLinks}>
@@ -551,6 +590,17 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontWeight: "800",
             textDecorationLine: "underline",
         },
+        loginError: { gap: 4, paddingVertical: 4 },
+        loginErrorInset: {
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            borderRadius: 12,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: mode === "dark" ? "#934640" : "#D77771",
+            backgroundColor: mode === "dark" ? "#2A1D22" : "#FDF2F2",
+        },
+        loginErrorTitle: { color: mode === "dark" ? "#FF9C96" : "#B42318", fontWeight: "700" },
+        loginErrorMessage: { fontSize: 13, lineHeight: 19 },
         divider: {
             flex: 1,
             height: StyleSheet.hairlineWidth,

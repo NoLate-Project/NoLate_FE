@@ -97,9 +97,19 @@ export function createRouteStyles(options: ScheduleDetailStylesOptions) {
         alignItems: "center",
         gap: 6,
     },
-        inspectedPlanText: {
+        inspectedPlanTitle: {
         flex: 1,
         minWidth: 0,
+    },
+        inspectedPlanTitleRow: {
+        flexDirection: "row",
+        alignItems: "baseline",
+    },
+        inspectedPlanName: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
+        inspectedPlanText: {
         fontSize: 13,
         lineHeight: 18,
         fontWeight: "700",

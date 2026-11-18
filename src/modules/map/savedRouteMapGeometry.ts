@@ -15,6 +15,7 @@ import type {
     TmapMarker,
     TmapPathOverlay,
 } from "./TmapMapView";
+import { hasTransitLegLineGeometry, requiresSegmentedTransitPath } from "./transitRouteGeometry";
 
 
 
@@ -232,6 +233,11 @@ export function getSavedRouteAlternative(route: unknown): RouteAlternativeOption
 
 /** 저장 경로에서 `getSavedTransitLegCoords`에 필요한 값을 계산하며 사용 가능한 최선의 대체값을 선택합니다. */
 export function getSavedTransitLegCoords(leg: TransitLegDetail): TmapLatLng[] {
+    if (requiresSegmentedTransitPath(leg.kind)) {
+        const coords = compactConsecutiveMapCoords(mapCoords(leg.pathCoords));
+        const path = routeCoords(coords);
+        return hasTransitLegLineGeometry(leg, path) ? coords : [];
+    }
     const pathCoords = mapCoords(leg.pathCoords);
     if (pathCoords.length >= 2) return pathCoords;
 
@@ -243,6 +249,13 @@ export function getSavedTransitLegCoords(leg: TransitLegDetail): TmapLatLng[] {
         }),
         toMapCoord(leg.endCoord),
     ].filter((coord): coord is TmapLatLng => !!coord));
+}
+
+/** Stations can frame the camera even when there is no rail line to draw. */
+export function getSavedTransitLegStationCoords(leg: TransitLegDetail): TmapLatLng[] {
+    return distinctMapCoords(mapCoords([
+        leg.startCoord, ...(leg.passStops ?? []).map(stop => stop.coord), leg.endCoord,
+    ]));
 }
 
 /** 저장 경로에서 `getExplicitSavedRouteRootPathCoords`에 필요한 값을 계산하며 사용 가능한 최선의 대체값을 선택합니다. */

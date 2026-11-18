@@ -5,6 +5,8 @@ import {
   type SetStateAction,
 } from 'react';
 import { Animated } from 'react-native';
+import { CALENDAR_YEAR_MOTION } from '../calendarMotion';
+import { getYearMonthSelection } from '../calendarNavigation';
 import type { DayTransitionContext } from '../components/calendar/CalendarWrapper';
 
 type CalendarDepth = 'year' | 'month' | 'day';
@@ -14,6 +16,7 @@ type UseScheduleIndexYearTransitionParams = {
   animateYearDepthTransition: (
     targetProgress: number,
     onComplete?: () => void,
+    durationMs?: number,
   ) => void;
   calendarDepth: CalendarDepth;
   calendarTransition: Animated.Value;
@@ -97,24 +100,16 @@ export function useScheduleIndexYearTransition({
    * 목표 월이 한 번 렌더링된 다음 슬라이드 애니메이션을 시작한다.
    */
   const runYearToMonthTransition = useCallback(
-    (year: number, month: number) => {
+    (year: number, month: number, durationMs: number) => {
       if (
         isYearDepthTransitionActiveRef.current ||
         isDayTransitionActiveRef.current ||
         transitionStartedRef.current
       )
-        return;
+        return false;
       transitionStartedRef.current = true;
       const monthKey = `${year}-${String(month).padStart(2, '0')}`;
-      const currentDay = Number(selectedDayRef.current.slice(8, 10)) || 1;
-      const targetDay = Math.min(
-        currentDay,
-        new Date(year, month, 0).getDate(),
-      );
-      const targetSelection = `${monthKey}-${String(targetDay).padStart(
-        2,
-        '0',
-      )}`;
+      const targetSelection = getYearMonthSelection(year, month, selectedDayRef.current);
       const monthTransition = `month-${monthKey}`;
       closeToolbarMenu();
       dayTransition.stopAnimation();
@@ -149,8 +144,9 @@ export function useScheduleIndexYearTransition({
           setPendingSelectedDay(targetSelection);
           updateFetchVisibleMonth(targetSelection);
           dispatch({ type: 'SET_SELECTED_DAY', day: targetSelection });
-        });
+        }, durationMs);
       });
+      return true;
     },
     [
       animateYearDepthTransition,
@@ -187,6 +183,7 @@ export function useScheduleIndexYearTransition({
     runYearToMonthTransition(
       focusedMonth.getFullYear(),
       focusedMonth.getMonth() + 1,
+      CALENDAR_YEAR_MOTION.closeMs,
     );
   }, [runYearToMonthTransition, visibleMonth, yearOverviewVisible]);
 
@@ -256,9 +253,8 @@ export function useScheduleIndexYearTransition({
 
   /** 연간 화면에서 사용자가 누른 월을 월간 전환의 목표로 전달한다. */
   const selectOverviewMonth = useCallback(
-    (year: number, month: number) => {
-      runYearToMonthTransition(year, month);
-    },
+    (year: number, month: number) =>
+      runYearToMonthTransition(year, month, CALENDAR_YEAR_MOTION.monthSelectionMs),
     [runYearToMonthTransition],
   );
 

@@ -110,6 +110,10 @@ export function createQuickScheduleLogoLoaderStyles({
         borderRadius: 25,
         overflow: "hidden",
     },
+    appLogoFace: {
+        width: LOGO_SIZE,
+        height: LOGO_SIZE,
+    },
     // 1024px 원본에서 중앙 유리 로고 영역만 84px 프레임에 맞춰 보여준다.
     calendarLogoImageCrop: {
         position: "absolute",

@@ -41,6 +41,7 @@ export function useShareInvitationSheet({ visible, resourceType, resourceId, tit
     const [revokingInvitationId, setRevokingInvitationId] = useState<string | null>(null);
     const invitationLoadSequenceRef = useRef(0);
     const directShareSequenceRef = useRef(0);
+    const targetEditRevisionRef = useRef(0);
     const invitationCreateSequenceRef = useRef(0);
     const invitationRevokeSequenceRef = useRef(0);
     const modePosition = useRef(new Animated.Value(0)).current;
@@ -210,12 +211,20 @@ export function useShareInvitationSheet({ visible, resourceType, resourceId, tit
         }
     }, [contentMode, creating, maxAcceptCount, onCalendarContentModeChange, permission, resourceId, resourceRequestKey, resourceType, shareGeneratedLink, ttlHours]);
 
+    const updateTargetQuery = useCallback((value: string) => {
+        targetEditRevisionRef.current += 1;
+        setTargetQuery(value);
+        setDirectError(null);
+        setLastDirectShareLabel(null);
+    }, []);
+
     /** 이메일 또는 회원 ID를 검증해 직접 공유하고 오래된 비동기 응답은 화면에 반영하지 않습니다. */
     const createDirectShare = useCallback(async () => {
         const requestKey = resourceRequestKey;
         if (!requestKey || !resourceId || sharingDirect) return;
         const requestSequence = directShareSequenceRef.current + 1;
         directShareSequenceRef.current = requestSequence;
+        const targetEditRevision = targetEditRevisionRef.current;
 
         let target: Pick<CreateDirectSharePayload, "targetEmail" | "targetAppId">;
         try {
@@ -245,7 +254,9 @@ export function useShareInvitationSheet({ visible, resourceType, resourceId, tit
             )) return;
 
             setLastDirectShareLabel(target.targetEmail ?? `회원 #${target.targetAppId}`);
-            setTargetQuery("");
+            if (targetEditRevision === targetEditRevisionRef.current) {
+                setTargetQuery("");
+            }
         } catch (shareError) {
             if (!isCurrentScheduleShareRequest(
                 activeResourceKeyRef.current,
@@ -253,7 +264,9 @@ export function useShareInvitationSheet({ visible, resourceType, resourceId, tit
                 directShareSequenceRef.current,
                 requestSequence,
             )) return;
-            setDirectError(getErrorMessage(shareError));
+            if (targetEditRevision === targetEditRevisionRef.current) {
+                setDirectError(getErrorMessage(shareError));
+            }
         } finally {
             if (isCurrentScheduleShareRequest(
                 activeResourceKeyRef.current,
@@ -393,10 +406,9 @@ export function useShareInvitationSheet({ visible, resourceType, resourceId, tit
         contentMode,
         setContentMode,
         targetQuery,
-        setTargetQuery,
+        updateTargetQuery,
         sharingDirect,
         lastDirectShareLabel,
-        setLastDirectShareLabel,
         ttlHours,
         setTtlHours,
         maxAcceptCount,
@@ -406,7 +418,6 @@ export function useShareInvitationSheet({ visible, resourceType, resourceId, tit
         invitations,
         generatedLink,
         directError,
-        setDirectError,
         linkError,
         revokingInvitationId,
         latestInvitation,

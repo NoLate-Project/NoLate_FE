@@ -12,6 +12,7 @@ export type NotificationSettingsCardProps = {
     intervalMinutes: number;
     routeInfo?: RouteInfo;
     startAt?: Date;
+    routePlannedArrivalAt?: string;
     /** @deprecated Ignored. Schedule settings are independent of subscriptions. */
     policy?: unknown;
     onEnabledChange: (enabled: boolean) => void;

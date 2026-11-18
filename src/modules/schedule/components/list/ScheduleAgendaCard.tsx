@@ -1,6 +1,6 @@
 import styles from './ScheduleAgendaCard.styles';
-import React, { useMemo } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import React, { useMemo, useRef } from 'react';
+import { AccessibilityInfo, Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { getScheduleShareBadgeLabel } from '../../../share/sharePermissionPresentation';
 import { useTheme } from '../../../theme/ThemeContext';
@@ -22,13 +22,14 @@ import ScheduleIcon, { type ScheduleIconName } from '../shared/ScheduleIcon';
 
 export type ScheduleAgendaCardProps = {
   item: ScheduleItem;
-  onPress: () => void;
+  onPress: (restoreFocus: () => void) => void;
   onLongPress?: () => void;
   swipeActions?: ScheduleSwipeActionCallbacks;
   compact?: boolean;
   groupRow?: boolean;
   showMultiDaySummary?: boolean;
   returnHighlightOpacity?: Animated.Value;
+  cardRef?: React.RefObject<View | null>;
 };
 
 function travelIcon(mode?: TravelMode): ScheduleIconName {
@@ -56,8 +57,11 @@ export default function ScheduleAgendaCard({
   groupRow = false,
   showMultiDaySummary = false,
   returnHighlightOpacity,
+  cardRef: externalCardRef,
 }: ScheduleAgendaCardProps) {
   const { colors, mode } = useTheme();
+  const internalCardRef = useRef<View>(null);
+  const cardRef = externalCardRef ?? internalCardRef;
   const { fontScale } = useWindowDimensions();
   const isDetailCard = groupRow && !compact;
   const categoryColor = item.category?.color ?? '#8e8e93';
@@ -122,7 +126,6 @@ export default function ScheduleAgendaCard({
           : [
               styles.timeColumn,
               hasDatedTime && styles.datedTimeColumn,
-              !isDetailCard && styles.listTimeColumn,
             ]
       }
     >
@@ -165,6 +168,7 @@ export default function ScheduleAgendaCard({
       ]}
     >
       <Pressable
+        ref={cardRef}
         testID={isDetailCard ? 'selected-day-agenda-card' : 'month-agenda-card'}
         accessibilityRole="button"
         accessibilityLabel={[
@@ -190,7 +194,9 @@ export default function ScheduleAgendaCard({
           if (nativeEvent.actionName === 'edit') swipeActions?.onEdit?.();
           if (nativeEvent.actionName === 'delete') swipeActions?.onDelete?.();
         }}
-        onPress={onPress}
+        onPress={() => onPress(() => {
+          if (cardRef.current) AccessibilityInfo.sendAccessibilityEvent?.(cardRef.current, 'focus');
+        })}
         onLongPress={onLongPress}
         delayLongPress={420}
         style={({ pressed }) => [
@@ -331,7 +337,7 @@ export default function ScheduleAgendaCard({
           ) : null}
         </View>
         {useFullWidthTime ? null : scheduleTimes}
-        {!isDetailCard ? (
+        {!groupRow ? (
           <View style={styles.chevronColumn}>
             <ScheduleIcon name="forward" color={colors.textSecondary} />
           </View>

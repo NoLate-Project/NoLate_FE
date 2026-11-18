@@ -6,7 +6,7 @@ import { subscribeAuthInvalidation } from "../auth/authStorage";
 import {
     updateAutomaticJourneyAuthentication, configureAutomaticJourneyAuthentication, acknowledgeAutomaticJourneyDeparture, armAutomaticJourney, getAutomaticJourneyDeparture,
     getAutomaticJourneySnapshot, isAutomaticJourneyDevelopment, normalizeAutomaticJourneyBinding,
-    restoreAutomaticJourney, stopAutomaticJourney, subscribeAutomaticJourney, reconcileAutomaticJourneyTerminal,
+    restoreAutomaticJourney, readSavedAutomaticJourneyCheckpointRoute, stopAutomaticJourney, subscribeAutomaticJourney, reconcileAutomaticJourneyTerminal,
     type AutomaticJourneyBinding, type AutomaticJourneySnapshot,
 } from "./automaticJourney";
 import { journeyJSONRequest } from "./journeyJSONRequest";
@@ -38,7 +38,9 @@ export type AutomaticJourneySyncState = {
     paused: boolean; errorCode: string | null;
     pendingStopCount?: number;
     checkpointState?: "NONE" | "CHECKING" | "CURRENT" | "CLEARED" | "WAITING" | "BLOCKED";
+    savedCheckpoint?: SavedJourneyCheckpoint;
 };
+export type SavedJourneyCheckpoint = { scheduleId: string; memberId: number; sessionId: string; expiresAt: number };
 let syncState: AutomaticJourneySyncState = { status: "IDLE", paused: false, errorCode: null };
 const listeners = new Set<(state: AutomaticJourneySyncState) => void>();
 let current: AutomaticJourneyBinding | null = null;
@@ -48,8 +50,10 @@ let preparingSavedRoute: { scheduleId: string; routeJSON: string } | null = null
 export function getAutomaticJourneyTrialBinding(input: JourneyRouteInput): AutomaticJourneyBinding | null {
     return getAutomaticJourneyTrialInput(input) ? { ...current! } : null;
 }
-export function getAutomaticJourneyTrialInput(input:JourneyRouteInput):JourneyRouteInput|null {
-    if(!current||!currentRouteJSON)return null;
+export function getAutomaticJourneyTrialInput(input: JourneyRouteInput, expectedDigest?: string): JourneyRouteInput | null {
+    if (!current || !currentRouteJSON || (expectedDigest !== undefined && current.routeInputDigest !== expectedDigest)) {
+        return null;
+    }
     const armed=JSON.parse(currentRouteJSON) as JourneyRouteInput;
     if(currentRouteJSON===JSON.stringify(input))return armed;
     return armed.walkingSnapshot && savedWalkingBaseJSON(armed)===savedWalkingBaseJSON(input) ? armed : null;
@@ -77,6 +81,7 @@ const codeFor = (error: unknown) => error instanceof Error && /^[A-Z][A-Z0-9_]{0
     ? error.message : "AUTOMATIC_SYNC_UNAVAILABLE";
 function publish(change: Partial<AutomaticJourneySyncState>) {
     syncState = { ...syncState, ...change };
+    if (change.checkpointState && change.checkpointState !== 'CURRENT') delete syncState.savedCheckpoint;
     for (const listener of listeners) { try { listener({ ...syncState }); } catch { /* One view must not break the session. */ } }
 }
 export const getAutomaticJourneySyncState = () => ({ ...syncState });
@@ -94,6 +99,16 @@ function transportFor(binding: AutomaticJourneyBinding, source = authenticationS
     if (binding.syncScope !== "AUTHENTICATED") return transport;
     if (!source || !binding.apiOrigin || !binding.authMemberId || binding.loginGeneration == null) throw new Error("AUTOMATIC_AUTH_REQUIRED");
     const identity = { apiOrigin: binding.apiOrigin, authMemberId: binding.authMemberId, loginGeneration: binding.loginGeneration };
+    return createAutomaticJourneyTransport(createAuthenticatedJourneyPost(source, identity), identity);
+}
+async function stopTransportFor(binding: AutomaticJourneyBinding, source: JourneyAuthenticationSource) {
+    if (binding.syncScope !== 'AUTHENTICATED') return transport;
+    if (!binding.apiOrigin || !binding.authMemberId || binding.loginGeneration == null) throw new Error('AUTOMATIC_AUTH_REQUIRED');
+    const auth = await source();
+    requireJourneyAuthenticationIdentity(auth, auth);
+    if (auth.apiOrigin !== binding.apiOrigin || auth.authMemberId !== binding.authMemberId
+        || auth.loginGeneration < binding.loginGeneration) throw new Error('AUTOMATIC_AUTH_CHANGED');
+    const identity = { apiOrigin: auth.apiOrigin, authMemberId: auth.authMemberId, loginGeneration: auth.loginGeneration };
     return createAutomaticJourneyTransport(createAuthenticatedJourneyPost(source, identity), identity);
 }
 
@@ -151,7 +166,11 @@ export async function reconcileAutomaticJourneyCheckpoint(source?: JourneyAuthen
             if (revision !== generation || current) return;
             if (await AsyncStorage.getItem(BINDING_KEY) !== raw) throw new Error('CHECKPOINT_BINDING_CHANGED');
             if (result === 'CURRENT') {
-                publish({ checkpointState: 'CURRENT', errorCode: null });
+                publish({ checkpointState: 'CURRENT', errorCode: null,
+                    savedCheckpoint: binding.savedRouteValidated && binding.authMemberId && {
+                        scheduleId: binding.scheduleId, memberId: binding.authMemberId,
+                        sessionId: binding.sessionId, expiresAt: binding.expiresAtEpochSeconds,
+                    } || undefined });
                 return; // Preserve the checkpoint; resuming location still requires existing explicit consent/validation.
             }
             const fresh = await selectedSource();
@@ -181,7 +200,8 @@ export async function reconcileAutomaticJourneyCheckpoint(source?: JourneyAuthen
 
 export async function retryAutomaticJourneyStops(source?: JourneyAuthenticationSource): Promise<void> {
     if (!isAutomaticJourneyDevelopment()) return;
-    const result = await stopOutbox.drain(binding => transportFor(binding, source ?? authenticationSource ?? currentJourneyAuthentication).stop(binding));
+    const selected = source ?? authenticationSource ?? currentJourneyAuthentication;
+    const result = await stopOutbox.drain(async binding => (await stopTransportFor(binding, selected)).stop(binding));
     publish({ pendingStopCount: result.pendingCount, ...(result.pendingCount || result.errorCode
         ? { status: 'RETRY_WAIT', errorCode: result.errorCode ?? 'STOP_DELIVERY_PENDING' }
         : syncState.pendingStopCount ? { status: 'IDLE', errorCode: null } : {}) });
@@ -397,7 +417,8 @@ export async function prepareAutomaticJourneyTrial(input: JourneyRouteInput, sco
     } finally { operationBusy = false; preparingSavedRoute = null; }
 }
 
-export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, authSource?: JourneyAuthenticationSource): Promise<AutomaticJourneySnapshot> {
+export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, authSource?: JourneyAuthenticationSource,
+    savedCheckpoint?: SavedJourneyCheckpoint): Promise<AutomaticJourneySnapshot> {
     if (!isAutomaticJourneyDevelopment()) throw new Error("DEVELOPMENT_IOS_ONLY");
     if (operationBusy || stopping) throw new Error("AUTOMATIC_OPERATION_PENDING");
     await retryAutomaticJourneyStops(authSource);
@@ -417,9 +438,18 @@ export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, aut
         const binding = normalizeAutomaticJourneyBinding(JSON.parse(raw));
         if (!binding) throw new Error("TRIAL_BINDING_UNAVAILABLE");
         if (binding.execution !== journeyTrialExecution(binding.syncScope)) throw new Error('TRIAL_EXECUTION_MISMATCH');
-        const selected = await selectedInput(input, binding.syncScope, binding.savedRouteValidated === true);
-        if (selected.digest !== binding.routeInputDigest) throw new Error("ROUTE_BINDING_MISMATCH");
-        if (binding.syncScope === "AUTHENTICATED") authenticationSource = authSource ?? currentJourneyAuthentication;
+        if (savedCheckpoint && (binding.syncScope !== "AUTHENTICATED" || !binding.savedRouteValidated ||
+            binding.scheduleId !== savedCheckpoint.scheduleId || binding.sessionId !== savedCheckpoint.sessionId ||
+            binding.authMemberId !== savedCheckpoint.memberId || binding.expiresAtEpochSeconds !== savedCheckpoint.expiresAt ||
+            input.context !== "SAVED_ROUTE")) throw new Error("ROUTE_BINDING_MISMATCH");
+        let routeJSON: string | undefined;
+        if (!savedCheckpoint) {
+            const selected = await selectedInput(input, binding.syncScope, binding.savedRouteValidated === true);
+            if (selected.digest !== binding.routeInputDigest) throw new Error("ROUTE_BINDING_MISMATCH");
+            routeJSON = selected.routeJSON;
+        }
+        const restoreAuthentication = authSource ?? currentJourneyAuthentication;
+        if (binding.syncScope === "AUTHENTICATED") authenticationSource = restoreAuthentication;
         // No native location/Activity/outbox restoration before authoritative server approval.
         if (binding.savedRouteValidated) {
             try { await transportFor(binding).validate(binding); }
@@ -435,24 +465,37 @@ export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, aut
         if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
         if (binding.syncScope === "AUTHENTICATED") {
             const extended = binding.expiresAtEpochSeconds - binding.preparedAtEpochSeconds > 600.001;
-            const auth = await authenticationSource!(extended ? binding.expiresAtEpochSeconds : undefined);
+            const auth = await restoreAuthentication(extended ? binding.expiresAtEpochSeconds : undefined);
             requireJourneyAuthenticationIdentity(auth, binding as Required<AutomaticJourneyBinding>);
             if (extended) requireJourneyAuthenticationLifetime(auth, binding.expiresAtEpochSeconds);
             if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
             await configureAutomaticJourneyAuthentication(auth);
             nativeAuthentication = auth;
         }
+        if (savedCheckpoint) {
+            routeJSON = await readSavedAutomaticJourneyCheckpointRoute(binding);
+            if (journeyRouteUTF8Bytes(routeJSON) > JOURNEY_ROUTE_INPUT_LIMITS.jsonBytes ||
+                await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, routeJSON) !== binding.routeInputDigest) {
+                throw new Error("ROUTE_BINDING_MISMATCH");
+            }
+            const saved = JSON.parse(routeJSON) as JourneyRouteInput;
+            if (saved.routeRevision !== binding.routeRevision || savedWalkingBaseJSON(saved) !== savedWalkingBaseJSON(input))
+                throw new Error("ROUTE_BINDING_MISMATCH");
+            requireJourneyAuthenticationIdentity(await restoreAuthentication(), binding as Required<AutomaticJourneyBinding>);
+        }
+        if (!routeJSON) throw new Error("CHECKPOINT_ROUTE_UNAVAILABLE");
         if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
         restoreRequested = true;
-        const snapshot = await restoreAutomaticJourney(selected.routeJSON, binding);
+        const snapshot = await restoreAutomaticJourney(routeJSON, binding);
         if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
         if (!snapshot.enabled || snapshot.sessionId !== binding.sessionId || !["ARMED", "ACTIVE"].includes(snapshot.status)) {
             throw new Error(snapshot.lastErrorCode ?? "AUTOMATIC_RESTORE_FAILED");
         }
         current = binding;
-        currentRouteJSON = selected.routeJSON;
+        currentRouteJSON = routeJSON;
         nextAutomaticRetryAt = 0;
-        publish({ status: snapshot.departureAcknowledged ? "ACKNOWLEDGED" : snapshot.pendingDeparture ? "PENDING" : "IDLE", errorCode: null });
+        publish({ status: snapshot.departureAcknowledged ? "ACKNOWLEDGED" : snapshot.pendingDeparture ? "PENDING" : "IDLE",
+            errorCode: null, ...(savedCheckpoint && { checkpointState: 'NONE' as const }) });
         observeLifetime();
         retryAutomaticJourneySync().catch(() => undefined);
         return snapshot;

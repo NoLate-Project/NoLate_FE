@@ -1,38 +1,12 @@
-import { useEffect, useState } from 'react';
-import {
-  DEFAULT_CALENDAR_VIEW_MODE,
-  type CalendarViewModePreference,
-} from '../../src/modules/schedule/components/calendar/viewMode';
-import {
-  getCachedCalendarViewModePreference,
-  loadCalendarViewModePreference,
-} from '../../src/modules/schedule/components/calendar/calendarViewModePreference';
+import { DEFAULT_CALENDAR_VIEW_MODE } from '../../src/modules/schedule/components/calendar/viewMode';
+import { getCachedCalendarViewModePreference } from '../../src/modules/schedule/components/calendar/calendarViewModePreference';
 import { ScheduleIndexScreenContent } from '../../src/modules/schedule/components/list/ScheduleIndexScreenContent';
 import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
 
 export default function ScheduleIndex() {
   useScreenFirstPaintPerformance('/schedule');
-  const [initialCalendarViewMode, setInitialCalendarViewMode] =
-    useState<CalendarViewModePreference>(() =>
-      getCachedCalendarViewModePreference() ?? DEFAULT_CALENDAR_VIEW_MODE,
-    );
-
-  useEffect(() => {
-    let cancelled = false;
-    loadCalendarViewModePreference()
-      .then(restoredMode => {
-        if (!cancelled) setInitialCalendarViewMode(restoredMode);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setInitialCalendarViewMode(DEFAULT_CALENDAR_VIEW_MODE);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const initialCalendarViewMode =
+    getCachedCalendarViewModePreference() ?? DEFAULT_CALENDAR_VIEW_MODE;
 
   return (
     <ScheduleIndexScreenContent

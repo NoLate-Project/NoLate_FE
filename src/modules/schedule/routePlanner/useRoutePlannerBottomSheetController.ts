@@ -18,6 +18,7 @@ import type { SelectedTransitMapStop } from './routeTransitMarkers';
 const BOTTOM_SHEET_EDGE_RESISTANCE = 0.28;
 const BOTTOM_SHEET_EDGE_OVERSHOOT = 30;
 const HANDLE_MOVE_THRESHOLD = 6;
+const HANDLE_SNAP_THRESHOLD = 24;
 
 type SetValue<T> = Dispatch<SetStateAction<T>>;
 
@@ -200,8 +201,6 @@ export function useRoutePlannerBottomSheetController({
   const bottomHandlePanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () =>
-          !isBottomSheetHidden && bottomSheetCollapsedOffset > 0,
         onMoveShouldSetPanResponder: (_event, gestureState) =>
           !isBottomSheetHidden &&
           bottomSheetCollapsedOffset > 0 &&
@@ -235,22 +234,19 @@ export function useRoutePlannerBottomSheetController({
           bottomSheetTranslateY.setValue(next);
         },
         onPanResponderRelease: (_event, gestureState) => {
-          if (Math.abs(gestureState.dx) <= HANDLE_MOVE_THRESHOLD && Math.abs(gestureState.dy) <= HANDLE_MOVE_THRESHOLD) {
-            toggleBottomSheetFromHandle();
+          if (Math.abs(gestureState.dy) < HANDLE_SNAP_THRESHOLD) {
+            snapBottomSheetTo(bottomSheetSnap);
             return;
           }
           bottomSheetTranslateY.stopAnimation(current => {
             snapBottomSheetTo(getSnapFromGesture(current, gestureState.vy));
           });
         },
-        onPanResponderTerminate: (_event, gestureState) => {
-          bottomSheetTranslateY.stopAnimation(current => {
-            snapBottomSheetTo(getSnapFromGesture(current, gestureState.vy));
-          });
-        },
+        onPanResponderTerminate: () => snapBottomSheetTo(bottomSheetSnap),
       }),
     [
       bottomSheetCollapsedOffset,
+      bottomSheetSnap,
       bottomSheetDragMinOffset,
       bottomSheetDragMaxOffset,
       bottomSheetStartYRef,
@@ -258,7 +254,6 @@ export function useRoutePlannerBottomSheetController({
       getSnapFromGesture,
       isBottomSheetHidden,
       snapBottomSheetTo,
-      toggleBottomSheetFromHandle,
     ],
   );
 

@@ -16,7 +16,7 @@ beforeEach(()=>{jest.clearAllMocks();mockId='41';mockEnabled=true;mockAutomatic=
 function render(){let view!:ReactTestRenderer;act(()=>{view=TestRenderer.create(<JourneyGuidanceScreen/>);});return view;}
 test.each(['41',['41']].map(id=>[id]))('legacy deep link %p opens owned route detail without manual start or tracking',id=>{
     mockId=id;const view=render();
-    expect(view.root.findByType('Redirect' as never).props.href).toEqual({pathname:'/schedule/[id]',params:{id:'41',openRouteDetail:'1'}});
+    expect(view.root.findByType('Redirect' as never).props.href).toEqual({pathname:'/schedule/[id]',params:{id:'41',navigationMode:'1'}});
     expect(mockManual).not.toHaveBeenCalled();
     for(const testID of ['journey-start','journey-advance','journey-stop'])expect(view.root.findAllByProps({testID})).toHaveLength(0);
     act(()=>view.unmount());

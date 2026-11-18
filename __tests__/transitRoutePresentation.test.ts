@@ -83,10 +83,11 @@ describe("transit route zoom presentation", () => {
         });
     });
 
-    it("native direction은 BUS/SUBWAY에만 적용하고 z11부터 고정 대비를 유지한다", () => {
+    it("지하철 개요는 z10에서, 버스 진행 방향은 z11에서 표시한다", () => {
         expect(shouldRenderTransitNativeDirection("BUS", 5.9)).toBe(false);
         expect(shouldRenderTransitNativeDirection("SUBWAY", 6)).toBe(false);
-        expect(shouldRenderTransitNativeDirection("BUS", 10)).toBe(false);
+        expect(shouldRenderTransitNativeDirection("SUBWAY", 9.9)).toBe(false);
+        expect(shouldRenderTransitNativeDirection("SUBWAY", 10)).toBe(true);
         expect(shouldRenderTransitNativeDirection("BUS", 10.9)).toBe(false);
         expect(shouldRenderTransitNativeDirection("BUS", 11)).toBe(true);
         expect(shouldRenderTransitNativeDirection("BUS", 11.9)).toBe(true);

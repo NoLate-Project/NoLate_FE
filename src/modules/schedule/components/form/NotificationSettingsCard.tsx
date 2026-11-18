@@ -12,7 +12,7 @@ import {
 } from "../../../notification/departureAlarm";
 import { requestPushPermissionAndRegisterCurrentDevice } from "../../../notification/pushPermission";
 import { useTheme } from "../../../theme/ThemeContext";
-import { formatRouteClock, formatRouteDuration } from "../../routeInfo";
+import { formatRouteClock, formatRouteDuration, isOdsayTimetableRouteInfo, roundRouteArrivalMinute } from "../../routeInfo";
 import AlarmSoundSettings from "./AlarmSoundSettings";
 import { AlarmModeOption, CompactAlarmModeOption } from "./NotificationAlertModeOptions";
 import type { NotificationSettingsCardProps as Props } from "./NotificationSettingsCard.types";
@@ -29,6 +29,7 @@ export default function NotificationSettingsCard({
     intervalMinutes,
     routeInfo,
     startAt,
+    routePlannedArrivalAt,
     onEnabledChange,
     onAlertModeChange,
     onLeadMinutesChange,
@@ -59,7 +60,8 @@ export default function NotificationSettingsCard({
         warningColor,
     } = getNotificationSettingsPalette({ dark: mode === "dark", surface: colors.surface });
     const routeMinutes = routeInfo?.totalDurationMinutes;
-    const { recommendedDepartureAt, arrivalAt } = getNotificationRouteTiming(routeMinutes, startAt);
+    const { recommendedDepartureAt, arrivalAt } = getNotificationRouteTiming(routeInfo, startAt, routePlannedArrivalAt);
+    const arrivalText = formatRouteClock(isOdsayTimetableRouteInfo(routeInfo) ? roundRouteArrivalMinute(arrivalAt) : arrivalAt);
     const showAlarmControls = enabled && alertMode === "ALARM";
     const flat = variant === "flat";
 
@@ -188,7 +190,7 @@ export default function NotificationSettingsCard({
             >
                 <View style={styles.headerText}>
                     <Text style={[styles.title, { color: colors.textPrimary }]}>
-                        {flat ? "알림" : "출발 알림"}
+                        출발 알림
                     </Text>
                     {!flat ? (
                         <Text style={[styles.usage, { color: colors.textSecondary }]}>
@@ -234,7 +236,7 @@ export default function NotificationSettingsCard({
                                         {recommendedDepartureAt ? formatRouteClock(recommendedDepartureAt) : "-"}
                                     </Text>
                                     <Text style={[styles.flatSummaryArrival, { color: colors.textSecondary }]}>
-                                        {arrivalAt ? `${formatRouteClock(arrivalAt)} 도착 예정` : "도착 시간 미정"}
+                                        {arrivalText ? `${arrivalText} 도착 예정` : "도착 시간 미정"}
                                     </Text>
                                 </View>
                                 <View style={[styles.flatDurationPill, { backgroundColor: colors.border }]}>
@@ -292,7 +294,7 @@ export default function NotificationSettingsCard({
                             <View style={styles.recommendationCol}>
                                 <Text style={[styles.label, { color: colors.textSecondary }]}>도착 예정</Text>
                                 <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
-                                    {arrivalAt ? formatRouteClock(arrivalAt) : "-"}
+                                    {arrivalText || "-"}
                                 </Text>
                             </View>
                             </View>

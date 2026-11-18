@@ -1,7 +1,6 @@
 import type { IntercityJourney } from './intercityJourney';
 import type { IntercityRideService } from './importedTicket';
-import { isIntercityRideKind } from "../map/transitModes";
-import { isTransitRideKind, transitModeLabel, intercityRideColor } from "../map/transitModes";
+import { isIntercityBusKind, isIntercityRideKind, isTransitRideKind, transitModeLabel, intercityRideColor } from "../map/transitModes";
 import type {
     RouteAlternativeOption,
     RouteApiProvider,
@@ -11,6 +10,7 @@ import type {
 } from "../map/tmapApi";
 import { getTransitBoardingDirectionHint } from "../map/transitStopLabelPresentation";
 import { validTotalDurationSeconds } from "../map/routeDuration";
+import { hasTransitLegLineGeometry, isRailKind, lacksIntermediateRailGeometry } from "../map/transitRouteGeometry";
 import type { Place, TravelMode } from "./types";
 
 export type RouteStepType =
@@ -42,9 +42,17 @@ export type RoutePassStop = {
 
 export interface RouteStep {
     /** Display-only timestamps from a matched server journey, never reconstructed from rounded minutes. */
-    matchedTimeline?: { startAt: string; endAt: string; movementSeconds: number };
+    matchedTimeline?: {
+        startAt: string;
+        endAt: string;
+        movementSeconds: number;
+        transferWaitSeconds?: number;
+        startsWithStationArrivalPrediction?: true;
+    };
+    scheduledRide?: { boardingAt: string; arrivalAt: string };
     alightingName?: string;
     intercityService?: IntercityRideService;
+    journeyPhase?: TransitLegDetail["journeyPhase"];
     id: string;
     type: RouteStepType;
     title: string;
@@ -67,6 +75,16 @@ export interface RouteStep {
     recommendedTransferPosition?: string;
     passStops?: RoutePassStop[];
     coordinates?: RouteCoordinate[];
+    /** The rail coordinates were checked against their source transit leg. */
+    railGeometryVerified?: true;
+}
+
+export function hasRenderableRouteStepGeometry(step: RouteStep, pointCount: number): boolean {
+    if (pointCount < (isIntercityBusKind(step.type) ? 3 : 2)) return false;
+    return !isRailKind(step.type) || (
+        step.railGeometryVerified === true &&
+        !lacksIntermediateRailGeometry(step.type, pointCount, step.stationCount, step.passStops?.length ?? 0)
+    );
 }
 
 export interface RouteInfo {
@@ -93,6 +111,8 @@ export interface RouteInfo {
     timeBasis: "provider_schedule" | "estimated" | "anchored_journey";
     /** 이전 ODsay 예상시각과 실제 시간표 연동 데이터를 구분하는 명시적 근거. */
     providerTimeBasis?: "route_estimate" | "timetable";
+    /** Keeps an observed bus estimate tied to the selected appointment when it is reopened. */
+    busPreviewObservation?: { sourceUpdatedAt: string; targetArrivalAt?: string };
     steps: RouteStep[];
 }
 
@@ -106,6 +126,8 @@ export const ROUTE_POINT_COLORS = {
 } as const;
 
 export const SUBWAY_LINE_COLORS: Array<{ pattern: RegExp; color: string }> = [
+    { pattern: /인천\s*1\s*호선/, color: "#7CA8D5" },
+    { pattern: /인천\s*2\s*호선/, color: "#ED8B00" },
     { pattern: /1호선/, color: "#0D47A1" },
     { pattern: /2호선/, color: "#00B140" },
     { pattern: /3호선/, color: "#FF7F00" },
@@ -127,8 +149,6 @@ export const SUBWAY_LINE_COLORS: Array<{ pattern: RegExp; color: string }> = [
     { pattern: /신림선/, color: "#6789CA" },
     { pattern: /용인경전철|에버라인/, color: "#6FB245" },
     { pattern: /의정부경전철/, color: "#FDA600" },
-    { pattern: /인천1호선/, color: "#7CA8D5" },
-    { pattern: /인천2호선/, color: "#ED8B00" },
 ];
 
 export const BUS_TYPE_COLORS = {
@@ -146,6 +166,26 @@ function isFiniteNumber(value: unknown): value is number {
 
 function validDurationSeconds(value: unknown): number | undefined {
     return isFiniteNumber(value) && value >= 0 ? value : undefined;
+}
+
+/** A timetable walk can be assigned only when a single leg represents the whole interval. */
+export function getTimetableWalkSeconds(
+    legs: readonly Pick<TransitLegDetail, "kind">[],
+    index: number,
+    ridesBeforeWalk: number,
+    preview: RouteAlternativeOption["odsayTimetablePreview"],
+): number | undefined {
+    if (legs[index]?.kind !== "WALK") return undefined;
+    if (index === 0 && legs[1]?.kind === "SUBWAY") return validDurationSeconds(preview?.entranceWalk?.seconds);
+    if (!isTransitRideKind(legs[index - 1]?.kind)) return undefined;
+    if (isTransitRideKind(legs[index + 1]?.kind)) {
+        return validDurationSeconds(preview?.transferTimings?.[ridesBeforeWalk - 1]?.walkingSeconds);
+    }
+    if (index !== legs.length - 1) return undefined;
+    const lastRide = preview?.rides?.[preview.rides.length - 1];
+    return preview && lastRide
+        ? validDurationSeconds((Date.parse(preview.arrivalAt) - Date.parse(lastRide.arrivalAt)) / 1000)
+        : undefined;
 }
 
 function normalizeHexColor(value?: string): string | undefined {
@@ -166,6 +206,13 @@ export function formatRouteDuration(minutes?: number): string {
     return `${hours}시간 ${remainMinutes}분`;
 }
 
+export function formatRouteDurationSeconds(seconds: number): string {
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    if (!minutes) return `${remainder}초`;
+    return remainder ? `${minutes}분 ${remainder}초` : `${minutes}분`;
+}
+
 export function formatRouteDistance(distanceMeters?: number): string | undefined {
     if (!isFiniteNumber(distanceMeters)) return undefined;
     if (distanceMeters >= 1000) return `${(distanceMeters / 1000).toFixed(1)}km`;
@@ -180,6 +227,16 @@ export function formatRouteClock(value: string | Date | undefined): string {
     const period = hours < 12 ? "오전" : "오후";
     const displayHour = hours % 12 || 12;
     return `${period} ${displayHour}:${minutes}`;
+}
+
+/** Minute-only arrival labels round the displayed clock without changing the route timestamp. */
+export function roundRouteArrivalMinute(value: string | Date | undefined): Date | undefined {
+    const time = value instanceof Date ? value.getTime() : value ? Date.parse(value) : NaN;
+    return Number.isFinite(time) ? new Date(Math.round(time / 60_000) * 60_000) : undefined;
+}
+
+export function isOdsayTimetableRouteInfo(route?: RouteInfo): boolean {
+    return route?.provider === "odsay" && route.timeBasis === "provider_schedule" && route.providerTimeBasis === "timetable";
 }
 
 export function compactTransitLineLabel(lineName?: string): string | undefined {
@@ -202,26 +259,64 @@ export function compactTransitLineLabel(lineName?: string): string | undefined {
         .replace(/광역\s*[:：]?\s*/g, "")
         .replace(/순환\s*[:：]?\s*/g, "")
         .replace(/마을\s*[:：]?\s*/g, "")
-        .replace(/공항\s*[:：]?\s*/g, "")
+        .replace(/공항(?!철도)\s*[:：]?\s*/g, "")
         .replace(/버스\s*/g, "")
         .replace(/수도권\s*/g, "")
         .replace(/노선$/u, "")
         .trim();
 
     if (!normalized) return undefined;
-    const lineMatch = normalized.match(/\d+호선/);
-    if (lineMatch?.[0]) return lineMatch[0];
+    const lineMatch = normalized.match(/(?:인천|부산|대구|대전|광주)?\s*\d+\s*호선/);
+    if (lineMatch?.[0]) return lineMatch[0].replace(/\s+/gu, "");
     const busNumberMatch = normalized.match(/^[A-Z]?\d{1,5}[A-Z]?/i);
     if (busNumberMatch?.[0]) return busNumberMatch[0];
     const first = normalized.split(",")[0]?.trim() ?? normalized;
     return first.length > 10 ? `${first.slice(0, 10)}...` : first;
 }
 
-export function getSubwayLineColor(lineName?: string): string {
-    const normalized = lineName?.trim();
-    if (!normalized) return "#00B140";
-    const matched = SUBWAY_LINE_COLORS.find((item) => item.pattern.test(normalized));
-    return matched?.color ?? "#00B140";
+const TRANSIT_GUIDANCE_LABEL_PATTERN = /정류장|승차|하차|환승|출발|도착|도보|에서|까지|방면/u;
+const TRANSIT_METRIC_ONLY_PATTERN = /^\d+(?:\.\d+)?\s*(?:분|시간|정거장|m|km)$/iu;
+const TRANSIT_TRAILING_METRIC_PATTERN = /\s+\d+(?:\.\d+)?\s*(?:분|시간|정거장|m|km)$/iu;
+const TRANSIT_GENERIC_MODE_PATTERN = /^(?:버스|지하철|이동)$/u;
+
+function compactTransitRideIdentity(rawValue?: string): string | undefined {
+    const raw = typeof rawValue === "string" ? rawValue.trim() : undefined;
+    if (
+        !raw ||
+        TRANSIT_GUIDANCE_LABEL_PATTERN.test(raw) ||
+        TRANSIT_METRIC_ONLY_PATTERN.test(raw)
+    ) return undefined;
+
+    const withoutTrailingMetric = raw.replace(TRANSIT_TRAILING_METRIC_PATTERN, "").trim();
+    if (!withoutTrailingMetric || TRANSIT_GENERIC_MODE_PATTERN.test(withoutTrailingMetric)) {
+        return undefined;
+    }
+
+    const compact = compactTransitLineLabel(withoutTrailingMetric);
+    if (compact && !TRANSIT_METRIC_ONLY_PATTERN.test(compact)) return compact;
+
+    return withoutTrailingMetric.length > 10
+        ? `${withoutTrailingMetric.slice(0, 10)}...`
+        : withoutTrailingMetric;
+}
+
+export function findTransitRideLineLabel(leg: { lineName?: string; label?: string }): string | undefined {
+    // Saved JSON/provider previews can omit the display label. Its absence is not
+    // navigation evidence and must not crash the route detail's presentation.
+    const candidates = [leg.lineName, ...(typeof leg.label === "string" ? leg.label.split(/[·|]/u) : [])];
+    for (const candidate of candidates) {
+        const identity = compactTransitRideIdentity(candidate);
+        if (identity) return identity;
+    }
+
+    return undefined;
+}
+
+export function getSubwayLineColor(lineName?: string, explicitColor?: string): string {
+    const normalized = lineName?.replace(/\s+/gu, "") ?? "";
+    const regionalNumber = /(?:부산|대구|대전|광주)\d+호선/u.test(normalized);
+    const matched = regionalNumber ? undefined : SUBWAY_LINE_COLORS.find(item => item.pattern.test(normalized));
+    return matched?.color ?? normalizeHexColor(explicitColor) ?? "#64748B";
 }
 
 export type BusBadgeType = keyof typeof BUS_TYPE_COLORS;
@@ -250,6 +345,10 @@ export function getBusLineColor(lineName?: string, explicitColor?: string): stri
     return BUS_TYPE_COLORS[getBusBadgeType(lineName)];
 }
 
+export function getTransitBusLineColor(leg: { lineName?: string; label?: string; lineColor?: string }): string {
+    return getBusLineColor(leg.lineName?.trim() || leg.label, leg.lineColor);
+}
+
 export function getRouteStepColor(step: Pick<RouteStep, "type" | "lineName" | "lineColor">): string {
     if (step.type === "ORIGIN") return ROUTE_POINT_COLORS.origin;
     if (step.type === "DESTINATION") return ROUTE_POINT_COLORS.destination;
@@ -257,7 +356,7 @@ export function getRouteStepColor(step: Pick<RouteStep, "type" | "lineName" | "l
     if (step.type === "TRANSFER") return ROUTE_POINT_COLORS.transfer;
     if (step.type === "DRIVE") return ROUTE_POINT_COLORS.activeBlue;
     if (step.type === "BIKE") return ROUTE_POINT_COLORS.bike;
-    if (step.type === "SUBWAY") return normalizeHexColor(step.lineColor) ?? getSubwayLineColor(step.lineName);
+    if (step.type === "SUBWAY") return getSubwayLineColor(step.lineName, step.lineColor);
     if (step.type === "BUS") return getBusLineColor(step.lineName, step.lineColor);
     if (intercityRideColor(step.type)) return normalizeHexColor(step.lineColor) ?? intercityRideColor(step.type)!;
     return ROUTE_POINT_COLORS.activeBlue;
@@ -331,8 +430,8 @@ function legDuration(leg: TransitLegDetail): number | undefined {
     return undefined;
 }
 
-function buildWalkStep(leg: TransitLegDetail, index: number): RouteStep {
-    const durationMinutes = legDuration(leg);
+function buildWalkStep(leg: TransitLegDetail, index: number, timetableSeconds?: number): RouteStep {
+    const durationMinutes = timetableSeconds === undefined ? legDuration(leg) : Math.ceil(timetableSeconds / 60);
     const distanceText = formatRouteDistance(leg.distanceMeters);
     const durationText = isFiniteNumber(durationMinutes) ? `${durationMinutes}분` : undefined;
     const description = [distanceText, durationText].filter(Boolean).join(" · ") || undefined;
@@ -342,22 +441,30 @@ function buildWalkStep(leg: TransitLegDetail, index: number): RouteStep {
         title: "도보",
         description,
         durationMinutes,
-        durationSeconds: validDurationSeconds(leg.durationSeconds),
+        durationSeconds: timetableSeconds ?? validDurationSeconds(leg.durationSeconds),
         distanceMeters: leg.distanceMeters,
         coordinates: pathToRouteCoordinates(leg.pathCoords),
     };
 }
 
-function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
+function buildRideStep(leg: TransitLegDetail, index: number, scheduledRide?: RouteStep["scheduledRide"]): RouteStep {
     const type = isTransitRideKind(leg.kind) ? leg.kind : "UNKNOWN";
-    const lineName = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label) ?? leg.lineName ?? leg.label;
+    const hasLineGeometry = hasTransitLegLineGeometry(leg);
+    const lineName = type === "SUBWAY"
+        ? findTransitRideLineLabel(leg)
+        : compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label) ?? leg.lineName ?? leg.label;
     const lineColor = type === "BUS"
-        ? getBusLineColor(lineName, leg.lineColor)
-        : normalizeHexColor(leg.lineColor) ?? intercityRideColor(type) ?? getSubwayLineColor(lineName);
+        ? getTransitBusLineColor(leg)
+        : type === "SUBWAY"
+            ? getSubwayLineColor(lineName, leg.lineColor)
+            : normalizeHexColor(leg.lineColor) ?? intercityRideColor(type);
     const startName = normalizeStopName(leg.startName);
     const endName = normalizeStopName(leg.endName);
     const fallbackKind = transitModeLabel(type);
-    const durationMinutes = legDuration(leg);
+    const timetableSeconds = scheduledRide && validDurationSeconds(
+        (Date.parse(scheduledRide.arrivalAt) - Date.parse(scheduledRide.boardingAt)) / 1000,
+    );
+    const durationMinutes = timetableSeconds === undefined ? legDuration(leg) : Math.ceil(timetableSeconds / 60);
     const stationText = isFiniteNumber(leg.stationCount) ? `${leg.stationCount}정거장` : undefined;
     const durationText = isFiniteNumber(durationMinutes) ? `${durationMinutes}분` : undefined;
     const passStops = leg.passStops
@@ -377,7 +484,8 @@ function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
         durationMinutes,
         intercityService: leg.intercityService,
         waitingMinutes: leg.waitingMinutes,
-        durationSeconds: validDurationSeconds(leg.durationSeconds),
+        durationSeconds: timetableSeconds ?? validDurationSeconds(leg.durationSeconds),
+        ...(scheduledRide && { scheduledRide }),
         distanceMeters: leg.distanceMeters,
         stationCount: leg.stationCount,
         lineName,
@@ -390,7 +498,10 @@ function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
         recommendedBoardingPosition: leg.recommendedBoardingPosition,
         recommendedTransferPosition: leg.recommendedTransferPosition,
         passStops,
-        coordinates: pathToRouteCoordinates(leg.pathCoords),
+        coordinates: hasLineGeometry
+            ? pathToRouteCoordinates(leg.pathCoords)
+            : undefined,
+        railGeometryVerified: isRailKind(leg.kind) && hasLineGeometry ? true : undefined,
     };
 }
 
@@ -430,7 +541,12 @@ function buildGuideRouteStep(
     };
 }
 
-function buildRouteSteps(option: RouteAlternativeOption, origin?: Place, destination?: Place): RouteStep[] {
+function buildRouteSteps(
+    option: RouteAlternativeOption,
+    origin?: Place,
+    destination?: Place,
+    useTimetable = false,
+): RouteStep[] {
     const originName = placeName(origin, "출발지");
     const destinationName = placeName(destination, "도착지");
     const steps: RouteStep[] = [{
@@ -441,16 +557,56 @@ function buildRouteSteps(option: RouteAlternativeOption, origin?: Place, destina
     }];
 
     const legs = Array.isArray(option.transitLegs) ? option.transitLegs : [];
+    const timetable = useTimetable ? option.odsayTimetablePreview : undefined;
+    const bus = option.odsayBusPreview;
+    const busIndex = bus ? legs.findIndex(leg => leg.kind === "BUS") : -1;
+    const lastBusIndex = bus?.transfer ? legs.findIndex((leg, index) => index > busIndex && leg.kind === "BUS") : busIndex;
+    const accessIndex = bus && busIndex > 0 ? 0 : -1;
+    const egressIndex = bus && lastBusIndex < legs.length - 1 ? legs.length - 1 : -1;
+    const entrance = timetable?.entranceWalk;
+    if (entrance && legs[0]?.kind === "SUBWAY") {
+        steps.push({
+            id: "odsay-entrance-walk",
+            type: "WALK",
+            title: "역 출구까지 도보",
+            durationMinutes: Math.ceil(entrance.seconds / 60),
+            durationSeconds: entrance.seconds,
+            distanceMeters: entrance.distanceMeters,
+        });
+    }
+    let rideIndex = 0;
     if (legs.length > 0) {
         legs.forEach((leg, index) => {
             if (leg.kind === "WALK") {
-                steps.push(buildWalkStep(leg, index));
+                const boundary = index === 0 && legs[1]?.kind === "SUBWAY" ? timetable?.entranceWalk
+                    : index === legs.length - 1 && legs[index - 1]?.kind === "SUBWAY" ? timetable?.exitWalk : undefined;
+                const walk = boundary && boundary.distanceMeters !== leg.distanceMeters
+                    ? { ...leg, pathCoords: undefined, distanceMeters: boundary.distanceMeters } : leg;
+                const busWalkSeconds = index === accessIndex && busIndex === 1 ? bus?.accessSeconds
+                    : index === egressIndex && lastBusIndex === legs.length - 2 ? bus?.egressSeconds
+                        : bus?.transfer && lastBusIndex === busIndex + 2 && index === busIndex + 1
+                            ? bus.transfer.walkingSeconds : undefined;
+                steps.push(buildWalkStep(walk, index, busWalkSeconds ??
+                    getTimetableWalkSeconds(legs, index, rideIndex, timetable)));
             } else if (isTransitRideKind(leg.kind)) {
-                steps.push(buildRideStep(leg, index));
+                if (bus && index === busIndex) {
+                    const wait = (Date.parse(bus.boardingAt) - Date.parse(bus.departureAt)) / 1000 - bus.accessSeconds;
+                    const seconds = (Date.parse(bus.transfer?.firstAlightingAt ?? bus.alightingAt) - Date.parse(bus.boardingAt)) / 1000 + wait;
+                    steps.push(buildRideStep({ ...leg, durationSeconds: seconds, durationMinutes: Math.ceil(seconds / 60),
+                        waitingMinutes: Math.ceil(wait / 60) }, index));
+                } else if (bus?.transfer && index === lastBusIndex) {
+                    const ready = Date.parse(bus.transfer.firstAlightingAt) + bus.transfer.walkingSeconds * 1000;
+                    const wait = (Date.parse(bus.transfer.secondBoardingAt) - ready) / 1000;
+                    const seconds = (Date.parse(bus.alightingAt) - ready) / 1000;
+                    steps.push(buildRideStep({ ...leg, durationSeconds: seconds, durationMinutes: Math.ceil(seconds / 60),
+                        waitingMinutes: Math.ceil(wait / 60) }, index));
+                } else steps.push(buildRideStep(leg, index, timetable?.rides?.[rideIndex]));
+                rideIndex++;
             } else {
                 steps.push({
                     id: `leg-${index}`,
                     type: leg.journeyPhase === "BUFFER" ? "TRANSFER" : "UNKNOWN",
+                    ...(leg.journeyPhase && { journeyPhase: leg.journeyPhase }),
                     title: leg.label || "이동 수단 확인",
                     description: buildWalkStep(leg, index).description,
                     durationMinutes: legDuration(leg),
@@ -502,9 +658,12 @@ export function buildRouteInfoFromAlternative(
     departureAt: Date = new Date(),
     routeIndex = 0
 ): RouteInfo {
-    const totalDurationMinutes = Math.max(0, Math.round(option.minutes ?? 0));
-    const providerDepartureAt = option.providerDepartureAt ? new Date(option.providerDepartureAt) : undefined;
-    const providerArrivalAt = option.providerArrivalAt ? new Date(option.providerArrivalAt) : undefined;
+    const timetablePreview = option.odsayTimetablePreview;
+    const bus = option.odsayBusPreview;
+    const providerDeparture = timetablePreview?.departureAt ?? bus?.departureAt ?? option.providerDepartureAt;
+    const providerArrival = timetablePreview?.arrivalAt ?? bus?.arrivalAt ?? option.providerArrivalAt;
+    const providerDepartureAt = providerDeparture ? new Date(providerDeparture) : undefined;
+    const providerArrivalAt = providerArrival ? new Date(providerArrival) : undefined;
     const hasProviderTimes = !!providerDepartureAt &&
         !!providerArrivalAt &&
         Number.isFinite(providerDepartureAt.getTime()) &&
@@ -512,15 +671,32 @@ export function buildRouteInfoFromAlternative(
         providerArrivalAt.getTime() >= providerDepartureAt.getTime();
     // maasRP의 start/endDateTime은 시간표가 아니라 SearchTime + 구간 시간이다.
     // 시각 필드 존재만으로 시간표로 승격하면 심야에도 운행이 확정된 것처럼 저장된다.
-    const hasProviderSchedule = hasProviderTimes && option.providerTimeBasis === "timetable";
+    const hasProviderSchedule = hasProviderTimes && (timetablePreview !== undefined || option.providerTimeBasis === "timetable");
     const effectiveDepartureAt = hasProviderTimes ? providerDepartureAt : departureAt;
-    const totalDurationSeconds = validTotalDurationSeconds(option.totalDurationSeconds, effectiveDepartureAt.getTime());
-    const arrivalAt = hasProviderTimes
+    const plannedSeconds = hasProviderTimes && (timetablePreview || bus)
+        ? (providerArrivalAt.getTime() - providerDepartureAt.getTime()) / 1000
+        : undefined;
+    const totalDurationSeconds = validTotalDurationSeconds(plannedSeconds ?? option.totalDurationSeconds, effectiveDepartureAt.getTime());
+    const totalDurationMinutes = plannedSeconds !== undefined
+        ? Math.ceil(plannedSeconds / 60)
+        : Math.max(0, Math.round(option.minutes ?? 0));
+    // maasRP endDateTime is minute-granular. An exact route estimate from validated walk links
+    // must carry its own destination time so saving can verify the elapsed seconds.
+    const usesOdsayEstimateSeconds = option.provider === "odsay" && option.providerTimeBasis === "route_estimate" &&
+        !hasProviderSchedule && totalDurationSeconds !== undefined;
+    const arrivalAt = hasProviderTimes && (bus || !usesOdsayEstimateSeconds)
         ? providerArrivalAt
         : new Date(effectiveDepartureAt.getTime() + (totalDurationSeconds ?? totalDurationMinutes * 60) * 1000);
     // Incomplete saved/provider previews are still renderable, but a missing
     // duration must not become a fabricated "depart/arrive now" timetable.
     const timingKnown = hasProviderTimes || (isFiniteNumber(option.minutes) && option.minutes >= 0);
+    const legs = option.transitLegs ?? [];
+    const first = legs[0], last = legs[legs.length - 1];
+    const accessDelta = timetablePreview?.entranceWalk && (first?.kind === "SUBWAY" || isFiniteNumber(first?.distanceMeters))
+        ? timetablePreview.entranceWalk.distanceMeters - (first?.kind === "WALK" ? first.distanceMeters ?? 0 : 0) : 0;
+    const exitDelta = timetablePreview?.exitWalk && last?.kind === "WALK" && isFiniteNumber(last.distanceMeters)
+        ? timetablePreview.exitWalk.distanceMeters - last.distanceMeters : 0;
+    const walkingDelta = accessDelta + exitDelta;
     return {
         id: option.id || `route-${routeIndex}`,
         provider: option.provider,
@@ -534,12 +710,14 @@ export function buildRouteInfoFromAlternative(
         tollFare: option.tollFareWon,
         taxiFare: option.taxiFareWon,
         transferCount: option.transferCount,
-        walkingDistanceMeters: option.walkMeters,
-        totalDistanceMeters: option.distanceMeters,
+        walkingDistanceMeters: isFiniteNumber(option.walkMeters) ? option.walkMeters + walkingDelta : undefined,
+        totalDistanceMeters: isFiniteNumber(option.distanceMeters) ? option.distanceMeters + walkingDelta : undefined,
         timeBasis: option.intercityJourney ? "anchored_journey" : hasProviderSchedule ? "provider_schedule" : "estimated",
         intercityJourney: option.intercityJourney,
-        providerTimeBasis: option.providerTimeBasis,
-        steps: buildRouteSteps(option, origin, destination),
+        providerTimeBasis: hasProviderSchedule && timetablePreview ? "timetable"
+            : bus ? "route_estimate" : option.providerTimeBasis,
+        ...(bus && { busPreviewObservation: { sourceUpdatedAt: bus.sourceUpdatedAt, targetArrivalAt: bus.targetArrivalAt } }),
+        steps: buildRouteSteps(option, origin, destination, hasProviderSchedule),
     };
 }
 
@@ -572,9 +750,9 @@ export function getRouteInfoFromRoute(
         travelMinutes?: number;
     }
 ): RouteInfo | undefined {
-    if (isRouteInfo(route)) return normalizeStoredTimingEvidence(route);
+    if (isRouteInfo(route)) return normalizeStoredRoute(route);
     const routeObject = route as Record<string, unknown> | undefined;
-    if (isRouteInfo(routeObject?.routeInfo)) return normalizeStoredTimingEvidence(routeObject.routeInfo);
+    if (isRouteInfo(routeObject?.routeInfo)) return normalizeStoredRoute(routeObject.routeInfo);
 
     if (
         routeObject &&
@@ -615,8 +793,28 @@ export function getRouteInfoFromRoute(
     return undefined;
 }
 
-function normalizeStoredTimingEvidence(route: RouteInfo): RouteInfo {
-    // DB를 덮어쓰지 않고 읽기 경계에서 구버전 maasRP의 과도한 시간표 표기만 바로잡는다.
+/** Compares the route shown in a draft, independent of the candidate's ranking ID. */
+export function isSameScheduleDraftRoute(current: RouteInfo | undefined, next: RouteInfo | undefined): boolean {
+    return !!current && !!next &&
+        current.originName === next.originName &&
+        current.destinationName === next.destinationName &&
+        current.totalDurationMinutes === next.totalDurationMinutes &&
+        current.fare === next.fare &&
+        current.departureTime === next.departureTime &&
+        JSON.stringify(current.steps) === JSON.stringify(next.steps);
+}
+
+function normalizeStoredRoute(route: RouteInfo): RouteInfo {
+    const steps = route.steps.map(step => {
+        if (step.type !== "SUBWAY") return step;
+        const lineName = findTransitRideLineLabel({ lineName: step.lineName, label: step.badgeText });
+        if (!lineName) return step;
+        const lineColor = getSubwayLineColor(lineName, step.lineColor);
+        if (step.lineName === lineName && step.badgeText === lineName && step.lineColor === lineColor) return step;
+        return { ...step, lineName, lineColor, badgeText: lineName };
+    });
+    if (steps.some((step, index) => step !== route.steps[index])) route = { ...route, steps };
+    // DB를 덮어쓰지 않고 읽기 경계에서 구버전 maasRP의 과도한 시간표 표기를 바로잡는다.
     if (route.provider === "odsay" && route.timeBasis === "provider_schedule" && route.providerTimeBasis !== "timetable") {
         return { ...route, timeBasis: "estimated", providerTimeBasis: "route_estimate" };
     }

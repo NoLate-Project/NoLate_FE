@@ -159,7 +159,7 @@ function validateRouteRequest(
 }
 
 export function getRouteQuality(option: RouteAlternativeOption): RouteQuality {
-    if (option.transitServiceState === "unknown") {
+    if (option.transitServiceState === "unknown" && !option.odsayTimetablePreview && !option.odsayBusPreview) {
         return {
             reliability: "provider_estimate",
             label: "운행 시간 확인 필요",
@@ -354,6 +354,10 @@ export async function getRouteAlternativeOptions(
         }
         return renderableOptions
             .map((option) => attachRouteQuality(option, origin, destination));
+    }).catch((error: unknown) => {
+        // maasRP returns the documented no-data code even when the HTTP request succeeds.
+        if (mode === "TRANSIT" && error instanceof OdsayApiError && error.providerCode === "400") return [];
+        throw error;
     });
 
     const resolveTransitServiceState = async (

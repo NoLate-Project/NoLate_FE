@@ -3,6 +3,7 @@ jest.mock("../src/api/env", () => ({
 }));
 
 import { parseTransitOptionsFromOdsay } from "../src/modules/map/odsayApi";
+import { buildRouteInfoFromAlternative } from "../src/modules/schedule/routeInfo";
 
 type ParsedCoord = { lat: number; lng: number };
 
@@ -25,6 +26,63 @@ function pathLengthMeters(coords: ParsedCoord[] | undefined): number {
 }
 
 describe("ODsay multimodal transit parser", () => {
+    test("keeps verified walking seconds through the bus route's stored estimate", () => {
+        const link = {
+            rseq: 1, LENGTH: 173, DURATION: 157,
+            xyInfos: [{ x: 127.027619, y: 37.497952 }, { x: 127.029322, y: 37.498243 }],
+        };
+        const parse = (walkLink: Record<string, unknown>, endDateTime = "202611152235") =>
+            parseTransitOptionsFromOdsay({ result: { paths: [{
+                pathType: 2, totalTime: 15, startDateTime: "202611152220", endDateTime,
+                rps: [
+                    { trafficType: 3, duration: 3, distance: 173, routes: [walkLink] },
+                    { trafficType: 2, duration: 6, lane: [{ busNo: "360", busID: 1440 }] },
+                    { trafficType: 3, duration: 6 },
+                ],
+            }] } })[0];
+        const option = parse(link);
+        expect(option).toMatchObject({ minutes: 15, totalDurationSeconds: 877, providerTimeBasis: "route_estimate" });
+        expect(option.transitLegs?.[0]?.durationSeconds).toBe(157);
+        const info = buildRouteInfoFromAlternative({ ...option, mode: "TRANSIT" }, undefined, undefined);
+        expect(info).toMatchObject({ totalDurationSeconds: 877, timeBasis: "estimated",
+            departureTime: "2026-11-15T13:20:00.000Z", arrivalTime: "2026-11-15T13:34:37.000Z" });
+        expect(info.steps.find(step => step.type === "WALK")?.durationSeconds).toBe(157);
+
+        for (const invalid of [
+            { ...link, crossXYInfos: link.xyInfos },
+            { ...link, DURATION: null },
+            { ...link, xyInfos: [{ x: null, y: 37.497952 }, link.xyInfos[1]] },
+            { ...link, LENGTH: 172 },
+        ]) {
+            const unverified = parse(invalid);
+            expect(unverified.transitLegs?.[0]?.durationSeconds).toBeUndefined();
+            expect(unverified.totalDurationSeconds).toBeUndefined();
+        }
+        expect(parse(link, "202611152234").totalDurationSeconds).toBeUndefined();
+    });
+
+    test("uses the next bus lane when ODsay labels the first as weekday only on Sunday", () => {
+        const restricted = { busNo: "8146(새벽맞춤버스.평일운행)", busID: 2822539 };
+        const normal = { busNo: "360", busID: 1440 };
+        const parse = (start: string, end: string, lane: Array<typeof restricted>) =>
+            parseTransitOptionsFromOdsay({ result: { paths: [{ pathType: 2, totalTime: 6,
+                startDateTime: start, endDateTime: end,
+                rps: [{ trafficType: 2, duration: 6, startDateTime: start, endDateTime: end, lane }],
+            }] } });
+        expect(parse("202611152223", "202611152229", [restricted, normal])[0]?.transitLegs?.[0])
+            .toMatchObject({ lineName: "360", providerRouteId: "1440" });
+        expect(parse("202611152223", "202611152229", [restricted, normal])[0]?.transitLegs?.[0]?.serviceAvailable)
+            .toBeUndefined();
+        expect(parse("202611152223", "202611152229", [restricted])).toEqual([]);
+        for (const [start, end] of [
+            ["202611150130", "202611150136"],
+            ["202611152357", "202611160003"],
+            ["202611160450", "202611160456"],
+        ]) {
+            expect(parse(start, end, [restricted, normal])[0]?.transitLegs?.[0]?.providerRouteId).toBe("2822539");
+        }
+    });
+
     test("keeps provider estimated times, exact geometry, stop IDs, and fast-transfer position", () => {
         const result = parseTransitOptionsFromOdsay({
             result: {
@@ -148,6 +206,28 @@ describe("ODsay multimodal transit parser", () => {
         // maasRP 시각/경로가 존재해도 차량 운행 여부나 확정 시간표로 승격하지 않는다.
         expect(result[0].transitLegs?.[1].serviceAvailable).toBeUndefined();
         expect(result[0].transitLegs?.[3].serviceAvailable).toBeUndefined();
+    });
+
+    test("preserves stations without certifying a subway graph with a missing point", () => {
+        const [option] = parseTransitOptionsFromOdsay({
+            result: { paths: [{ pathType: 2, totalTime: 16, rps: [{
+                trafficType: 1,
+                duration: 16,
+                graph: "126.972713 37.553514|missing-point|126.974396 37.522427|126.981668 37.476798",
+                passStopList: { stations: [
+                    { index: 0, stationName: "서울역", x: 126.972713, y: 37.553514 },
+                    { index: 1, stationName: "이촌역", x: 126.974396, y: 37.522427 },
+                    { index: 2, stationName: "사당역", x: 126.981668, y: 37.476798 },
+                ] },
+            }] }] },
+        });
+        const leg = option.transitLegs?.[0];
+        expect(leg).toMatchObject({
+            pathGeometrySource: "PASS_STOP_LIST",
+            pathCoordsIsExact: false,
+            navigationEvidence: { geometryInputComplete: false },
+        });
+        expect(leg?.passStops?.map(stop => stop.name)).toEqual(["서울역", "이촌역", "사당역"]);
     });
 
     test("persists ODsay express markers and classifies non-express named subway legs as local", () => {

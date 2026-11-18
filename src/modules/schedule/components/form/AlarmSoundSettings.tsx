@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Pressable, Text, View } from "react-native";
+import { AccessibilityInfo, AppState, Pressable, Text, View } from "react-native";
 import { getNativeNoLateAlarmSoundPreference, setNativeNoLateAlarmSoundPreference } from "../../../notification/departureAlarm";
 import type { NoLateCustomAlarmAudioSession } from "../../../notification/customAlarmAudio";
 import {
@@ -12,16 +12,20 @@ import AlarmSoundPickerSheet from "./AlarmSoundPickerSheet";
 import styles from "./NotificationSettingsCard.styles";
 import { getNotificationSettingsPalette } from "./notificationSettingsPalette";
 
+const appliedSoundListeners = new Set<(soundId: NoLateAlarmSoundId) => void>();
+
 export default function AlarmSoundSettings({ available, flat, disabled = false }: {
     available: boolean; flat: boolean; disabled?: boolean;
 }) {
     const { colors, mode } = useTheme();
     const { accentBlue, subtleAccentBackground } = getNotificationSettingsPalette({ dark: mode === "dark", surface: colors.surface });
-    const [selectedSoundId, setSelectedSoundId] = useState<NoLateAlarmSoundId>(DEFAULT_NOLATE_ALARM_SOUND_ID);
+    const [selectedSoundId, setSelectedSoundId] = useState<NoLateAlarmSoundId | null>(null);
     const [draftSoundId, setDraftSoundId] = useState<NoLateAlarmSoundId | null>(null);
     const [soundPickerError, setSoundPickerError] = useState<string | null>(null);
     const [previewingSoundId, setPreviewingSoundId] = useState<NoLateAlarmSoundId | null>(null);
     const [soundPickerVisible, setSoundPickerVisible] = useState(false);
+    const triggerRef = useRef<React.ComponentRef<typeof Pressable>>(null);
+    const restoreTriggerFocusRef = useRef(false);
     const mountedRef = useRef(false);
     const soundPreferenceRequestRef = useRef(0);
     const soundPreviewRequestRef = useRef(0);
@@ -30,19 +34,17 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
     const appStateActiveRef = useRef(true);
     const soundPreviewSessionRef = useRef<NoLateCustomAlarmAudioSession | null>(null);
     const soundPreviewingIdRef = useRef<NoLateAlarmSoundId | null>(null);
-    const soundPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [pendingAction, setPendingAction] = useState<"soundPreview" | "soundPreference" | null>(null);
 
     const stopSoundPreview = useCallback(async () => {
         soundPreviewRequestRef.current += 1;
-        if (soundPreviewTimerRef.current) {
-            clearTimeout(soundPreviewTimerRef.current);
-            soundPreviewTimerRef.current = null;
-        }
         const session = soundPreviewSessionRef.current;
         soundPreviewSessionRef.current = null;
         soundPreviewingIdRef.current = null;
-        if (mountedRef.current) setPreviewingSoundId(null);
+        if (mountedRef.current) {
+            setPreviewingSoundId(null);
+            setPendingAction(current => current === "soundPreview" ? null : current);
+        }
         await session?.stop().catch(() => undefined);
     }, []);
 
@@ -54,8 +56,6 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
             soundPickerVisibleRef.current = false;
             soundPreferenceRequestRef.current += 1;
             soundPreviewRequestRef.current += 1;
-            if (soundPreviewTimerRef.current) clearTimeout(soundPreviewTimerRef.current);
-            soundPreviewTimerRef.current = null;
             const session = soundPreviewSessionRef.current;
             soundPreviewSessionRef.current = null;
             soundPreviewingIdRef.current = null;
@@ -86,6 +86,12 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
 
     useEffect(() => {
         if (!available) return undefined;
+        let hasReceivedAppliedSound = false;
+        const updateAppliedSound = (soundId: NoLateAlarmSoundId) => {
+            hasReceivedAppliedSound = true;
+            setSelectedSoundId(soundId);
+        };
+        appliedSoundListeners.add(updateAppliedSound);
         const requestId = soundPreferenceRequestRef.current + 1;
         soundPreferenceRequestRef.current = requestId;
 
@@ -95,7 +101,7 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
                 ? getNativeNoLateAlarmSoundPreference().catch(() => undefined)
                 : Promise.resolve(undefined),
         ]).then(([localSoundId, nativeSoundId]) => {
-            if (!mountedRef.current || requestId !== soundPreferenceRequestRef.current) return;
+            if (!mountedRef.current || hasReceivedAppliedSound || requestId !== soundPreferenceRequestRef.current) return;
             const resolvedSoundId = nativeSoundId ?? localSoundId;
             setSelectedSoundId(resolvedSoundId);
             if (nativeSoundId && nativeSoundId !== localSoundId) {
@@ -106,6 +112,7 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
         });
 
         return () => {
+            appliedSoundListeners.delete(updateAppliedSound);
             soundPreferenceRequestRef.current += 1;
         };
     }, [available]);
@@ -116,16 +123,21 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
             return;
         }
 
-        await stopSoundPreview();
-        if (!appStateActiveRef.current || !soundPickerVisibleRef.current || applyingSoundRef.current) return;
+        const stopping = stopSoundPreview();
+        const requestId = soundPreviewRequestRef.current;
+        await stopping;
+        if (requestId !== soundPreviewRequestRef.current || !appStateActiveRef.current ||
+            !soundPickerVisibleRef.current || applyingSoundRef.current) return;
 
-        const requestId = soundPreviewRequestRef.current + 1;
-        soundPreviewRequestRef.current = requestId;
         setPendingAction("soundPreview");
         setSoundPickerError(null);
         try {
             const { startNoLateCustomAlarmAudio } = require("../../../notification/customAlarmAudio") as typeof import("../../../notification/customAlarmAudio");
-            const session = await startNoLateCustomAlarmAudio(soundId);
+            const session = await startNoLateCustomAlarmAudio(soundId, failed => {
+                if (!mountedRef.current || requestId !== soundPreviewRequestRef.current) return;
+                if (failed) setSoundPickerError("소리를 재생하지 못했어요.");
+                void stopSoundPreview();
+            });
             if (
                 !mountedRef.current ||
                 requestId !== soundPreviewRequestRef.current ||
@@ -138,31 +150,36 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
             soundPreviewSessionRef.current = session;
             soundPreviewingIdRef.current = soundId;
             setPreviewingSoundId(soundId);
-            soundPreviewTimerRef.current = setTimeout(() => {
-                stopSoundPreview().catch(() => undefined);
-            }, 10_000);
         } catch {
             if (!mountedRef.current || requestId !== soundPreviewRequestRef.current) return;
             setSoundPickerError("소리를 재생하지 못했어요.");
         } finally {
-            if (mountedRef.current) {
+            if (mountedRef.current && requestId === soundPreviewRequestRef.current) {
                 setPendingAction(current => (current === "soundPreview" ? null : current));
             }
         }
     }, [stopSoundPreview]);
 
     const openSoundPicker = useCallback(() => {
+        if (!selectedSoundId) return;
         setDraftSoundId(null);
         setSoundPickerError(null);
         soundPickerVisibleRef.current = true;
+        restoreTriggerFocusRef.current = true;
         setSoundPickerVisible(true);
-    }, []);
+    }, [selectedSoundId]);
 
     const dismissSoundPicker = useCallback(() => {
         soundPickerVisibleRef.current = false;
         setSoundPickerVisible(false);
         stopSoundPreview().catch(() => undefined);
     }, [stopSoundPreview]);
+
+    const focusSoundTrigger = useCallback(() => {
+        if (!restoreTriggerFocusRef.current || soundPickerVisibleRef.current || !triggerRef.current) return;
+        restoreTriggerFocusRef.current = false;
+        AccessibilityInfo.sendAccessibilityEvent?.(triggerRef.current, "focus");
+    }, []);
 
     const closeSoundPicker = useCallback(() => {
         if (!applyingSoundRef.current) dismissSoundPicker();
@@ -187,9 +204,9 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
                 : false;
             if (!nativeSaved) throw new Error("NATIVE_SOUND_PREFERENCE_UNAVAILABLE");
             await setNoLateAlarmSoundPreference(draftSoundId).catch(() => undefined);
-            if (!mountedRef.current || requestId !== soundPreferenceRequestRef.current) return;
-            setSelectedSoundId(draftSoundId);
-            dismissSoundPicker();
+            const shouldDismiss = mountedRef.current && requestId === soundPreferenceRequestRef.current;
+            appliedSoundListeners.forEach(update => update(draftSoundId));
+            if (shouldDismiss) dismissSoundPicker();
         } catch {
             if (mountedRef.current && requestId === soundPreferenceRequestRef.current) {
                 setSoundPickerError("알람음을 바꾸지 못했어요. 다시 시도해 주세요.");
@@ -202,20 +219,26 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
         }
     }, [dismissSoundPicker, draftSoundId, selectedSoundId, stopSoundPreview]);
 
-    const selectedSound = getNoLateAlarmSound(selectedSoundId);
-    const soundPreviewDisabled = disabled || pendingAction !== null;
+    const selectedSound = selectedSoundId ? getNoLateAlarmSound(selectedSoundId) : null;
+    const soundSummary = selectedSound
+        ? `${selectedSound.label} · 무음일 때는 진동만${flat ? "" : " · 모든 출발 알람에 적용"}`
+        : "기본 알람음 확인 중";
+    const soundAccessibilityLabel = selectedSound
+        ? `소리 및 진동, 현재 ${selectedSound.label}${flat ? "" : ", 모든 출발 알람에 적용"}`
+        : `소리 및 진동, ${soundSummary}`;
+    const soundPreviewDisabled = disabled || !selectedSound || pendingAction !== null;
 
     return (
         <>
             {available ? (
                 <Pressable
+                    ref={triggerRef}
                     testID="notification-alarm-sound-row"
                     accessibilityRole="button"
-                    accessibilityLabel={flat
-                        ? `소리 및 진동, 현재 ${selectedSound.label}`
-                        : `소리 및 진동, 현재 ${selectedSound.label}, 모든 출발 알람에 적용`}
+                    accessibilityLabel={soundAccessibilityLabel}
                     accessibilityState={{
                         disabled: soundPreviewDisabled,
+                        busy: !selectedSound,
                     }}
                     disabled={soundPreviewDisabled}
                     onPress={openSoundPicker}
@@ -242,24 +265,23 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
                             소리 및 진동
                         </Text>
                         <Text style={[styles.flatTestDescription, { color: colors.textSecondary }]}>
-                            {flat
-                                ? `${selectedSound.label} · 무음일 때는 진동만`
-                                : `${selectedSound.label} · 무음일 때는 진동만 · 모든 출발 알람에 적용`}
+                            {soundSummary}
                         </Text>
                     </View>
-                    <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
+                    <Ionicons accessible={false} name="chevron-forward-outline" size={16} color={colors.textSecondary} />
                 </Pressable>
             ) : null}
             <AlarmSoundPickerSheet
                 visible={soundPickerVisible && available}
-                selectedSoundId={draftSoundId ?? selectedSoundId}
+                selectedSoundId={draftSoundId ?? selectedSoundId ?? DEFAULT_NOLATE_ALARM_SOUND_ID}
                 previewingSoundId={previewingSoundId}
                 applying={pendingAction === "soundPreference"}
                 previewLoading={pendingAction === "soundPreview"}
                 error={soundPickerError}
+                isDark={mode === "dark"}
                 accentColor={accentBlue}
-                backgroundColor={colors.background}
-                surfaceColor={mode === "dark" ? "#1C1C1E" : "#F6F6F8"}
+                backgroundColor={mode === "dark" ? "#1C1E24" : colors.background}
+                surfaceColor={mode === "dark" ? "#2B364B" : "#EDF4FF"}
                 borderColor={colors.inputBorder}
                 textPrimary={colors.textPrimary}
                 textSecondary={colors.textSecondary}
@@ -267,6 +289,7 @@ export default function AlarmSoundSettings({ available, flat, disabled = false }
                 onPreview={toggleSoundPreview}
                 onApply={applyAlarmSound}
                 onClose={closeSoundPicker}
+                onDismiss={focusSoundTrigger}
             />
         </>
     );

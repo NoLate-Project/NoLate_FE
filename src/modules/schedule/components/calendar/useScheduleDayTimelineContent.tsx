@@ -1,9 +1,10 @@
 import { createScheduleIndexStyles } from '../../../../routeSupport/schedule/index.styles';
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useRef, type ComponentProps, type ComponentRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ComponentRef } from 'react';
 import {
   AccessibilityInfo,
   Animated,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,13 +14,16 @@ import {
 } from 'react-native';
 import DayTimelineEventCard from './DayTimelineEventCard';
 import DayEventReturnHighlight from './DayEventReturnHighlight';
+import { TimelineOverlapButton, TimelineOverlapSheet, type TimelineOverlapSelection } from './TimelineOverlapSheet';
 import { getFloatingActionBarClearance } from '../shared/floatingActionBarLayout';
 import {
   DAY_MINUTES,
   DAY_TIMELINE_END_PADDING,
+  DAY_TIMELINE_EVENT_MAX_FONT_SCALE,
   DAY_TIMELINE_HOUR_HEIGHT,
   formatDayTimelineTimeRange,
   formatDayTimelineDeparture,
+  getTimelineDisplayEntries,
 } from '../../dayTimelineLayout';
 import { addDaysToYmd } from '../../hooks/scheduleIndexControllerModel';
 import { CALENDAR_PRIMARY_PILL_LAYOUT } from '../../calendarMotion';
@@ -126,6 +130,7 @@ export function useScheduleDayTimelineContent(
     getScheduleSwipeActions,
     onRequestScheduleActions,
     onPressRetry,
+    reduceMotionEnabled,
     todayKey,
   } = props;
   const {
@@ -165,6 +170,32 @@ export function useScheduleDayTimelineContent(
     navigateToDayFromWeekStrip,
   } = controller;
   const { fontScale, width } = useWindowDimensions();
+  const [overlapSelection, setOverlapSelection] = useState<TimelineOverlapSelection | null>(null);
+  const [overlapVisible, setOverlapVisible] = useState(false);
+  const pendingOverlapClose = useRef<{ id?: string } | null>(null);
+  const openOverlap = useCallback((selection: TimelineOverlapSelection) => {
+    pendingOverlapClose.current = null;
+    setOverlapSelection(selection);
+    setOverlapVisible(true);
+  }, []);
+  const closeOverlap = (id?: string) => {
+    if (pendingOverlapClose.current || !overlapSelection) return;
+    pendingOverlapClose.current = { id };
+    setOverlapVisible(false);
+  };
+  const finishOverlapClose = useCallback(() => {
+    const pending = pendingOverlapClose.current;
+    if (!pending || !overlapSelection) return;
+    pendingOverlapClose.current = null;
+    setOverlapSelection(null);
+    if (pending.id) onOpenSchedule(pending.id, overlapSelection.restoreFocus);
+    else overlapSelection.restoreFocus();
+  }, [onOpenSchedule, overlapSelection]);
+  useEffect(() => {
+    if (Platform.OS === 'ios' || overlapVisible || !pendingOverlapClose.current) return;
+    const frame = requestAnimationFrame(finishOverlapClose);
+    return () => cancelAnimationFrame(frame);
+  }, [finishOverlapClose, overlapVisible]);
   const largeAllDayText = fontScale > 1.35;
   const allDayEventMaxWidth = largeAllDayText ? Math.min(300, width - 112) : 180;
   const singleDayTimeline = useMemo(() => {
@@ -229,6 +260,7 @@ export function useScheduleDayTimelineContent(
           </Pressable>
         ) : null}
         <View style={styles.dayTimelineCanvas}>
+          <View pointerEvents="none" style={[styles.dayTimelineGutterRule, { backgroundColor: colors.border }]} />
           {Array.from({ length: 25 }, (_, hour) => (
             <View
               key={hour}
@@ -253,8 +285,12 @@ export function useScheduleDayTimelineContent(
           ))}
 
           <View style={styles.dayEventLayer}>
-            {positionedEvents.map(
-              ({ item, startMinute, height, lane, laneCount }) => {
+            {getTimelineDisplayEntries(positionedEvents, width - DAY_TIMELINE_GUTTER).map(
+              entry => {
+                if ('events' in entry) return (
+                  <TimelineOverlapButton key={entry.events[0].item.id} overlap={entry} day={selectedDay} onOpen={openOverlap} />
+                );
+                const { item, startMinute, height, lane, laneCount } = entry;
                 const top = (startMinute / 60) * DAY_TIMELINE_HOUR_HEIGHT;
                 const laneWidth = 100 / laneCount;
                 const laneInset = laneCount > 1 ? 0.5 : 0;
@@ -324,11 +360,14 @@ export function useScheduleDayTimelineContent(
     initialTimelineOffset,
     getScheduleSwipeActions,
     onOpenSchedule,
+    openOverlap,
     onRequestScheduleActions,
     onPressRetry,
     positionedEvents,
     returnHighlight,
+    selectedDay,
     singleDayTimelineRef,
+    width,
   ]);
 
   const multiDayTimeline = useMemo(() => {
@@ -469,8 +508,12 @@ export function useScheduleDayTimelineContent(
                     />
                   </Animated.View>
                 )}
-                {column.positionedEvents.map(
-                  ({ item, startMinute, height, lane, laneCount }) => {
+                {getTimelineDisplayEntries(column.positionedEvents, (width - DAY_TIMELINE_GUTTER) / multiDayColumns.length).map(
+                  entry => {
+                    if ('events' in entry) return (
+                      <TimelineOverlapButton key={entry.events[0].item.id} overlap={entry} day={column.day.dateString} compact onOpen={openOverlap} />
+                    );
+                    const { item, startMinute, height, lane, laneCount } = entry;
                     const color = item.category?.color ?? '#8e8e93';
                     const top = (startMinute / 60) * DAY_TIMELINE_HOUR_HEIGHT;
                     const laneWidth = 100 / laneCount;
@@ -478,9 +521,11 @@ export function useScheduleDayTimelineContent(
                     const continuesFromPreviousDay = startMinute === 0 &&
                       new Date(item.startAt).getTime() < new Date(`${column.day.dateString}T00:00:00`).getTime();
                     const compactTime = continuesFromPreviousDay ? '자정부터' : formatDayTimelineDeparture(item.startAt);
-                    const textHeight = Math.ceil(14 * Math.min(fontScale, 1.5));
+                    const eventFontScale = Math.min(fontScale, DAY_TIMELINE_EVENT_MAX_FONT_SCALE);
+                    const textHeight = Math.ceil(14 * eventFontScale);
                     const showsTime = height >= textHeight * 2 + 10;
                     const showsFullRange = showsTime && laneCount === 1 && width >= 360 && fontScale <= 1.3 && !continuesFromPreviousDay;
+                    const showsInlineTime = !showsTime && laneCount === 1;
 
                     return (
                       <TimelineScheduleButton
@@ -518,18 +563,29 @@ export function useScheduleDayTimelineContent(
                         {returnHighlight?.id === item.id && (
                           <DayEventReturnHighlight opacity={returnHighlight.opacity} color={colors.textPrimary} />
                         )}
-                        <Text
-                          maxFontSizeMultiplier={1.5}
-                          numberOfLines={1}
-                          style={[
-                            styles.multiDayEventTitle,
-                            { color: colors.textPrimary },
-                          ]}
-                        >
-                          {item.title}
-                        </Text>
+                        <View style={styles.multiDayEventHeading}>
+                          <Text
+                            maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE}
+                            numberOfLines={1}
+                            style={[
+                              styles.multiDayEventTitle,
+                              { color: colors.textPrimary },
+                            ]}
+                          >
+                            {item.title}
+                          </Text>
+                          {showsInlineTime && (
+                            <Text
+                              maxFontSizeMultiplier={1.35}
+                              numberOfLines={1}
+                              style={[styles.multiDayEventTime, styles.multiDayInlineTime, { color: colors.textSecondary }]}
+                            >
+                              {compactTime}
+                            </Text>
+                          )}
+                        </View>
                         {showsTime && (
-                          <Text maxFontSizeMultiplier={1.5} numberOfLines={1}
+                          <Text maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE} numberOfLines={1}
                             style={[styles.multiDayEventTime, { color: colors.textSecondary }]}>
                             {showsFullRange ? timeRange : compactTime}
                           </Text>
@@ -565,6 +621,7 @@ export function useScheduleDayTimelineContent(
     multiDayColumns,
     needsMultiDayContent,
     onOpenSchedule,
+    openOverlap,
     onRequestScheduleActions,
     onPressRetry,
     returnHighlight,
@@ -789,6 +846,15 @@ export function useScheduleDayTimelineContent(
     </View>
   );
 
+  const emptyTimelineNotice = !largeAllDayText && !loading && !inlineError ? (
+    <Text
+      testID="day-timeline-empty-notice"
+      style={[styles.dayTimelineEmptyText, { color: colors.textSecondary, borderBottomColor: colors.border }]}
+    >
+      이 날짜에 등록된 일정이 없어요
+    </Text>
+  ) : null;
+
   const singleDayPanelContent = (
     <View
       style={[
@@ -810,6 +876,7 @@ export function useScheduleDayTimelineContent(
         ]}
       >
         {allDayItems.length > 0 ? singleDayAllDaySection : null}
+        {allDayItems.length === 0 && positionedEvents.length === 0 ? emptyTimelineNotice : null}
         {singleDayTimeline}
       </Animated.View>
     </View>
@@ -853,6 +920,9 @@ export function useScheduleDayTimelineContent(
           ) : null}
 
           {currentAllDaySection}
+          {dayViewMode === 'multiDay' && multiDayColumns.every(column => column.items.length === 0)
+            ? emptyTimelineNotice
+            : null}
 
           <Animated.View
             style={{
@@ -896,5 +966,16 @@ export function useScheduleDayTimelineContent(
   return {
     nonSingleDayPanelContent,
     currentDayPanelContent,
+    overlapSheet: (
+      <TimelineOverlapSheet
+        selection={overlapSelection}
+        visible={overlapVisible}
+        bottomInset={bottomInset}
+        reduceMotion={reduceMotionEnabled}
+        onClose={() => closeOverlap()}
+        onSelect={closeOverlap}
+        onDismiss={finishOverlapClose}
+      />
+    ),
   };
 }

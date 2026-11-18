@@ -24,6 +24,7 @@ import {
 import { getScheduleCreationCalendarId, type CalendarScope } from '../calendarScope';
 import type { QuickScheduleMorphPresenter } from '../components/form/QuickScheduleModal';
 import type { ScheduleAddMorphPresenter } from '../components/form/ScheduleAddModal';
+import { scheduleFormCategoryManagerRoute } from '../components/form/useCategoryManagementReturn';
 import { createScheduleForAddItem } from '../scheduleCreateMutation';
 import { useScheduleStore } from '../store';
 import type { ScheduleItem, ScheduleParseResult } from '../types';
@@ -493,13 +494,19 @@ export function useScheduleIndexToolbarActions({
     });
   };
 
+  /** 관리 화면을 폼 위에 쌓아 입력값과 스크롤 위치를 유지한다. */
+  const openFormCategoryManager = (calendarId?: number | null) => {
+    const scope = calendarId === undefined ? activeCalendarScope : calendarId;
+    const calendar = scheduleCalendars.find(candidate => candidate.id === scope);
+    router.push(scheduleFormCategoryManagerRoute(typeof scope === 'number' ? scope : null, calendar?.title));
+  };
+
   /** 현재 툴바를 닫은 뒤 공유 캘린더 관리 화면으로 이동한다. */
   const openSharedCalendarManager = () => {
     runToolbarAction(() => {
-      runWithTransitionShell(
-        { route: '/schedule/calendars', title: '공유 캘린더 관리' },
-        () => router.push('/schedule/calendars'),
-      );
+      // Category management is a pushed route. Keep the manager in that same
+      // stack so returning reuses its scroll view and per-calendar drafts.
+      router.push('/schedule/calendars');
     });
   };
 
@@ -555,6 +562,7 @@ export function useScheduleIndexToolbarActions({
     handleQuickAnalyze,
     openBlankSchedule,
     openCategoryManager,
+    openFormCategoryManager,
     openQuickSchedule,
     openScheduleFromSearch,
     openSearchToolbar,

@@ -18,7 +18,6 @@ import {
 } from '../../../api/scheduleCalendars';
 import { getShareInbox } from '../../../api/scheduleSharing';
 import { getAppNotificationUnreadCount } from '../../../api/notification';
-import { refreshCalendarScheduleCache } from '../calendarScheduleCache';
 import {
   getCalendarYearScheduleFetchRanges,
   mergeCalendarYearScheduleItems,
@@ -330,7 +329,7 @@ export function useScheduleIndexAuxiliaryData({
       ),
     [activeCalendarScope, allItemsArray],
   );
-  /** 지정 연도의 월별 일정 범위를 병렬 조회하고 성공한 스냅샷만 연간 보기 캐시에 병합한다. */
+  /** 반기별 응답은 월간 캐시 용량과 별개로 연간 화면에 보관한다. */
   const loadYearOverviewSchedules = useCallback((targetYear: number) => {
     if (!Number.isInteger(targetYear)) return;
     if (
@@ -342,12 +341,8 @@ export function useScheduleIndexAuxiliaryData({
     const loadSession = yearOverviewLoadSessionRef.current;
     let request: Promise<void>;
     request = Promise.allSettled(
-      getCalendarYearScheduleFetchRanges(targetYear).map(range =>
-        refreshCalendarScheduleCache(
-          range.startAt,
-          range.endAt,
-          getCalendarSchedules,
-        ),
+      getCalendarYearScheduleFetchRanges(targetYear).map(({ startAt, endAt }) =>
+        getCalendarSchedules(startAt, endAt),
       ),
     )
       .then(results => {
@@ -362,7 +357,7 @@ export function useScheduleIndexAuxiliaryData({
         setYearOverviewItemsByYear(current => ({
           ...current,
           [targetYear]: mergeCalendarYearScheduleItems(
-            snapshots.flatMap(snapshot => snapshot.items),
+            snapshots.flat(),
           ),
         }));
       })
@@ -445,6 +440,7 @@ export function useScheduleIndexAuxiliaryData({
     activeCalendarScope,
   )}:${normalizedSearchKeyword.toLowerCase()}`;
   const searchKeywordLength = Array.from(normalizedSearchKeyword).length;
+  const currentSearchKey = `${normalizedSearchCacheKey}:${searchInvalidationKey}`;
   const displayedSearchKeyRef = useRef<string | null>(null);
   const [settledSearchKey, setSettledSearchKey] = useState<string | null>(null);
   useEffect(() => {
@@ -477,7 +473,7 @@ export function useScheduleIndexAuxiliaryData({
       setSearchResults(cached.items);
       setSearchLoading(false);
       setSearchError(null);
-      setSettledSearchKey(normalizedSearchCacheKey);
+      setSettledSearchKey(currentSearchKey);
       return undefined;
     }
 
@@ -493,6 +489,7 @@ export function useScheduleIndexAuxiliaryData({
         {
           keyword: normalizedSearchKeyword,
           limit: SEARCH_RESULT_LIMIT,
+          calendarScope: activeCalendarScope === 'all' ? undefined : `${activeCalendarScope}`,
         },
         abortController.signal,
       )
@@ -523,7 +520,7 @@ export function useScheduleIndexAuxiliaryData({
           }
           setSearchResults(visibleItems);
           displayedSearchKeyRef.current = normalizedSearchCacheKey;
-          setSettledSearchKey(normalizedSearchCacheKey);
+          setSettledSearchKey(currentSearchKey);
         })
         .catch(error => {
           if (
@@ -534,7 +531,7 @@ export function useScheduleIndexAuxiliaryData({
           if (!keepCachedResults) {
             setSearchResults([]);
             setSearchError(getErrorMessage(error));
-            setSettledSearchKey(normalizedSearchCacheKey);
+            setSettledSearchKey(currentSearchKey);
           }
         })
         .finally(() => {
@@ -558,6 +555,7 @@ export function useScheduleIndexAuxiliaryData({
     };
   }, [
     isFocused,
+    currentSearchKey,
     normalizedSearchCacheKey,
     normalizedSearchKeyword,
     activeCalendarScope,
@@ -585,7 +583,7 @@ export function useScheduleIndexAuxiliaryData({
     routeSetupItems,
     searchKeywordLength,
     searchAwaitingCurrentQuery: searchKeywordLength >= SEARCH_MIN_QUERY_LENGTH
-      && settledSearchKey !== normalizedSearchCacheKey,
+      && settledSearchKey !== currentSearchKey,
     writableCategories,
     yearOverviewItems,
   };

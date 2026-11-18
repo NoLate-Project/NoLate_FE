@@ -212,7 +212,7 @@ export async function saveFavoriteDepartureFavorite(
     if (!favorite.id) {
         throw new Error("이 장소를 기본주소로 바꾸지 못했어요. 다시 선택해 주세요.");
     }
-    return persistFavoriteDeparturePlace(favorite, favorite.id);
+    return persistFavoriteDeparturePlace(favorite, favorite.id, false);
 }
 
 /**

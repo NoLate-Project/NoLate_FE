@@ -269,6 +269,12 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
     useEffect(() => {
         if (isReady || runtimeErrorMessage || !appKey) return;
         const timeoutId = setTimeout(() => {
+            // First iOS SDK startup can stall without either a ready or an error callback.
+            // Recreate just the native view so the surrounding route and camera data stay in place.
+            if (Platform.OS === "ios" && nativeRevision === 0) {
+                setNativeRevision(1);
+                return;
+            }
             setRuntimeErrorMessage(MAP_LOAD_ERROR_MESSAGE);
         }, MAP_INITIALIZATION_TIMEOUT_MS);
         return () => clearTimeout(timeoutId);

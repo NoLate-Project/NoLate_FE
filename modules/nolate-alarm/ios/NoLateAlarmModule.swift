@@ -60,6 +60,9 @@ private struct NoLateCancelAlarmCommand: Record {
 
   @Field
   var generation: Double = -1
+
+  @Field
+  var preserveTriggerAt: String?
 }
 
 private struct NoLateDepartureActionEventCommand: Record {
@@ -161,7 +164,8 @@ public final class NoLateAlarmModule: Module {
           alarmId: command.alarmId,
           logicalAlarmId: command.logicalAlarmId,
           scheduleId: command.scheduleId,
-          generation: command.generation
+          generation: command.generation,
+          preserveTriggerAt: command.preserveTriggerAt
         )
         return try await NoLateAlarmCoordinator.shared.cancel(validated)
       }

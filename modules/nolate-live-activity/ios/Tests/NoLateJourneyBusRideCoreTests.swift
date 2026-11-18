@@ -81,6 +81,54 @@ final class NoLateJourneyBusRideCoreTests: XCTestCase {
     XCTAssertFalse(ride.snapshot.boardingConfirmed)
     XCTAssertEqual(ride.snapshot.reason, "VEHICLE_ASSOCIATION_UNAVAILABLE")
   }
+  func testRemoteShapeLoopCanContinueOnlyTheAlreadyConfirmedVehicle() throws {
+    var (before, waiting) = try make(); candidate(&before, &waiting)
+    var ambiguous = vehicle(160, 1028)
+    ambiguous.shapeOccurrenceAmbiguous = true
+    step(&before, &waiting, 7, 160, 1028, vehicles: [ambiguous])
+    XCTAssertFalse(before.snapshot.boardingConfirmed)
+    XCTAssertEqual(before.snapshot.reason, "VEHICLE_ASSOCIATION_UNAVAILABLE")
+
+    var (confirmedRide, confirmedApproach) = try make(); confirmed(&confirmedRide, &confirmedApproach)
+    var same = vehicle(280, 1040)
+    same.shapeOccurrenceAmbiguous = true
+    step(&confirmedRide, &confirmedApproach, 10, 280, 1040, vehicles: [same])
+    XCTAssertTrue(confirmedRide.snapshot.boardingConfirmed)
+    XCTAssertEqual(confirmedRide.snapshot.phase, "RIDING")
+    XCTAssertEqual(confirmedRide.snapshot.lastConfirmedAt, 1040)
+  }
+  func testSameVehicleCanBeReconfirmedAfterShortProviderGapWithoutReusingOldPosition() throws {
+    var (ride, approach) = try make(); confirmed(&ride, &approach)
+    for i in 10...18 {
+      step(&ride, &approach, i, 240 + Double(i - 9) * 25,
+           1036 + Double(i - 9) * 4, vehicles: [])
+    }
+    XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    XCTAssertNil(ride.snapshot.alongRouteMeters)
+    XCTAssertEqual(ride.snapshot.lastConfirmedAt, 1036)
+    for i in 19...22 {
+      let meters = 240 + Double(i - 9) * 25
+      var same = vehicle(meters, 1036 + Double(i - 9) * 4)
+      same.shapeOccurrenceAmbiguous = true
+      step(&ride, &approach, i, meters, 1036 + Double(i - 9) * 4, vehicles: [same])
+      if i < 22 { XCTAssertFalse(ride.snapshot.boardingConfirmed) }
+    }
+    XCTAssertTrue(ride.snapshot.boardingConfirmed)
+    XCTAssertEqual(ride.snapshot.phase, "RIDING")
+    XCTAssertEqual(ride.snapshot.lastConfirmedAt, 1088)
+  }
+  func testDifferentVehicleCannotUseShortProviderGapToReplaceConfirmedRide() throws {
+    var (ride, approach) = try make(); confirmed(&ride, &approach)
+    step(&ride, &approach, 10, 265, 1040, vehicles: [])
+    step(&ride, &approach, 11, 290, 1044,
+         vehicles: [vehicle(290, 1044, id: "100000124")])
+    XCTAssertEqual(ride.snapshot.reason, "ASSOCIATED_VEHICLE_CHANGED")
+    XCTAssertNil(ride.snapshot.lastConfirmedAt)
+    var same = vehicle(315, 1048)
+    same.shapeOccurrenceAmbiguous = true
+    step(&ride, &approach, 12, 315, 1048, vehicles: [same])
+    XCTAssertFalse(ride.snapshot.boardingConfirmed)
+  }
   func testDepartureScopedVehicleCannotBecomeBoardingOrRidingEvidenceEvenAtSameCoordinate() throws {
     var (ride,approach)=try make();candidate(&ride,&approach)
     var departure=vehicle(160,1028);departure.metersPastAlighting=100
@@ -135,6 +183,7 @@ final class NoLateJourneyBusRideCoreTests: XCTestCase {
     step(&ride, &approach, 10, 280, 1040, vehicles: [vehicle(280, 1040, id: "100000124")])
     XCTAssertEqual(ride.snapshot.reason, "ASSOCIATED_VEHICLE_CHANGED")
     XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    XCTAssertNil(ride.snapshot.lastConfirmedAt)
   }
   func testTickOnlyExpiresAndNeverAdvancesPosition() throws {
     var (ride, approach) = try make(); confirmed(&ride, &approach)
@@ -145,6 +194,9 @@ final class NoLateJourneyBusRideCoreTests: XCTestCase {
     XCTAssertEqual(ride.snapshot.reason, "RIDING_EVIDENCE_STALE")
     XCTAssertNil(ride.snapshot.alongRouteMeters)
     XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    XCTAssertEqual(ride.snapshot.lastConfirmedAt, 1036)
+    ride.tick(now: 1126)
+    XCTAssertNil(ride.snapshot.lastConfirmedAt)
   }
   func testOutOfOrderAndDifferentIdentityDoNotMutateState() throws {
     var (ride, approach) = try make(); confirmed(&ride, &approach)

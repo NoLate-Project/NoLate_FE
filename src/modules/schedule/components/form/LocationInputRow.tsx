@@ -1,10 +1,11 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 import type { TravelMode } from "../../types";
 import { getTravelModeLabel } from "../../travelMode";
 import { formatRouteDuration, type RouteInfo } from "../../routeInfo";
+import { FORM_ACCENT } from "./scheduleAddModalModel";
 
 type Props = {
     originValue: string;
@@ -14,11 +15,14 @@ type Props = {
     routeInfo?: RouteInfo;
     onPress: () => void;
     onClear?: () => void;
+    routeButtonRef?: React.Ref<React.ComponentRef<typeof Pressable>>;
+    highlightOpacity?: Animated.Value;
+    variant?: "create" | "edit";
     wrapTitle?: boolean;
     footer?: React.ReactNode;
 };
 
-// 일정 폼에서 이동 경로 입력 상태를 한 줄 카드로 보여준다.
+// 일정 폼의 이동 경로와 예상 소요 시간을 같은 카드에 표시한다.
 export default function LocationInputRow({
     originValue,
     destinationValue,
@@ -27,12 +31,18 @@ export default function LocationInputRow({
     routeInfo,
     onPress,
     onClear,
+    routeButtonRef,
+    highlightOpacity,
+    variant = "create",
     wrapTitle = false,
     footer,
 }: Props) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
 
     const hasRoute = !!routeInfo || !!originValue || !!destinationValue;
+    const showEmptyRouteAccent = !hasRoute && !wrapTitle;
+    const isSavedRouteInEdit = !!routeInfo && variant === "edit";
+    const accent = mode === "dark" ? "#4B9DFF" : FORM_ACCENT;
     const routeText =
         routeInfo
             ? `${routeInfo.originName} → ${routeInfo.destinationName}`
@@ -53,11 +63,25 @@ export default function LocationInputRow({
                 testID="location-input-card"
                 style={[
                     styles.card,
-                    { borderColor: colors.border, backgroundColor: colors.surface2 },
+                    {
+                        borderColor: isSavedRouteInEdit ? (mode === "dark" ? "#34465E" : "#D8E5F8") : colors.border,
+                        backgroundColor: isSavedRouteInEdit ? colors.surface : colors.surface2,
+                    },
                 ]}
             >
+                {highlightOpacity && (
+                    <Animated.View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFill,
+                            variant === "edit" ? styles.highlightBorder : styles.highlightFill,
+                            { opacity: highlightOpacity },
+                        ]}
+                    />
+                )}
                 <View style={styles.contentRow}>
                     <Pressable
+                        ref={routeButtonRef}
                         testID="location-input-pressable"
                         accessibilityRole="button"
                         accessibilityLabel={hasRoute ? `이동 경로 수정, ${routeText}` : "출발지와 도착지 추가"}
@@ -68,11 +92,14 @@ export default function LocationInputRow({
                             hasRoute && onClear
                                 ? styles.routeButtonWithClear
                                 : styles.routeButtonWithoutClear,
-                            pressed && { backgroundColor: colors.surface },
+                            pressed && { backgroundColor: isSavedRouteInEdit ? colors.surface2 : colors.surface },
                         ]}
                     >
+                        {(routeInfo || showEmptyRouteAccent) && (
+                            <Ionicons accessible={false} name="navigate-outline" size={16} color={accent} />
+                        )}
                         <View style={styles.textGroup}>
-                            <Text numberOfLines={wrapTitle ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.routeTitle, { color: colors.textPrimary }]}>
+                            <Text numberOfLines={wrapTitle ? undefined : 2} lineBreakStrategyIOS="hangul-word" style={[styles.routeTitle, { color: colors.textPrimary }]}>
                                 {routeText}
                             </Text>
                             {hasRoute ? (
@@ -85,12 +112,12 @@ export default function LocationInputRow({
                                 </Text>
                             )}
                         </View>
-                        <View style={styles.chevronIcon}>
+                        <View style={!hasRoute && !showEmptyRouteAccent && styles.chevronIcon}>
                             <Ionicons
                                 accessible={false}
-                                name="chevron-forward-outline"
+                                name={hasRoute ? "pencil-outline" : "chevron-forward-outline"}
                                 size={16}
-                                color={colors.textSecondary}
+                                color={hasRoute || showEmptyRouteAccent ? accent : colors.textSecondary}
                             />
                         </View>
                     </Pressable>
@@ -133,6 +160,14 @@ const styles = StyleSheet.create({
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 14,
         overflow: "hidden",
+    },
+    highlightBorder: {
+        borderColor: FORM_ACCENT,
+        borderWidth: 1.5,
+        borderRadius: 14,
+    },
+    highlightFill: {
+        backgroundColor: FORM_ACCENT,
     },
     contentRow: {
         flexDirection: "row",

@@ -1,6 +1,6 @@
 import React from "react";
-import { Image, StyleSheet } from "react-native";
-import { useReducedMotion, withDelay, withRepeat, withTiming } from "react-native-reanimated";
+import { AccessibilityInfo, Animated, Image, Platform, StyleSheet } from "react-native";
+import { cancelAnimation, useReducedMotion, withDelay, withRepeat, withTiming } from "react-native-reanimated";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import QuickScheduleLogoLoader, {
@@ -47,6 +47,7 @@ describe("quick schedule logo loader", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         jest.mocked(useReducedMotion).mockReturnValue(false);
+        jest.spyOn(AccessibilityInfo, "isReduceMotionEnabled").mockImplementation(async () => useReducedMotion());
     });
 
     afterEach(async () => {
@@ -54,6 +55,7 @@ describe("quick schedule logo loader", () => {
             renderer?.unmount();
         });
         renderer = undefined;
+        jest.restoreAllMocks();
     });
 
     test("실제 퍼센트 대신 접근 가능한 불확정형 브랜드 로더를 표시한다", async () => {
@@ -207,7 +209,7 @@ describe("quick schedule logo loader", () => {
         expect(renderer!.root.findByProps({ testID: "quick-schedule-ambient-halo" })).toBeDefined();
     });
 
-    test("섹션 로더는 같은 궤도를 축소하고 화면별 위성 아이콘을 사용한다", async () => {
+    test("섹션 로더는 작은 로고와 대기 막대를 표시한다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -220,24 +222,15 @@ describe("quick schedule logo loader", () => {
             );
         });
 
-        const frame = renderer!.root.findByProps({ testID: "branded-loader-section" });
-        expect(StyleSheet.flatten(frame.props.style)).toMatchObject({
-            width: 120,
-            height: 109,
-        });
-        const orbitStage = renderer!.root.findByProps({ testID: "branded-loader-orbit-stage" });
-        expect(StyleSheet.flatten(orbitStage.props.style).transform).toEqual([{ scale: 0.62 }]);
         expect(renderer!.root.findByProps({ accessibilityRole: "progressbar" }).props.accessibilityLabel)
             .toBe("경로를 계산하고 있어요");
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-satellite-icon-0" }).props.name)
-            .toBe("location-outline");
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-satellite-icon-1" }).props.name)
-            .toBe("bus-outline");
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-satellite-icon-2" }).props.name)
-            .toBe("time-outline");
+        const logo = renderer!.root.findByType(Image);
+        expect(StyleSheet.flatten(logo.props.style)).toMatchObject({ width: 34, height: 34 });
+        expect(renderer!.root.findByProps({ testID: "loading-indicator" }).props.accessibilityElementsHidden).toBe(true);
+        expect(renderer!.root.findAllByProps({ testID: "quick-schedule-satellite-icon-0" })).toHaveLength(0);
     });
 
-    test("버튼 로더는 28px 유리 로고와 단일 궤도 입자를 표시한다", async () => {
+    test("버튼 로더는 고정 크기의 대기 표시를 사용한다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -252,13 +245,39 @@ describe("quick schedule logo loader", () => {
 
         const mark = renderer!.root.findByProps({ testID: "branded-loader-button" });
         expect(StyleSheet.flatten(mark.props.style)).toMatchObject({
-            width: 28,
+            width: 29,
             height: 28,
         });
         expect(mark.props.accessibilityRole).toBe("progressbar");
         expect(mark.props.accessibilityLabel).toBe("로그인 중");
-        expect(renderer!.root.findByProps({ testID: "branded-loader-button-logo" })).toBeDefined();
+        expect(renderer!.root.findByProps({ testID: "loading-indicator" })).toBeDefined();
+        expect(renderer!.root.findAllByType(Image)).toHaveLength(0);
         expect(withRepeat).toHaveBeenCalled();
+    });
+
+    test.each([false, true])("지도 로딩 로고는 한 번만 정착하며 동작 줄이기를 따른다 (%s)", async (reduceMotion) => {
+        jest.mocked(useReducedMotion).mockReturnValue(reduceMotion);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <BrandedLoader size="button" settleMark accessibilityLabel="지도 준비 중" />
+                </ThemeProvider>
+            );
+        });
+
+        const mark = renderer!.root.findByProps({ testID: "branded-loader-button" });
+        expect(StyleSheet.flatten(mark.props.style)).toMatchObject({ width: 28, height: 28 });
+        expect(mark.props.accessibilityLabel).toBe("지도 준비 중");
+        expect(renderer!.root.findByProps({ testID: "branded-loader-settle-logo" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ testID: "loading-indicator" })).toHaveLength(0);
+        expect(withRepeat).not.toHaveBeenCalled();
+        if (reduceMotion) {
+            expect(withTiming).not.toHaveBeenCalled();
+        } else {
+            expect(withTiming).toHaveBeenCalledTimes(1);
+            expect(withTiming).toHaveBeenCalledWith(1, expect.objectContaining({ duration: 280 }));
+        }
     });
 
     test("문구가 있는 로딩 상태는 스크린리더에 하나의 진행 상태로만 노출한다", async () => {
@@ -286,28 +305,70 @@ describe("quick schedule logo loader", () => {
     });
 
     test.each([false, true])("앱 시작 로고는 시스템 동작 줄이기를 따른다 (%s)", async (reduceMotion) => {
+        jest.replaceProperty(Platform, "OS", "ios");
         jest.mocked(useReducedMotion).mockReturnValue(reduceMotion);
+        const start = jest.fn();
+        const stop = jest.fn();
+        const timing = jest.spyOn(Animated, "timing").mockReturnValue({ start, stop, reset: jest.fn() });
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
                     <BrandedLoadingState
                         accessibilityLabel="NoLate를 준비하고 있어요"
-                        settleOnly
-                        settleDelayMs={150}
+                        size="full"
+                        startup
                     />
                 </ThemeProvider>,
             );
         });
 
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-app-logo" })).toBeDefined();
+        const logo = renderer!.root.findByProps({ testID: "startup-native-logo" });
+        expect(logo.props.source).toEqual({ uri: "SplashScreenLogo" });
+        expect(StyleSheet.flatten(logo.props.style)).toMatchObject({ width: 82, height: 82 });
         expect(withRepeat).not.toHaveBeenCalled();
         if (reduceMotion) {
-            expect(withDelay).not.toHaveBeenCalled();
-            expect(withTiming).not.toHaveBeenCalled();
+            expect(timing).not.toHaveBeenCalled();
         } else {
-            expect(withDelay).toHaveBeenCalledTimes(1);
-            expect(withDelay).toHaveBeenCalledWith(150, 1);
+            expect(timing).toHaveBeenCalledTimes(1);
+            const config = timing.mock.calls[0][1];
+            expect(config).toMatchObject({ duration: 470, useNativeDriver: true });
+            expect(config.easing?.(150 / 470)).toBe(0);
+            expect(config.easing?.(1)).toBe(1);
+            expect(start).toHaveBeenCalledTimes(1);
+            act(() => renderer!.unmount());
+            renderer = undefined;
+            expect(stop).toHaveBeenCalledTimes(1);
         }
+    });
+
+    test("대기 중 동작 줄이기를 켜면 예약된 로고 동작을 취소하고 다시 재생하지 않는다", async () => {
+        let changeMotion!: (enabled: boolean) => void;
+        const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", () => undefined);
+        const remove = jest.spyOn(subscription, "remove");
+        jest.spyOn(AccessibilityInfo, "addEventListener").mockImplementation((eventName, callback) => {
+            expect(eventName).toBe("reduceMotionChanged");
+            changeMotion = callback as unknown as typeof changeMotion;
+            return subscription;
+        });
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleLogoLoader accessibilityLabel="일정을 확인하고 있어요"
+                        settleOnly settleDelayMs={90} settleDurationMs={320} hideBeforeSettle />
+                </ThemeProvider>,
+            );
+        });
+
+        expect(withTiming).toHaveBeenCalledWith(1, expect.objectContaining({ duration: 320 }));
+        expect(withDelay).toHaveBeenCalledTimes(1);
+        jest.mocked(cancelAnimation).mockClear();
+        await act(async () => changeMotion(true));
+        expect(cancelAnimation).toHaveBeenCalled();
+        await act(async () => changeMotion(false));
+        expect(withDelay).toHaveBeenCalledTimes(1);
+        await act(async () => renderer!.unmount());
+        renderer = undefined;
+        expect(remove).toHaveBeenCalledTimes(1);
     });
 
     async function renderLoader(variant: LogoLoaderVariant = "schedule") {

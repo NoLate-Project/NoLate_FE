@@ -7,7 +7,11 @@ export function isTransitRideKind(kind: unknown): kind is TransitRideKind {
 }
 
 export function isIntercityRideKind(kind: unknown): boolean {
-    return kind === "TRAIN" || kind === "EXPRESS_BUS" || kind === "INTERCITY_BUS" || kind === "COACH";
+    return kind === "TRAIN" || isIntercityBusKind(kind);
+}
+
+export function isIntercityBusKind(kind: unknown): boolean {
+    return kind === "EXPRESS_BUS" || kind === "INTERCITY_BUS" || kind === "COACH";
 }
 
 export const TRANSIT_MODE_LABELS = {

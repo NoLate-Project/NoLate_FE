@@ -311,6 +311,42 @@ describe("schedule edit route timing reconciliation", () => {
         });
     });
 
+    test("일정 시각을 바꾸면 이전 ODsay 열차편을 지우고 같은 경로의 지도 정보는 유지한다", () => {
+        const scheduledRide = {
+            boardingAt: "2026-07-20T10:11:00Z",
+            arrivalAt: "2026-07-20T10:34:00Z",
+        };
+        const previous = {
+            ...route,
+            provider: "odsay",
+            providerTimeBasis: "route_estimate",
+            transitDepartureAt: routeInfo.departureTime,
+            transitServiceState: "operating",
+            transitDepartureTimeSource: "requested",
+            odsayTimetablePreview: { departureAt: routeInfo.departureTime, arrivalAt: routeInfo.arrivalTime, rides: [scheduledRide] },
+            routeInfo: {
+                ...routeInfo, provider: "odsay", providerTimeBasis: "timetable",
+                steps: [{ ...routeInfo.steps[0], type: "SUBWAY", scheduledRide }],
+            },
+        };
+        const result = reconcileScheduleRouteTiming({
+            departAt: routeInfo.departureTime, route: previous, travelMinutes: 31,
+            plannedArrivalAt: "2026-07-20T10:37:00Z", nextArrivalAt: "2026-07-21T10:37:00Z",
+        });
+        const stored = JSON.parse(JSON.stringify(result.route));
+        expect(result.departAt).toBe("2026-07-21T10:06:00.000Z");
+        expect(stored).toMatchObject({
+            provider: "odsay", pathCoords: previous.pathCoords,
+            routeInfo: { timeBasis: "estimated", providerTimeBasis: "route_estimate",
+                departureTime: result.departAt, arrivalTime: "2026-07-21T10:37:00.000Z",
+                steps: [{ type: "SUBWAY", coordinates: routeInfo.steps[0].coordinates }] },
+        });
+        expect(stored).not.toHaveProperty("odsayTimetablePreview");
+        expect(stored).not.toHaveProperty("transitDepartureAt");
+        expect(stored).not.toHaveProperty("transitServiceState");
+        expect(stored.routeInfo.steps[0]).not.toHaveProperty("scheduledRide");
+    });
+
     test("일정 변경 후에도 원본 초를 유지해 분 올림이 누적되지 않는다", () => {
         const result = reconcileScheduleRouteTiming({
             route: { ...route, routeInfo: { ...routeInfo, totalDurationSeconds: 1817 } },

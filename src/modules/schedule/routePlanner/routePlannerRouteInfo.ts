@@ -33,7 +33,9 @@ import { isRideLegKind } from './routeTransitLegCoordinates';
 import { toDisplayOverlayCoords } from './routeTransitWalkGeometry';
 import {
   compactTransitLineLabel,
+  findTransitRideLineLabel,
   getRouteStepColor,
+  hasRenderableRouteStepGeometry,
   type RouteInfo,
   type RouteStep,
 } from '../routeInfo';
@@ -221,11 +223,7 @@ export function getPrimaryTransitLineLabel(legs?: TransitLegDetail[]): string {
   const firstRide = Array.isArray(legs)
     ? legs.find(leg => isRideLegKind(leg.kind))
     : undefined;
-  return (
-    compactTransitLineLabel(firstRide?.lineName) ??
-    compactTransitLineLabel(firstRide?.label) ??
-    '대중교통'
-  );
+  return (firstRide && findTransitRideLineLabel(firstRide)) ?? '대중교통';
 }
 
 /** 저장 경로 단계 좌표를 수단별 지도 선 오버레이로 변환합니다. 입력 경로 정보는 변경하지 않습니다. */
@@ -323,7 +321,7 @@ export function buildRouteInfoPathOverlays(
   }
   return routeInfo.steps.flatMap((step, index) => {
     if (step.type === 'ORIGIN' || step.type === 'DESTINATION') return [];
-    if (!Array.isArray(step.coordinates) || step.coordinates.length < 2)
+    if (!Array.isArray(step.coordinates) || !hasRenderableRouteStepGeometry(step, step.coordinates.length))
       return [];
     const isWalk = step.type === 'WALK' || step.type === 'TRANSFER';
     const isTransitRide = isTransitRideKind(step.type);

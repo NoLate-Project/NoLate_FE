@@ -531,6 +531,22 @@ final class NoLateJourneyRouteNormalizerTests: XCTestCase {
     XCTAssertFalse(accepted.summary.fieldValidated)
     XCTAssertFalse(accepted.summary.fullAutomaticGuidance)
 
+    var repeated = input
+    var repeatedBus = bus
+    repeatedBus["coordinates"] = [point(100), point(300), point(300), point(500)]
+    repeated["legs"] = [first, repeatedBus, last]
+    let withAdjacentRepeat = try Normalizer.prepareWalkingRoute(json: json(repeated),
+      allowValidatedSavedRoute: true, officialBusAdmission: proof)
+    XCTAssertEqual(withAdjacentRepeat.busRoute?.coordinates.count, 3)
+    XCTAssertTrue(withAdjacentRepeat.summary.legs[1].geometryUsable)
+    XCTAssertThrowsError(try Normalizer.prepareWalkingRoute(json: json(repeated), allowValidatedSavedRoute: true))
+
+    repeatedBus["coordinates"] = [point(100), point(300), point(100), point(500)]
+    repeated["legs"] = [first, repeatedBus, last]
+    let backtrack = try Normalizer.normalize(json: json(repeated), officialBusAdmission: proof)
+    XCTAssertFalse(backtrack.legs[1].geometryUsable)
+    XCTAssertTrue(backtrack.legs[1].reasonCodes.contains("GEOMETRY_DUPLICATE_COORDINATE"))
+
     let wrong = Normalizer.OfficialBusAdmission(schemaVersion: 1, identityEvidence: "OFFICIAL_STOP_SHAPE_CROSSWALK",
       busLegIndex: 1, routeId: "100100186", direction: "상행", stationCount: 2,
       firstStopSequence: 1, lastStopSequence: 3)
@@ -561,8 +577,36 @@ final class NoLateJourneyRouteNormalizerTests: XCTestCase {
       providerRouteId: "1000:2", startRoutingStationId: "222", endRoutingStationId: "224", stationCount: 2)
     let decoded = try JSONDecoder().decode(Normalizer.Input.self, from: Data(json(input).utf8))
     XCTAssertTrue(proof.matches(decoded))
+    let savedWithoutLiveAdmission = try Normalizer.prepareWalkingRoute(json: json(input),
+      allowValidatedSavedRoute: true)
+    XCTAssertEqual(savedWithoutLiveAdmission.guidanceLegs[1].boardingStopName, "Private Stop 0")
+    XCTAssertEqual(savedWithoutLiveAdmission.guidanceLegs[1].alightingStopName, "Private Stop 2")
+    var entranceWalk = first
+    entranceWalk["coordinates"] = [point(0), point(140)]
+    entranceWalk["end"] = point(140)
+    var entranceSubway = ride(kind: "SUBWAY", start: 200, end: 600)
+    entranceSubway["providerRouteId"] = "1000:2"
+    entranceSubway["directionCode"] = "UP"
+    entranceSubway["stopEvidenceProvider"] = "odsay"
+    var entranceStops = entranceSubway["stops"] as! [[String: Any]]
+    for index in entranceStops.indices { entranceStops[index]["routingStationId"] = String(222 + index) }
+    entranceSubway["stops"] = entranceStops
+    var entranceLast = last
+    entranceLast["start"] = point(600)
+    entranceLast["coordinates"] = [point(600), point(700)]
+    entranceLast["end"] = point(700)
+    var entranceRoute = route(legs: [entranceWalk, entranceSubway, entranceLast], destination: point(700))
+    entranceRoute["provider"] = "odsay"; entranceRoute["context"] = "SAVED_ROUTE"; entranceRoute["serviceState"] = "UNKNOWN"
+    XCTAssertEqual(try Normalizer.normalize(json: json(entranceRoute)).reasonCodes,
+      ["SAVED_ROUTE_REVALIDATION_REQUIRED", "ROUTE_SERVICE_UNVERIFIED"])
+    let nearEntrance = try Normalizer.prepareWalkingRoute(json: json(entranceRoute), allowValidatedSavedRoute: true)
+    XCTAssertEqual(nearEntrance.guidanceLegs[1].boardingStopName, "Private Stop 0")
     XCTAssertEqual(try Normalizer.normalize(json: json(input), officialSubwayAdmission: proof).reasonCodes,
       ["SAVED_ROUTE_REVALIDATION_REQUIRED"])
+    let prepared = try Normalizer.prepareWalkingRoute(json: json(input), allowValidatedSavedRoute: true,
+      officialSubwayAdmission: proof)
+    XCTAssertEqual(prepared.guidanceLegs[1].boardingStopName, "Private Stop 0")
+    XCTAssertEqual(prepared.guidanceLegs[1].alightingStopName, "Private Stop 2")
     let wrong = Normalizer.OfficialSubwayAdmission(schemaVersion: 1,
       identityEvidence: "OFFICIAL_STATION_PATH_CROSSWALK", subwayLegIndex: 1,
       providerRouteId: "1000:2", startRoutingStationId: "223", endRoutingStationId: "224", stationCount: 2)

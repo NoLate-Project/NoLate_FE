@@ -1,7 +1,8 @@
 import React, { useCallback, useRef, useState } from "react";
 import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import type { TmapLoadState } from "../../modules/map/TmapMapView";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import LoadingIndicator from "../../ui/LoadingIndicator";
 import {
   canSendDepartureNudge,
 } from "../../modules/schedule/detailPresentation";
@@ -74,7 +75,12 @@ export function ScheduleDetailLayout({
   const openingTravelPlan = travelPlanDetailPendingMemberId !== undefined;
 
   const firstCompanionRow = useRef<View>(null);
-  const renderRouteCompanions = (onFirstRowLayout: (row: View) => void) => (
+  const failedCompanionMessage = useRef<Text>(null);
+  const requestedCompanionId = useRef<number | undefined>(undefined);
+  const renderRouteCompanions = (
+    onFirstRowLayout: (row: View) => void,
+    onFailureLayout: (message: Text) => void,
+  ) => (
     <View style={styles.routeCompanionList}>
       {companionIds.map((memberId, index) => {
         const departure = departureByMember.get(memberId);
@@ -115,7 +121,10 @@ export function ScheduleDetailLayout({
               accessibilityLabel={rowAccessibilityLabel}
               accessibilityState={canOpen ? { selected, busy: opening, disabled: openingTravelPlan } : undefined}
               accessibilityHint={canOpen ? '이 사람의 경로를 지도에서 봅니다.' : undefined}
-              onPress={plan && canOpen ? () => openParticipantTravelPlan(plan) : undefined}
+              onPress={plan && canOpen ? () => {
+                requestedCompanionId.current = memberId;
+                openParticipantTravelPlan(plan);
+              } : undefined}
               style={({ pressed }) => [
                 styles.routeCompanionMain,
                 { opacity: pressed ? 0.62 : 1 },
@@ -137,6 +146,13 @@ export function ScheduleDetailLayout({
                 {feedback || routeLabel ? (
                   <Reanimated.Text
                     key={feedback ?? routeLabel}
+                    ref={failed ? failedCompanionMessage : undefined}
+                    onLayout={failed ? () => {
+                      const message = failedCompanionMessage.current;
+                      if (!message || requestedCompanionId.current !== memberId) return;
+                      requestedCompanionId.current = undefined;
+                      onFailureLayout(message);
+                    } : undefined}
                     entering={feedback ? travelPlanFeedbackEntrance : undefined}
                     accessibilityLiveRegion="polite"
                     maxFontSizeMultiplier={1.75}
@@ -146,7 +162,7 @@ export function ScheduleDetailLayout({
                 ) : null}
               </View>
               {opening ? (
-                <ActivityIndicator size="small" color={topCardAccentText} />
+                <LoadingIndicator size="inline" delayMs={150} />
               ) : canOpen ? (
                 <Ionicons
                   name={failed ? 'refresh-outline' : selected ? 'checkmark-circle-outline' : 'chevron-forward-outline'}
@@ -164,7 +180,7 @@ export function ScheduleDetailLayout({
                 onPress={() => confirmDepartureNudge(memberId, label)}
                 style={({ pressed }) => [styles.routeCompanionAction, { opacity: pressed ? 0.62 : 1 }]}
               >
-                {sending ? <ActivityIndicator size="small" color={topCardAccentText} />
+                {sending ? <LoadingIndicator size="inline" delayMs={150} />
                   : <Ionicons name="notifications-outline" size={19} color={topCardAccentText} />}
               </Pressable>
             ) : null}
@@ -269,7 +285,7 @@ export function ScheduleDetailLayout({
                 </Text>
               </View>
               {pending ? (
-                <ActivityIndicator size="small" color={topCardAccentText} />
+                <LoadingIndicator size="inline" delayMs={150} />
               ) : canOpen ? (
                 <Ionicons
                   name={failed ? "refresh-outline" : "chevron-forward-outline"}

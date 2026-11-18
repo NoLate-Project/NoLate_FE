@@ -1,4 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import React, {
   useCallback,
   useEffect,
@@ -7,14 +8,18 @@ import React, {
   useState,
 } from 'react';
 import {
+  AccessibilityInfo,
   Alert,
+  Keyboard,
   StatusBar,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import styles from '../../src/routeSupport/share/inbox.styles';
 
+import { ApiResponseError } from '../../src/api/response';
 import { getSchedules } from '../../src/api/schedule';
 import {
   getScheduleCalendars,
@@ -68,8 +73,10 @@ import { useScreenFirstPaintPerformance } from '../../src/modules/performance/us
 import ScreenFirstPaintShell from '../../src/modules/performance/ScreenFirstPaintShell';
 import { useDeferredScreenContent } from '../../src/modules/performance/useDeferredScreenContent';
 import { useImmediateNavigationTransition } from '../../src/modules/performance/ImmediateNavigationTransition';
+import { useSystemReduceMotion } from '../../src/modules/performance/useSystemReduceMotion';
 
 import { FilterSheet } from '../../src/routeSupport/share/ShareInboxFilters';
+import InboxDestinationTransition from '../../src/routeSupport/share/InboxDestinationTransition';
 import ShareInboxLibraryView from '../../src/routeSupport/share/ShareInboxLibraryView';
 import { ManageShareSheet } from '../../src/routeSupport/share/ShareInboxManage';
 import {
@@ -90,26 +97,61 @@ import {
 export default function ShareInboxRoute() {
   useScreenFirstPaintPerformance('/share/inbox');
   const contentReady = useDeferredScreenContent();
-  if (!contentReady) {
-    return (
-      <ScreenFirstPaintShell
-        title="공유함"
-        backAccessibilityLabel="뒤로 가기"
-        testID="share-inbox-first-paint-shell"
-      />
-    );
-  }
-  return <ShareInboxScreen />;
+  const { from, notificationInboxKey } = useLocalSearchParams<{ from?: string; notificationInboxKey?: string }>();
+  const { fontScale } = useWindowDimensions();
+  const content = contentReady ? <ShareInboxScreen /> : (
+    <ScreenFirstPaintShell
+      title="공유함"
+      backAccessibilityLabel="뒤로 가기"
+      testID="share-inbox-first-paint-shell"
+    />
+  );
+  return from === 'notifications' && fontScale <= 1.35 ? (
+    <InboxDestinationTransition source="notification" notificationInboxKey={notificationInboxKey}>
+      {content}
+    </InboxDestinationTransition>
+  ) : content;
 }
 
-export function ShareInboxScreen() {
+function ShareInboxScreen() {
   const router = useRouter();
   const { runWithTransitionShell } = useImmediateNavigationTransition();
+  const inboxVisible = useIsFocused();
+  const reduceMotion = useSystemReduceMotion();
+  const largeText = useWindowDimensions().fontScale > 1.35;
+  const safetyButton = useRef<View>(null);
+  const calendarManagerButton = useRef<View>(null);
+  const returningFromSafety = useRef(false);
+  useEffect(() => {
+    if (!inboxVisible || !returningFromSafety.current) return;
+    const frame = requestAnimationFrame(() => {
+      returningFromSafety.current = false;
+      if (safetyButton.current) AccessibilityInfo.sendAccessibilityEvent?.(safetyButton.current, 'focus');
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [inboxVisible]);
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ tab?: string; from?: string }>();
+  const params = useLocalSearchParams<{ tab?: string; from?: string; focusScheduleId?: string }>();
   const { colors, mode } = useTheme();
   const accent = mode === 'dark' ? '#8BB7FF' : BRAND_BLUE;
   const searchInputRef = useRef<TextInput>(null);
+  const resourceRows = useRef(new Map<string, View>());
+  const openedResource = useRef<{ key: string; tab: ShareLibraryTab } | 'calendar-manager' | null>(null);
+  const registerResourceRow = useCallback((key: string, node: View | null) => {
+    if (node) resourceRows.current.set(key, node);
+    else resourceRows.current.delete(key);
+  }, []);
+  useEffect(() => {
+    const source = openedResource.current;
+    if (!inboxVisible || !source) return;
+    const task = runAfterScreenTransition(() => {
+      openedResource.current = null;
+      const target = (source === 'calendar-manager' ? calendarManagerButton.current : resourceRows.current.get(source.key))
+        ?? searchInputRef.current;
+      if (target) AccessibilityInfo.sendAccessibilityEvent?.(target, 'focus');
+    }, largeText && !reduceMotion && source !== 'calendar-manager' && source.tab === 'schedule' ? 180 : 0);
+    return task.cancel;
+  }, [inboxVisible, largeText, reduceMotion]);
   const loadRequestGuardRef = useRef(
     createLatestAsyncRequestGuard('share-inbox'),
   );
@@ -131,7 +173,7 @@ export function ShareInboxScreen() {
   });
   const [data, setData] = useState<ShareInboxViewData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMode, setRefreshMode] = useState<'refresh' | 'pull' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
   const [managedItemKey, setManagedItemKey] = useState<string | null>(null);
@@ -171,11 +213,15 @@ export function ShareInboxScreen() {
       }
 
       if (item.resourceType === 'SCHEDULE') {
+        openedResource.current = { key: item.key, tab: item.tab };
+        Keyboard.dismiss();
         router.push({
           pathname: '/schedule/[id]',
-          params: { id: item.resourceId },
+          params: { id: item.resourceId, entrySource: 'share-inbox' },
         });
       } else if (item.resourceType === 'CALENDAR') {
+        openedResource.current = { key: item.key, tab: item.tab };
+        Keyboard.dismiss();
         router.push({
           pathname: '/schedule/calendars',
           params: { id: item.resourceId, from: "share-inbox", view: "calendar" },
@@ -188,13 +234,15 @@ export function ShareInboxScreen() {
   );
 
   const loadShares = useCallback(
-    async (loadMode: 'initial' | 'refresh' | 'return' = 'initial') => {
+    async (loadMode: 'initial' | 'refresh' | 'pull' | 'return' = 'initial') => {
       if (!mountedRef.current) return;
       const ticket = loadRequestGuardRef.current.begin();
 
-      setRefreshing(loadMode === 'refresh');
-      if (loadMode === 'initial') setLoading(true);
-      setError(null);
+      setRefreshMode(loadMode === 'refresh' || loadMode === 'pull' ? loadMode : null);
+      if (loadMode === 'initial') {
+        setLoading(true);
+        setError(null);
+      }
 
       try {
         const [inbox, outbox, schedules, calendars, seenKeys] =
@@ -211,6 +259,7 @@ export function ShareInboxScreen() {
           !loadRequestGuardRef.current.isCurrent(ticket)
         )
           return;
+        setError(null);
         setData({
           inbox,
           outbox,
@@ -226,14 +275,16 @@ export function ShareInboxScreen() {
           !loadRequestGuardRef.current.isCurrent(ticket)
         )
           return;
-        setError(getErrorMessage(loadError));
+        setError(loadError instanceof ApiResponseError && (loadError.status ?? 0) >= 500
+          ? '공유함을 불러오지 못했어요.'
+          : getErrorMessage(loadError));
       } finally {
         if (
           mountedRef.current &&
           loadRequestGuardRef.current.isCurrent(ticket)
         ) {
           setLoading(false);
-          setRefreshing(false);
+          setRefreshMode(null);
         }
       }
     },
@@ -292,6 +343,10 @@ export function ShareInboxScreen() {
     () => filterShareLibraryItems(items, selectedTab, selectedFilter),
     [items, selectedFilter, selectedTab],
   );
+  const invitationRowKey = params.focusScheduleId && selectedTab === 'schedule'
+    ? visibleItems.find(item => item.resourceType === 'SCHEDULE' && item.relation === 'received'
+        && !item.isPending && item.resourceId === params.focusScheduleId)?.key
+    : undefined;
   const tabTotal = useMemo(
     () => items.filter(item => item.tab === selectedTab).length,
     [items, selectedTab],
@@ -683,7 +738,8 @@ export function ShareInboxScreen() {
         topInset={insets.top}
         bottomInset={insets.bottom}
         hasModal={hasModal}
-        refreshing={refreshing}
+        refreshing={refreshMode !== null}
+        pullRefreshing={refreshMode === 'pull'}
         unseenCounts={unseenCounts}
         selectedTab={selectedTab}
         selectedFilter={selectedFilter}
@@ -693,24 +749,42 @@ export function ShareInboxScreen() {
         error={error}
         hasData={Boolean(data)}
         visibleItems={visibleItems}
+        invitationRowKey={invitationRowKey}
+        reduceMotion={reduceMotion}
         scheduleGroups={scheduleGroups}
         safetyPendingKey={safetyPendingKey}
         searchInputRef={searchInputRef}
+        safetyButtonRef={safetyButton}
         onGoBack={goBack}
-        onOpenReports={() => runWithTransitionShell(
-          { route: '/share/reports', title: '내 신고 내역' },
-          () => router.push('/share/reports'),
-        )}
-        onOpenBlocked={() => runWithTransitionShell(
-          { route: '/share/blocked', title: '차단한 사용자' },
-          () => router.push('/share/blocked'),
-        )}
-        onOpenCalendarManager={() => router.push({ pathname: '/schedule/calendars', params: { from: 'share-inbox' } })}
+        onOpenSafetyManagement={() => {
+          returningFromSafety.current = true;
+          Keyboard.dismiss();
+          router.push('/share/safety');
+        }}
+        calendarManagerButtonRef={calendarManagerButton}
+        onOpenCalendarManager={() => {
+          openedResource.current = 'calendar-manager';
+          Keyboard.dismiss();
+          router.push({ pathname: '/schedule/calendars', params: { from: 'share-inbox' } });
+        }}
         onRefresh={() => loadShares('refresh')}
+        onPullRefresh={() => loadShares('pull')}
         onSelectTab={setSelectedTab}
         onUpdateQuery={updateQuery}
-        onOpenFilters={() => setFilterSheetOpen(true)}
+        onOpenFilters={() => {
+          Keyboard.dismiss();
+          setFilterSheetOpen(true);
+        }}
+        onClearFilters={() => setFilters(current => ({
+          ...current,
+          [selectedTab]: {
+            ...current[selectedTab],
+            relation: 'all',
+            status: 'all',
+          },
+        }))}
         onOpenItem={openSharedResource}
+        onResourceRowRef={registerResourceRow}
         onManageItem={item => setManagedItemKey(item.key)}
         onSafetyItem={openSafetyActions}
       />

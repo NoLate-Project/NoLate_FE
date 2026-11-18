@@ -2,6 +2,7 @@ import React from "react";
 import {
     ActionSheetIOS,
     Animated,
+    Dimensions,
     PanResponder,
     ScrollView,
     StyleSheet,
@@ -462,7 +463,7 @@ describe("schedule agenda presentation", () => {
         })).toBeDefined();
         expect(StyleSheet.flatten(renderer!.root.findByProps({
             testID: "selected-day-agenda-group",
-        }).props.style).borderRadius).toBe(16);
+        }).props.style).backgroundColor).toBeUndefined();
         const detailScroll = renderer!.root.findByType(ScrollView);
         expect(StyleSheet.flatten(detailScroll.props.style).marginBottom).toBe(70);
         expect(StyleSheet.flatten(detailScroll.props.contentContainerStyle).paddingBottom)
@@ -497,7 +498,7 @@ describe("schedule agenda presentation", () => {
             && String(node.props.accessibilityLabel).startsWith("오전 일정")
         ))[0];
         await act(async () => targetCard?.props.onPress());
-        expect(onOpenSchedule).toHaveBeenCalledWith("earlier");
+        expect(onOpenSchedule).toHaveBeenCalledWith("earlier", expect.any(Function));
 
         const handle = renderer!.root.find((node) => (
             node.props.accessibilityLabel === "일정 보기 방식"
@@ -845,7 +846,7 @@ describe("schedule agenda presentation", () => {
             && String(node.props.accessibilityLabel).startsWith("14일 오전")
         ))[0];
         await act(async () => targetCard?.props.onPress());
-        expect(onOpenSchedule).toHaveBeenCalledWith("same-day");
+        expect(onOpenSchedule).toHaveBeenCalledWith("same-day", expect.any(Function));
 
         await act(async () => targetCard?.props.onLongPress());
         expect(onRequestScheduleActions).toHaveBeenCalledWith(
@@ -894,6 +895,190 @@ describe("schedule agenda presentation", () => {
         );
     });
 
+    test("일정이 없는 선택 날짜를 표시하고 이후 일정을 날짜순으로 이어서 보여 준다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <MonthAgendaList visibleMonth="2026-07-01" entryDate="2026-07-16"
+                        items={[schedule("before", 14, 9, "이전 일정"), schedule("after", 17, 12, "다음 일정")]}
+                        loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+                </ThemeProvider>,
+            );
+        });
+        const selected = renderer!.root.findByProps({ testID: "month-agenda-entry-date" });
+        expect(selected.findByProps({ children: "7월 16일" })).toBeDefined();
+        const text = renderedText(renderer!);
+        expect(text.indexOf("이전 일정")).toBeLessThan(text.indexOf("등록된 일정이 없어요"));
+        expect(text.indexOf("등록된 일정이 없어요")).toBeLessThan(text.indexOf("다음 일정"));
+    });
+
+    test("기본 글씨의 목록은 선택 날짜 앞에 이전 날짜 제목의 일부를 남기지 않는다", async () => {
+        jest.useFakeTimers();
+        const scrollTo = jest.spyOn(ScrollView.prototype, "scrollTo").mockImplementation(() => {});
+        const getDimensions = Dimensions.get.bind(Dimensions);
+        const dimensions = jest.spyOn(Dimensions, "get").mockImplementation(name => ({ ...getDimensions(name), fontScale: 1 }));
+        try {
+            const view = (transitionActive: boolean) => (
+                <ThemeProvider>
+                    <MonthAgendaList visibleMonth="2026-07-01" entryDate="2026-07-16"
+                        entryLayoutTransitionActive={transitionActive}
+                        items={[schedule("before", 14, 9), schedule("after", 17, 12)]}
+                        loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+                </ThemeProvider>
+            );
+            await act(async () => {
+                renderer = TestRenderer.create(view(true));
+            });
+            const heading = renderer!.root.findByProps({ testID: "month-agenda-entry-date" }).parent!;
+            const body = renderer!.root.findByProps({ testID: "month-agenda-body-2026-07-16" });
+            const list = renderer!.root.findByType(ScrollView);
+            const layout = (y: number, height: number) => ({ nativeEvent: { layout: { y, height } } });
+            await act(async () => {
+                list.props.onLayout(layout(0, 212));
+                list.props.onContentSizeChange(320, 412);
+                heading.props.onLayout(layout(120, 28));
+                body.props.onLayout(layout(148, 45));
+                jest.advanceTimersByTime(50);
+            });
+            expect(scrollTo).not.toHaveBeenCalled();
+            await act(async () => { renderer!.update(view(false)); });
+            await act(async () => {
+                list.props.onLayout(layout(0, 300));
+                jest.advanceTimersByTime(50);
+            });
+            expect(renderer!.root.findAllByType(View).some(view =>
+                view.props.pointerEvents === "none" && view.props.style?.height === 8)).toBe(true);
+            await act(async () => {
+                list.props.onContentSizeChange(320, 420);
+                jest.advanceTimersByTime(50);
+            });
+            expect(scrollTo).toHaveBeenLastCalledWith({ y: 120, animated: false });
+            await act(async () => {
+                list.props.onScroll({ nativeEvent: {
+                    contentOffset: { y: 103 }, layoutMeasurement: { height: 317 }, contentSize: { height: 420 },
+                } });
+                list.props.onContentSizeChange(320, 437);
+                jest.advanceTimersByTime(50);
+            });
+            expect(scrollTo).toHaveBeenCalledTimes(2);
+            expect(scrollTo).toHaveBeenLastCalledWith({ y: 120, animated: false });
+        } finally {
+            scrollTo.mockRestore();
+            dimensions.mockRestore();
+            jest.useRealTimers();
+        }
+    });
+
+    test("여러 날 일정은 시작일에 한 번만 표시하고 선택한 이후 날짜를 함께 표시한다", async () => {
+        const trip = { ...schedule("trip", 14, 9, "가족 여행"), endAt: new Date(2026, 6, 15, 18).toISOString() };
+        const tree = (entryDate: string) => (
+            <ThemeProvider>
+                <MonthAgendaList visibleMonth="2026-07-01" entryDate={entryDate} items={[trip]}
+                    loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                    onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+            </ThemeProvider>
+        );
+        await act(async () => { renderer = TestRenderer.create(tree("2026-07-15")); });
+        const heading = renderer!.root.findByProps({ testID: "month-agenda-entry-date" });
+        expect(heading.findByProps({ children: "7월 14일" })).toBeDefined();
+        expect(heading.findByProps({ children: "선택한 날 7월 15일" })).toBeDefined();
+        expect(renderer!.root.findAllByType(ScheduleAgendaCard)).toHaveLength(1);
+
+        await act(async () => { renderer!.update(tree("2026-07-14")); });
+        expect(renderer!.root.findAllByProps({ children: "선택한 날 7월 15일" })).toHaveLength(0);
+    });
+
+    test.each([[true, 1], [false, 1], [true, 2], [false, 2]])("범위를 바꾸면 보던 날짜가 있는 경우에만 목록 위치를 유지한다 (%s, %s)", async (keepsDate, fontScale) => {
+        jest.useFakeTimers();
+        const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => {});
+        const getDimensions = Dimensions.get.bind(Dimensions);
+        const dimensions = jest.spyOn(Dimensions, 'get').mockImplementation(name => ({ ...getDimensions(name), fontScale }));
+        try {
+            const view = (scope: 'all' | 'personal', days: number[]) => (
+                <ThemeProvider>
+                    <MonthAgendaList visibleMonth="2026-07-01" entryDate="2026-07-14" calendarScope={scope}
+                        items={days.map(day => schedule(String(day), day, 9))} loading={false} error={null}
+                        bottomInset={0} onPressRetry={jest.fn()} onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+                </ThemeProvider>
+            );
+            const section = (day: number) => {
+                let node = renderer!.root.findByProps({ children: `7월 ${day}일` });
+                while (node.parent && !node.props.onLayout) node = node.parent;
+                return node;
+            };
+            const layout = (y: number, height: number) => ({ nativeEvent: { layout: { y, height } } });
+            const placeSection = (day: number, y: number) => {
+                const body = renderer!.root.findAllByType(View).find(view => view.props.testID === `month-agenda-body-2026-07-${day}`);
+                section(day).props.onLayout(layout(y, body ? 29 : 70));
+                body?.props.onLayout(layout(y + 37, 33));
+            };
+            await act(async () => { renderer = TestRenderer.create(view('all', [14, 18, 21])); });
+            const list = () => renderer!.root.findByType(ScrollView);
+            expect(list().props.stickyHeaderIndices).toEqual(fontScale === 1 ? [0, 2, 4] : undefined);
+            await act(async () => {
+                placeSection(14, 8);
+                placeSection(18, 150);
+                jest.advanceTimersByTime(50);
+            });
+            act(() => list().props.onScroll({ nativeEvent: { contentOffset: { y: 175 } } }));
+            scrollTo.mockClear();
+            await act(async () => { renderer!.update(view('personal', keepsDate ? [14, 18, 21] : [14, 21])); });
+            await act(async () => {
+                list().props.onLayout({ nativeEvent: { layout: { height: 300 } } });
+                list().props.onContentSizeChange(320, 700);
+                placeSection(14, 8);
+                if (keepsDate) placeSection(18, 100);
+                jest.advanceTimersByTime(50);
+            });
+            const expectedOffset = keepsDate ? 125 : fontScale === 1 ? 8 : 0;
+            expect(scrollTo).toHaveBeenLastCalledWith({ y: expectedOffset, animated: false });
+        } finally {
+            scrollTo.mockRestore();
+            dimensions.mockRestore();
+            jest.useRealTimers();
+        }
+    });
+
+    test("목록을 다시 열면 상위 캘린더가 보관한 카테고리로 표시한다", async () => {
+        const personal = { ...category, id: "personal", title: "개인" };
+        const items = [schedule("work", 14, 9, "업무 일정"), schedule("personal", 14, 12, "개인 일정", personal)];
+        const categoryFilter = { id: personal.id, onChange: jest.fn(), onHandleSavedItem: jest.fn() };
+        const tree = (showList: boolean) => (
+            <ThemeProvider>
+                {showList && <MonthAgendaList visibleMonth="2026-07-14" items={items} categoryFilter={categoryFilter}
+                    loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                    onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />}
+            </ThemeProvider>
+        );
+        await act(async () => { renderer = TestRenderer.create(tree(true)); });
+        await act(async () => { renderer!.update(tree(false)); });
+        await act(async () => { renderer!.update(tree(true)); });
+        expect(renderedText(renderer!)).toContain("개인 일정");
+        expect(renderedText(renderer!)).not.toContain("업무 일정");
+        expect(categoryFilter.onChange).not.toHaveBeenCalled();
+    });
+
+    test("안내에서 복귀한 일정이 다른 카테고리면 목록에서 해당 일정을 표시한다", async () => {
+        const personal = { ...category, id: "personal", title: "개인" };
+        const items = [schedule("other", 19, 9, "다른 일정"), schedule("returned", 19, 14, "안내를 종료한 일정", personal)];
+        const onChange = jest.fn();
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <MonthAgendaList visibleMonth="2026-07-19" items={items} entryDate="2026-07-19"
+                        focusTarget={{ id: "returned", run: "1" }}
+                        categoryFilter={{ id: category.id, onChange, onHandleSavedItem: jest.fn() }}
+                        loading={false} error={null} bottomInset={0} onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()} onRequestViewMode={jest.fn()} />
+                </ThemeProvider>,
+            );
+        });
+        expect(onChange).toHaveBeenCalledWith(null);
+        expect(renderedText(renderer!)).toContain("안내를 종료한 일정");
+    });
+
     test.each([true, false])("빠른 저장 뒤 일정이 필터에 포함되는지 확인한다 (%s)", async (matchesFilter) => {
         const personal = { ...category, id: "personal", title: "개인" };
         const items = [schedule("old", 14, 9, "기존 일정"), schedule("personal", 14, 12, "개인 일정", personal)];
@@ -921,6 +1106,7 @@ describe("schedule agenda presentation", () => {
     test("저장한 일정만 작성 창이 닫힌 뒤 한 번 강조한다", async () => {
         jest.useFakeTimers();
         const timing = jest.spyOn(Animated, "timing");
+        const scrollTo = jest.spyOn(ScrollView.prototype, "scrollTo").mockImplementation(() => {});
         try {
             const saved = schedule("saved", 19, 14);
             const other = schedule("other", 19, 10);
@@ -944,10 +1130,20 @@ describe("schedule agenda presentation", () => {
             });
             const cards = renderer!.root.findAllByType(ScheduleAgendaCard);
             expect(cards.find(card => card.props.item.id === "other")?.props.returnHighlightOpacity).toBeUndefined();
-            expect(cards.find(card => card.props.item.id === "saved")?.props.returnHighlightOpacity).toBeDefined();
+            const savedCard = cards.find(card => card.props.item.id === "saved")!;
+            expect(savedCard.props.returnHighlightOpacity).toBeDefined();
+            const measureLayout = jest.fn((_content, onLayout) => onLayout(0, 510));
+            savedCard.props.cardRef.current = { measureLayout };
+            scroll.props.innerViewRef.current = {};
             const fades = () => timing.mock.calls.filter(([, config]) => config.duration === 240);
             expect(fades()).toHaveLength(0);
+            expect(measureLayout).not.toHaveBeenCalled();
             await act(async () => { renderer!.update(renderList(true)); });
+            await act(async () => { jest.advanceTimersByTime(80); });
+            expect(measureLayout).toHaveBeenCalledTimes(1);
+            const position = scrollTo.mock.lastCall?.[0];
+            expect(position).toEqual({ y: expect.any(Number), animated: false });
+            expect(typeof position === "object" ? position.y : undefined).toBeGreaterThan(400);
             expect(fades()).toHaveLength(1);
             await act(async () => { renderer!.update(renderList(false)); });
             await act(async () => { renderer!.update(renderList(true)); });
@@ -955,13 +1151,16 @@ describe("schedule agenda presentation", () => {
             await act(async () => { renderer!.update(renderList(true, true)); });
             expect(renderer!.root.findAllByType(ScheduleAgendaCard).every(card => !card.props.returnHighlightOpacity)).toBe(true);
         } finally {
+            scrollTo.mockRestore();
             timing.mockRestore();
             jest.useRealTimers();
         }
     });
 
     test("상세형은 작성 창이 닫히고 저장한 일정이 표시되면 해당 행만 강조한다", async () => {
+        jest.useFakeTimers();
         const timing = jest.spyOn(Animated, "timing");
+        const scrollTo = jest.spyOn(ScrollView.prototype, "scrollTo").mockImplementation(() => {});
         try {
             const saved = schedule("saved", 19, 14);
             const other = schedule("other", 19, 10);
@@ -978,14 +1177,23 @@ describe("schedule agenda presentation", () => {
             await act(async () => { renderer!.update(renderPanel(true, [other])); });
             expect(fades()).toHaveLength(0);
             await act(async () => { renderer!.update(renderPanel(true, [other, saved])); });
-            expect(fades()).toHaveLength(1);
             const cards = renderer!.root.findAllByType(ScheduleAgendaCard);
+            const savedCard = cards.find(card => card.props.item.id === saved.id)!;
+            savedCard.props.cardRef.current = {
+                measureLayout: (_content: View, onLayout: (x: number, y: number) => void) => onLayout(0, 420),
+            };
+            renderer!.root.findByType(ScrollView).props.innerViewRef.current = {};
+            await act(async () => { jest.advanceTimersByTime(80); });
+            expect(scrollTo).toHaveBeenLastCalledWith({ y: 412, animated: false });
+            expect(fades()).toHaveLength(1);
             expect(cards.find(card => card.props.item.id === other.id)?.props.returnHighlightOpacity).toBeUndefined();
-            expect(cards.find(card => card.props.item.id === saved.id)?.props.returnHighlightOpacity).toBeDefined();
+            expect(savedCard.props.returnHighlightOpacity).toBeDefined();
             await act(async () => { renderer!.update(renderPanel(true, [other, saved], true)); });
             expect(renderer!.root.findAllByType(ScheduleAgendaCard).every(card => !card.props.returnHighlightOpacity)).toBe(true);
         } finally {
+            scrollTo.mockRestore();
             timing.mockRestore();
+            jest.useRealTimers();
         }
     });
 

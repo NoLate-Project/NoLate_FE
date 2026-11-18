@@ -7,8 +7,8 @@ export function savedJourneyEntryIssue(input: JourneyRouteInput | null, subwayTr
     if (input.legs.length < 3 || input.legs.length > 31 || input.legs.length % 2 !== 1 || input.legs.some((leg, index) => leg.index !== index
         || (index % 2 === 0 ? leg.kind !== 'WALK' : leg.kind !== 'BUS' && !(subwayTrial && input.legs.length===3 && leg.kind==='SUBWAY')))) {
         return subwayTrial
-            ? '현재 위치 안내 시험은 도보·대중교통이 이어진 경로 중 버스 또는 지하철 단일 구간만 지원해요. 지하철 환승 경로는 아직 지원하지 않아요.'
-            : '현재 위치 안내 시험은 도보와 버스가 번갈아 이어지는 경로만 지원해요. 지하철 탑승 안내는 아직 지원하지 않아요.';
+            ? '위치 안내는 도보와 대중교통이 이어진 경로 중 버스 구간 또는 지하철 단일 구간을 지원해요. 지하철 환승 경로는 아직 지원하지 않아요.'
+            : '위치 안내는 도보와 버스가 번갈아 이어지는 경로를 지원해요. 지하철 탑승 안내는 아직 지원하지 않아요.';
     }
     const valid = (point: JourneyRouteCoordinate | null) => !!point && Number.isFinite(point.latitude)
         && Number.isFinite(point.longitude) && Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180;

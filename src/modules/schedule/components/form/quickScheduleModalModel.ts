@@ -20,6 +20,7 @@ export type TabLayout = { x: number; width: number };
 export type LiveSpeechCaptureStartMode = "fresh" | "rollover";
 
 export const QUICK_TEXT_LIMIT = 300;
+export const QUICK_TEXT_EXAMPLE = "내일 오후 2시 성수 오피스에서 회의";
 export const PHOTO_RECOGNITION_TIMEOUT_MILLIS = 15_000;
 export const PHOTO_PREVIEW_STAGE_HEIGHT = 152;
 const PHOTO_PREVIEW_MIN_ASPECT_RATIO = 0.55;
@@ -85,6 +86,13 @@ export const VOICE_SPECTRUM_COLORS = [
   "#45C7A5",
 ];
 const PREVIEW_CARD_HEIGHT = 552;
+const STATUS_CARD_HEIGHT = 368;
+export const QUICK_ANALYSIS_MOTION = {
+  waitAfterMs: 120,
+  logoDelayMs: 90,
+  logoSettleMs: 320,
+  previewFadeMs: 160,
+} as const;
 export const FLOW_CARD_HEIGHT_BY_STEP: Record<
   Exclude<FlowStep, "input">,
   number
@@ -93,8 +101,8 @@ export const FLOW_CARD_HEIGHT_BY_STEP: Record<
   analysisError: PREVIEW_CARD_HEIGHT,
   preview: PREVIEW_CARD_HEIGHT,
   edit: 520,
-  saving: 368,
-  saved: 368,
+  saving: STATUS_CARD_HEIGHT,
+  saved: STATUS_CARD_HEIGHT,
 };
 export const EDIT_CARD_HEIGHT_BY_FIELD: Record<PreviewField, number> = {
   title: 290,
@@ -227,18 +235,6 @@ export function appendVoiceMeterHistory(history: number[], level: number) {
       ? previous * 0.18 + normalized * 0.82
       : previous * 0.72 + normalized * 0.28;
   return [...source.slice(1), smoothed];
-}
-
-/** 현재 입력 모드에 맞는 안내 문구를 반환한다. */
-export function placeholderForMode(inputMode: InputMode) {
-  switch (inputMode) {
-    case "photo":
-      return "사진에 담긴 일정에 메모를 추가해보세요";
-    case "voice":
-      return "녹음한 일정에 메모를 추가해보세요";
-    default:
-      return "예) 금요일 오후 7시\n강남역에서 친구와 저녁";
-  }
 }
 
 /** 녹음 시간을 분:초 형식으로 표시한다. */

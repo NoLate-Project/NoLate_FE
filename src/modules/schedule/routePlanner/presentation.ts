@@ -1,4 +1,5 @@
 import { isTransitRideKind, transitModeLabel } from "../../map/transitModes";
+import { validTotalDurationSeconds } from '../../map/routeDuration';
 import type {
   RouteAlternativeOption,
   TransitLegDetail,
@@ -8,7 +9,7 @@ import {
   getNaverLikeTransitRouteCategory,
   selectNaverLikeRouteAlternatives,
 } from '../routeAlternativeRanking';
-import { compactTransitLineLabel, formatRouteDistance, formatRouteDuration } from '../routeInfo';
+import { compactTransitLineLabel, findTransitRideLineLabel, formatRouteDistance, formatRouteDuration, roundRouteArrivalMinute } from '../routeInfo';
 import type { TravelMode } from '../types';
 import type { TransitRouteFilter } from './params';
 
@@ -36,7 +37,7 @@ export type TransitRouteTimeMeta = {
 };
 
 /** Shows the access walk only when it is the first actual route leg. */
-export function getRouteOverviewAccessWalk(option?: RouteAlternativeOption) {
+export function getRouteOverviewAccessWalk(option?: RouteAlternativeOption, originName?: string) {
   if (option?.mode !== 'TRANSIT' || option.transitServiceState === 'not_operating') return undefined;
   const first = option.transitLegs?.[0];
   if (!first || first.kind !== 'WALK' || !option.transitLegs?.some(leg => isTransitRideKind(leg.kind))) return undefined;
@@ -53,10 +54,18 @@ export function getRouteOverviewAccessWalk(option?: RouteAlternativeOption) {
     : undefined;
   if (!distance && !duration) return undefined;
 
-  const from = first.startName?.trim();
+  const from = first.startName?.trim() || originName?.trim();
   const to = first.endName?.trim();
+  const next = option.transitLegs[1];
+  const boarding = next && isTransitRideKind(next.kind) ? next.startName?.trim() : undefined;
+  const subwayLine = next?.kind === 'SUBWAY'
+    ? findTransitRideLineLabel(next)
+    : undefined;
   return {
-    destination: to && to !== from ? to : undefined,
+    origin: from,
+    destination: to && to !== from ? to
+      : boarding && boarding !== from ? boarding
+      : subwayLine ? `${subwayLine} 타는 곳` : undefined,
     walking: `도보 ${[distance, duration].filter(Boolean).join(' · ')}`,
   };
 }
@@ -195,30 +204,61 @@ export function getTransitRouteCategory(
   return getNaverLikeTransitRouteCategory(option) as TransitRouteFilter;
 }
 
-/** Distinguish equal-duration alternatives by their first different ride. */
-export function getMapRouteChoiceLabels(options: RouteAlternativeOption[]): string[] {
-  const choices = options.map(option => ({
-    category: getTransitRouteCategory(option),
-    duration: option.transitServiceState === 'not_operating' ? '운행 종료' : formatRouteDuration(option.minutes),
-    lines: (option.transitLegs ?? [])
-      .filter(leg => isTransitRideKind(leg.kind))
-      .map(leg => compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label)),
-  }));
-  return choices.map(({ category, duration, lines }, index) => {
-    const peers = choices.filter((choice, peerIndex) =>
-      index !== peerIndex && choice.category === category && choice.duration === duration);
-    const distinguishingLine = peers.length
-      ? lines.find((line, legIndex) => line && peers.every(peer => peer.lines[legIndex] !== line))
-      : undefined;
+/** Identify route choices using the line and, for tied choices, the relevant stop. */
+export function getMapRouteChoiceLabels(
+  options: RouteAlternativeOption[],
+  { compareLinesAcrossDurations = true }: { compareLinesAcrossDurations?: boolean } = {},
+): string[] {
+  const choices = options.map(option => {
+    const rides = (option.transitLegs ?? []).filter(leg => isTransitRideKind(leg.kind));
+    return {
+      category: getTransitRouteCategory(option),
+      duration: option.transitServiceState === 'not_operating' ? '운행 종료' : formatRouteDuration(option.minutes),
+      transfers: getNaverLikeRouteTransferCount(option),
+      lines: rides.map(findTransitRideLineLabel),
+      boardingStops: rides.map(leg => leg.startName?.trim() || undefined),
+      alightingStops: rides.map(leg => leg.endName?.trim() || undefined),
+    };
+  });
+  const labels = choices.map((choice, index) => {
+    const { category, duration } = choice;
+    const sameMode = choices.filter((peer, peerIndex) =>
+      index !== peerIndex && peer.category === category);
+    const sameDuration = sameMode.filter(peer => peer.duration === duration);
+    const differentIndex = (field: 'lines' | 'boardingStops' | 'alightingStops', peers = sameDuration) =>
+      peers.length > 0 ? choice[field].findIndex((value, legIndex) =>
+        value && peers.every(peer => peer[field][legIndex] !== value)) : -1;
+    const sameDurationLineIndex = differentIndex('lines');
+    const lineIndex = sameDurationLineIndex >= 0 || !compareLinesAcrossDurations
+      ? sameDurationLineIndex : differentIndex('lines', sameMode);
+    const distinguishingLine = choice.lines[lineIndex];
+    const boarding = lineIndex < 0 ? choice.boardingStops[differentIndex('boardingStops')] : undefined;
+    const alighting = lineIndex < 0 && !boarding ? choice.alightingStops[differentIndex('alightingStops')] : undefined;
+    const stopDistinction = boarding ? `${boarding} 승차` : alighting ? `${alighting} 하차` : undefined;
+    let distinction = distinguishingLine ?? stopDistinction;
+    if (category === 'SUBWAY') {
+      const firstLine = choice.lines[0];
+      if (!firstLine) {
+        distinction = stopDistinction;
+      } else if (lineIndex > 0) {
+        distinction = choice.lines.slice(0, lineIndex + 1).map(line => line ?? '지하철').join('→');
+      } else {
+        const boardingLine = choice.transfers ? `${firstLine} + 환승 ${choice.transfers}회` : firstLine;
+        distinction = [boardingLine, stopDistinction].filter(Boolean).join(' · ');
+      }
+    }
     const mode = category === 'BUS' ? '버스'
       : category === 'SUBWAY' ? '지하철'
       : category === 'MIXED' ? '버스+지하철'
       : '대중교통';
     const title = index === 0
-      ? ['추천', distinguishingLine].filter(Boolean).join(' · ')
-      : distinguishingLine ?? mode;
+      ? ['추천', distinction].filter(Boolean).join(' · ')
+      : distinction ?? mode;
     return `${title} · ${duration}`;
   });
+  return labels.map((label, index) => labels.indexOf(label) === labels.lastIndexOf(label)
+    ? label
+    : `${label} · ${index + 1}번 후보`);
 }
 
 /** 네이버형 추천 규칙과 동일한 기준으로 경로의 환승 횟수를 계산합니다. */
@@ -270,7 +310,9 @@ export function buildTransitLegMeta(leg: TransitLegDetail): string | undefined {
 export function buildTransitTimelineTitle(leg: TransitLegDetail): string {
   if (leg.kind === 'WALK') return leg.label;
   const kindLabel = getTransitLegKindMeta(leg.kind).label;
-  const lineName = leg.lineName?.trim() || compactTransitLineLabel(leg.label);
+  const lineName = leg.kind === 'SUBWAY'
+    ? findTransitRideLineLabel(leg)
+    : leg.lineName?.trim() || compactTransitLineLabel(leg.label);
   const titleChunks = [kindLabel, lineName].filter(
     (value): value is string => !!value,
   );
@@ -344,6 +386,7 @@ export function formatTransitClockWithDayContext(
 }
 
 export const TRANSIT_ESTIMATED_DURATION_LABEL = '예상 소요 시간';
+export const TIMETABLE_DESTINATION_ARRIVAL_LABEL = '목적지 도착 (시간표 기준)';
 
 /** Some saved itineraries have ride legs but no provider verified departure. */
 export function isSavedTransitDurationEstimate(option?: RouteAlternativeOption): boolean {
@@ -359,6 +402,8 @@ export function isSavedTransitDurationEstimate(option?: RouteAlternativeOption):
 
 export function shouldShowTransitDurationOnly(option?: RouteAlternativeOption): boolean {
   return option?.mode === 'TRANSIT' &&
+    !option.odsayTimetablePreview &&
+    !option.odsayBusPreview &&
     (option.transitServiceState === 'unknown' || isSavedTransitDurationEstimate(option));
 }
 
@@ -402,23 +447,32 @@ export function buildTransitRouteTimeMeta(
     };
   }
 
-  const providerDeparture = option.providerDepartureAt ? new Date(option.providerDepartureAt) : undefined;
-  const providerArrival = option.providerArrivalAt ? new Date(option.providerArrivalAt) : undefined;
-  const hasTimetable = option.providerTimeBasis === 'timetable' &&
+  const timetablePreview = option.odsayTimetablePreview;
+  const bus = option.odsayBusPreview;
+  const departure = timetablePreview?.departureAt ?? bus?.departureAt ?? option.providerDepartureAt;
+  const arrival = timetablePreview?.arrivalAt ?? bus?.arrivalAt ?? option.providerArrivalAt;
+  const providerDeparture = departure ? new Date(departure) : undefined;
+  const providerArrival = arrival ? new Date(arrival) : undefined;
+  const hasTimetable = (timetablePreview || bus || option.providerTimeBasis === 'timetable') &&
     providerDeparture && providerArrival &&
     Number.isFinite(providerDeparture.getTime()) && Number.isFinite(providerArrival.getTime()) &&
     providerArrival.getTime() >= providerDeparture.getTime();
   const displayedDeparture = hasTimetable ? providerDeparture : departureAt;
   const departureText = formatTransitClock(displayedDeparture);
   let arrivalText: string | undefined;
-  if (typeof option.minutes === 'number') {
-    const arrivalAt = hasTimetable ? providerArrival : new Date(
-      displayedDeparture.getTime() + Math.max(0, option.minutes) * 60 * 1000,
-    );
-    arrivalText = formatTransitClockWithDayContext(arrivalAt, displayedDeparture);
+  const departureMs = displayedDeparture.getTime();
+  const exactSeconds = validTotalDurationSeconds(option.totalDurationSeconds, departureMs);
+  const estimatedSeconds = exactSeconds ?? (
+    typeof option.minutes === 'number' && Number.isFinite(option.minutes) ? Math.max(0, option.minutes) * 60 : undefined
+  );
+  const arrivalAt = hasTimetable ? providerArrival : estimatedSeconds === undefined
+    ? undefined : new Date(departureMs + estimatedSeconds * 1000);
+  if (arrivalAt && Number.isFinite(arrivalAt.getTime())) {
+    const displayedArrival = timetablePreview ? roundRouteArrivalMinute(arrivalAt) ?? arrivalAt : arrivalAt;
+    arrivalText = formatTransitClockWithDayContext(displayedArrival, displayedDeparture);
   }
   const timeRangeText = arrivalText
-    ? `${departureText} 출발 - ${arrivalText} 예상 도착`
+    ? `${departureText} 출발 - ${arrivalText} ${timetablePreview ? TIMETABLE_DESTINATION_ARRIVAL_LABEL : '예상 도착'}`
     : undefined;
   return {
     departureText,

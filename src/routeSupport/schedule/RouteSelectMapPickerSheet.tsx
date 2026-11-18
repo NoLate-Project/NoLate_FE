@@ -1,9 +1,9 @@
-import React, { useLayoutEffect, useMemo, useRef } from "react";
-import { Animated, Easing, Modal, Pressable, Text, View, useWindowDimensions } from "react-native";
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Animated, Easing, Modal, Platform, Pressable, Text, View, useWindowDimensions } from "react-native";
 import Reanimated, { FadeIn, Keyframe, ReduceMotion } from "react-native-reanimated";
 
 import TmapMapView, { type TmapMarker } from "../../modules/map/TmapMapView";
-import { getMapPickerAddressLabel } from "../../modules/schedule/routePointSelection";
+import { getMapPickerAddressLabel, isMapPickedPlaceWithoutAddress } from "../../modules/schedule/routePointSelection";
 import styles from "./route-select.styles";
 import {
     MAP_PICKER_DEFAULT_ZOOM,
@@ -16,6 +16,7 @@ import type { RouteSelectController } from "./useRouteSelectController";
 
 type RouteSelectMapPickerSheetProps = {
     controller: RouteSelectController;
+    onCancelDismissed: () => void;
 };
 const mapAddressEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const confirmedLocationEntrance = new Keyframe({
@@ -29,6 +30,7 @@ const confirmedLocationEntrance = new Keyframe({
 /** 지도 좌표 선택 모달의 카메라, 표식, 안내 문구와 확정 동작을 구성한다. */
 export function RouteSelectMapPickerSheet({
     controller,
+    onCancelDismissed,
 }: RouteSelectMapPickerSheetProps) {
     const {
         insets,
@@ -52,6 +54,21 @@ export function RouteSelectMapPickerSheet({
     } = controller;
     const { fontScale } = useWindowDimensions();
     const previousTarget = useRef(activeTarget);
+    const cancelled = useRef(false);
+    const restoreAfterCancel = React.useCallback(() => {
+        if (!cancelled.current) return;
+        cancelled.current = false;
+        onCancelDismissed();
+    }, [onCancelDismissed]);
+    useEffect(() => {
+        if (Platform.OS === "ios" || mapPickerVisible || !cancelled.current) return;
+        const frame = requestAnimationFrame(restoreAfterCancel);
+        return () => cancelAnimationFrame(frame);
+    }, [mapPickerVisible, restoreAfterCancel]);
+    const cancelPicker = () => {
+        cancelled.current = true;
+        closeMapPicker();
+    };
     const wasVisible = useRef(false);
     const stageOpacity = useRef(new Animated.Value(1)).current;
     useLayoutEffect(() => {
@@ -141,7 +158,8 @@ export function RouteSelectMapPickerSheet({
         <Modal
             visible={mapPickerVisible}
             animationType={reduceFavoriteMotionEnabled ? "none" : "slide"}
-            onRequestClose={closeMapPicker}
+            onRequestClose={cancelPicker}
+            onDismiss={restoreAfterCancel}
         >
             <View accessibilityViewIsModal style={[styles.mapPickerRoot, { backgroundColor: routeUi.background }]}>
                 <TmapMapView
@@ -159,7 +177,7 @@ export function RouteSelectMapPickerSheet({
                 <View style={[styles.mapPickerHeader, { paddingTop: insets.top + 8 }]}>
                     <View style={styles.mapPickerHeaderRow}>
                         <Pressable
-                            onPress={closeMapPicker}
+                            onPress={cancelPicker}
                             accessibilityRole="button"
                             accessibilityLabel="지도 선택 닫기"
                             style={[styles.mapPickerIconButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
@@ -184,7 +202,9 @@ export function RouteSelectMapPickerSheet({
                         }]}>
                             <Ionicons name="location-outline" size={16} color={routeUi.accentGreen} />
                             <Text numberOfLines={2} maxFontSizeMultiplier={1.5} style={[styles.mapPickerOriginText, { color: routeUi.textPrimary }]}>
-                                {`출발지 ${origin.name}`}
+                                {isMapPickedPlaceWithoutAddress(origin, "origin")
+                                    ? "선택한 출발지"
+                                    : `출발지 ${origin.name || origin.address}`}
                             </Text>
                         </Animated.View>
                     )}

@@ -4,6 +4,7 @@ import {
     getDefaultScheduleStartTime,
     getScheduleAllDayFormEndDay,
     getScheduleCalendarDateKey,
+    getScheduleFormEndWhenMovingStartDate,
     normalizeScheduleFormRange,
     startOfLocalScheduleDay,
 } from "../src/modules/schedule/scheduleFormDate";
@@ -103,5 +104,22 @@ describe("schedule form date presentation", () => {
 
         expect(range.allDay).toBe(false);
         expect(range.hasEndTime).toBe(true);
+    });
+
+    it("keeps an overnight duration when the new start day is after the old end day", () => {
+        const range = {
+            startDay: new Date(2026, 10, 16),
+            startTime: new Date(2026, 10, 16, 23, 40),
+            endDay: new Date(2026, 10, 17),
+            endTime: new Date(2026, 10, 17, 0, 40),
+            allDay: false,
+            hasEndTime: true,
+        };
+        expect(getScheduleFormEndWhenMovingStartDate(range, new Date(2026, 10, 30)))
+            .toEqual(new Date(2026, 11, 1, 0, 40));
+        expect(getScheduleFormEndWhenMovingStartDate(range, new Date(2026, 10, 17)))
+            .toBeUndefined();
+        expect(getScheduleFormEndWhenMovingStartDate({ ...range, allDay: true }, new Date(2026, 10, 30)))
+            .toBeUndefined();
     });
 });

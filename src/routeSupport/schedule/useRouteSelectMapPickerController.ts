@@ -1,10 +1,12 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
 import { reverseGeocodeToAddress } from "../../modules/map/routingService";
 import {
   createMapPickerSessionState,
   getMapPickerAddressLabel,
+  isMapPickedPlaceWithoutAddress,
+  MAP_PICKER_FALLBACK_NAMES,
   resolveMapPickerCommit,
   resolveMapPickerPostCommitTransition,
   selectMapPickerSessionCoordinate,
@@ -16,6 +18,8 @@ import {
   MAP_PICKER_FALLBACK_LNG,
 } from "./RouteSelectAnimatedControls";
 import { placeHasCoords } from "./routeSelectPlaceModel";
+
+const MAP_PICKER_ADDRESS_WAIT_MS = 5_000;
 
 type RouteSelectMapPickerControllerOptions = {
   activeTarget: RoutePointTarget;
@@ -61,6 +65,11 @@ export function useRouteSelectMapPickerController({
   const mapPickerCommittedRef = useRef(false);
   const mapPickerOpenRef = useRef(false);
 
+  useEffect(() => () => {
+    mapPickerRequestIdRef.current += 1;
+    mapPickerOpenRef.current = false;
+  }, []);
+
   /** 대상 지점, 반대편 지점, 기본 좌표 순서로 지도 모달의 최초 카메라 위치를 고른다. */
   const getMapPickerInitialCoord = useCallback(
     (target: RoutePointTarget) => {
@@ -100,7 +109,7 @@ export function useRouteSelectMapPickerController({
     setMapPickerName(targetHasCoordinates ? targetPlace.name : undefined);
     setMapPickerAddress(targetHasCoordinates ? targetPlace.address : undefined);
     setMapPickerResolving(false);
-    setMapPickerAddressUnavailable(false);
+    setMapPickerAddressUnavailable(targetHasCoordinates && isMapPickedPlaceWithoutAddress(targetPlace, activeTarget));
     setMapPickerVisible(true);
   }, [
     activeTarget,
@@ -141,8 +150,15 @@ export function useRouteSelectMapPickerController({
       setMapPickerAddress(undefined);
       setMapPickerResolving(true);
       setMapPickerAddressUnavailable(false);
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      const addressDeadline = new Promise<undefined>(resolve => {
+        deadline = setTimeout(() => resolve(undefined), MAP_PICKER_ADDRESS_WAIT_MS);
+      });
       try {
-        const address = await reverseGeocodeToAddress(latitude, longitude);
+        const address = await Promise.race([
+          reverseGeocodeToAddress(latitude, longitude),
+          addressDeadline,
+        ]);
         if (mapPickerRequestIdRef.current !== requestId) return;
         setMapPickerAddress(address?.trim() || undefined);
         setMapPickerAddressUnavailable(!address?.trim());
@@ -150,6 +166,7 @@ export function useRouteSelectMapPickerController({
         if (mapPickerRequestIdRef.current !== requestId) return;
         setMapPickerAddressUnavailable(true);
       } finally {
+        if (deadline !== undefined) clearTimeout(deadline);
         if (mapPickerRequestIdRef.current === requestId) {
           mapPickerResolvingRef.current = false;
           setMapPickerResolving(false);
@@ -180,10 +197,8 @@ export function useRouteSelectMapPickerController({
         return;
       }
 
-      const label =
-        target === "origin" ? "지도 선택 출발지" : "지도 선택 도착지";
       const place: Place = {
-        name: mapPickerName || getMapPickerAddressLabel(mapPickerAddress) || label,
+        name: mapPickerName || getMapPickerAddressLabel(mapPickerAddress) || MAP_PICKER_FALLBACK_NAMES[target],
         address: mapPickerAddress,
         lat: commit.coordinate.latitude,
         lng: commit.coordinate.longitude,

@@ -3,13 +3,14 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
 import { useTheme } from "../../../theme/ThemeContext";
-import ThemeModeSwitch from "../../../theme/ThemeModeSwitch";
+import ThemeModeSwitch, { type OutlinedSelectionColors } from "../../../theme/ThemeModeSwitch";
 
 type Props = {
     firstDay: 0 | 1;
     onChangeFirstDay: (firstDay: 0 | 1) => void;
     largeText: boolean;
     reduceMotionEnabled: boolean;
+    outlinedSelection?: OutlinedSelectionColors;
 };
 
 const weekStarts = [
@@ -24,6 +25,7 @@ export default function CalendarViewSettings({
     onChangeFirstDay,
     largeText,
     reduceMotionEnabled,
+    outlinedSelection,
 }: Props) {
     const { colors } = useTheme();
 
@@ -34,9 +36,15 @@ export default function CalendarViewSettings({
                     <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.label, { color: colors.textPrimary }]}>
                         주 시작 요일
                     </Text>
-                    <View accessibilityRole="radiogroup" style={[styles.segment, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                    <View accessibilityRole="radiogroup" style={[
+                        styles.segment,
+                        outlinedSelection ? styles.outlinedSegment : { backgroundColor: colors.surface2, borderColor: colors.border },
+                    ]}>
                         {weekStarts.map((option) => {
                             const selected = option.value === firstDay;
+                            const labelColor = outlinedSelection
+                                ? selected ? outlinedSelection.color : colors.textPrimary
+                                : selected ? colors.selectedDayText : colors.textSecondary;
                             return (
                                 <Pressable
                                     key={option.value}
@@ -46,11 +54,16 @@ export default function CalendarViewSettings({
                                     onPress={() => onChangeFirstDay(option.value)}
                                     style={({ pressed }) => [
                                         styles.option,
-                                        selected && { backgroundColor: colors.selectedDayBg },
+                                        outlinedSelection
+                                            ? [styles.outlinedOption, {
+                                                backgroundColor: selected ? outlinedSelection.backgroundColor : colors.surface2,
+                                                borderColor: selected ? outlinedSelection.borderColor : colors.border,
+                                            }]
+                                            : selected && { backgroundColor: colors.selectedDayBg },
                                         pressed && styles.pressed,
                                     ]}
                                 >
-                                    <Text maxFontSizeMultiplier={2} style={[styles.optionLabel, { color: selected ? colors.selectedDayText : colors.textSecondary }]}>
+                                    <Text maxFontSizeMultiplier={2} style={[styles.optionLabel, { color: labelColor }]}>
                                         {option.label}
                                     </Text>
                                 </Pressable>
@@ -58,11 +71,11 @@ export default function CalendarViewSettings({
                         })}
                     </View>
                 </View>
-                <View style={[styles.section, styles.divider, { borderTopColor: colors.border }]}>
+                <View style={[styles.section, !outlinedSelection && styles.divider, { borderTopColor: colors.border }]}>
                     <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.label, { color: colors.textPrimary }]}>
                         화면 테마
                     </Text>
-                    <ThemeModeSwitch stacked={largeText} />
+                    <ThemeModeSwitch stacked={largeText} outlinedSelection={outlinedSelection} />
                 </View>
             </Animated.View>
         </ScrollView>
@@ -82,6 +95,7 @@ const styles = StyleSheet.create({
         padding: 3,
         gap: 3,
     },
+    outlinedSegment: { minHeight: 48, borderWidth: 0, padding: 0, gap: 6 },
     option: {
         minHeight: 44,
         minWidth: 0,
@@ -93,5 +107,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 4,
     },
     optionLabel: { fontSize: 14, fontWeight: "800", textAlign: "center" },
+    outlinedOption: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 12 },
     pressed: { opacity: 0.62 },
 });

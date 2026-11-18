@@ -12,6 +12,7 @@ import {
 import { getBusArrivalStationIdentifiers } from '../../transitArrivalIdentifiers';
 import { formatTransferBoardingTarget, isTransitRideKind } from '../../../map/transitModes';
 import styles from './RouteStepTimeline.styles';
+import type { BusBoardingScroll } from './RouteBusBoardingContext';
 
 /** 경로 단계의 제목·아이콘·실시간 도착정보 표시 규칙과 작은 UI 조각을 모읍니다. */
 export function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -107,9 +108,12 @@ export type RouteStepTimelineProps = {
   initialExpandedStepId?: string;
   compact?: boolean;
   inlineStationRail?: boolean;
+  busBoardingScroll?: BusBoardingScroll & { surface: string; border: string };
   realtimeArrivalsEnabled?: boolean;
+  realtimeArrivalsActive?: boolean;
   showEstimatedClockHeading?: boolean;
-  currentGuidance?: { stepId: string; label: string };
+  currentGuidance?: { stepId: string };
+  currentGuidanceRowRef?: React.RefObject<View | null>;
   stepDisplayNames?: Record<string, string>;
 };
 
@@ -157,10 +161,12 @@ export function StepIconGlyph({
   type,
   color,
   compact,
+  isWaiting,
 }: {
   type: RouteStepType;
   color: string;
   compact: boolean;
+  isWaiting?: boolean;
 }) {
   if (type === 'ORIGIN') {
     return (
@@ -184,7 +190,7 @@ export function StepIconGlyph({
 
   return (
     <Ionicons
-      name={getStepIcon(type)}
+      name={isWaiting ? 'time-outline' : getStepIcon(type)}
       size={getStepIconSize(type, compact)}
       color={color}
     />
@@ -199,17 +205,16 @@ export function buildStepTitle(step: RouteStep, walkingLabel = '도보'): string
       badge && step.title.startsWith(`${badge} `)
         ? step.title.slice(badge.length + 1)
         : step.title;
-    return (
-      withoutBadge
-        .replace(/\s*승차\s*→.*$/u, '')
-        .replace(/\s*하차\s*$/u, '')
-        .replace(/\s*승차\s*$/u, '')
-        .trim() || withoutBadge
-    );
+    const withoutLegacyDestination = withoutBadge.replace(/\s*승차\s*→.*$/u, '');
+    return stripStopAction(withoutLegacyDestination) || stripStopAction(step.title) || badge || withoutBadge;
   }
   if (step.title.trim() !== '도보') return step.title;
   const summary = walkingMetrics(step).join(' · ');
   return summary ? `${walkingLabel} ${summary}` : walkingLabel;
+}
+
+export function stripStopAction(name: string): string {
+  return name.trim().replace(/(?:^|\s)(?:승차|하차)$/u, '').trimEnd();
 }
 
 function walkingMetrics(step: RouteStep): string[] {
@@ -222,7 +227,9 @@ function walkingMetrics(step: RouteStep): string[] {
 /** 승차 구간 사이에서 다음 승차 직전의 도보에만 환승 정보를 표시합니다. */
 export function getTransferWalkDestination(steps: readonly RouteStep[], index: number): string | undefined {
   const next = steps[index + 1];
-  const type = steps[index]?.type;
+  const step = steps[index];
+  const type = step?.type;
+  if (step?.journeyPhase === 'BUFFER') return undefined;
   if ((type !== 'WALK' && type !== 'TRANSFER') || !next || !isTransitRideKind(next.type)) return;
   if (type === 'TRANSFER') return formatTransferBoardingTarget(next.type, next.lineName?.trim() || next.badgeText);
   let previousIndex = index - 1;
@@ -232,9 +239,9 @@ export function getTransferWalkDestination(steps: readonly RouteStep[], index: n
   return formatTransferBoardingTarget(next.type, next.lineName?.trim() || next.badgeText);
 }
 
-/** 제목에 이미 있는 도보 거리와 시간만 설명에서 제외합니다. */
+/** 제목에 이미 있는 도보·대기 시간과 거리만 설명에서 제외합니다. */
 export function buildStepDescription(step: RouteStep, title: string): string | undefined {
-  if (!step.description || step.type !== 'WALK') return step.description;
+  if (!step.description || (step.type !== 'WALK' && step.journeyPhase !== 'BUFFER')) return step.description;
   const titleTokens = new Set(title.split(/[\s·(),]+/u));
   const repeatedMetrics = new Set(walkingMetrics(step).filter(metric => titleTokens.has(metric)));
   return step.description.split('·')
@@ -287,9 +294,7 @@ export function buildBoardingGuideItems(
 export function buildRideDescription(step: RouteStep): string | undefined {
   if (step.description)
     return step.description
-      .replace(/\s*승차(?!권)\s*/gu, ' ')
-      .replace(/\s*하차\s*/gu, ' ')
-      .replace(/\s*→\s*/gu, ' · ')
+      .replace(/\s*승차\s*→\s*([^·]+?)\s*하차(?=\s*·|\s*$)/gu, ' · $1')
       .replace(/\s+/g, ' ')
       .trim();
   const chunks = [
@@ -303,13 +308,13 @@ export function buildRideDescription(step: RouteStep): string | undefined {
   return chunks.join(' · ') || step.description;
 }
 
-/** 도착 정보의 시각 문자열을 오전·오후가 포함된 짧은 한국어 형식으로 변환합니다. */
+/** 출발 시각과 구간 오프셋을 시간 레일에 표시할 시각으로 변환합니다. */
 export function formatArrivalClock(
   baseValue: string,
   offsetMinutes: number,
-): string {
+): string | undefined {
   const base = new Date(baseValue);
-  if (Number.isNaN(base.getTime())) return '--:--';
+  if (!Number.isFinite(base.getTime()) || !Number.isFinite(offsetMinutes)) return undefined;
   const next = new Date(
     base.getTime() + Math.max(0, offsetMinutes) * 60 * 1000,
   );
@@ -401,6 +406,12 @@ function getExpectedArrivalTime(arrival: TransitArrivalInfo): number | undefined
   return Number.isFinite(estimate) ? estimate : undefined;
 }
 
+export function hasPassedArrivalEstimate(arrival: TransitArrivalInfo, now: number): boolean {
+  if (arrival.arrivalStatus === 'ARRIVED' || arrival.arrivalStatus === 'DEPARTED') return false;
+  const expected = getExpectedArrivalTime(arrival);
+  return expected !== undefined && expected < now;
+}
+
 /** 도착 예정 초를 분·초 기반의 짧은 대기 문구로 변환합니다. */
 export function getArrivalWaitText(arrival: TransitArrivalInfo, now = Date.now()): string {
   if (arrival.arrivalStatus === 'ARRIVED') return '도착';
@@ -417,9 +428,9 @@ export function getArrivalWaitText(arrival: TransitArrivalInfo, now = Date.now()
 }
 
 /** 도착 시계와 남은 시간이 같은 관측을 기준으로 표시되도록 합니다. */
-export function getArrivalClockText(arrival: TransitArrivalInfo): string {
+export function getArrivalClockText(arrival: TransitArrivalInfo): string | undefined {
   const expected = getExpectedArrivalTime(arrival);
-  if (expected === undefined) return '--:--';
+  if (expected === undefined) return undefined;
   const date = new Date(expected);
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');

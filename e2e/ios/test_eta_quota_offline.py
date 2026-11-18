@@ -119,6 +119,7 @@ class OfflineQuotaVerifierTest(unittest.TestCase):
     def test_quality_suite_is_bounded_and_keeps_diagnostic_stages_distinct(self):
         self.assertEqual(len(quota.suite_commands(True)), 7)
         self.assertEqual(quota.suite_commands(True)[-1], 'quota-recovered')
+        self.assertEqual(quota.suite_commands(departed=True), ['quality-departed', 'quota-recovered'])
         self.assertEqual(len(set(quota.QUALITY_CODES.values())), 6)
         for scenario, code in quota.QUALITY_CODES.items():
             if not scenario.startswith('quality-'):
@@ -127,12 +128,16 @@ class OfflineQuotaVerifierTest(unittest.TestCase):
             value.update(scenario=scenario, injectedFaults=[quota.QUALITY_FAULTS[scenario]], failureCode=code)
             value['evaluationHistory']['failureCode'] = code
             public.update(failureReason=code + ': safe', predictedArrivalAt=None, effectiveTransitRoute=None)
-            if scenario == 'quality-unobserved':
+            if scenario in ('quality-unobserved', 'quality-departed', 'quality-stale'):
                 preview = {'segments': [{'kind': 'SUBWAY', 'rideTiming': {'basis': 'TIMETABLE'}}]}
                 value['effectiveSnapshot'] = {'accepted': False, 'transitTimingBasis': 'TIMETABLE_ONLY',
                                                'effectiveTransitRoute': preview}
                 public['futureTimetablePrediction'] = copy.deepcopy(preview)
             self.assertEqual(quota.verify_case(value, baseline, previous, public)['result'], 'PASSED')
+            if scenario == 'quality-departed':
+                delayed = dict(value, nextCheckAt='2026-10-08T06:05:00Z')
+                with self.assertRaises(AssertionError):
+                    quota.verify_case(delayed, baseline, previous, public)
             bad = copy.deepcopy(value)
             bad['failureCode'] = 'TRANSIT_ARRIVAL_UNAVAILABLE'
             with self.assertRaises(AssertionError):

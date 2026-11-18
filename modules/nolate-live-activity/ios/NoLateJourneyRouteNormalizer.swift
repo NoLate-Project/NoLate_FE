@@ -230,15 +230,23 @@ enum NoLateJourneyRouteNormalizer {
       busRoute: bus.0, busUnavailableReason: bus.1,
       guidanceLegs: NoLateGuidanceRouteLayoutPolicy.budgeted(summary.legs.map { leg in
         let continuous: Bool
-        if leg.index == 1 { continuous = bus.0 != nil }
-        else if leg.index > 1, input.legs[leg.index - 1].kind == "WALK", summary.legs[leg.index - 1].geometryUsable,
+        if leg.index == 1, leg.kind == "BUS" { continuous = bus.0 != nil }
+        else if leg.index > 0, input.legs[leg.index - 1].kind == "WALK", summary.legs[leg.index - 1].geometryUsable,
           let end = (try? routeCoordinates(input,legIndex:leg.index - 1))?.last ?? nil,
           let board = input.legs[leg.index].stops.first?.coordinate {
-          continuous = distance(end,board) <= 25
+          // Walking providers may end at a station entrance while the transit
+          // provider anchors the platform/stop. Use the same proximity bound
+          // as the bus approach; this permits only a planned boarding label.
+          continuous = distance(end,board) <= 75
         } else { continuous = false }
         return .init(index: leg.index, kind: leg.kind,
           walkingLengthMeters: leg.kind == "WALK" && leg.geometryUsable ? leg.geometryLengthMeters : nil,
-          boardingStopName: continuous && leg.stopSequenceUsable && leg.directionExplicit ? NoLateGuidanceRouteLayoutPolicy.safeName(input.legs[leg.index].stops.first?.name) : nil,
+          // The first subway boarding point is also anchored by the verified
+          // walking endpoint. Its route label can be shown before a live train
+          // or official stop-sequence admission is available; ride/alighting
+          // claims still require the stricter evidence below.
+          boardingStopName: continuous && (leg.kind == "SUBWAY" || (leg.stopSequenceUsable && leg.directionExplicit))
+            ? NoLateGuidanceRouteLayoutPolicy.safeName(input.legs[leg.index].stops.first?.name) : nil,
           lineName: ["BUS", "SUBWAY"].contains(leg.kind) ? NoLateGuidanceRouteLayoutPolicy.safeName(input.legs[leg.index].display?.lineName) : nil,
           lineColor: ["BUS", "SUBWAY"].contains(leg.kind) ? NoLateGuidanceRouteLayoutPolicy.safeColor(input.legs[leg.index].display?.lineColor) : nil,
           durationMinutes: NoLateGuidanceRouteLayoutPolicy.number(input.legs[leg.index].display?.durationMinutes, maximum: 1440),
@@ -259,7 +267,8 @@ enum NoLateJourneyRouteNormalizer {
     var coordinates: [NoLateJourneyEngineCore.Coordinate] = []
     for coordinate in leg.coordinates {
       guard let coordinate else { return (nil, "BUS_GEOMETRY_UNUSABLE") }
-      coordinates.append(.init(latitude: coordinate.latitude, longitude: coordinate.longitude))
+      let point = NoLateJourneyEngineCore.Coordinate(latitude: coordinate.latitude, longitude: coordinate.longitude)
+      if coordinates.last != point { coordinates.append(point) }
     }
     // A missing provider route ID cannot confirm a vehicle. It does not prevent stop proximity
     // or a clearly labelled, unconfirmed speed/shape candidate; there is no RIDING transition.
@@ -314,11 +323,12 @@ enum NoLateJourneyRouteNormalizer {
     var routeReasons = routeReasons(input, officialBusAdmission: official, officialSubwayAdmission: officialSubway)
     var summaries: [LegSummary] = []
     for leg in input.legs {
+      let busProof = leg.index == 1 && leg.kind == "BUS" ? official : nil
       let geometry = evaluateGeometry(leg, provider: input.provider,
-        walkingPath: input.walkingSnapshot?.walks.first(where: { $0.legIndex == leg.index })?.coordinates)
+        walkingPath: input.walkingSnapshot?.walks.first(where: { $0.legIndex == leg.index })?.coordinates,
+        collapseAdjacentBusVertices: busProof != nil)
       var reasons = geometry.reasons
       let ride = leg.kind == "BUS" || leg.kind == "SUBWAY"
-      let busProof = leg.index == 1 && leg.kind == "BUS" ? official : nil
       let direction = explicit(leg.directionName) || leg.directionCode == "UP" || leg.directionCode == "DOWN" || busProof != nil
       let stopsUsable: Bool
       if ride {
@@ -444,7 +454,8 @@ enum NoLateJourneyRouteNormalizer {
     }
     return input.legs[legIndex].coordinates
   }
-  private static func evaluateGeometry(_ leg: Leg, provider: String, walkingPath: [Coordinate]? = nil) -> Geometry {
+  private static func evaluateGeometry(_ leg: Leg, provider: String, walkingPath: [Coordinate]? = nil,
+    collapseAdjacentBusVertices: Bool = false) -> Geometry {
     var reasons: [String] = []
     let trustedSources = leg.kind == "WALK"
       ? ["WALK_STEPS_LINESTRING", "WALK_PASS_SHAPE_LINESTRING"]
@@ -465,7 +476,15 @@ enum NoLateJourneyRouteNormalizer {
       // Do not filter out a bad middle point and connect the surrounding coordinates.
       return Geometry(coordinates: [], length: nil, reasons: reasons + ["GEOMETRY_COORDINATE_INVALID"])
     }
-    let coordinates = path.compactMap { $0 }
+    let rawCoordinates = path.compactMap { $0 }
+    // The official crosswalk may certify a bus shape containing zero-length edges.
+    // Collapse adjacent repeats only; distant repeats and reversed paths stay rejected.
+    let coordinates = collapseAdjacentBusVertices && leg.kind == "BUS"
+      ? rawCoordinates.reduce(into: [Coordinate]()) { result, point in
+          if result.last != point { result.append(point) }
+        } : rawCoordinates
+    if coordinates.count < 2 { return Geometry(coordinates: coordinates, length: 0,
+      reasons: unique(reasons + ["GEOMETRY_ZERO_LENGTH"])) }
     if Set(coordinates).count != coordinates.count { reasons.append("GEOMETRY_DUPLICATE_COORDINATE") }
     let maximumSegment = leg.kind == "WALK" ? 150.0 : (leg.kind == "BUS" ? 2_000.0 : 5_000.0)
     var length = 0.0

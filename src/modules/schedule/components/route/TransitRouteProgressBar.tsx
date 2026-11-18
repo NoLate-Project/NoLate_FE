@@ -5,10 +5,12 @@ import { useReducedMotion } from "react-native-reanimated";
 
 import {
     getTransitRouteSegmentAccessibilityLabel,
+    groupTransitRouteSummary,
     isRouteTransferWalk,
+    TRANSIT_WAIT_LABEL,
     type TransitRouteProgressSegment,
 } from "../../transitRouteProgress";
-import { routeColorForWhiteIcon, routeColorInk } from "../../routeColorContrast";
+import { routeColorForCaption, routeColorForWhiteIcon, routeColorInk } from "../../routeColorContrast";
 import { transitModeLabel } from "../../../map/transitModes";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -30,43 +32,63 @@ type Props = {
 type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
 const ROUTE_MARKER_CAPTION_SIZE = 11;
 const ROUTE_MARKER_CAPTION_PADDING = 3;
-const ROUTE_MARKER_CONNECTOR_GAP = 13;
+const ROUTE_MARKER_MIN_CELL_WIDTH = 36;
+const ROUTE_WALKING_MIN_CELL_WIDTH = 24;
+const ROUTE_MARKER_SHORT_CAPTION_WIDTH = 72;
 
-function routeMarkerCaptionWidth(label: string, fontScale: number): number {
-    // Reserve enough room for an unbroken label before distributing the extra width by duration.
-    const longestWord = Math.max(...label.split(/\s+/u).map(word =>
-        Array.from(word).reduce((width, character) =>
-            width + (/^[\x20-\x7e]$/u.test(character) ? 0.64 : 1), 0),
-    ));
-    return Math.ceil(longestWord * ROUTE_MARKER_CAPTION_SIZE * fontScale)
+function routeMarkerCaptionWidth(label: string, fontScale: number, preferOneLine = false): number {
+    const estimateWidth = (text: string) => Math.ceil(Array.from(text).reduce((width, character) =>
+        width + (/^[\x20-\x7e]$/u.test(character) ? 0.64 : 1), 0) * ROUTE_MARKER_CAPTION_SIZE * fontScale)
         + ROUTE_MARKER_CAPTION_PADDING * 2;
+    if (preferOneLine) {
+        const fullWidth = estimateWidth(label);
+        if (fullWidth <= ROUTE_MARKER_SHORT_CAPTION_WIDTH) return fullWidth;
+    }
+    return Math.max(...label.split(/\s+/u).map(estimateWidth));
 }
 
 function getSegmentIcon(kind: TransitRouteProgressSegment["kind"]): IoniconName {
-    if (kind === "WALK") return "walk-outline";
+    if (kind === "WALK" || kind === "TRANSFER") return "walk-outline";
     if (kind === "BUS" || kind === "EXPRESS_BUS" || kind === "INTERCITY_BUS" || kind === "COACH") return "bus-outline";
     if (kind === "SUBWAY" || kind === "TRAIN") return "train-outline";
-    if (kind === "TRANSFER") return "swap-horizontal-outline";
+    if (kind === "WAIT") return "time-outline";
     return "navigate-outline";
 }
 
 function getAccessibilityLabel(segments: TransitRouteProgressSegment[]): string {
-    return segments.map((segment) => (
-        [segment.lineLabel, segment.label].filter(Boolean).join(" ")
+    return segments.map((segment, index) => (
+        segment.kind === "WAIT" ? getTransitRouteSegmentAccessibilityLabel(segments, index)
+            : [segment.lineLabel, segment.label].filter(Boolean).join(" ")
     )).join(", ");
 }
 
+function getRouteMarkerCaption(segment: TransitRouteProgressSegment): string | undefined {
+    if (segment.kind === "WAIT") return TRANSIT_WAIT_LABEL;
+    if (segment.isRide) return segment.lineLabel ?? transitModeLabel(segment.kind);
+    return undefined;
+}
+
+function isUnmarkedWalk(segments: readonly TransitRouteProgressSegment[], index: number): boolean {
+    return isRouteTransferWalk(segments, index) ||
+        (segments[index].kind === "WALK" && index > 0 && index === segments.length - 1);
+}
+
 export default function TransitRouteProgressBar({
-    segments,
+    segments: routeSegments,
     isDark = false,
     compact = false,
     trackOnly = false,
     labelledSummary = false,
     alignedSummary = false,
-    focusedSegmentIndex,
+    focusedSegmentIndex: focusedLegIndex,
     reduceFocusMotion,
     showTrackOnlyFocusLabel = true,
 }: Props) {
+    const summary = labelledSummary && alignedSummary
+        ? groupTransitRouteSummary(routeSegments, focusedLegIndex)
+        : undefined;
+    const segments = summary?.segments ?? routeSegments;
+    const focusedSegmentIndex = summary ? summary.focusedIndex : focusedLegIndex;
     const initialReduceMotion = useReducedMotion();
     const { width: windowWidth, fontScale } = useWindowDimensions();
     const [summaryWidth, setSummaryWidth] = useState(0);
@@ -125,22 +147,35 @@ export default function TransitRouteProgressBar({
         const ink = isDark ? "#F4F6F8" : "#243142";
         const secondaryInk = isDark ? "#B3BECC" : "#53647A";
         const walkingColor = isDark ? "#687588" : "#ACB8C6";
+        const markerFocusStyle = {
+            borderColor: isDark ? "#FFFFFF" : "#18283B",
+            opacity: reduceMotionEnabled ? 1 : focusProgress,
+            transform: [{ scale: reduceMotionEnabled ? 1 : focusProgress.interpolate({
+                inputRange: [0, 1], outputRange: [0.85, 1],
+            }) }],
+        };
         const availableWidth = Math.max(1, summaryWidth || windowWidth - 48);
-        const minimumCellWidth = alignedSummary ? Math.max(
-            Math.ceil(36 * Math.max(1, Math.min(fontScale, 2))),
-            ...segments.map(segment => Math.max(
+        const baseCellWidth = Math.ceil(ROUTE_MARKER_MIN_CELL_WIDTH * Math.max(1, Math.min(fontScale, 2)));
+        const minimumCellWidths = alignedSummary
+            ? segments.map((segment, index) => Math.max(
+                !largeSummaryLabels && isUnmarkedWalk(segments, index) ? ROUTE_WALKING_MIN_CELL_WIDTH : baseCellWidth,
                 routeMarkerCaptionWidth(segment.label, fontScale),
-                routeMarkerCaptionWidth(segment.isRide ? segment.lineLabel ?? transitModeLabel(segment.kind) : "", fontScale),
-            )),
-        ) : 36;
+                routeMarkerCaptionWidth(
+                    getRouteMarkerCaption(segment) ?? "",
+                    fontScale,
+                    !largeSummaryLabels,
+                ),
+            ))
+            : [];
+        const minimumCellWidth = Math.max(baseCellWidth, ...minimumCellWidths);
+        const totalMinimumWidth = minimumCellWidths.reduce((total, width) => total + width, 0);
+        const proportionate = !largeSummaryLabels && totalMinimumWidth <= availableWidth;
         const capacity = Math.max(1, Math.floor(availableWidth / minimumCellWidth));
-        const rowCount = Math.ceil(segments.length / capacity);
+        const rowCount = proportionate ? 1 : Math.ceil(segments.length / capacity);
         const cellsPerRow = Math.ceil(segments.length / rowCount);
-        const captionWidth = Math.min(minimumCellWidth, availableWidth / cellsPerRow);
-        const markerCenter = captionWidth / 2;
-        const proportionate = rowCount === 1 && !largeSummaryLabels;
+        const wrappedCaptionWidth = Math.min(minimumCellWidth, availableWidth / cellsPerRow);
         const totalWeight = segments.reduce((total, segment) => total + segment.flex, 0);
-        const spareWidth = Math.max(0, availableWidth - segments.length * minimumCellWidth);
+        const spareWidth = Math.max(0, availableWidth - totalMinimumWidth);
         const rows = alignedSummary
             ? Array.from({ length: rowCount }, (_, row) =>
                 segments.slice(row * cellsPerRow, (row + 1) * cellsPerRow))
@@ -157,15 +192,19 @@ export default function TransitRouteProgressBar({
             >
                 {alignedSummary ? rows.map((row, rowIndex) => (
                     <View key={row[0].key} style={styles.routeMarkerRow}>
+                        {row.length === cellsPerRow && (
+                            <View style={[styles.routeMarkerConnector, { backgroundColor: walkingColor, opacity: 0.42 }]} />
+                        )}
                         {row.map((segment, column) => {
                             const index = rowIndex * cellsPerRow + column;
                             const color = routeColorForWhiteIcon(segment.color);
                             const selected = index === focusedSegmentIndex;
-                            const iconKind = isRouteTransferWalk(segments, index) ? "TRANSFER" : segment.kind;
+                            const walkingWithoutMarker = isUnmarkedWalk(segments, index);
+                            const caption = getRouteMarkerCaption(segment);
                             const continuation = column === row.length - 1 && index < segments.length - 1;
-                            const lastInRow = column === row.length - 1;
+                            const captionWidth = proportionate ? minimumCellWidths[index] : wrappedCaptionWidth;
                             const width = proportionate && totalWeight > 0
-                                ? (minimumCellWidth + spareWidth * segment.flex / totalWeight) / availableWidth
+                                ? (captionWidth + spareWidth * segment.flex / totalWeight) / availableWidth
                                 : 1 / cellsPerRow;
                             return (
                                 <View
@@ -177,41 +216,39 @@ export default function TransitRouteProgressBar({
                                         styles.routeMarkerConnector,
                                         {
                                             backgroundColor: segment.isRide ? segment.color : walkingColor,
-                                            left: markerCenter + ROUTE_MARKER_CONNECTOR_GAP,
-                                            right: lastInRow
-                                                ? (continuation ? 16 : 2)
-                                                : ROUTE_MARKER_CONNECTOR_GAP - markerCenter,
+                                            right: continuation ? 16 : 0,
                                         },
-                                    ]} />
-                                    <View style={[
+                                    ]}>
+                                        {walkingWithoutMarker && selected && (
+                                            <Animated.View pointerEvents="none" style={[styles.routeMarkerFocus, markerFocusStyle]} />
+                                        )}
+                                    </View>
+                                    {walkingWithoutMarker ? <View style={styles.routeMarkerSpacer} /> : <View style={[
                                         styles.routeMarker,
                                         !segment.isRide && styles.routeMarkerNeutral,
                                         {
                                             backgroundColor: segment.isRide ? color : isDark ? "#465365" : "#58677A",
-                                            marginLeft: Math.max(0, markerCenter - (segment.isRide ? 10 : 9)),
                                         },
                                     ]}>
-                                        <Ionicons name={getSegmentIcon(iconKind)} size={13} color="#FFFFFF" />
+                                        <Ionicons name={getSegmentIcon(segment.kind)} size={13} color="#FFFFFF" />
                                         {selected && (
-                                            <Animated.View pointerEvents="none" style={[styles.routeMarkerFocus, {
-                                                borderColor: isDark ? "#FFFFFF" : "#18283B",
-                                                opacity: reduceMotionEnabled ? 1 : focusProgress,
-                                                transform: [{ scale: reduceMotionEnabled ? 1 : focusProgress.interpolate({
-                                                    inputRange: [0, 1], outputRange: [0.85, 1],
-                                                }) }],
-                                            }]} />
+                                            <Animated.View pointerEvents="none" style={[styles.routeMarkerFocus, markerFocusStyle]} />
                                         )}
-                                    </View>
+                                    </View>}
                                     {continuation && (
                                         <View style={styles.routeMarkerContinuation}>
                                             <Ionicons name="return-down-back-outline" size={13} color={secondaryInk} />
                                         </View>
                                     )}
                                     <View style={[styles.routeMarkerCaption, { width: captionWidth }]}>
-                                        <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeMarkerTime, { color: ink }]}>{segment.label}</Text>
-                                        {segment.isRide && (
-                                            <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeMarkerLabel, { color: secondaryInk }]}>
-                                                {segment.lineLabel ?? transitModeLabel(segment.kind)}
+                                        <Text lineBreakStrategyIOS="hangul-word" style={[styles.routeMarkerTime, { color: ink }, selected && styles.selectedCaption]}>{segment.label}</Text>
+                                        {caption && (
+                                            <Text lineBreakStrategyIOS="hangul-word" style={[
+                                                styles.routeMarkerLabel,
+                                                { color: segment.isRide ? routeColorForCaption(segment.color, isDark) : secondaryInk },
+                                                selected && styles.selectedCaption,
+                                            ]}>
+                                                {caption}
                                             </Text>
                                         )}
                                     </View>
@@ -523,7 +560,8 @@ const styles = StyleSheet.create({
     labelledSummary: { width: "100%", marginTop: 12, gap: 9 },
     routeMarkerRow: { flexDirection: "row" },
     routeMarkerCell: { flexShrink: 1, minWidth: 0, alignItems: "flex-start" },
-    routeMarkerConnector: { position: "absolute", top: 9, height: 2, borderRadius: 1 },
+    routeMarkerConnector: { position: "absolute", top: 7, left: 0, right: 0, height: 6, borderRadius: 3 },
+    routeMarkerSpacer: { height: 24 },
     routeMarkerContinuation: { position: "absolute", top: 3, right: 4 },
     routeMarker: {
         width: 20, height: 20, borderRadius: 10,
@@ -534,6 +572,7 @@ const styles = StyleSheet.create({
     routeMarkerFocus: { ...StyleSheet.absoluteFillObject, borderWidth: 1.5, borderRadius: 10 },
     routeMarkerLabel: { fontSize: ROUTE_MARKER_CAPTION_SIZE, fontWeight: "700", textAlign: "center" },
     routeMarkerTime: { fontSize: ROUTE_MARKER_CAPTION_SIZE, fontWeight: "600", fontVariant: ["tabular-nums"], textAlign: "center" },
+    selectedCaption: { textDecorationLine: "underline" },
     trackOnlySummary: { width: "100%", gap: 6 },
     labelledTrack: {
         height: 6,

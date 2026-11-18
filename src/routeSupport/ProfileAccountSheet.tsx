@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef } from "react";
 import {
-    AccessibilityInfo, ActivityIndicator, Animated, Easing, KeyboardAvoidingView, Modal,
+    AccessibilityInfo, Animated, Easing, KeyboardAvoidingView, Modal,
     Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import Reanimated, { Easing as ReanimatedEasing, FadeInDown, ReduceMotion } from "react-native-reanimated";
@@ -58,6 +58,9 @@ export default function ProfileAccountSheet({
         : action === "logout" ? "로그아웃"
         : withdrawalCommitted ? "로그아웃 다시 시도"
         : withdrawalNeedsPassword ? "확인하고 탈퇴하기" : "탈퇴하기";
+    const pendingLabel = action === "password" ? "변경 중…"
+        : action === "logout" || withdrawalCommitted ? "로그아웃 중…" : "탈퇴 확인 중…";
+    const actionLabel = busy ? pendingLabel : confirmationLabel;
     const summary = action === "logout"
         ? "이 기기에서 로그아웃합니다.\n다시 로그인하면 저장된 일정을 확인할 수 있어요."
         : isWithdrawal && !withdrawalCommitted
@@ -134,9 +137,10 @@ export default function ProfileAccountSheet({
                         <Text ref={titleRef} accessible accessibilityRole="header" style={[styles.title, { color: colors.textPrimary }]}>
                             {action && titles[action]}
                         </Text>
-                        {canClose && (
-                            <Pressable accessibilityRole="button" accessibilityLabel="닫기" onPress={onClose}
-                                style={({ pressed }) => [styles.closeButton, { backgroundColor: neutral, opacity: pressed ? 0.65 : 1 }]}>
+                        {!withdrawalCommitted && (
+                            <Pressable accessibilityRole="button" accessibilityLabel="닫기"
+                                accessibilityState={{ disabled: busy }} disabled={busy} onPress={onClose}
+                                style={({ pressed }) => [styles.closeButton, { backgroundColor: neutral, opacity: busy ? 0.45 : pressed ? 0.65 : 1 }]}>
                                 <Ionicons name="close-outline" size={22} color={colors.textSecondary} />
                             </Pressable>
                         )}
@@ -181,15 +185,13 @@ export default function ProfileAccountSheet({
                                 <Text style={[styles.buttonText, { color: colors.textPrimary }]}>취소</Text>
                             </Pressable>
                         )}
-                        <Pressable accessibilityRole="button" accessibilityLabel={confirmationLabel}
+                        <Pressable accessibilityRole="button" accessibilityLabel={actionLabel}
                             accessibilityState={{ disabled, busy }} disabled={disabled} onPress={onConfirm}
                             style={({ pressed }) => [styles.button, styles.confirm, {
                                 backgroundColor: disabled && !busy ? neutral : isWithdrawal && !withdrawalCommitted ? "#B42318" : "#205BD0",
                                 opacity: pressed ? 0.75 : 1,
                             }]}>
-                            {busy ? <ActivityIndicator color="#fff" /> : (
-                                <Text style={[styles.buttonText, { color: disabled ? colors.textSecondary : "#fff" }]}>{confirmationLabel}</Text>
-                            )}
+                            <Text style={[styles.buttonText, { color: disabled && !busy ? colors.textSecondary : "#fff" }]}>{actionLabel}</Text>
                         </Pressable>
                     </View>
                 </Animated.View>

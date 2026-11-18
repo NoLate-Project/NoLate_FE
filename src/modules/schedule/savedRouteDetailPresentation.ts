@@ -149,6 +149,24 @@ function mergeStoredSteps(generated: RouteStep[], stored: RouteStep[]): RouteSte
     });
 }
 
+function fillSavedEndpointTitles(routeInfo: RouteInfo, origin?: Place, destination?: Place): RouteInfo {
+    const steps = routeInfo.steps.map((step) => {
+        if (!isEndpointStep(step)) return step;
+        const isOrigin = step.type === "ORIGIN";
+        const placeholder = isOrigin ? "출발지" : "도착지";
+        const title = step.title.trim();
+        if (title && title !== placeholder) return step;
+
+        const place = isOrigin ? origin : destination;
+        const routeName = isOrigin ? routeInfo.originName : routeInfo.destinationName;
+        const placeTitle = [place?.name, place?.address, routeName]
+            .map((name) => name?.trim())
+            .find((name) => name && name !== placeholder);
+        return placeTitle ? { ...step, title: placeTitle } : step;
+    });
+    return { ...routeInfo, steps };
+}
+
 /** 저장 당시 공급자 상세와 현재 타임라인 모델을 결합해 일정 상세의 낡은 표현을 제거한다. */
 export function buildSavedRouteDetailInfo({
     route,
@@ -160,9 +178,9 @@ export function buildSavedRouteDetailInfo({
     const stored = getRouteInfoFromRoute(route);
     const requestedDepartureAt = validDate(departureAt);
     if (!routeAlternative) {
-        return stored && requestedDepartureAt
-            ? applyDepartureTime(stored, requestedDepartureAt)
-            : stored;
+        if (!stored) return undefined;
+        const named = fillSavedEndpointTitles(stored, origin, destination);
+        return requestedDepartureAt ? applyDepartureTime(named, requestedDepartureAt) : named;
     }
 
     const effectiveDepartureAt = requestedDepartureAt
@@ -190,5 +208,6 @@ export function buildSavedRouteDetailInfo({
         arrivalTime: clocks.arrivalTime,
         steps: mergeStoredSteps(generated.steps, stored.steps),
     };
-    return requestedDepartureAt ? applyDepartureTime(merged, requestedDepartureAt) : merged;
+    const named = fillSavedEndpointTitles(merged, origin, destination);
+    return requestedDepartureAt ? applyDepartureTime(named, requestedDepartureAt) : named;
 }

@@ -1,10 +1,10 @@
 import React from "react";
-import { Text } from "react-native";
+import { Text, TextInput } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import ShareInvitationSheet from "../src/modules/schedule/components/share/ShareInvitationSheet";
-import { getScheduleShareInvitations } from "../src/api/scheduleSharing";
-import type { ScheduleShareInvitation } from "../src/api/scheduleSharing";
+import { createScheduleShare, getScheduleShareInvitations } from "../src/api/scheduleSharing";
+import type { ScheduleShare, ScheduleShareInvitation } from "../src/api/scheduleSharing";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
@@ -51,8 +51,9 @@ const mockGetInvitations = getScheduleShareInvitations as jest.MockedFunction<
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((next) => { resolve = next; });
-    return { promise, resolve };
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
+    return { promise, resolve, reject };
 }
 
 function invitation(
@@ -133,5 +134,57 @@ describe("ShareInvitationSheet async resource state", () => {
             .map((node) => React.Children.toArray(node.props.children).join(""));
         expect(textValues.some((value) => value.includes("2/5명 수락"))).toBe(true);
         expect(textValues.some((value) => value.includes("1/1명 수락"))).toBe(false);
+    });
+
+    async function renderDirectShare() {
+        mockGetInvitations.mockResolvedValue([]);
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <ShareInvitationSheet visible resourceType="schedule" resourceId="schedule-a"
+                        title="공유 검토 일정" onClose={jest.fn()} />
+                </ThemeProvider>
+            );
+        });
+        const field = () => renderer!.root.findByType(TextInput);
+        const button = (label: string) => renderer!.root.findAll((node) => (
+            node.props.accessibilityLabel === label && typeof node.props.onPress === "function"
+        ))[0];
+        const visibleText = () => renderer!.root.findAllByType(Text)
+            .map((node) => React.Children.toArray(node.props.children).join("")).join("\n");
+        return { field, button, visibleText };
+    }
+
+    test("공유 대상 입력을 지우면 현재 검증 오류가 함께 사라진다", async () => {
+        const { field, button, visibleText } = await renderDirectShare();
+        act(() => field().props.onChangeText("invalid@"));
+        await act(async () => button("이 대상에게 공유").props.onPress());
+        expect(visibleText()).toContain("이메일 형식을 확인해 주세요.");
+        act(() => button("공유 대상 입력 지우기").props.onPress());
+        expect(field().props.value).toBe("");
+        expect(visibleText()).not.toContain("이메일 형식을 확인해 주세요.");
+        expect(createScheduleShare).not.toHaveBeenCalled();
+    });
+
+    test.each(["success", "failure"])("늦은 공유 %s 응답 뒤에도 새로 입력한 대상을 유지한다", async (outcome) => {
+        const request = deferred<ScheduleShare>();
+        jest.mocked(createScheduleShare).mockReturnValueOnce(request.promise);
+        const { field, button, visibleText } = await renderDirectShare();
+        act(() => field().props.onChangeText("first@example.test"));
+        act(() => { button("이 대상에게 공유").props.onPress(); });
+        act(() => field().props.onChangeText("next@example.test"));
+        await act(async () => {
+            if (outcome === "success") {
+                request.resolve({ id: "share-a", resourceId: "schedule-a", ownerMemberId: 1,
+                    targetMemberId: 2, permission: "VIEWER", status: "ACTIVE" });
+            } else {
+                request.reject(new Error("처음 대상의 공유 오류"));
+            }
+        });
+        expect(field().props.value).toBe("next@example.test");
+        expect(visibleText()).not.toContain("처음 대상의 공유 오류");
+        if (outcome === "success") {
+            expect(visibleText()).toContain("first@example.test에게 공유했습니다");
+        }
     });
 });

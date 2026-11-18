@@ -6,7 +6,7 @@ import { SCHEDULE_ICONS, type ScheduleIconName } from '../shared/ScheduleIcon';
 
 // Existing SF identifiers adapt to the same Ionicons glyphs used by React Native.
 const NATIVE_ICON_ROLES: Record<string, ScheduleIconName> = {
-  'toolbar.view': 'view',
+  'chevron.down': 'down',
   'view.stack': 'stack',
   'view.detail': 'detail',
   'view.list': 'list',

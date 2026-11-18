@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import React, { useRef } from "react";
-import { Animated, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { AccessibilityInfo, Animated, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { Calendar } from "react-native-calendars";
 import { useReducedMotion } from "react-native-reanimated";
+import "../components/calendar/calendarKoreanLocale";
 
 import { BrandedLoadingState } from "../../../ui/BrandedLoader";
 import CategoryLoadErrorBanner from "../components/form/CategoryLoadErrorBanner";
@@ -11,6 +12,8 @@ import CategoryPickerRow from "../components/form/CategorySelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
 import { ScheduleRouteDraftNotice } from "../components/form/ScheduleRouteDraftNotice";
+import { getScheduleRouteCardScrollOffset } from "../components/form/scheduleRouteCardPosition";
+import { scheduleFormCategoryManagerRoute, useCategoryManagementReturn } from "../components/form/useCategoryManagementReturn";
 import ScheduleCalendarSelectBox from "../components/form/ScheduleCalendarSelectBox";
 import { getWritableScheduleCategories } from "../categoryPermissions";
 import { formatScheduleFormDate, startOfLocalScheduleDay } from "../scheduleFormDate";
@@ -28,7 +31,65 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
     const largeText = fontScale > 1.35;
     const reduceMotion = useReducedMotion();
     const categoryTriggerRef = useRef<View>(null);
+    const openCategoryManagement = useCategoryManagementReturn(categoryTriggerRef, !screen.unavailable);
     const formOffsetRef = useRef(0);
+    const routeButtonRef = useRef<React.ComponentRef<typeof Pressable>>(null);
+    const routeSectionRef = useRef<View>(null);
+    const handledRouteReturn = useRef<string | undefined>(undefined);
+    const routeHighlight = useRef(new Animated.Value(0)).current;
+    const routeReturn = screen.unavailable ? undefined : screen.routeReturn;
+    const routeScrollRef = screen.unavailable ? undefined : screen.editScrollRef;
+    const usesMultilineTitle = Platform.OS === "ios" && largeText;
+    const [multilineTitleMounted, setMultilineTitleMounted] = useState(false);
+    const titleFieldReady = !usesMultilineTitle || multilineTitleMounted;
+
+    useEffect(() => {
+        if (!usesMultilineTitle) setMultilineTitleMounted(false);
+    }, [usesMultilineTitle]);
+
+    useEffect(() => {
+        if (!routeReturn || handledRouteReturn.current === routeReturn.sessionId) return;
+        handledRouteReturn.current = routeReturn.sessionId;
+        if (routeReturn.changed && !reduceMotion) {
+            routeHighlight.setValue(0.65);
+            Animated.timing(routeHighlight, { toValue: 0, duration: 160, useNativeDriver: true, isInteraction: false }).start();
+        }
+        let active = true;
+        const frame = requestAnimationFrame(() => {
+            const button = routeButtonRef.current;
+            if (!button) return;
+            const focus = () => {
+                if (active && routeButtonRef.current === button) AccessibilityInfo.sendAccessibilityEvent?.(button, "focus");
+            };
+            const scroll = routeScrollRef?.current;
+            const viewport = scroll?.getNativeScrollRef();
+            const section = routeSectionRef.current;
+            if (!routeReturn.changed || !scroll || !viewport || !section) {
+                focus();
+                return;
+            }
+            viewport.measureInWindow((_x, top, _w, viewportHeight) => {
+                section.measureInWindow((_left, y, _width, sectionHeight) => {
+                    if (!active || routeButtonRef.current !== button) return;
+                    const current = formOffsetRef.current;
+                    const target = getScheduleRouteCardScrollOffset(current, top, viewportHeight, y, sectionHeight);
+                    if (target !== current) {
+                        formOffsetRef.current = target;
+                        scroll.scrollTo({ y: target, animated: false });
+                        requestAnimationFrame(focus);
+                    } else {
+                        focus();
+                    }
+                });
+            });
+        });
+        return () => {
+            active = false;
+            cancelAnimationFrame(frame);
+            routeHighlight.stopAnimation();
+            routeHighlight.setValue(0);
+        };
+    }, [reduceMotion, routeHighlight, routeReturn, routeScrollRef]);
     if (screen.unavailable) {
         const { loading, error, backgroundStyle, topInset, colors, requestClose, retry } = screen.unavailable;
         if (loading) {
@@ -67,6 +128,20 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
             }
         });
     };
+    const endTimeSwitch = (
+        <Switch
+            accessibilityLabel="종료 시간"
+            accessibilityHint="켜면 종료 날짜와 시간을 설정합니다"
+            value={hasEndTime}
+            onValueChange={handleEndTimeEnabledChange}
+            trackColor={{ false: inactiveSwitchTrack, true: fieldAccent }}
+            thumbColor="#FFFFFF"
+            style={styles.toggleSwitch}
+        />
+    );
+    const endDateLabel = !largeText && allDay ? "마지막 날" : "종료 날짜";
+    const dateFieldBackground = largeText ? "transparent" : colors.surface2;
+    const selectedDateFieldBackground = mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)";
     return (
         <View
             testID="schedule-edit-root"
@@ -78,6 +153,7 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                 styles.topHeader,
                 editPageBackgroundStyle,
                 {
+                    borderBottomColor: colors.border,
                     paddingTop: insets.top + 6,
                 },
             ]}
@@ -145,10 +221,12 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                     paddingBottom: Math.max(36, insets.bottom + 24),
                 },
             ]}
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            automaticallyAdjustKeyboardInsets={Platform.OS === "ios" && !largeText}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            onScroll={largeText ? ({ nativeEvent }) => { formOffsetRef.current = nativeEvent.contentOffset.y; } : undefined}
-            scrollEventThrottle={largeText ? 16 : undefined}
+            onScroll={({ nativeEvent }) => { formOffsetRef.current = nativeEvent.contentOffset.y; }}
+            scrollEventThrottle={16}
             onContentSizeChange={() => {
                 if (!developmentPreview || !initialScrollToEnd || initialScrollAppliedRef.current) return;
                 initialScrollAppliedRef.current = true;
@@ -211,7 +289,9 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                     ]}
                 >
                     <TextInput
-                        testID="schedule-edit-title-input"
+                        // iOS can drop these props when it replaces the native title field with a text view.
+                        onLayout={titleFieldReady ? undefined : () => setMultilineTitleMounted(true)}
+                        testID={titleFieldReady ? "schedule-edit-title-input" : undefined}
                         value={title}
                         onPressIn={closeCategoryPicker}
                         onFocus={() => setTitleFocused(true)}
@@ -220,7 +300,7 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                             markFormDirty();
                             setTitle(value);
                         }}
-                        accessibilityLabel="일정 제목"
+                        accessibilityLabel={titleFieldReady ? "일정 제목" : undefined}
                         maxLength={120}
                         multiline={largeText}
                         lineBreakStrategyIOS="hangul-word"
@@ -242,9 +322,8 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                         ref={categoryTriggerRef}
                         accessibilityRole="button"
                         accessibilityLabel={`카테고리 선택, 현재 ${category?.title ?? "없음"}`}
-                        accessibilityState={{ expanded: categoryPickerOpen, disabled: categoryOptions.length === 0 }}
+                        accessibilityState={{ expanded: categoryPickerOpen }}
                         onPress={toggleCategoriesInForm}
-                        disabled={categoryOptions.length === 0}
                         hitSlop={{ top: 7, right: 4, bottom: 7, left: 4 }}
                         style={({ pressed }) => [
                             styles.categoryInlineChip,
@@ -291,16 +370,10 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                             setCategoryId(nextCategoryId);
                             closeCategoryPicker();
                         }}
-                        onManageCategories={() => {
+                        onManageCategories={() => openCategoryManagement(() => {
                             const selectedCalendar = calendars.find((candidate) => candidate.id === calendarId);
-                            router.push(selectedCalendar ? {
-                                pathname: "/schedule/categories",
-                                params: {
-                                    calendarId: String(selectedCalendar.id),
-                                    calendarTitle: selectedCalendar.title,
-                                },
-                            } : "/schedule/categories");
-                        }}
+                            router.push(scheduleFormCategoryManagerRoute(calendarId, selectedCalendar?.title));
+                        })}
                     />
                 </Animated.View>
             </View>
@@ -312,7 +385,7 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                     styles.dateTimeCard,
                     {
                         borderColor: colors.border,
-                        backgroundColor: colors.surface2,
+                        backgroundColor: largeText ? colors.surface2 : colors.surface,
                     },
                 ]}
             >
@@ -331,7 +404,10 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
 
                 <View style={[styles.dateTimeDivider, { backgroundColor: colors.border }]} />
 
-                <View testID="schedule-edit-start-row" style={[styles.dateTimeValueRow, largeText && !allDay && styles.dateTimeValueRowLarge]}>
+                <View testID="schedule-edit-start-row" style={[styles.dateTimeValueRow, largeText ? !allDay && styles.dateTimeValueRowLarge : styles.dateTimeFieldRow]}>
+                    {!largeText && !allDay && (
+                        <Text style={[styles.dateTimeRowTitle, styles.dateTimeFieldLabel, { color: colors.textPrimary }]}>시작</Text>
+                    )}
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
@@ -339,19 +415,26 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                         onPress={() => togglePicker("startDate")}
                         style={({ pressed }) => [
                             styles.dateTimeDateAction,
-                            largeText && !allDay && styles.dateTimeDateActionLarge,
+                            largeText ? !allDay && styles.dateTimeDateActionLarge : styles.dateTimeDateActionInline,
+                            !largeText && styles.dateTimeField,
                             {
-                                backgroundColor: picker === "startDate"
-                                    ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
-                                    : "transparent",
+                                backgroundColor: picker === "startDate" ? selectedDateFieldBackground : dateFieldBackground,
                                 opacity: pressed ? 0.62 : 1,
                             },
                         ]}
                     >
-                        <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>시작</Text>
-                        <Text lineBreakStrategyIOS="hangul-word" style={[styles.dateTimeDateText, { color: colors.textSecondary }]}>
-                            {editDateText(startDay)}
+                        {(largeText || allDay) && <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>시작</Text>}
+                        <Text
+                            lineBreakStrategyIOS="hangul-word"
+                            style={[
+                                largeText ? styles.dateTimeDateText : styles.dateTimeDateTextInline,
+                                !largeText && styles.dateTimeFieldValue,
+                                { color: largeText ? colors.textSecondary : colors.textPrimary },
+                            ]}
+                        >
+                            {largeText ? editDateText(startDay) : formatScheduleFormDate(startDay)}
                         </Text>
+                        {!largeText && <Ionicons accessible={false} name="calendar-outline" size={16} color={picker === "startDate" ? fieldAccent : colors.textSecondary} />}
                     </Pressable>
                     {!allDay ? (
                         <Pressable
@@ -361,29 +444,36 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                             onPress={() => togglePicker("startTime")}
                             style={({ pressed }) => [
                                 styles.dateTimeClockAction,
-                                largeText && styles.dateTimeClockActionLarge,
+                                largeText ? styles.dateTimeClockActionLarge : styles.dateTimeClockField,
+                                !largeText && styles.dateTimeField,
                                 {
-                                    backgroundColor: picker === "startTime"
-                                        ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
-                                        : "transparent",
+                                    backgroundColor: picker === "startTime" ? selectedDateFieldBackground : dateFieldBackground,
                                     opacity: pressed ? 0.62 : 1,
                                 },
                             ]}
                         >
-                            <Text style={[styles.dateTimeClockText, { color: colors.textPrimary }]}>{hhmmText(startTime)}</Text>
-                            <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
+                            <Text style={[styles.dateTimeClockText, !largeText && styles.dateTimeClockFieldText, { color: colors.textPrimary }]}>{hhmmText(startTime)}</Text>
+                            <Ionicons accessible={false} name={largeText ? "chevron-forward-outline" : "time-outline"} size={16} color={picker === "startTime" ? fieldAccent : colors.textSecondary} />
                         </Pressable>
-                    ) : (
-                        <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
-                    )}
+                    ) : largeText ? (
+                        <Ionicons accessible={false} name="chevron-forward-outline" size={16} color={colors.textSecondary} />
+                    ) : null}
                 </View>
 
                 <View style={[styles.dateTimeDivider, { backgroundColor: colors.border }]} />
 
-                <View testID="schedule-edit-end-row" style={[styles.dateTimeValueRow, largeText && !allDay && styles.dateTimeValueRowLarge]}>
+                {!largeText && !allDay && (
+                    <View testID="schedule-edit-end-toggle-row" style={styles.dateTimeToggleRow}>
+                        <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>종료 일시</Text>
+                        {endTimeSwitch}
+                    </View>
+                )}
+                {!largeText && !allDay && hasEndTime && <View style={[styles.dateTimeDivider, { backgroundColor: colors.border }]} />}
+
+                {(largeText || allDay || hasEndTime) && <View testID="schedule-edit-end-row" style={[styles.dateTimeValueRow, largeText ? !allDay && styles.dateTimeValueRowLarge : styles.dateTimeFieldRow]}>
                     <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(endDay)}`}
+                        accessibilityLabel={`${endDateLabel} ${formatScheduleFormDate(endDay)}`}
                         accessibilityState={{
                             disabled: !allDay && !hasEndTime,
                             expanded: picker === "endDate",
@@ -392,24 +482,37 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                         onPress={() => togglePicker("endDate")}
                         style={({ pressed }) => [
                             styles.dateTimeDateAction,
-                            largeText && !allDay && styles.dateTimeDateActionLarge,
+                            largeText ? !allDay && styles.dateTimeDateActionLarge : styles.dateTimeDateActionInline,
+                            !largeText && styles.dateTimeField,
                             {
-                                backgroundColor: picker === "endDate"
-                                    ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
-                                    : "transparent",
+                                backgroundColor: picker === "endDate" ? selectedDateFieldBackground : dateFieldBackground,
                                 opacity: !allDay && !hasEndTime ? 0.55 : pressed ? 0.62 : 1,
                             },
                         ]}
                     >
-                        <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>종료</Text>
-                        <Text lineBreakStrategyIOS="hangul-word" style={[styles.dateTimeDateText, { color: colors.textSecondary }]}>
-                            {!allDay && !hasEndTime ? "설정 안 함" : editDateText(endDay)}
+                        {(!hasEndTime || allDay || largeText) && (
+                            <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>
+                                {!largeText && allDay ? "마지막 날" : "종료"}
+                            </Text>
+                        )}
+                        <Text
+                            lineBreakStrategyIOS="hangul-word"
+                            style={[
+                                largeText ? styles.dateTimeDateText : styles.dateTimeDateTextInline,
+                                !largeText && styles.dateTimeFieldValue,
+                                { color: largeText ? colors.textSecondary : colors.textPrimary },
+                            ]}
+                        >
+                            {!allDay && !hasEndTime ? "설정 안 함" : largeText ? editDateText(endDay) : formatScheduleFormDate(endDay)}
                         </Text>
+                        {!largeText && (allDay || hasEndTime) && (
+                            <Ionicons accessible={false} name="calendar-outline" size={16} color={picker === "endDate" ? fieldAccent : colors.textSecondary} />
+                        )}
                     </Pressable>
                     {allDay ? (
-                        <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
+                        largeText && <Ionicons accessible={false} name="chevron-forward-outline" size={16} color={colors.textSecondary} />
                     ) : (
-                        <View style={[styles.dateTimeEndControls, largeText && styles.dateTimeEndControlsLarge]}>
+                        <View style={[styles.dateTimeEndControls, largeText ? styles.dateTimeEndControlsLarge : styles.dateTimeClockField]}>
                             {hasEndTime ? (
                                 <Pressable
                                     accessibilityRole="button"
@@ -418,37 +521,29 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                                     onPress={() => togglePicker("endTime")}
                                     style={({ pressed }) => [
                                         styles.dateTimeClockAction,
-                                        styles.dateTimeEndClockAction,
+                                        largeText && styles.dateTimeEndClockAction,
                                         largeText && styles.dateTimeClockActionLarge,
+                                        !largeText && styles.dateTimeField,
+                                        !largeText && styles.dateTimeFieldValue,
                                         {
-                                            backgroundColor: picker === "endTime"
-                                                ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
-                                                : "transparent",
+                                            backgroundColor: picker === "endTime" ? selectedDateFieldBackground : dateFieldBackground,
                                             opacity: pressed ? 0.62 : 1,
                                         },
                                     ]}
                                 >
-                                    <Text style={[styles.dateTimeClockText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
+                                    <Text style={[styles.dateTimeClockText, !largeText && styles.dateTimeClockFieldText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
                                     <Ionicons
                                         accessible={false}
-                                        name="chevron-forward"
+                                        name={largeText ? "chevron-forward-outline" : "time-outline"}
                                         size={16}
-                                        color={colors.textSecondary}
+                                        color={picker === "endTime" ? fieldAccent : colors.textSecondary}
                                     />
                                 </Pressable>
                             ) : null}
-                            <Switch
-                                accessibilityLabel="종료 시간"
-                                accessibilityHint="켜면 종료 날짜와 시간을 설정합니다"
-                                value={hasEndTime}
-                                onValueChange={handleEndTimeEnabledChange}
-                                trackColor={{ false: inactiveSwitchTrack, true: fieldAccent }}
-                                thumbColor="#FFFFFF"
-                                style={styles.toggleSwitch}
-                            />
+                            {largeText && endTimeSwitch}
                         </View>
                     )}
-                </View>
+                </View>}
             </View>
 
             <Animated.View style={[styles.pickerContainer, {
@@ -461,8 +556,14 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                 <Animated.View style={{ opacity: contentFade }}>
                     {isDisplayDate && (
                         <Calendar
-                            key={mode}
+                            key={`${mode}-${displayPicker}`}
+                            testID="schedule-edit-date-picker"
                             current={calendarSelected}
+                            renderHeader={month => (
+                                <Text accessibilityRole="header" style={[styles.pickerMonthTitle, { color: colors.textPrimary }]}>
+                                    {month?.toString("yyyy년 M월")}
+                                </Text>
+                            )}
                             onDayPress={onDayPress}
                             markedDates={{
                                 [calendarSelected]: {
@@ -487,17 +588,22 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                 </Animated.View>
             </Animated.View>
 
-            <LocationInputRow
-                originValue={originText}
-                destinationValue={destinationText}
-                travelMode={travelMode}
-                travelMinutes={travelMinutes}
-                routeInfo={routeInfo}
-                onPress={openRoutePlanner}
-                onClear={routeInfo ? clearRoute : undefined}
-                wrapTitle={largeText}
-                footer={<ScheduleRouteDraftNotice change={screen.routeDraftChange} color={colors.textSecondary} />}
-            />
+            <View ref={routeSectionRef} collapsable={false}>
+                <LocationInputRow
+                    originValue={originText}
+                    destinationValue={destinationText}
+                    travelMode={travelMode}
+                    travelMinutes={travelMinutes}
+                    routeInfo={routeInfo}
+                    onPress={openRoutePlanner}
+                    routeButtonRef={routeButtonRef}
+                    highlightOpacity={routeHighlight}
+                    variant="edit"
+                    onClear={routeInfo ? clearRoute : undefined}
+                    wrapTitle={largeText}
+                    footer={<ScheduleRouteDraftNotice change={screen.routeDraftChange} color={colors.textSecondary} />}
+                />
+            </View>
 
             {!!routeInfo && (
                 <NotificationSettingsCard
@@ -509,6 +615,7 @@ export default function ScheduleEdit(props: ScheduleEditScreenProps) {
                     leadMinutes={notificationLeadMinutes}
                     intervalMinutes={notificationIntervalMinutes}
                     routeInfo={routeInfo}
+                    routePlannedArrivalAt={screen.routePlannedArrivalAt}
                     startAt={allDay
                         ? startOfLocalScheduleDay(startDay)
                         : mergeDateTime(startDay, startTime)}

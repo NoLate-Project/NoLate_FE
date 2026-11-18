@@ -4,6 +4,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import ScheduleAddModal from "../src/modules/schedule/components/form/ScheduleAddModal";
 import CategorySelectBox from "../src/modules/schedule/components/form/CategorySelectBox";
+import { MORPH_OPEN_DURATION_MS } from "../src/modules/schedule/components/form/scheduleAddModalModel";
 import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 
@@ -46,6 +47,10 @@ jest.mock("../src/api/subscription", () => ({
 }));
 jest.mock("../src/api/scheduleCalendars", () => ({
     getScheduleCalendars: jest.fn().mockResolvedValue([]),
+}));
+jest.mock("../src/api/api", () => ({
+    __esModule: true,
+    default: { post: jest.fn().mockResolvedValue({ data: { success: true, data: { preview: null } } }) },
 }));
 jest.mock("../src/modules/notification/departureAlarm", () => ({
     getDepartureAlarmCapabilities: jest.fn().mockResolvedValue({
@@ -103,11 +108,13 @@ describe("ScheduleAddModal close flow", () => {
 
     async function renderModal({
         onClose = jest.fn(),
+        onMorphReady,
         onSubmit = jest.fn().mockResolvedValue(undefined),
         categories = [category],
         presentation = "sheet",
     }: {
         onClose?: jest.Mock;
+        onMorphReady?: jest.Mock;
         onSubmit?: jest.Mock;
         categories?: (typeof category)[];
         presentation?: "sheet" | "morph";
@@ -118,6 +125,7 @@ describe("ScheduleAddModal close flow", () => {
                     <ScheduleAddModal
                         visible
                         onClose={onClose}
+                        onMorphReady={onMorphReady}
                         onSubmit={onSubmit}
                         categories={categories}
                         defaultDay="2026-07-17"
@@ -129,6 +137,21 @@ describe("ScheduleAddModal close flow", () => {
         });
         return { onClose, onSubmit };
     }
+
+    test("시트 레이아웃 이벤트가 누락되어도 직접 입력 창을 연다", async () => {
+        jest.useFakeTimers();
+        try {
+            const onMorphReady = jest.fn();
+            await renderModal({ presentation: "morph", onMorphReady });
+            expect(onMorphReady).not.toHaveBeenCalled();
+
+            await act(async () => { jest.advanceTimersByTime(MORPH_OPEN_DURATION_MS); });
+
+            expect(onMorphReady).toHaveBeenCalledTimes(1);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
 
     test("새 일정의 핵심 입력을 짧고 자연스러운 문구로 보여 준다", async () => {
         await renderModal();
@@ -174,8 +197,19 @@ describe("ScheduleAddModal close flow", () => {
         expect(timeCardStyle).toMatchObject({
             borderWidth: StyleSheet.hairlineWidth,
             borderRadius: 14,
-            backgroundColor: "#f7f7f8",
+            backgroundColor: "#fff",
         });
+        for (const prefix of ["시작 날짜 ", "시작 시간 "]) {
+            const field = renderer!.root.findAll(node =>
+                node.props.accessibilityLabel?.startsWith(prefix)
+                && typeof node.props.style === "function",
+            )[0];
+            expect(StyleSheet.flatten(field.props.style({ pressed: false }))).toMatchObject({
+                minHeight: 44,
+                borderRadius: 10,
+                backgroundColor: "#f7f7f8",
+            });
+        }
         expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholderTextColor)
             .toBe("rgba(60,60,67,0.56)");
         expect(switchStyle.transform).toEqual([{ scale: 0.88 }]);
@@ -304,6 +338,12 @@ describe("ScheduleAddModal close flow", () => {
             typeof node.props.accessibilityLabel === "string"
             && node.props.accessibilityLabel.startsWith("시작 날짜 ")
         ))[0];
+        expect(startDateButton.findByProps({ name: "calendar-outline" }).props.accessible).toBe(false);
+        const startTimeButton = renderer!.root.findAll(node => (
+            typeof node.props.accessibilityLabel === "string"
+            && node.props.accessibilityLabel.startsWith("시작 시간 ")
+        ))[0];
+        expect(startTimeButton.findByProps({ name: "time-outline" }).props.accessible).toBe(false);
         expect(StyleSheet.flatten(startDateButton.props.style({ pressed: true })).backgroundColor)
             .toBe("rgba(60,60,67,0.05)");
 
@@ -509,6 +549,11 @@ describe("ScheduleAddModal close flow", () => {
         });
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("경로 회의");
+            renderer!.root.findByProps({ accessibilityLabel: "시작 날짜 2026. 7. 17." }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "시작 날짜 2026. 7. 17." })
+            .props.accessibilityState.expanded).toBe(true);
+        await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" }).props.onPress();
             await Promise.resolve();
         });
@@ -543,6 +588,10 @@ describe("ScheduleAddModal close flow", () => {
             renderer!.update(tree());
             await Promise.resolve();
         });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "시작 날짜 2026. 7. 17." })
+            .props.accessibilityState.expanded).toBe(true);
+        const notice = renderer!.root.findAllByProps({ children: "일정을 저장하면 새 경로가 반영돼요." })[0];
+        expect(notice).toBeDefined();
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "출발 알림" }).props.onValueChange(true);
         });

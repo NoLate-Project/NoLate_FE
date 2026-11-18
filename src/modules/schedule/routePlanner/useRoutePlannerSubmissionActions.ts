@@ -9,6 +9,7 @@ import {
 import { Alert, BackHandler, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { isFreshOdsayBusPreview } from '../../../api/transitTimetablePreview';
 
 import { getStoredRouteOverlayGeometryProvenance } from '../../map/savedRouteMapPresentation';
 import type {
@@ -20,6 +21,7 @@ import type { BottomSheetSnap } from './bottomSheetLayout';
 import type { RoutePointTarget } from './params';
 import type { NormalizedRoute } from './routeMapTypesAndStyle';
 import type { RouteInfo } from '../routeInfo';
+import { isOdsayTimetableDepartureExpired } from '../scheduleRouteTiming';
 import type { Place, TravelMode } from '../types';
 import {
   clearRouteCandidateListSnapshot,
@@ -211,6 +213,8 @@ export function useRoutePlannerSubmissionActions({
 
     return {
       ...selectedAlternative,
+      odsayTimetablePreview: undefined,
+      odsayBusPreview: undefined,
       schemaVersion: selectedAlternative.intercityJourney ? 3 : 2,
       routeInfo: selectedRouteInfo,
       pathCoords: selectedPathCoords,
@@ -558,6 +562,25 @@ export function useRoutePlannerSubmissionActions({
         '저장할 일정이 없어요',
         '일정 화면에서 이동 경로를 다시 열어 주세요.',
       );
+      return;
+    }
+
+    if (selectedAlternative?.odsayBusPreview && !isFreshOdsayBusPreview(selectedAlternative.odsayBusPreview)) {
+      Alert.alert('버스 예측이 만료됐어요', '경로를 다시 검색해 최신 도착 시각을 확인해 주세요.', [
+        { text: '닫기', style: 'cancel' },
+        { text: '다시 검색', onPress: () => setRouteRefreshTick(current => current + 1) },
+      ]);
+      return;
+    }
+    if (isOdsayTimetableDepartureExpired(selectedAlternative?.odsayTimetablePreview?.departureAt)) {
+      Alert.alert('출발 시각이 지났어요', requestedDeparture
+        ? '새 출발 시각을 선택한 뒤 경로를 다시 확인해 주세요.'
+        : '다시 검색해 일정에 맞는 경로를 확인해 주세요.', [
+        { text: '닫기', style: 'cancel' },
+        requestedDeparture
+          ? { text: '출발 시각 선택', onPress: openTransitDeparturePicker }
+          : { text: '다시 검색', onPress: () => setRouteRefreshTick(current => current + 1) },
+      ]);
       return;
     }
 

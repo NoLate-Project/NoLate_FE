@@ -1,7 +1,7 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { AppState, type AppStateStatus } from "react-native";
-import JourneyEngineRoute from "../app/internal/journey-engine";
+import JourneyEngineRoute from "./fixtures/journey/journey-engine";
 import { normalizeJourneyEngineSnapshot, type JourneyEngineSnapshot } from "../src/modules/journey/journeyEngine";
 
 const mockGet = jest.fn();

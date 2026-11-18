@@ -53,5 +53,14 @@ describe("CalendarScopeContextLabel", () => {
         expect(label.props.numberOfLines).toBe(1);
         expect(label.props.ellipsizeMode).toBe("tail");
         expect(StyleSheet.flatten(marker.props.style).backgroundColor).toBe("#AF52DE");
+        expect(root.findAllByProps({ testID: "calendar-search-result-count" })).toHaveLength(0);
+
+        await act(async () => {
+            renderer!.update(<CalendarScopeContextLabel title={title} searchResultCount={12} />);
+        });
+
+        const count = root.findByProps({ testID: "calendar-search-result-count" });
+        expect(count.props.children).toBe("일정 12개");
+        expect(count.props.accessibilityLabel).toBe("검색 결과 12개");
     });
 });

@@ -20,7 +20,7 @@ export function AccountInfoRow({
     buttonRef,
 }: {
     label: string;
-    value: string;
+    value?: string;
     colors: ReturnType<typeof useTheme>["colors"];
     selectable?: boolean;
     showDivider?: boolean;
@@ -32,6 +32,11 @@ export function AccountInfoRow({
     const content = (
         <>
             <View style={styles.accountRowMain}>
+                {value === undefined ? (
+                    <Text style={[styles.accountActionTitle, { color: colors.textPrimary }]}>
+                        {[label, actionLabel].filter(Boolean).join(" ")}
+                    </Text>
+                ) : <>
                 <Text style={[styles.accountLabel, { color: colors.textSecondary }]}>{label}</Text>
                 <Text
                     selectable={selectable}
@@ -40,10 +45,11 @@ export function AccountInfoRow({
                 >
                     {value}
                 </Text>
+                </>}
             </View>
             {actionLabel ? (
                 <View style={styles.accountRowAction}>
-                    <Text style={[styles.accountActionLabel, { color: colors.textSecondary }]}>{actionLabel}</Text>
+                    {value !== undefined && <Text style={[styles.accountActionLabel, { color: colors.textSecondary }]}>{actionLabel}</Text>}
                     {actionIcon ? <Ionicons name={actionIcon} size={16} color={colors.textSecondary} /> : null}
                 </View>
             ) : null}
@@ -60,7 +66,7 @@ export function AccountInfoRow({
             <Pressable
                 ref={buttonRef}
                 accessibilityRole="button"
-                accessibilityLabel={`${label}, ${value}${actionLabel ? `, ${actionLabel}` : ""}`}
+                accessibilityLabel={[label, value, actionLabel].filter(Boolean).join(", ")}
                 onPress={onPress}
                 style={({ pressed }) => [rowStyle, { opacity: pressed ? 0.58 : 1 }]}
             >

@@ -48,12 +48,23 @@ FirebaseApp.configure()
       launchOptions[.url] = context.url
       launchOptions[.sourceApplication] = context.options.sourceApplication
       launchOptions[.annotation] = context.options.annotation
+      // Expo Router reads Expo Linking's initial URL, which is separate from
+      // the React Native launch options passed to the factory below.
+      if context.url.scheme == "nolate" {
+        var urlOptions: [UIApplication.OpenURLOptionsKey: Any] = [.openInPlace: context.options.openInPlace]
+        urlOptions[.sourceApplication] = context.options.sourceApplication
+        urlOptions[.annotation] = context.options.annotation
+        _ = super.application(UIApplication.shared, open: context.url, options: urlOptions)
+      }
     }
     if let activity = options.userActivities.first {
       launchOptions[.userActivityDictionary] = [
         "UIApplicationLaunchOptionsUserActivityTypeKey": activity.activityType,
         "UIApplicationLaunchOptionsUserActivityKey": activity,
       ]
+      if options.urlContexts.isEmpty && activity.activityType == NSUserActivityTypeBrowsingWeb {
+        _ = super.application(UIApplication.shared, continue: activity, restorationHandler: { _ in })
+      }
     }
     if let response = options.notificationResponse {
       launchOptions[.remoteNotification] = response.notification.request.content.userInfo

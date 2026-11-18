@@ -41,6 +41,95 @@ class ComparisonTest(unittest.TestCase):
         self.assertFalse(result['realWorldAccuracyVerified'])
         self.assertFalse(result['simulatorE2eVerified'])
 
+    def test_displayed_destination_delta_has_no_hidden_train_or_rounding_assumption(self):
+        for item, clock in ((self.left, '12:00'), (self.right, '12:03')):
+            item['originBoundary'] = item['destinationBoundary'] = 'UNKNOWN'
+            item['requestedCoordinateEvidence'] = {
+                'origin': {'lat': 37.65, 'lng': 127.06},
+                'destination': {'lat': 37.48, 'lng': 126.93},
+                'evidence': 'captured pin inputs',
+            }
+            item['arrivalAt'] = f'2026-10-05T{clock}:00Z'
+            item['displayedArrivalEvidence'] = {
+                'scope': 'REQUESTED_DESTINATION', 'arrivalAt': item['arrivalAt'],
+                'evidence': 'captured visible destination clock',
+            }
+            del item['rides'][0]['trainIdentity']
+            del item['arrivalClockEvidence']
+            del item['walkingBoundaryEvidence']
+        result = comparison.compare(self.left, self.right)
+        self.assertEqual(result['displayedDestinationComparison'], {
+            'comparable': True, 'exclusionReasons': [],
+            'leftMinusRightDisplayedMinutes': -3,
+        })
+        self.assertIsNone(result['withinTwoMinutes'])
+        self.assertFalse(result['realWorldAccuracyVerified'])
+        self.assertEqual(comparison.report({'observations': [self.left, self.right]})
+                         ['displayedDestinationComparableCount'], 1)
+        self.right['requestedCoordinateEvidence']['destination']['lat'] = 37.48001
+        different_pins = comparison.compare(self.left, self.right)['displayedDestinationComparison']
+        self.assertEqual(different_pins['exclusionReasons'], ['DISPLAY_QUERY_COORDINATES_MISMATCH'])
+        self.assertIsNone(different_pins['leftMinusRightDisplayedMinutes'])
+
+    def test_display_difference_requires_visible_destination_and_same_future_departure(self):
+        for item in (self.left, self.right):
+            item['originBoundary'] = '노원역'
+            item['destinationBoundary'] = '신림역'
+            item['displayedArrivalEvidence'] = {'scope': 'LAST_STATION', 'arrivalAt': item['arrivalAt'],
+                                               'evidence': 'visible station clock'}
+        self.left['departureAt'] = '2026-10-05T11:01:00Z'
+        result = comparison.compare(self.left, self.right)['displayedDestinationComparison']
+        self.assertFalse(result['comparable'])
+        self.assertIsNone(result['leftMinusRightDisplayedMinutes'])
+        self.assertIn('CALCULATED_DEPARTURE_DIFFERS_FROM_COMPARISON_INPUT', result['exclusionReasons'])
+        self.assertIn('DISPLAY_QUERY_COORDINATES_UNCONFIRMED', result['exclusionReasons'])
+        self.assertIn('DISPLAYED_DESTINATION_CLOCK_UNCONFIRMED', result['exclusionReasons'])
+
+    def test_paired_naver_uses_same_samples_for_both_error_summaries(self):
+        before, after, naver = copy.deepcopy(self.left), copy.deepcopy(self.left), self.right
+        after['id'] = 'app-after'
+        for item, clock in ((before, '12:05'), (after, '11:58'), (naver, '12:00')):
+            item['requestedCoordinateEvidence'] = {
+                'origin': {'lat': 37.65, 'lng': 127.06},
+                'destination': {'lat': 37.48, 'lng': 126.93},
+                'evidence': 'pinned inputs',
+            }
+            item['arrivalAt'] = f'2026-10-05T{clock}:00Z'
+            item['displayedArrivalEvidence'] = {'scope': 'REQUESTED_DESTINATION',
+                                                'arrivalAt': item['arrivalAt'], 'evidence': 'visible ETA'}
+            del item['arrivalClockEvidence']
+            del item['rides'][0]['trainIdentity']
+        del naver['rides'][0]['arrivalAt']
+        del after['displayedArrivalEvidence']
+        after['arrivalAt'] = '2026-10-05T11:58:30Z'
+        sample = {'id': 'same-trip', 'before': before, 'after': after, 'naver': naver}
+        report = comparison.paired_map_report({'samples': [sample]})
+        self.assertEqual(report['comparableCount'], 1)
+        self.assertEqual(report['before'], {'meanAbsoluteErrorMinutes': 5, 'largeErrorCount': 1,
+                                            'withinTwoMinutesCount': 0})
+        self.assertEqual(report['after'], {'meanAbsoluteErrorMinutes': 1.5, 'largeErrorCount': 0,
+                                           'withinTwoMinutesCount': 1})
+        self.assertEqual(report['samples'][0]['after']['appMinusNaverMinutes'], -1.5)
+        after['walkingBoundaryEvidence'][1]['stationInteriorCoverage'] = 'UNKNOWN'
+        report = comparison.paired_map_report({'samples': [sample]})
+        self.assertEqual(report['comparableCount'], 0)
+        self.assertIsNone(report['before']['meanAbsoluteErrorMinutes'])
+        self.assertIsNone(report['after']['largeErrorCount'])
+        self.assertIn('WALKING_BOUNDARIES_UNCONFIRMED', report['samples'][0]['after']['exclusionReasons'])
+        sample['before'] = None
+        report = comparison.paired_map_report({'samples': [sample]})
+        self.assertEqual(report['candidateCount'], 1)
+        self.assertEqual(report['comparableCount'], 0)
+        self.assertEqual(report['samples'][0]['before']['exclusionReasons'], ['APP_PREDICTION_MISSING'])
+
+    def test_moved_route_start_cannot_replace_the_original_map_query(self):
+        self.left['comparisonRequestedDepartureAt'] = '2026-10-05T10:59:00Z'
+        result = comparison.compare(self.left, self.right)
+        self.assertIn('ORIGINAL_COMPARISON_DEPARTURE_MISMATCH', result['exclusionReasons'])
+        self.assertIn('ORIGINAL_COMPARISON_DEPARTURE_MISMATCH',
+                      result['displayedDestinationComparison']['exclusionReasons'])
+        self.assertIsNone(result['withinTwoMinutes'])
+
     def test_same_station_names_or_nominal_endpoints_cannot_prove_walking_equality(self):
         for mutation in ('missing', 'unknown', 'nominal', 'no_evidence', 'omitted_egress'):
             with self.subTest(mutation=mutation):
@@ -226,19 +315,72 @@ class ComparisonTest(unittest.TestCase):
 
     def test_worker_export_keeps_current_departure_separate_from_protected_alarm(self):
         worker = self.recorded_worker()
+        worker['comparisonRequestedDepartureAt'] = worker['recommendedDepartureAt']
         result = comparison.worker_prediction(worker, 'recorded-worker.json')
         route = worker['effectiveSnapshot']['effectiveTransitRoute']
         self.assertEqual(result['requestedDepartureAt'], route['departureAt'])
         self.assertEqual(result['protectedAlarmDepartureAt'], worker['recommendedDepartureAt'])
         self.assertNotEqual(result['requestedDepartureAt'], result['protectedAlarmDepartureAt'])
+        self.assertEqual(result['comparisonRequestedDepartureAt'], worker['comparisonRequestedDepartureAt'])
         self.assertEqual(result['arrivalAt'], route['arrivalAt'])
         self.assertEqual(result['rides'][0]['trainIdentity']['number'], '4095')
         self.assertEqual(result['rides'][0]['boardingAt'], '2026-10-12T04:03:50Z')
         self.assertFalse(result['simulatorE2eVerified'])
         self.assertFalse(result['realWorldAccuracyVerified'])
 
+    def test_fixed_departure_diagnostic_keeps_only_matching_complete_timetable(self):
+        worker = self.recorded_worker()
+        worker['journeyProvider'] = 'tmap'
+        route = worker['effectiveSnapshot']['effectiveTransitRoute']
+        shift = comparison.dt.timedelta(seconds=600)
+
+        def shifted(value):
+            return (comparison.instant(value) + shift).isoformat()
+
+        legs = []
+        for segment in route['segments']:
+            if segment['kind'] == 'WALK':
+                legs.append({'mode': 'WALK', 'walkingScope': segment['walkingScope'],
+                             'movementSeconds': segment['durationMinutes'] * 60})
+                continue
+            timing = segment['rideTiming']
+            table = timing['timetable'].copy()
+            table.update(boardingAt=shifted(timing['predictedBoardingAt']),
+                         arrivalAt=shifted(timing['predictedArrivalAt']), trainNumber='later-' + table['trainNumber'])
+            legs.append({'mode': 'SUBWAY', 'timingBasis': 'TIMETABLE', 'timetable': table})
+        departure = shifted(route['departureAt'])
+        worker['comparisonRequestedDepartureAt'] = departure
+        candidate = {'method': 'enrich', 'provider': 'tmap', 'requestedDepartureAt': departure,
+                     'departureAt': departure, 'arrivalAt': shifted(route['arrivalAt']), 'legs': legs}
+        wrong_route = copy.deepcopy(candidate)
+        next(leg for leg in wrong_route['legs'] if leg['mode'] == 'SUBWAY')['timetable']['directionCode'] = 'UP'
+        worker['journeyTimingTrace'] = {
+            'classification': 'PASSIVE_REAL_JOURNEY_TIMING_TRACE', 'responseModified': False,
+            'events': [candidate | {'departureAt': route['departureAt']}, wrong_route,
+                       candidate | {'legs': legs[:-1]}, candidate],
+        }
+
+        result = comparison.fixed_departure_diagnostic(worker, 'recorded-worker.json')
+        observed, = result['candidates']
+        self.assertEqual(result['acceptedDepartureAt'], route['departureAt'])
+        self.assertEqual(result['requestedDepartureAt'], departure)
+        self.assertEqual(observed['lastStationArrivalDeltaSeconds'], 600)
+        self.assertEqual(observed['destinationArrivalDeltaSeconds'], 600)
+        self.assertTrue(observed['evidence'].endswith('events[3]'))
+        self.assertNotIn('withinTwoMinutes', result)
+
+        worker['journeyTimingTrace']['responseModified'] = True
+        with self.assertRaisesRegex(ValueError, 'Unmodified Worker timing trace'):
+            comparison.fixed_departure_diagnostic(worker, 'modified-worker.json')
+
     def test_worker_export_does_not_promote_station_coordinates_to_platform_equality(self):
-        result = comparison.worker_prediction(self.recorded_worker(), 'recorded-worker.json')
+        worker = self.recorded_worker()
+        worker['requestedCoordinates'] = {'origin': {'lat': 37.65, 'lng': 127.06},
+                                          'destination': {'lat': 37.48, 'lng': 126.93}}
+        result = comparison.worker_prediction(worker, 'recorded-worker.json')
+        self.assertEqual(result['requestedCoordinateEvidence'], {
+            **worker['requestedCoordinates'], 'evidence': 'recorded-worker.json#requestedCoordinates',
+        })
         self.assertIsNone(comparison.walking_boundaries(result))
         other = copy.deepcopy(result)
         other.update(id='same-captured-result', kind='MAP_PREDICTION')
@@ -246,6 +388,19 @@ class ComparisonTest(unittest.TestCase):
         self.assertIn('WALKING_BOUNDARIES_UNCONFIRMED', pair['exclusionReasons'])
         self.assertIsNone(pair['withinTwoMinutes'])
         self.assertTrue(all(w['stationInteriorCoverage'] == 'UNKNOWN' for w in result['walkingBoundaryEvidence']))
+
+    def test_worker_export_keeps_routed_egress_endpoint_distinct_from_requested_pin(self):
+        worker = self.recorded_worker()
+        egress = worker['effectiveSnapshot']['effectiveTransitRoute']['segments'][-1]
+        origin = {'lat': 37.484, 'lng': 126.93}
+        pin = {'lat': 37.48427, 'lng': 126.92977}
+        routed = {'lat': 37.48428, 'lng': 126.92977}
+        egress['walkingGeometry'] = {'from': origin, 'to': routed, 'endpointBasis': 'PROVIDER_PATH_ENDPOINTS',
+                                      'providerQueryEndpoints': {'start': origin, 'end': pin}}
+        result = comparison.worker_prediction(worker, 'recorded-worker-with-verified-egress')
+        self.assertEqual(result['providerWalkingPathEndpoints'], [{'scope': 'EGRESS',
+            'pathStart': origin, 'pathEnd': routed, 'requestedStart': origin, 'requestedEnd': pin}])
+        self.assertIsNone(comparison.walking_boundaries(result))
 
     def test_worker_export_rejects_mock_rejected_and_conflicting_current_results(self):
         for mutation in ('mock', 'clock', 'stale', 'fallback', 'not_accepted', 'arrival'):
@@ -300,6 +455,58 @@ class ComparisonTest(unittest.TestCase):
         diagnostic = comparison.compare(self.left, self.right)['rideDiagnostics'][0]
         self.assertEqual(diagnostic['boardingDeltaSeconds'], -60)
         self.assertEqual(diagnostic['rideDurationDeltaSeconds'], 0)
+
+    def test_station_arrival_prediction_is_not_a_boarding_or_in_vehicle_delta(self):
+        self.left['rides'][0]['boardingClockKind'] = 'STATION_ARRIVAL_PREDICTION'
+        self.right['rides'][0].update(boardingAt='2026-10-05T11:06:00Z', arrivalAt='2026-10-05T11:56:00Z')
+        result = comparison.compare(self.left, self.right)
+        ride = result['rideDiagnostics'][0]
+        self.assertIsNone(ride['boardingDeltaSeconds'])
+        self.assertIsNone(ride['stationArrivalPredictionDeltaSeconds'])
+        self.assertIsNone(ride['rideDurationDeltaSeconds'])
+        self.assertEqual(ride['alightingDeltaSeconds'], -60)
+        self.assertEqual(result['timelineDiagnostic']['leftBudget']['rideStartClockKinds'], ['STATION_ARRIVAL_PREDICTION'])
+        self.assertEqual(result['timelineDiagnostic']['reconstructedArrivalDeltaSeconds'], 0)
+
+        self.right['rides'][0]['boardingClockKind'] = 'STATION_ARRIVAL_PREDICTION'
+        ride = comparison.compare(self.left, self.right)['rideDiagnostics'][0]
+        self.assertEqual(ride['stationArrivalPredictionDeltaSeconds'], -60)
+        self.assertIsNone(ride['boardingDeltaSeconds'])
+
+    def test_worker_export_marks_arrival_based_live_clocks_only(self):
+        worker = self.recorded_worker()
+        rides = [segment['rideTiming'] for segment in worker['effectiveSnapshot']['effectiveTransitRoute']['segments']
+                 if segment['kind'] == 'SUBWAY']
+        for has_station_clock in (False, True):
+            with self.subTest(has_station_clock=has_station_clock):
+                for timing in rides:
+                    timing['timetable']['boardingStationArrivalAt'] = timing['timetable']['boardingAt'] if has_station_clock else None
+                result = comparison.worker_prediction(worker, 'recorded-worker-with-arrival-event')
+                self.assertEqual([ride['boardingClockKind'] for ride in result['rides']],
+                                 ['STATION_ARRIVAL_PREDICTION', 'BOARDING'])
+
+    def test_worker_distinguishes_walk_wait_and_unused_slack(self):
+        worker = self.recorded_worker()
+        segments = worker['effectiveSnapshot']['effectiveTransitRoute']['segments']
+        first, onward = [segment for segment in segments if segment['kind'] == 'SUBWAY']
+        transfer_walk = segments[first['sequence'] + 1]
+        walking = transfer_walk.get('durationSeconds') or transfer_walk['durationMinutes'] * 60
+        alight = comparison.instant(first['rideTiming']['predictedArrivalAt'])
+        board = comparison.instant(onward['rideTiming']['predictedBoardingAt'])
+        wait = int((board - alight).total_seconds()) - walking
+        onward['transferTiming'] = {'previousArrivalAt': alight.isoformat(), 'boardingAt': board.isoformat(),
+                                    'walkingSeconds': walking, 'requiredMarginSeconds': 25,
+                                    'physicalReadyAt': (alight + comparison.dt.timedelta(seconds=walking)).isoformat(),
+                                    'remainingSlackSeconds': wait - 25}
+        result = comparison.worker_prediction(worker, 'recorded-worker-with-transfer-components')
+        budget = comparison.timeline_budget(result)
+        actual, = budget['providerTransferComponents']
+        self.assertEqual((actual['walkingSeconds'], actual['waitAfterWalkingSeconds'], actual['remainingSlackSeconds']),
+                         (walking, wait, wait - 25))
+        self.assertEqual(actual['waitEndsAt'], 'BOARDING')
+        onward['transferTiming']['walkingSeconds'] = walking - 1
+        with self.assertRaises(ValueError):
+            comparison.worker_prediction(worker, 'contradictory-components')
 
     def test_arrival_boundary_diagnostic_splits_alighting_and_residual(self):
         self.right['rides'][0]['arrivalAt'] = '2026-10-05T11:53:00Z'

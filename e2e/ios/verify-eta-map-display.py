@@ -61,14 +61,14 @@ def compare_timetable_preview(worker, public, map_display):
             or worker.get('stale') is not True or snapshot.get('accepted') is not False
             or snapshot.get('transitTimingBasis') != 'TIMETABLE_ONLY'
             or snapshot.get('firstBoardingObservation') is not None
-            or not reason.startswith('TRANSIT_TRAIN_NOT_YET_OBSERVED:')
+            or not reason.startswith(('TRANSIT_TRAIN_NOT_YET_OBSERVED:', 'TRANSIT_ARRIVAL_SOURCE_STALE:'))
             or worker.get('predictedArrivalAt') is not None
             or public.get('source') != worker['source'] or public.get('stale') is not True
             or public.get('failureReason') != reason or public.get('scheduleId') != worker['scheduleId']
             or public.get('predictedArrivalAt') is not None or public.get('effectiveTransitRoute') is not None
             or public.get('firstBoardingObservation') is not None or public.get('confidence') != 'LOW'
             or public.get('futureTimetablePrediction') != route or not route):
-        raise ValueError('Only the separate unobserved-train future timetable preview is eligible')
+        raise ValueError('Only the separate future timetable preview is eligible')
     window = public.get('_isolationReadWindow') or {}
     started, finished = instant(window['startedAt']), instant(window['finishedAt'])
     if not instant(worker['evaluatedAt']) <= started <= finished < instant(route['departureAt']) or instant(route['arrivalAt']) > instant(worker['targetArrivalAt']):

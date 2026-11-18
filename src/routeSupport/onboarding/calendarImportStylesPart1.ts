@@ -66,6 +66,20 @@ export function createCalendarImportStylesPart1(
       paddingTop: 36,
       paddingBottom: 28,
     },
+    scanContent: {
+      justifyContent: 'center',
+    },
+    choicesContent: {
+      paddingTop: 20,
+    },
+    choicesHeading: {
+      gap: 8,
+    },
+    choicesTitle: {
+      fontSize: 26,
+      lineHeight: 34,
+      letterSpacing: -0.4,
+    },
     stepMotion: {
       width: '100%',
     },
@@ -89,13 +103,23 @@ export function createCalendarImportStylesPart1(
       height: '100%',
     },
     centeredStatusHeader: { alignItems: 'center', gap: 8 },
+    importResultHeading: { gap: 5 },
+    importResultKicker: {
+      color: isDark ? '#9ABEFF' : '#1959DB',
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    importResultTitle: {
+      fontSize: 25,
+      lineHeight: 33,
+      letterSpacing: -0.45,
+    },
     importResultSummary: {
-      marginTop: 10,
       overflow: 'hidden',
       borderRadius: 14,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      backgroundColor: colors.surface2,
+      backgroundColor: colors.surface,
     },
     importResultRow: {
       minHeight: 50,

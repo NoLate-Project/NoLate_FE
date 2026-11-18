@@ -123,6 +123,9 @@ describe("/alarm route", () => {
     test("routes one capability-backed real alarm to the departure-completion flow", async () => {
         const screen = await renderRoute();
 
+        expect(mockGetSchedule).toHaveBeenCalledWith("42");
+        expect(screen.props.presentation.title).toBe("QA0713A 강남역 이동");
+        mockedGetAuthMember.mockClear();
         await expect(screen.props.onCompleteDeparture("42")).resolves.toEqual({
             status: "completed",
         });
@@ -160,6 +163,8 @@ describe("/alarm route", () => {
         >);
         const screen = await renderRoute();
 
+        expect(mockGetSchedule).not.toHaveBeenCalled();
+        expect(screen.props.presentation.title).toBe("지금 출발하세요");
         await expect(screen.props.onCompleteDeparture("42"))
             .rejects.toThrow("CUSTOM_ALARM_ACCOUNT_MISMATCH");
 
@@ -174,6 +179,7 @@ describe("/alarm route", () => {
 
     test("returns an explicit rejection when the capability is no longer available", async () => {
         const screen = await renderRoute();
+        mockedGetAuthMember.mockClear();
         consumeNoLateCustomAlarmCapability(authorizedTarget.capabilityId);
 
         await expect(screen.props.onCompleteDeparture("42")).resolves.toEqual({
@@ -183,6 +189,15 @@ describe("/alarm route", () => {
 
         expect(mockedGetAuthMember).not.toHaveBeenCalled();
         expect(mockCompleteDeparture).not.toHaveBeenCalled();
+    });
+
+    test("keeps a real alarm available when the schedule title cannot load", async () => {
+        mockGetSchedule.mockRejectedValueOnce(new Error("offline"));
+        const screen = await renderRoute();
+
+        expect(screen.props.presentation.title).toBe("지금 출발하세요");
+        expect(screen.props.presentation.canOpenRoute).toBe(true);
+        expect(screen.props.presentation.canCompleteDeparture).toBe(true);
     });
 
     test("keeps a capability-backed preview UI-only", async () => {
@@ -229,11 +244,13 @@ describe("/alarm route", () => {
         });
 
         expect(mockedGetAuthMember).not.toHaveBeenCalled();
+        expect(mockGetSchedule).not.toHaveBeenCalled();
         expect(mockCompleteDeparture).not.toHaveBeenCalled();
     });
 
     test("rejects a mismatched schedule id supplied by a child action", async () => {
         const screen = await renderRoute();
+        mockedGetAuthMember.mockClear();
 
         await expect(screen.props.onCompleteDeparture("41")).resolves.toEqual({
             status: "rejected",

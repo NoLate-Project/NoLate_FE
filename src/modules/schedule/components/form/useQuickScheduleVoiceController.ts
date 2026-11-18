@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { Alert, Keyboard, Platform } from "react-native";
+import { Alert, AppState, Keyboard, Platform } from "react-native";
 import { Audio } from "expo-av";
 
 import { buildScheduleSpeechContext } from "../../quickInputExtraction";
@@ -62,6 +62,7 @@ export function useQuickScheduleVoiceController({
   const [voiceRecognitionConfidence, setVoiceRecognitionConfidence] = useState<number>();
   const [voiceRecognitionAlternatives, setVoiceRecognitionAlternatives] = useState<LiveSpeechRecognitionAlternative[]>([]);
   const [voiceStatusMessage, setVoiceStatusMessage] = useState("");
+  const [voicePermissionDenied, setVoicePermissionDenied] = useState(false);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [isVoiceFinalizing, setIsVoiceFinalizing] = useState(false);
   const [voiceMeterHistory, setVoiceMeterHistory] = useState(() => createVoiceMeterHistory(0));
@@ -112,6 +113,7 @@ export function useQuickScheduleVoiceController({
     setVoiceRecognitionConfidence(undefined);
     setVoiceRecognitionAlternatives([]);
     setVoiceStatusMessage("");
+    setVoicePermissionDenied(false);
     setIsVoiceRecording(false);
     setIsVoiceFinalizing(false);
     setVoiceMeterHistory(createVoiceMeterHistory());
@@ -308,11 +310,19 @@ export function useQuickScheduleVoiceController({
     const startIsCurrent = () => liveSpeechOperationRef.current === operation && liveSpeechStartingRef.current && mountedRef.current && visibleRef.current && !closingRef.current;
     const pendingCleanup = recordingCleanupPromiseRef.current;
     if (pendingCleanup) { setVoiceStatusMessage("이전 음성 입력을 마무리하고 있어요."); await pendingCleanup.catch(() => undefined); if (!startIsCurrent()) return; }
-    Keyboard.dismiss(); setInputMode("voice"); clearPhotoRecognition(); setVoiceUri(null); setVoiceStatusMessage(""); setVoiceMeterHistory(createVoiceMeterHistory()); clearVoiceTimer();
+    Keyboard.dismiss(); setInputMode("voice"); setVoiceStatusMessage(""); setVoiceMeterHistory(createVoiceMeterHistory()); clearVoiceTimer();
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!startIsCurrent()) return;
-      if (!permission.granted) { liveSpeechStartingRef.current = false; setIsVoiceFinalizing(false); Alert.alert("마이크 권한 필요", "음성으로 빠른 일정을 만들려면 마이크 권한이 필요합니다."); return; }
+      if (!permission.granted) {
+        liveSpeechStartingRef.current = false;
+        setIsVoiceFinalizing(false);
+        setVoicePermissionDenied(true);
+        return;
+      }
+      setVoicePermissionDenied(false);
+      clearPhotoRecognition();
+      setVoiceUri(null);
     } catch (error) {
       if (!startIsCurrent()) return;
       liveSpeechStartingRef.current = false; setIsVoiceFinalizing(false);
@@ -459,6 +469,21 @@ export function useQuickScheduleVoiceController({
 
   useEffect(() => () => { invalidateVoiceOperations(); clearVoiceTimer(); }, [clearVoiceTimer, invalidateVoiceOperations]);
 
+  useEffect(() => {
+    if (!voicePermissionDenied) return undefined;
+    let active = true;
+    const subscription = AppState.addEventListener("change", nextState => {
+      if (nextState !== "active" || !visibleRef.current || closingRef.current) return;
+      Audio.getPermissionsAsync().then(permission => {
+        if (active && permission.granted) setVoicePermissionDenied(false);
+      }).catch(() => undefined);
+    });
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, [closingRef, visibleRef, voicePermissionDenied]);
+
   return {
     hasActiveVoiceSession: Boolean(audioRecordingRef.current || isVoiceRecording || isVoiceFinalizing || voiceUri),
     invalidateVoiceOperations,
@@ -471,6 +496,7 @@ export function useQuickScheduleVoiceController({
     updateVoiceTranscript,
     voiceDurationMillis,
     voiceMeterHistory,
+    voicePermissionDenied,
     voiceRecognitionAlternatives,
     voiceRecognitionConfidence,
     voiceStatusMessage,

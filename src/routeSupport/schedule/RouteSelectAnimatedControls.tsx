@@ -54,21 +54,11 @@ export function showLocationSettingsAlert(title: string, message: string, prefer
 
 export type TransitRouteFilter = "ALL" | "SUBWAY" | "BUS" | "MIXED";
 export type RouteSelectTransitLeg = NonNullable<RouteAlternativeOption["transitLegs"]>[number];
-export type RouteProgressSegment = {
-    key: string;
-    label: string;
-    lineLabel?: string;
-    minutes: number;
-    color: string;
-    kind: RouteSelectTransitLeg["kind"] | "TRANSFER";
-    flex: number;
-    isRide: boolean;
-};
 export type RouteMetricChip = {
     key: string;
     label: string;
 };
-export type RouteDropdownSummaryKind = RouteSelectTransitLeg["kind"] | "TRANSFER";
+export type RouteDropdownSummaryKind = RouteSelectTransitLeg["kind"] | "TRANSFER" | "WAIT";
 export type RouteDropdownSummaryItem = {
     key: string;
     kind: RouteDropdownSummaryKind;
@@ -83,6 +73,7 @@ export type PlaceIconSource = {
     category?: string;
 };
 export type AnimatedTravelModeButtonProps = {
+    buttonRef?: React.Ref<React.ElementRef<typeof Pressable>>;
     reduceMotion: boolean;
     selected: boolean;
     label: string;
@@ -162,6 +153,7 @@ function useSelectedSpring(selected: boolean, reduceMotion: boolean) {
 
 /** 이동수단 선택 상태를 아이콘 크기와 카드 스케일로 표현하고 접근성 선택 상태를 함께 제공한다. */
 export function AnimatedTravelModeButton({
+    buttonRef,
     reduceMotion,
     selected,
     label,
@@ -179,6 +171,7 @@ export function AnimatedTravelModeButton({
 
     return (
         <Pressable
+            ref={buttonRef}
             onPress={onPress}
             accessibilityRole="button"
             accessibilityLabel={label}

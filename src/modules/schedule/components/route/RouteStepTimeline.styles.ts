@@ -1,5 +1,11 @@
 import { StyleSheet } from "react-native";
 
+const COMPACT_RAIL_WIDTH = 56;
+const COMPACT_LINE_WIDTH = 5;
+const COMPACT_BODY_BOTTOM_PADDING = 6;
+const ROW_DIVIDER_TOP_MARGIN = 12;
+const ALIGHTING_TIMED_MARKER_HEIGHT = 30;
+
 /** RouteStepTimeline 화면의 정적 시각 규칙입니다. 화면 로직과 독립적으로 조정할 수 있도록 분리했습니다. */
 const styles = StyleSheet.create({
     root: {
@@ -10,9 +16,11 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         marginBottom: 8,
     },
-    guidanceCurrentRow: { borderLeftWidth: 3, borderLeftColor: '#2979FF', paddingVertical: 8, backgroundColor: 'rgba(41,121,255,0.08)' },
-    guidanceCurrent: { paddingVertical: 4, paddingRight: 8 },
-    guidanceCurrentText: { color: '#1264C7', fontSize: 13, fontWeight: '600' },
+    guidanceCurrentRow: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 8,
+        borderLeftWidth: 3,
+    },
     item: {
         flexDirection: "row",
         borderWidth: 0,
@@ -74,7 +82,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     railCompact: {
-        width: 56,
+        width: COMPACT_RAIL_WIDTH,
     },
     dot: {
         width: 32,
@@ -122,7 +130,7 @@ const styles = StyleSheet.create({
         opacity: 0.92,
     },
     lineCompact: {
-        width: 5,
+        width: COMPACT_LINE_WIDTH,
         minHeight: 46,
         marginTop: 0,
     },
@@ -173,7 +181,7 @@ const styles = StyleSheet.create({
     },
     bodyCompact: {
         paddingTop: 2,
-        paddingBottom: 6,
+        paddingBottom: COMPACT_BODY_BOTTOM_PADDING,
     },
     titleRow: {
         flexDirection: "row",
@@ -204,6 +212,9 @@ const styles = StyleSheet.create({
         minHeight: 25,
         borderRadius: 7,
         paddingHorizontal: 9,
+    },
+    badgeIntercity: {
+        maxWidth: 112,
     },
     badgeExpanded: {
         maxWidth: "100%",
@@ -430,7 +441,7 @@ const styles = StyleSheet.create({
     },
     itemDivider: {
         height: StyleSheet.hairlineWidth,
-        marginTop: 12,
+        marginTop: ROW_DIVIDER_TOP_MARGIN,
         marginRight: -2,
     },
     stopList: {
@@ -473,9 +484,29 @@ const styles = StyleSheet.create({
         justifyContent: "flex-start",
         paddingTop: 7,
     },
+    inlineAlightingMarker: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        borderWidth: 1,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     inlineAlightingRail: {
         bottom: undefined,
-        height: 30,
+        height: ALIGHTING_TIMED_MARKER_HEIGHT,
+    },
+    inlineAlightingConnector: {
+        position: "absolute",
+        left: -(COMPACT_RAIL_WIDTH + COMPACT_LINE_WIDTH) / 2,
+        width: COMPACT_LINE_WIDTH,
+        top: "50%",
+        bottom: -(COMPACT_BODY_BOTTOM_PADDING + ROW_DIVIDER_TOP_MARGIN + StyleSheet.hairlineWidth),
+        borderBottomLeftRadius: 2,
+        borderBottomRightRadius: 2,
+    },
+    inlineAlightingConnectorTimed: {
+        top: ALIGHTING_TIMED_MARKER_HEIGHT / 2,
     },
     inlineAlightingClock: {
         top: 27,

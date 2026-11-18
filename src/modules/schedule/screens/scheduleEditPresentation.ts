@@ -1,4 +1,5 @@
 import { formatScheduleFormDate } from "../scheduleFormDate";
+import type { ScheduleItem } from "../types";
 
 export const DATE_H = 312;
 export const TIME_H = 216;
@@ -9,6 +10,7 @@ export type ScheduleEditScreenProps = {
     initialScrollToEnd?: boolean;
     initialCategoryPickerOpen?: boolean;
     onPreviewClose?: () => void;
+    onSaved?: (previous: ScheduleItem, updated: ScheduleItem) => void;
     previewCurrentMemberId?: number;
 };
 

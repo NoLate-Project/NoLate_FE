@@ -1,9 +1,89 @@
-import type { RoutePathCoord } from "./tmapApi";
+import type { RoutePathCoord, TransitLegDetail } from "./tmapApi";
+import { isIntercityBusKind } from "./transitModes";
 
 export type TransitMapCoordinate = {
     latitude: number;
     longitude: number;
 };
+
+export function isRailKind(kind: string): boolean {
+    return kind === "SUBWAY" || kind === "TRAIN";
+}
+
+export function requiresSegmentedTransitPath(kind: string): boolean {
+    return isRailKind(kind) || isIntercityBusKind(kind);
+}
+
+export function hasTransitLegLineGeometry(leg: TransitLegDetail, path = leg.pathCoords ?? []): boolean {
+    if (isRailKind(leg.kind)) return hasRailLineGeometry(leg, path);
+    if (!isIntercityBusKind(leg.kind)) return true;
+    if (path.length < 3 || leg.pathGeometrySource === "PASS_STOP_LIST") return false;
+    if (!path.every(isFiniteRouteCoord) || leg.pathCoords?.some(point => !isFiniteRouteCoord(point))) return false;
+
+    // Boarding and alighting coordinates alone would draw a cross-country shortcut.
+    const start = path[0];
+    const end = path[path.length - 1];
+    return path.slice(1, -1).some(point =>
+        routeCoordDistanceMeters(point, start) > 1 && routeCoordDistanceMeters(point, end) > 1
+    );
+}
+
+export function hasRailLineGeometry(leg: TransitLegDetail, path = leg.pathCoords ?? []): boolean {
+    if (path.length < 2 || leg.pathCoordsIsExact === false) return false;
+    if (leg.kind === "SUBWAY" && leg.navigationEvidence?.provider === "odsay" &&
+        leg.navigationEvidence.geometryInputComplete === false) return false;
+    // Restored overlays may have filtered invalid points from the stored track.
+    // The resulting line can bridge the missing part of the rail corridor.
+    if (!path.every(isFiniteRouteCoord) || leg.pathCoords?.some(point => !isFiniteRouteCoord(point))) return false;
+    if (lacksIntermediateRailGeometry(leg.kind, path.length, leg.stationCount, leg.passStops?.length ?? 0)) return false;
+
+    const source = leg.pathGeometrySource;
+    if (source && source !== "UNKNOWN" && source !== "TRANSIT_PASS_SHAPE_LINESTRING") return false;
+    const hasExplicitShape = source === "TRANSIT_PASS_SHAPE_LINESTRING" || leg.pathCoordsIsExact === true;
+    if (!hasExplicitShape) return false;
+
+    const endpoints = [
+        { station: leg.startCoord, track: path[0] },
+        { station: leg.endCoord, track: path[path.length - 1] },
+    ];
+    if (endpoints.some(({ station, track }) =>
+        isFiniteRouteCoord(station) &&
+        routeCoordDistanceMeters(station, track) > TRANSIT_CONNECTOR_POLICY.maxSchematicAccessLinkMeters
+    )) return false;
+
+    const knownStops = (leg.passStops ?? []).map(stop => stop.coord).filter(isFiniteRouteCoord);
+
+    // A station-only shape can use slightly different platform or station coordinates.
+    const stationCoords = [leg.startCoord, ...knownStops, leg.endCoord].filter(isFiniteRouteCoord);
+    const hasTrackPoints = path.length === 2 || !path.every(point =>
+        stationCoords.some(station =>
+            routeCoordDistanceMeters(point, station) <= TRANSIT_CONNECTOR_POLICY.stopToRouteSnapMeters
+        )
+    );
+    if (!hasTrackPoints) return false;
+
+    // Station coordinates may be offset from the track by a platform or station entrance.
+    // A line through the wrong corridor or visiting known stops out of order is not usable.
+    let furthestStopMeters = 0;
+    return knownStops.every(stop => {
+        const projection = projectEndpointToPath(path, stop, "start");
+        if (!projection || projection.distanceMeters > TRANSIT_CONNECTOR_POLICY.maxSchematicAccessLinkMeters) return false;
+        const positionMeters = projection.discardedLengthMeters;
+        if (positionMeters + TRANSIT_CONNECTOR_POLICY.stopToRouteSnapMeters < furthestStopMeters) return false;
+        furthestStopMeters = Math.max(furthestStopMeters, positionMeters);
+        return true;
+    });
+}
+
+export function lacksIntermediateRailGeometry(
+    kind: string,
+    pointCount: number,
+    stationCount: number | undefined,
+    knownStops: number,
+): boolean {
+    return isRailKind(kind) &&
+        pointCount === 2 && ((stationCount ?? 0) > 1 || knownStops > 2);
+}
 
 export type TransitStopAnchorLike = {
     rawCoordinate?: TransitMapCoordinate;

@@ -2,18 +2,21 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
+private let guidanceSecondaryInk = Color(hex: "AAB8CB")
+
 struct NoLateGuidanceLiveActivity: Widget {
   var body: some WidgetConfiguration {
     ActivityConfiguration(for: NoLateGuidanceAttributes.self) { context in
       NoLateGuidanceCard(legs: context.attributes.routeLegs, content: context.state, isStale: context.isStale)
         .padding(.horizontal, 18).padding(.vertical, 14)
-        .activityBackgroundTint(Color(.systemBackground))
-        .activitySystemActionForegroundColor(.primary)
+        .activityBackgroundTint(Color(hex: "111925"))
+        .activitySystemActionForegroundColor(.white)
         .widgetURL(scheduleURL(context.state))
     } dynamicIsland: { context in
       DynamicIsland {
         DynamicIslandExpandedRegion(.bottom) {
-          NoLateGuidanceCard(legs: context.attributes.routeLegs, content: context.state, isStale: context.isStale)
+          NoLateGuidanceCard(legs: context.attributes.routeLegs, content: context.state, isStale: context.isStale, compact: true)
+            .padding(.horizontal, 8)
         }
       } compactLeading: {
         NoLateActivityIcons.guidance(NoLateGuidancePresentationPolicy.presentation(context.state,
@@ -34,7 +37,10 @@ struct NoLateGuidanceLiveActivity: Widget {
           let value = UInt64(id), value > 0, value <= 9_007_199_254_740_991 else {
       return URL(string: "nolate://schedule")
     }
-    return URL(string: "nolate://schedule/\(id)?openRouteDetail=1")
+    guard UUID(uuidString: content.sessionId) != nil, content.sessionId.utf8.count == 36 else {
+      return URL(string: "nolate://schedule/\(id)")
+    }
+    return URL(string: "nolate://schedule/\(id)?entrySource=guidance-activity&guidanceSession=\(content.sessionId)")
   }
 }
 
@@ -42,6 +48,7 @@ private struct NoLateGuidanceCard: View {
   let legs: [NoLateGuidanceRouteLeg]
   let content: NoLateGuidanceContent
   let isStale: Bool
+  var compact = false
 
   var body: some View {
     let now = Date().timeIntervalSince1970
@@ -50,32 +57,38 @@ private struct NoLateGuidanceCard: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 8) {
         NoLateActivityIcons.guidance(presentation.symbol, size: 19)
-          .foregroundStyle(.blue).frame(width: 34, height: 34)
-          .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+          .foregroundStyle(Color(hex: "A3C9FF")).frame(width: 34, height: 34)
+          .background(Color(hex: "203653"), in: RoundedRectangle(cornerRadius: 9))
+          .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 3) {
           Text(presentation.title).font(.headline)
             .accessibilityLabel(presentation.title)
             .lineLimit(1).minimumScaleFactor(0.8).accessibilityIdentifier("guidance-lock-instruction")
-          Text(presentation.action).font(.subheadline).foregroundStyle(.secondary)
+          Text(presentation.action).font(.subheadline).foregroundStyle(guidanceSecondaryInk)
             .accessibilityLabel(presentation.action)
             .lineLimit(1).minimumScaleFactor(0.8)
         }
         Spacer(minLength: 0)
         NoLateActivityIcons.image(62015, size: 13)
-          .foregroundStyle(.secondary).accessibilityHidden(true)
+          .foregroundStyle(guidanceSecondaryInk).accessibilityHidden(true)
       }
-      NoLateGuidanceRouteBar(legs: legs, content: content, isStale: isStale)
+      if (content.status == "ARMED" || content.status == "ACTIVE"),
+         NoLateGuidanceRouteLayoutPolicy.validTopology(legs) {
+        NoLateGuidanceRouteBar(legs: legs, content: content, isStale: isStale, compact: compact)
+      }
       if let arrival {
         HStack(spacing: 5) {
-          NoLateActivityIcons.image(61892, size: 12).foregroundStyle(.green)
-          Text("버스 도착까지").foregroundStyle(.secondary)
+          NoLateActivityIcons.guidance(arrival.kind == "SUBWAY" ? "tram.fill" : "bus.fill", size: 12).foregroundStyle(.green)
+          Text(arrival.kind == "SUBWAY" ? "열차 도착까지" : "버스 도착까지").foregroundStyle(guidanceSecondaryInk)
           Text(Date(timeIntervalSince1970: arrival.expectedAt), style: .timer)
             .fontWeight(.semibold).monospacedDigit()
           Spacer(minLength: 4)
-          Text(arrival.directionLabel).foregroundStyle(.secondary).lineLimit(1)
+          Text(arrival.directionLabel).foregroundStyle(guidanceSecondaryInk).lineLimit(1)
         }.font(.caption).lineLimit(1).minimumScaleFactor(0.8)
       }
-    }.dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+    .foregroundStyle(.white)
+    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
   }
 }
 
@@ -86,20 +99,23 @@ private struct NoLateGuidanceRouteBar: View {
   let legs: [NoLateGuidanceRouteLeg]
   let content: NoLateGuidanceContent
   let isStale: Bool
+  let compact: Bool
 
   var body: some View {
     let motion = reduceMotion || isLuminanceReduced
       ? nil : Animation.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
+    let now = Date().timeIntervalSince1970
     let position = NoLateGuidanceRoutePositionPolicy.position(content, legs: legs,
-      now: Date().timeIntervalSince1970, isStale: isStale)
-    let displayLegs = NoLateGuidanceRouteLayoutPolicy.validTopology(legs) ? legs : []
-    let layout = NoLateGuidanceRouteLayoutPolicy.layout(displayLegs)
+      now: now, isStale: isStale)
+    let layout = NoLateGuidanceRouteLayoutPolicy.layout(legs)
+    let activeRideIndex = position != nil && ["WAITING", "RIDING"].contains(content.phase)
+      ? content.activeLegIndex : nil
     VStack(alignment: .leading, spacing: 3) {
       GeometryReader { proxy in
         let width = max(0, proxy.size.width - 22)
         ZStack(alignment: .topLeading) {
           HStack(spacing: 0) {
-            ForEach(displayLegs, id: \.index) { leg in
+            ForEach(legs, id: \.index) { leg in
               color(leg).frame(width: width * layout.fractions[leg.index])
             }
           }
@@ -128,34 +144,47 @@ private struct NoLateGuidanceRouteBar: View {
       .frame(height: 22)
 
       HStack(spacing: 6) {
-        let rides = displayLegs.filter { ["BUS", "SUBWAY"].contains($0.kind) }
-        ForEach(rides.prefix(3), id: \.index) { leg in
+        let rides = legs.filter { ["BUS", "SUBWAY"].contains($0.kind) }
+        let legend = NoLateGuidanceRouteLayoutPolicy.visibleRideLegend(rides, activeLegIndex: activeRideIndex)
+        ForEach(legend, id: \.index) { leg in
           HStack(spacing: 3) {
             Circle().fill(color(leg)).frame(width: 5, height: 5)
-            Text(NoLateGuidanceRouteLayoutPolicy.label(leg)).lineLimit(1)
+            Text(NoLateGuidanceRouteLayoutPolicy.legendLabel(leg)).lineLimit(1)
+              .minimumScaleFactor(0.85)
           }
+          .layoutPriority(leg.index == activeRideIndex ? 1 : 0)
         }
-        if rides.count > 3 {
-          Text("+\(rides.count - 3)").foregroundStyle(.secondary)
+        if rides.count > legend.count {
+          Text("+\(rides.count - legend.count)").foregroundStyle(guidanceSecondaryInk)
         }
         Spacer(minLength: 0)
-        Text(layout.basis == "TIME" ? "구간별 예정 시간" : layout.caption)
-          .foregroundStyle(.secondary).lineLimit(1)
+        Text(layout.basis == "TIME" ? (compact ? "예정 시간" : "구간별 예정 시간") : layout.caption)
+          .foregroundStyle(guidanceSecondaryInk).lineLimit(1).truncationMode(.tail)
+          .layoutPriority(-1)
       }
       .font(.caption2)
     }.accessibilityElement(children: .ignore)
-      .accessibilityLabel(legs.map { "\($0.index + 1). \(NoLateGuidanceRouteLayoutPolicy.label($0))" }.joined(separator: " → ")
+      .accessibilityLabel(legs.map { "\($0.index + 1). \(NoLateGuidanceRouteLayoutPolicy.legendLabel($0))" }.joined(separator: " → ")
         + ". \(layout.caption). 전체 여정 완료율이 아닙니다."
-        + (position == nil ? " 현재 위치 확인 필요" : content.phase == "TRANSFER_WALK" ? " 현재 위치: 환승 도보 구간" : content.phase == "FINAL_WALK" ? " 현재 위치: 최종 도보 구간" : content.phase == "RIDING" ? (content.subway == nil ? " 현재 위치: 버스 이동 구간" : " 현재 위치: 지하철 이동 구간") : content.phase == "WAITING" ? " 현재 위치: 승차 정류장" : content.activeLegIndex > 0 ? " 현재 위치: 환승 승차점 도보 구간" : " 현재 위치: 첫 도보 구간"))
+        + positionDescription(hasPosition: position != nil, now: now))
       .accessibilityIdentifier("guidance-lock-route-bar")
   }
-  private func color(_ leg: NoLateGuidanceRouteLeg) -> Color {
-    if ["BUS", "SUBWAY"].contains(leg.kind), let value = NoLateGuidanceRouteLayoutPolicy.safeColor(leg.lineColor) { return Color(hex: value) }
-    switch leg.kind {
-    case "BUS": return Color(hex: "2F963B")
-    case "SUBWAY": return Color(hex: "239FD2")
-    default: return Color(hex: "78828F")
+
+  private func positionDescription(hasPosition: Bool, now: Double) -> String {
+    guard hasPosition else {
+      return !isStale && NoLateGuidancePresentationPolicy.isPrepared(content, legs: legs, now: now)
+        ? " 출발 대기" : " 현재 위치 확인 필요"
     }
+    switch content.phase {
+    case "TRANSFER_WALK": return " 현재 위치: 환승 도보 구간"
+    case "FINAL_WALK": return " 현재 위치: 최종 도보 구간"
+    case "RIDING": return content.subway == nil ? " 현재 위치: 버스 이동 구간" : " 현재 위치: 지하철 이동 구간"
+    case "WAITING": return " 현재 위치: 승차 정류장"
+    default: return content.activeLegIndex > 0 ? " 현재 위치: 환승 승차점 도보 구간" : " 현재 위치: 첫 도보 구간"
+    }
+  }
+  private func color(_ leg: NoLateGuidanceRouteLeg) -> Color {
+    Color(hex: NoLateGuidanceRouteLayoutPolicy.routeColor(leg))
   }
 
 }

@@ -13,18 +13,12 @@ const baseStyles = {
         paddingBottom: 12,
     },
     headerButton: {
-        width: 42,
-        height: 42,
+        width: 44,
+        height: 44,
         borderRadius: 14,
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
-    },
-    headerButtonText: {
-        marginTop: -3,
-        fontSize: 38,
-        fontWeight: "300",
-        lineHeight: 42,
     },
     headerTitleWrap: {
         flex: 1,
@@ -135,11 +129,6 @@ const baseStyles = {
         alignItems: "center",
         justifyContent: "center",
         marginLeft: 10,
-    },
-    swapButtonText: {
-        fontSize: 22,
-        fontWeight: "800",
-        lineHeight: 24,
     },
     searchModeHeader: {
         minHeight: 58,

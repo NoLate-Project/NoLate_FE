@@ -40,7 +40,8 @@ const safeError = (error: unknown) => {
 };
 
 /** View lifetime owns reads/subscriptions only. Native owns every explicitly consented session. */
-export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope: AutomaticJourneyTrialScope, blocked = false, savedScheduleId?: string, authSource?: JourneyAuthenticationSource) {
+export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope: AutomaticJourneyTrialScope,
+    blocked = false, savedScheduleId?: string, authSource?: JourneyAuthenticationSource, savedRestoreMemberId?: number) {
     const [snapshot, setSnapshot] = useState<AutomaticJourneySnapshot | null>(null);
     const [sync, setSync] = useState(getAutomaticJourneySyncState);
     const [assessment, setAssessment] = useState<JourneyRouteAssessmentResult | null>(null);
@@ -67,7 +68,7 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
         setAssessment(null);
         setConsented(false);
         setErrorCode(null);
-    }, [selectedInput, scope, savedScheduleId]);
+    }, [selectedInput, scope, savedScheduleId, sync.savedCheckpoint?.sessionId]);
 
     const refresh = useCallback(async () => {
         // A server stop can remain in flight after native location collection is
@@ -84,7 +85,7 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
     }, []);
 
     useEffect(() => {
-        if (blocked) return;
+        if (blocked && savedRestoreMemberId == null) return;
         let active = true;
         const check = async () => {
             try {
@@ -101,7 +102,7 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
             if (AppState.currentState === 'active' && getAutomaticJourneySyncState().checkpointState === 'WAITING') check();
         }, 5000);
         return () => { active = false; foreground.remove(); clearInterval(retry); };
-    }, [authSource, blocked, scope, refresh]);
+    }, [authSource, blocked, scope, refresh, savedRestoreMemberId]);
 
     useEffect(() => {
         mounted.current = true;
@@ -147,6 +148,10 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
     const running = snapshot?.status === "ARMED" || snapshot?.status === "ACTIVE";
     const eligible = assessedInput.current === selectedInput && canPrepareAutomaticJourneyAssessment(selectedInput, scope, assessment, !!savedScheduleId);
     const available = snapshot?.enabled === true && !blocked;
+    const checkpoint = sync.checkpointState === 'CURRENT' ? sync.savedCheckpoint : undefined;
+    const savedCheckpoint = checkpoint?.scheduleId === savedScheduleId && checkpoint?.memberId === savedRestoreMemberId
+        && scope === 'AUTHENTICATED' && snapshot?.checkpointAvailable ? checkpoint : undefined;
+    const canConsentToSavedRestore = !!savedCheckpoint && snapshot?.enabled === true && !!selectedInput && !running && !pending;
     const canAssess = available && !!selectedInput && !pending;
     const canOptIn = available && eligible && consented && !running && !pending;
     const canPrepare = canOptIn && snapshot?.pendingDeparture !== true && (scope !== 'AUTHENTICATED' || snapshot?.checkpointAvailable !== true)
@@ -196,14 +201,20 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
 
     return {
         snapshot, sync, assessment, consented, pending, errorCode, running, eligible, canAssess, canPrepare,
+        savedCheckpoint, canConsentToSavedRestore,
+        canRestoreSaved: canConsentToSavedRestore && consented,
         canRestore: canOptIn && snapshot?.checkpointAvailable === true,
-        setConsented: (value: boolean) => { if (!pending && !running && available) setConsented(value); },
+        setConsented: (value: boolean) => { if (!pending && !running && (available || canConsentToSavedRestore)) setConsented(value); },
         assess,
         prepare: async () => {
             if (canPrepare && selectedInput) await runNative(() => prepareAutomaticJourneyTrial(selectedInput, scope, savedScheduleId, authSource));
         },
         restore: async () => {
             if (canOptIn && selectedInput && snapshot?.checkpointAvailable) await runNative(() => restoreAutomaticJourneyTrial(selectedInput, authSource));
+        },
+        restoreSaved: async () => {
+            if (canConsentToSavedRestore && consented && selectedInput && savedCheckpoint)
+                await runNative(() => restoreAutomaticJourneyTrial(selectedInput, authSource, savedCheckpoint));
         },
         stop: async () => {
             if (snapshot?.enabled && !pending) {

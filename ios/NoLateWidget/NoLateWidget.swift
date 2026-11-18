@@ -38,11 +38,11 @@ private enum NoLateWidgetIcons {
     return Image(uiImage: image.withRenderingMode(.alwaysTemplate))
   }
 
-  static func timing(_ timing: NoLateWidgetPresentation.Timing, size: CGFloat) -> Image {
-    // Ionicons outline: arrow-redo, time, calendar, checkmark-circle and map.
+  static func timing(_ timing: NoLateWidgetPresentation.Timing, size: CGFloat, isHomeWidget: Bool = false) -> Image {
+    // Ionicons outline: arrow-forward, arrow-redo, time, calendar, checkmark-circle and map.
     let code: UInt32
     switch timing {
-    case .departure, .leaveNow: code = 61757
+    case .departure, .leaveNow: code = isHomeWidget ? 61751 : 61757
     case .start, .ongoing: code = 62942
     case .allDay: code = 61910
     case .departed: code = 61983
@@ -90,42 +90,11 @@ struct NoLateWidgetProvider: TimelineProvider {
     let now = Date()
     let snapshot = NoLateWidgetSnapshotStore.load()
     let schedules = NoLateWidgetSnapshotStore.visibleSchedules(from: snapshot, at: now)
-    let entries = timelineDates(for: schedules, after: now).map { date in
+    let entries = NoLateWidgetPresentation.timelineDates(for: schedules, after: now).map { date in
       NoLateWidgetEntry(date: date, snapshot: snapshot, isPlaceholder: false)
     }
     let refreshDate = now.addingTimeInterval(schedules.isEmpty ? 30 * 60 : 2 * 60 * 60)
     completion(Timeline(entries: entries, policy: .after(refreshDate)))
-  }
-
-  private func timelineDates(
-    for schedules: [NoLateWidgetSchedule],
-    after now: Date
-  ) -> [Date] {
-    let horizon = now.addingTimeInterval(2 * 60 * 60)
-    var timestamps = Set<Int>([Int(now.timeIntervalSince1970)])
-
-    func include(_ date: Date?) {
-      guard let date, date > now, date <= horizon else { return }
-      // Never render a transition just before its boundary when dates include fractions.
-      timestamps.insert(Int(ceil(date.timeIntervalSince1970)))
-    }
-
-    for schedule in schedules {
-      include(schedule.startDate)
-      include(schedule.effectiveEndDate()?.addingTimeInterval(1))
-      guard !schedule.departureCompleted,
-            let departureDate = schedule.departureDate,
-            departureDate > now else { continue }
-      include(departureDate)
-    }
-
-    // Date labels and all-day selection also change at midnight.
-    include(Calendar.current.date(byAdding: .day, value: 1,
-                                  to: Calendar.current.startOfDay(for: now)))
-
-    return timestamps
-      .sorted()
-      .map { Date(timeIntervalSince1970: TimeInterval($0)) }
   }
 }
 
@@ -159,7 +128,7 @@ private extension NoLateWidgetEntry {
     schedules.filter { $0.id != featured?.id }
   }
 
-  var destination: URL? { featured?.deepLink ?? URL(string: "nolate://") }
+  var destination: URL? { featured?.deepLink ?? URL(string: "nolate://schedule") }
 }
 
 private struct NoLateWidgetEntryView: View {
@@ -238,12 +207,16 @@ private struct NoLateMediumWidget: View {
     VStack(alignment: .leading, spacing: 12) {
       NoLateWidgetHeader(date: entry.date)
       if let schedule = entry.featured {
-        HStack(alignment: .top, spacing: 18) {
+        HStack(alignment: .top, spacing: 8) {
           NoLateScheduleLink(schedule: schedule) {
             NoLateFeaturedSchedule(schedule: schedule, now: entry.date, compact: true)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
           if !entry.remaining.isEmpty {
+            Rectangle()
+              .fill(.primary.opacity(0.08))
+              .frame(width: 1)
+              .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 12) {
               ForEach(entry.remaining.prefix(2)) { item in
                 NoLateAgendaRow(schedule: item, now: entry.date, compact: true)
@@ -341,7 +314,7 @@ private struct NoLateDepartureLabel: View {
 
   var body: some View {
     HStack(spacing: 5) {
-      NoLateWidgetIcons.timing(timing, size: 12)
+      NoLateWidgetIcons.timing(timing, size: 12, isHomeWidget: true)
         .accessibilityHidden(true)
       Text(NoLateWidgetFormatting.lockHeadline(schedule, now: now))
         .font(.system(size: 13, weight: .semibold))
@@ -367,19 +340,6 @@ private struct NoLateAgendaRow: View {
   var body: some View {
     NoLateScheduleLink(schedule: schedule) {
       HStack(alignment: .top, spacing: 8) {
-        if !compact {
-          VStack(alignment: .leading, spacing: 3) {
-            Text(schedule.allDay ? "종일" : schedule.startDate.map(NoLateWidgetFormatting.numericTime) ?? "—")
-              .font(.system(size: 13, weight: .medium))
-              .monospacedDigit()
-            if let start = schedule.startDate, !Calendar.current.isDate(start, inSameDayAs: now) {
-              Text(NoLateWidgetFormatting.day(start, now: now))
-                .font(.system(size: 11))
-                .foregroundStyle(noLateSecondaryText)
-            }
-          }
-          .frame(width: 44, alignment: .leading)
-        }
         Capsule()
           .fill(Color(noLateHex: schedule.categoryTintHex))
           .frame(width: 2, height: compact ? 28 : 30)
@@ -389,18 +349,11 @@ private struct NoLateAgendaRow: View {
             .font(.system(size: compact ? 13 : 14, weight: .medium))
             .lineLimit(1)
             .privacySensitive()
-          if compact {
-            Text(NoLateWidgetFormatting.eventDateTime(schedule, relativeTo: now))
-              .font(.system(size: 11))
-              .foregroundStyle(noLateSecondaryText)
-              .lineLimit(1)
-          } else if let location = schedule.displayLocation {
-            Text(location)
-              .font(.system(size: 12))
-              .foregroundStyle(noLateSecondaryText)
-              .lineLimit(1)
-              .privacySensitive()
-          }
+          Text(NoLateWidgetFormatting.eventDateTime(schedule, relativeTo: now, includeLocation: !compact))
+            .font(.system(size: compact ? 11 : 12))
+            .foregroundStyle(noLateSecondaryText)
+            .lineLimit(1)
+            .privacySensitive()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -414,7 +367,10 @@ private struct NoLateScheduleLink<Content: View>: View {
   @ViewBuilder let content: () -> Content
   var body: some View {
     if let destination = schedule.deepLink {
-      Link(destination: destination, label: content).buttonStyle(.plain)
+      Link(destination: destination) {
+        content().contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
     } else { content() }
   }
 }
@@ -528,16 +484,17 @@ private struct NoLateEmptyState: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Spacer(minLength: 0)
-      Text(hasSnapshot ? "잠깐, 쉬어가요" : "일정을 불러올까요?")
+      Text(hasSnapshot ? "예정된 일정이 없어요" : "일정을 불러올까요?")
         .font(.system(size: compact ? 17 : 21, weight: .semibold))
         .lineLimit(2)
-      Text(hasSnapshot ? "다가오는 일정이 없어요" : "NoLate를 열면 동기화돼요")
+      Text(hasSnapshot ? "캘린더 열기" : "NoLate를 열면 동기화돼요")
         .font(.system(size: 12))
-        .foregroundStyle(noLateSecondaryText)
+        .foregroundStyle(hasSnapshot ? noLateDepartureInk : noLateSecondaryText)
         .lineLimit(2)
       Spacer(minLength: 0)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
   }
 }
 
@@ -553,12 +510,19 @@ private enum NoLateWidgetFormatting {
     if Calendar.current.isDate(date, inSameDayAs: now) { return "오늘" }
     if let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now),
        Calendar.current.isDate(date, inSameDayAs: tomorrow) { return "내일" }
-    return date.formatted(.dateTime.month().day())
+    return date.formatted(.dateTime.month().day().locale(Locale(identifier: "ko_KR")))
   }
 
-  static func eventDateTime(_ schedule: NoLateWidgetSchedule, relativeTo now: Date) -> String {
-    guard let date = schedule.startDate else { return "시간 미정" }
-    return "\(day(date, now: now)) · \(schedule.allDay ? "종일" : numericTime(date))"
+  static func eventDateTime(
+    _ schedule: NoLateWidgetSchedule, relativeTo now: Date, includeLocation: Bool
+  ) -> String {
+    let timing = schedule.startDate.map { date in
+      "\(day(date, now: now)) · \(schedule.allDay ? "종일" : numericTime(date))"
+    } ?? (schedule.allDay ? "종일" : "시간 미정")
+    if includeLocation, let location = schedule.displayLocation {
+      return "\(timing) · \(location)"
+    }
+    return timing
   }
 
   static func headerDate(_ date: Date, compact: Bool) -> String {

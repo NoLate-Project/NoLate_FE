@@ -3,6 +3,8 @@ import React from "react";
 import { useScreenContentReadyPerformance } from "../../modules/performance/useScreenContentReadyPerformance";
 import { ScheduleDetailLayout } from "./ScheduleDetailLayout";
 import { ScheduleDetailUnavailableState } from "./ScheduleDetailUnavailableState";
+import { ScheduleGuidanceEndedDetail } from "./ScheduleGuidanceEndedDetail";
+import ScreenFirstPaintShell from "../../modules/performance/ScreenFirstPaintShell";
 import {
   buildScheduleDetailPresentation,
 } from "./scheduleDetailPresentationModel";
@@ -23,10 +25,17 @@ export function ScheduleDetailScreenContent({
   useScreenContentReadyPerformance(
     "schedule.detail_content_ready",
     "/schedule/[id]",
-    Boolean(presentation),
+    Boolean(presentation) && !controller.guidanceHandoffPending,
   );
+  if (controller.guidanceHandoffPending) {
+    return <ScreenFirstPaintShell title="일정 상세" backAccessibilityLabel="이전 화면으로 돌아가기"
+      testID="schedule-guidance-handoff-loading" />;
+  }
   if (!presentation) {
     return <ScheduleDetailUnavailableState controller={controller} />;
+  }
+  if (controller.guidanceEndedHandoff) {
+    return <ScheduleGuidanceEndedDetail presentation={presentation} />;
   }
 
   return <ScheduleDetailLayout presentation={presentation} />;

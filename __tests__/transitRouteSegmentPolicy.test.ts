@@ -24,9 +24,10 @@ describe("transit route segment policy", () => {
         expect(getNormalizedFallbackRouteMode("TRANSIT")).toBe("TRANSIT");
     });
 
-    it("ride와 no-leg TRANSIT만 z11부터 방향표를 허용한다", () => {
-        expect(shouldRenderNormalizedTransitDirection("SUBWAY", 10.9)).toBe(false);
-        expect(shouldRenderNormalizedTransitDirection("SUBWAY", 11)).toBe(true);
+    it("지하철 개요의 z10에서 방향표를 허용하고 no-leg TRANSIT에는 z11 기준을 적용한다", () => {
+        expect(shouldRenderNormalizedTransitDirection("SUBWAY", 9.9)).toBe(false);
+        expect(shouldRenderNormalizedTransitDirection("SUBWAY", 10)).toBe(true);
+        expect(shouldRenderNormalizedTransitDirection("TRANSIT", 10.9)).toBe(false);
         expect(shouldRenderNormalizedTransitDirection("TRANSIT", 11)).toBe(true);
         expect(shouldRenderNormalizedTransitDirection("ETC", 18)).toBe(false);
         expect(shouldRenderNormalizedTransitDirection("WALK", 18)).toBe(false);

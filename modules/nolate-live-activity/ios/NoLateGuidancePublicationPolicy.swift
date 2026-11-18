@@ -50,7 +50,9 @@ struct NoLateGuidanceNoticePolicy {
     let leg = legs[min(busIndex, legs.count - 1)]
     let target = NoLateGuidanceRouteLayoutPolicy.safeName(leg.alightingStopName) ?? "목표 정류장"
     let line = NoLateGuidanceRouteLayoutPolicy.safeName(leg.lineName) ?? "버스"
-    func eventKey(_ kind:String) -> String { "\(content.activeLegIndex):\(kind)" }
+    func eventKey(_ kind:String) -> String {
+      "\(["ARRIVAL_SOON", "BOARDING_STOP_REACHED"].contains(kind) ? busIndex : content.activeLegIndex):\(kind)"
+    }
     var kind: String, body: String
     if content.phase == "RIDING", let subway = content.subway, subway.valid {
       let station = NoLateGuidanceRouteLayoutPolicy.safeName(leg.alightingStopName) ?? "하차역"
@@ -63,12 +65,17 @@ struct NoLateGuidanceNoticePolicy {
         guard !seen.contains(eventKey("NEAR_STOP")) else { return nil }
         kind = "ONE_STOP_BEFORE"; body = "다음 정류장은 \(target)입니다. 하차를 준비해 주세요."
       }
-    } else if ["WAITING", "APPROACHING_STOP"].contains(content.phase),
+    } else if ["WALKING_TO_STOP", "WAITING", "APPROACHING_STOP"].contains(content.phase),
       let arrival = NoLateGuidancePresentationPolicy.freshArrival(content, legs: legs, now: now),
       arrival.expectedAt - now <= 120 {
       // Round up, never claim the user is on this vehicle or that it arrives at an exact second.
       let minutes = max(1, Int(ceil((arrival.expectedAt - now) / 60)))
       kind = "ARRIVAL_SOON"; body = "\(line) · 약 \(minutes)분 후 도착 예정입니다. 탑승을 준비해 주세요."
+    } else if content.phase == "WAITING" {
+      // GPS may first become reliable at the boarding stop. Announce the verified
+      // stage instead of waiting for a walking event that can no longer occur.
+      let stop = NoLateGuidanceRouteLayoutPolicy.safeName(leg.boardingStopName) ?? "승차 지점"
+      kind = "BOARDING_STOP_REACHED"; body = "\(stop)에 도착했습니다. 탑승할 노선을 확인해 주세요."
     } else if content.phase == "RIDING" { kind = "BOARDING_CONFIRMED"; body = "\(line)로 이동 중입니다." }
     else if content.phase == "FINAL_WALK" { kind = "FINAL_WALK"; body = "목적지까지 도보로 이동합니다." }
     else if content.phase == "TRANSFER_WALK" {
@@ -76,10 +83,16 @@ struct NoLateGuidanceNoticePolicy {
       let next = NoLateGuidanceRouteLayoutPolicy.safeName(legs[content.activeLegIndex + 1].boardingStopName) ?? "다음 승차 지점"
       body = "\(next)까지 도보로 이동해 환승해 주세요."
     }
-    else if content.phase == "WALKING_TO_STOP" { kind = "DEPARTURE"; body = "이동을 감지했습니다. 승차 지점으로 안내합니다." }
+    else if content.phase == "WALKING_TO_STOP" {
+      kind = "DEPARTURE"
+      if let stop = NoLateGuidanceRouteLayoutPolicy.safeName(leg.boardingStopName) {
+        body = "이동을 감지했습니다. \(stop)까지 안내합니다."
+      } else { body = "이동을 감지했습니다. 승차 지점으로 안내합니다." }
+    }
     else { return nil }
     // Higher priority replaces lower priority, never drains an obsolete speech queue later.
     if kind == "NEAR_STOP" || kind == "ONE_STOP_BEFORE" { seen.insert(eventKey("BOARDING_CONFIRMED")) }
+    if kind == "ARRIVAL_SOON" { seen.insert(eventKey("BOARDING_STOP_REACHED")) }
     guard seen.insert(eventKey(kind)).inserted else { return nil }
     return .init(kind: kind, body: body, expiresAt: min(content.validUntil, now + 10))
   }
@@ -114,6 +127,7 @@ struct NoLateGuidancePublicationPolicy {
         || last.rideProgress != content.rideProgress || last.boardingConfirmed != content.boardingConfirmed
         || last.alighting != content.alighting || last.subway != content.subway
         || last.lastConfirmedSubway != content.lastConfirmedSubway
+        || last.lastConfirmedBus != content.lastConfirmedBus
         // A station dwell still needs genuinely new observation leases. Otherwise
         // an unchanged current-station card expires after 15s despite fresh GPS.
         || last.observedAt != content.observedAt || last.validUntil != content.validUntil

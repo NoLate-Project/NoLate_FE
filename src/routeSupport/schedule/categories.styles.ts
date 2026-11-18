@@ -38,12 +38,15 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         gap: 16,
     },
+    contentStandard: { gap: 0 },
+    calendarContextStandard: { marginBottom: 16 },
     card: {
         borderWidth: 1,
         borderRadius: 18,
         padding: 16,
         gap: 12,
     },
+    cardStandard: { marginBottom: 20 },
     sectionTitle: {
         fontSize: 16,
         fontWeight: "800",
@@ -65,6 +68,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 8,
     },
+    colorHeading: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 },
+    colorLabel: { fontSize: 12, fontWeight: "600" },
+    colorRowStandard: { gap: 0, justifyContent: "space-between", marginHorizontal: -4 },
     colorButton: {
         width: 44,
         height: 44,
@@ -78,6 +84,8 @@ const styles = StyleSheet.create({
         height: 28,
         borderRadius: 14,
     },
+    colorRing: { width: 37, height: 37, borderRadius: 19, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
+    colorSwatchStandard: { width: 27, height: 27 },
     disabledControl: {
         opacity: 0.4,
     },
@@ -99,11 +107,15 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
     },
+    listHeaderStandard: { minHeight: 42, borderBottomWidth: StyleSheet.hairlineWidth },
+    listCount: { fontSize: 12, fontWeight: "600" },
     categoryCard: {
         borderWidth: 1,
         borderRadius: 16,
         overflow: "hidden",
     },
+    categoryCardStandard: { borderRadius: 0, borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth },
+    editCardStandard: { marginVertical: 8 },
     categoryRow: {
         minHeight: 62,
         paddingHorizontal: 16,
@@ -111,6 +123,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
     },
+    categoryRowStandard: { minHeight: 58, paddingHorizontal: 0 },
     categoryInfo: {
         flex: 1,
         flexDirection: "row",
@@ -122,6 +135,7 @@ const styles = StyleSheet.create({
         height: 14,
         borderRadius: 7,
     },
+    categoryDotStandard: { width: 10, height: 10, borderRadius: 5 },
     categoryTitle: {
         flex: 1,
         fontSize: 16,

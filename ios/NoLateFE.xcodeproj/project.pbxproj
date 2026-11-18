@@ -74,6 +74,8 @@
 		F30000000000000000000008 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F3000000000000000000001A /* WidgetKit.framework */; };
 		F30000000000000000000009 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F3000000000000000000001B /* SwiftUI.framework */; };
 		F3000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F3000000000000000000001C /* Assets.xcassets */; };
+		F3000000000000000000000B /* NoLateWidgetSharedSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3000000000000000000001D /* NoLateWidgetSharedSnapshot.swift */; };
+		F3000000000000000000000C /* NoLateWidgetSharedSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3000000000000000000001D /* NoLateWidgetSharedSnapshot.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -190,6 +192,7 @@
 		F30000000000000000000011 /* NoLateWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateWidgetBundle.swift; sourceTree = "<group>"; };
 		F30000000000000000000012 /* NoLateWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateWidget.swift; sourceTree = "<group>"; };
 		F30000000000000000000013 /* NoLateWidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateWidgetSnapshot.swift; sourceTree = "<group>"; };
+		F3000000000000000000001D /* NoLateWidgetSharedSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateWidgetSharedSnapshot.swift; sourceTree = "<group>"; };
 		F30000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F30000000000000000000015 /* NoLateWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NoLateWidget.entitlements; sourceTree = "<group>"; };
 		F30000000000000000000016 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -419,6 +422,7 @@
 				F30000000000000000000011 /* NoLateWidgetBundle.swift */,
 				F30000000000000000000012 /* NoLateWidget.swift */,
 				F30000000000000000000013 /* NoLateWidgetSnapshot.swift */,
+				F3000000000000000000001D /* NoLateWidgetSharedSnapshot.swift */,
 				F30000000000000000000014 /* Info.plist */,
 				F30000000000000000000015 /* NoLateWidget.entitlements */,
 				F30000000000000000000016 /* PrivacyInfo.xcprivacy */,
@@ -873,6 +877,7 @@
 				A20600000000000000000004 /* NoLateLiveSpeechModule.m in Sources */,
 				A20700000000000000000004 /* NoLateDocumentScannerModule.m in Sources */,
 				F30000000000000000000006 /* NoLateWidgetModule.swift in Sources */,
+				F3000000000000000000000B /* NoLateWidgetSharedSnapshot.swift in Sources */,
 				F30000000000000000000007 /* NoLateWidgetModule.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -910,6 +915,7 @@
 				F30000000000000000000001 /* NoLateWidgetBundle.swift in Sources */,
 				F30000000000000000000002 /* NoLateWidget.swift in Sources */,
 				F30000000000000000000003 /* NoLateWidgetSnapshot.swift in Sources */,
+				F3000000000000000000000C /* NoLateWidgetSharedSnapshot.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

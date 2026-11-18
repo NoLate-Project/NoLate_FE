@@ -239,14 +239,14 @@ describe("schedule query api wrappers", () => {
         });
     });
 
-    test("schedule search forwards an abort signal when the caller supplies one", async () => {
+    test("schedule search forwards the selected calendar scope and abort signal", async () => {
         mockedApiGet.mockResolvedValue({ success: true, data: [scheduleDto] });
         const controller = new AbortController();
 
-        await searchSchedules({ keyword: "sync", limit: 20 }, controller.signal);
+        await searchSchedules({ keyword: "sync", limit: 20, calendarScope: "34" }, controller.signal);
 
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/search", {
-            params: { keyword: "sync", limit: 20 },
+            params: { keyword: "sync", limit: 20, calendarScope: "34" },
             signal: controller.signal,
         });
     });

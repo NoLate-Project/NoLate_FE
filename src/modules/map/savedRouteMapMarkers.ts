@@ -3,9 +3,7 @@ import { isTransitRideKind } from "./transitModes";
 import type {
     Place,
 } from "../schedule/types";
-import {
-    compactTransitLineLabel,
-} from "../schedule/routeInfo";
+import { findTransitRideLineLabel } from "../schedule/routeInfo";
 import type {
     RouteAlternativeOption,
     RoutePathCoord,
@@ -26,6 +24,7 @@ import {
 import {
     getTransitEventMarkerPresentation,
     getTransitModeMarkerStyle,
+    shouldPreserveTransitBoundaryEvents,
     shouldShowTransitRouteIdentityLabel,
 } from "./transitMarkerPresentation";
 import {
@@ -36,6 +35,7 @@ import {
     buildTransitStopInteractionId,
 } from "./transitMapInteraction";
 import {
+    hasTransitLegLineGeometry,
     repairLegacyOdsayWalkPath,
     routeCoordDistanceMeters,
     stitchTransitWalkPathToAnchors,
@@ -278,7 +278,7 @@ export function buildTransitEventMarkers(
 
     return rideLegIndexes.flatMap((legIndex, rideIndex): TmapMarker[] => {
         const leg = legs[legIndex];
-        const lineLabel = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
+        const lineLabel = findTransitRideLineLabel(leg);
         const color = getLegLineColor(leg);
         const markerStyle = getTransitModeMarkerStyle(leg.kind);
         const boardCoord = getLegBoardCoord(legs, legIndex);
@@ -311,9 +311,11 @@ export function buildTransitEventMarkers(
                     zIndex: 3700 + (legIndex * 4),
                 });
                 if (presentation.showRouteLabel) {
-                    const primary = [lineLabel, compactStopLabel(leg.startName)]
-                        .filter((value): value is string => !!value)
-                        .join(" · ");
+                    const detailed = shouldPreserveTransitBoundaryEvents(mapZoom);
+                    const stopName = compactStopLabel(leg.startName);
+                    const primary = detailed
+                        ? [lineLabel, stopName].filter(Boolean).join(" · ")
+                        : stopName ?? "환승";
                     markers.push({
                         id: `${markerId}-label`,
                         interactionId,
@@ -323,9 +325,9 @@ export function buildTransitEventMarkers(
                         markerStyle,
                         caption: leg.startName ?? lineLabel,
                         displayType: "routeLabel",
-                        badgeVariant: "context",
+                        badgeVariant: detailed ? "context" : "stop",
                         badgeLabel: primary || lineLabel || (eventIntent === "transfer" ? "환승" : "승차"),
-                        badgeSubLabel: getTransitBoardingDirectionHint(leg),
+                        badgeSubLabel: detailed ? getTransitBoardingDirectionHint(leg) : undefined,
                         badgeSide: markerBadgeSide(leg, "start"),
                         eventIntent,
                         zIndex: 3701 + (legIndex * 4),
@@ -419,13 +421,14 @@ export function buildTransitPassStopMarkers(
         const policy = getTransitStopMarkerPolicy(leg.kind, mapZoom);
         if (!policy.visible) return;
         const path = routeCoords(leg.pathCoords);
+        const snappingPath = hasTransitLegLineGeometry(leg, path) ? path : [];
         const color = getLegLineColor(leg);
-        const lineLabel = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
+        const lineLabel = findTransitRideLineLabel(leg);
         const candidates = leg.passStops.flatMap((stop, stopIndex): TmapMarker[] => {
             if (stopIndex === 0 || stopIndex === leg.passStops!.length - 1) return [];
             const rawCoord = toRouteCoord(stop.coord);
             if (!rawCoord) return [];
-            const coord = nearestPathCoordinate(rawCoord, path);
+            const coord = nearestPathCoordinate(rawCoord, snappingPath);
             const key = `${coord.lat.toFixed(5)}:${coord.lng.toFixed(5)}`;
             if (seen.has(key)) return [];
             seen.add(key);
@@ -509,9 +512,11 @@ export function buildTransitRouteIdentityMarkers(
 
     return legs.flatMap((leg, legIndex): TmapMarker[] => {
         if (!isTransitRideKind(leg.kind)) return [];
-        const lineLabel = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
+        const path = routeCoords(leg.pathCoords);
+        if (!hasTransitLegLineGeometry(leg, path)) return [];
+        const lineLabel = findTransitRideLineLabel(leg);
         if (!lineLabel) return [];
-        const coord = selectTransitRouteLabelCoordinate(routeCoords(leg.pathCoords));
+        const coord = selectTransitRouteLabelCoordinate(path);
         if (!coord) return [];
 
         return [{
@@ -583,7 +588,10 @@ export function buildRouteMarkers(
         if (selectedTransitStop && leg && rawCoord && label) {
             const { legIndex, stopIndex } = selectedTransitStop;
             const interactionId = buildTransitStopInteractionId(legIndex, stopIndex);
-            const coord = nearestPathCoordinate(rawCoord, routeCoords(leg.pathCoords));
+            const path = routeCoords(leg.pathCoords);
+            const coord = hasTransitLegLineGeometry(leg, path)
+                ? nearestPathCoordinate(rawCoord, path)
+                : rawCoord;
             const id = `saved-transit-stop-${route.id}-${legIndex}-${stopIndex}`;
             const selectedMarker: Omit<TmapMarker, "id"> = {
                 interactionId,

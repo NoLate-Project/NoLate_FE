@@ -4,6 +4,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+    AccessibilityInfo,
     Alert,
     Keyboard,
     Pressable,
@@ -15,6 +16,7 @@ import {
     TextInput,
     View,
     useWindowDimensions,
+    type LayoutChangeEvent,
 } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -44,7 +46,7 @@ import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 import { useScreenFirstPaintPerformance } from "../../src/modules/performance/useScreenFirstPaintPerformance";
 import { useImmediateNavigationTransition } from "../../src/modules/performance/ImmediateNavigationTransition";
-import { usePreMountedSceneActivity } from "../../src/modules/performance/preMountedSceneActivity";
+import { useSystemReduceMotion } from "../../src/modules/performance/useSystemReduceMotion";
 import { ColorPicker, ContentModeControl, MemberRow, roleLabel } from "../../src/routeSupport/schedule/CalendarsSettingsComponents";
 
 const BRAND_BLUE = "#2F80FF";
@@ -68,21 +70,21 @@ export default function ScheduleCalendarsScreen() {
     useScreenFirstPaintPerformance('/schedule/calendars');
     const { closeActiveScene, runWithTransitionShell } = useImmediateNavigationTransition();
     const router = useRouter();
-    const navigationFocused = useIsFocused();
-    const sceneActivity = usePreMountedSceneActivity();
-    const isFocused = sceneActivity ?? navigationFocused;
+    const isFocused = useIsFocused();
     const focusedRef = useRef(isFocused);
     focusedRef.current = isFocused;
     const params = useLocalSearchParams<{ id?: string; from?: string; view?: string }>();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const largeText = useWindowDimensions().fontScale > 1.35;
+    const reduceMotion = useSystemReduceMotion();
     const [showCreateForm, setShowCreateForm] = useState(false);
     const requestedCalendarId = useMemo(() => {
         const requestedId = Number(params.id);
         return Number.isSafeInteger(requestedId) && requestedId > 0 ? requestedId : null;
     }, [params.id]);
-    const focusedCalendarView = params.view === "calendar" && requestedCalendarId !== null;
+    const focusedSettingsView = params.view === "settings" && requestedCalendarId !== null;
+    const focusedCalendarView = focusedSettingsView || (params.view === "calendar" && requestedCalendarId !== null);
     const [calendars, setCalendars] = useState<ScheduleCalendar[]>(() =>
         getCachedScheduleCalendars() ?? []
     );
@@ -100,15 +102,26 @@ export default function ScheduleCalendarsScreen() {
     const hasCalendarSnapshotRef = useRef(calendars.length > 0);
     const [loading, setLoading] = useState(!hasCalendarSnapshotRef.current);
     const [refreshing, setRefreshing] = useState(false);
+    const [calendarListError, setCalendarListError] = useState(false);
     const [membersLoading, setMembersLoading] = useState(false);
     const [detailCalendarId, setDetailCalendarId] = useState<number | null>(null);
     const [detailLoadError, setDetailLoadError] = useState<string | null>(null);
-    const [busy, setBusy] = useState(false);
+    const [mutating, setBusy] = useState(false);
+    const [savingScope, setSavingScope] = useState(false);
+    const scopeSavePending = useRef(false);
+    const busy = mutating || savingScope;
     const [sharingCalendarId, setSharingCalendarId] = useState<number | null>(null);
     const [newTitle, setNewTitle] = useState("");
     const [newColor, setNewColor] = useState(BRAND_BLUE);
     const [newContentMode, setNewContentMode] = useState<ScheduleShareContentMode>("SCHEDULE_ONLY");
     const [titleDrafts, setTitleDrafts] = useState<Partial<Record<number, string>>>({});
+    const [savedTitle, setSavedTitle] = useState<{ calendarId: number; revision: number }>();
+    const categoryButtonRef = useRef<View>(null);
+    const settingsScroll = useRef<ScrollView>(null);
+    const settingsViewport = useRef({ offset: 0, height: 0 });
+    const settingsAnchor = useRef<{ id: number; y: number } | null>(null);
+    const pendingSettingsReveal = useRef<number | null>(null);
+    const returnCategoryIdRef = useRef<number | null>(null);
     const selectedIdRef = useRef<number | null>(selectedId);
     const detailCalendarIdRef = useRef<number | null>(null);
     const calendarsRequestIdRef = useRef(0);
@@ -123,8 +136,10 @@ export default function ScheduleCalendarsScreen() {
     const editingTitle = selected ? titleDrafts[selected.id] : undefined;
     const canSaveTitle = editingTitle !== undefined && editingTitle.trim().length > 0
         && editingTitle.trim() !== selected?.title && !busy;
-    const detailReady = isFocused && calendarListVerified && !!selected && detailCalendarId === selected.id;
+    const hasSelectedDetail = !!selected && detailCalendarId === selected.id;
+    const detailReady = isFocused && calendarListVerified && hasSelectedDetail;
     const accent = mode === "dark" ? "#8BB7FF" : BRAND_BLUE;
+    const subtleAccent = mode === "dark" ? "#26354A" : "#EFF4FC";
     const destructive = mode === "dark" ? "#FF6961" : "#D70015";
     const addButtonStateStyle = {
         backgroundColor: accent,
@@ -142,6 +157,7 @@ export default function ScheduleCalendarsScreen() {
     const selectCalendar = useCallback((calendarId: number | null) => {
         if (selectedIdRef.current === calendarId) return;
         selectedIdRef.current = calendarId;
+        returnCategoryIdRef.current = null;
         detailCalendarIdRef.current = null;
         membersRequestIdRef.current += 1;
         setSelectedId(calendarId);
@@ -150,7 +166,31 @@ export default function ScheduleCalendarsScreen() {
         setMembers([]);
         setMembersLoading(calendarId !== null);
         setSharingCalendarId(null);
+        setSavedTitle(undefined);
     }, []);
+
+    const revealSettings = () => {
+        const anchor = settingsAnchor.current;
+        const { offset, height } = settingsViewport.current;
+        if (!anchor || anchor.id !== pendingSettingsReveal.current || height <= 0) return;
+        pendingSettingsReveal.current = null;
+        if (anchor.y >= offset && anchor.y + 148 <= offset + height) return;
+        settingsScroll.current?.scrollTo({ y: Math.max(0, anchor.y - 12), animated: !reduceMotion });
+    };
+
+    const selectCalendarRow = (calendarId: number) => {
+        if (!largeText) {
+            pendingSettingsReveal.current = calendarId;
+            if (calendarId === selectedIdRef.current && detailReady) revealSettings();
+        }
+        selectCalendar(calendarId);
+    };
+
+    const onSettingsLayout = (calendarId: number, event: LayoutChangeEvent) => {
+        if (largeText) return;
+        settingsAnchor.current = { id: calendarId, y: event.nativeEvent.layout.y };
+        revealSettings();
+    };
 
     const isCurrentDetailTarget = useCallback((calendarId: number) => (
         focusedRef.current
@@ -164,8 +204,9 @@ export default function ScheduleCalendarsScreen() {
         const requestId = ++calendarsRequestIdRef.current;
         calendarListVerifiedRef.current = false;
         setCalendarListVerified(false);
+        setCalendarListError(false);
         if (refresh) setRefreshing(true);
-        else if (!hasCalendarSnapshotRef.current) setLoading(true);
+        if (!hasCalendarSnapshotRef.current) setLoading(true);
         try {
             const result = await measurePerformanceInteraction(
                 "calendar.list_load",
@@ -195,9 +236,9 @@ export default function ScheduleCalendarsScreen() {
             if (next !== current) selectCalendar(next);
             calendarListVerifiedRef.current = true;
             setCalendarListVerified(true);
-        } catch (error) {
+        } catch {
             if (!focusedRef.current || requestId !== calendarsRequestIdRef.current) return;
-            Alert.alert("공유 캘린더", errorMessage(error));
+            setCalendarListError(true);
         } finally {
             if (focusedRef.current && requestId === calendarsRequestIdRef.current) {
                 setLoading(false);
@@ -319,17 +360,25 @@ export default function ScheduleCalendarsScreen() {
         if (
             !selected
             || selected.myRole !== "OWNER"
+            || busy
+            || scopeSavePending.current
             || !isCurrentDetailTarget(selected.id)
             || selected.defaultContentMode === nextMode
         ) return;
         const targetId = selected.id;
-        const updated = await updateScheduleCalendar(targetId, { defaultContentMode: nextMode });
-        if (nextMode === "SCHEDULE_ONLY") {
-            await recoverDepartureAlarmsAfterMutation();
+        scopeSavePending.current = true;
+        setSavingScope(true);
+        try {
+            const updated = await updateScheduleCalendar(targetId, { defaultContentMode: nextMode });
+            if (nextMode === "SCHEDULE_ONLY") {
+                await recoverDepartureAlarmsAfterMutation();
+            }
+            replaceCalendar(updated);
+        } finally {
+            scopeSavePending.current = false;
+            setSavingScope(false);
         }
-        if (!isCurrentDetailTarget(targetId)) return;
-        replaceCalendar(updated);
-    }, [isCurrentDetailTarget, replaceCalendar, selected]);
+    }, [busy, isCurrentDetailTarget, replaceCalendar, selected]);
 
     const saveTitle = useCallback(async () => {
         if (!selected || !isOwner || !canSaveTitle || editingTitle === undefined || !isCurrentDetailTarget(selected.id)) return;
@@ -339,7 +388,10 @@ export default function ScheduleCalendarsScreen() {
         try {
             const updated = await updateScheduleCalendar(targetId, { title });
             replaceCalendar(updated);
-            if (selectedIdRef.current === targetId) Keyboard.dismiss();
+            if (selectedIdRef.current === targetId) {
+                Keyboard.dismiss();
+                setSavedTitle(previous => ({ calendarId: targetId, revision: (previous?.revision ?? 0) + 1 }));
+            }
             closeTitleEditor(targetId);
         } catch (error) {
             Alert.alert("이름 변경 실패", errorMessage(error));
@@ -353,16 +405,16 @@ export default function ScheduleCalendarsScreen() {
         const targetId = selected.id;
         setBusy(true);
         try {
-            await updateMyScheduleCalendarPreferences(targetId, enabled);
-            if (isCurrentDetailTarget(targetId)) {
-                replaceCalendar({ ...selected, routeReminderEnabled: enabled });
-            }
+            const updated = await updateMyScheduleCalendarPreferences(targetId, enabled);
+            setCalendars(current => current.map(calendar => calendar.id === targetId
+                ? { ...calendar, routeReminderEnabled: updated.routeReminderEnabled }
+                : calendar));
         } catch (error) {
             Alert.alert("알림 설정 실패", errorMessage(error));
         } finally {
             setBusy(false);
         }
-    }, [busy, isCurrentDetailTarget, replaceCalendar, selected]);
+    }, [busy, isCurrentDetailTarget, selected]);
 
     const changeMemberRole = useCallback(async (
         member: ScheduleCalendarMember,
@@ -564,9 +616,18 @@ export default function ScheduleCalendarsScreen() {
         );
     }, [busy, closeTitleEditor, isCurrentDetailTarget, selectCalendar, selected]);
 
+    useEffect(() => {
+        if (!detailReady || selectedId === null || returnCategoryIdRef.current !== selectedId) return;
+        const frame = requestAnimationFrame(() => {
+            returnCategoryIdRef.current = null;
+            if (categoryButtonRef.current) AccessibilityInfo.sendAccessibilityEvent?.(categoryButtonRef.current, "focus");
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [detailReady, selectedId]);
+
     const goBack = () => {
         if (closeActiveScene()) return;
-        if ((params.from === "share-inbox" || params.from === "calendar-scope") && router.canGoBack()) {
+        if (params.from === "share-inbox" && router.canGoBack()) {
             router.back();
             return;
         }
@@ -588,20 +649,46 @@ export default function ScheduleCalendarsScreen() {
                 >
                     <Ionicons name="chevron-back-outline" size={23} color={colors.textPrimary} />
                 </Pressable>
-                <Text accessibilityRole="header" maxFontSizeMultiplier={1.65} style={[styles.headerTitle, { color: colors.textPrimary }]}>{focusedCalendarView ? "공유 캘린더" : "공유 캘린더 관리"}</Text>
+                <Text accessibilityRole="header" maxFontSizeMultiplier={1.65} style={[styles.headerTitle, { color: colors.textPrimary }]}>
+                    {focusedSettingsView ? "캘린더 설정" : focusedCalendarView ? "공유 캘린더" : "공유 캘린더 관리"}
+                </Text>
                 <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="공유 캘린더 새로고침"
+                    accessibilityState={{ disabled: loading || refreshing, busy: refreshing }}
+                    disabled={loading || refreshing}
                     onPress={() => loadCalendars(true)}
-                    style={styles.iconButton}
+                    style={[styles.iconButton, (loading || refreshing) && styles.disabledAction]}
                 >
                     <Ionicons name="refresh-outline" size={21} color={colors.textPrimary} />
                 </Pressable>
             </View>
 
+            {calendarListError ? (
+                <View style={[styles.listRecovery, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                    <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+                        style={[styles.emptyText, styles.rowText, { color: colors.textPrimary }]}>
+                        공유 캘린더를 불러오지 못했어요.
+                    </Text>
+                    <Pressable accessibilityRole="button" accessibilityLabel="공유 캘린더 목록 다시 불러오기"
+                        onPress={() => loadCalendars(true)}
+                        style={[styles.retryButton, { borderColor: colors.border }]}>
+                        <Ionicons accessible={false} name="refresh-outline" size={16} color={accent} />
+                        <Text style={[styles.retryText, { color: accent }]}>다시 시도</Text>
+                    </Pressable>
+                </View>
+            ) : null}
+
             <ScrollView
+                ref={settingsScroll}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadCalendars(true)} />}
                 keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={largeText ? "none" : "on-drag"}
+                automaticallyAdjustKeyboardInsets={!largeText}
+                onLayout={event => { settingsViewport.current.height = event.nativeEvent.layout.height; }}
+                onScroll={event => { settingsViewport.current.offset = event.nativeEvent.contentOffset.y; }}
+                onScrollBeginDrag={() => { pendingSettingsReveal.current = null; }}
+                scrollEventThrottle={16}
                 contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, 16) + 24 }]}
             >
                 {!focusedCalendarView && <>
@@ -611,7 +698,10 @@ export default function ScheduleCalendarsScreen() {
                         accessibilityLabel="새 캘린더 만들기"
                         accessibilityState={{ expanded: showCreateForm, disabled: busy }}
                         disabled={busy}
-                        onPress={() => setShowCreateForm(open => !open)}
+                        onPress={() => {
+                            if (showCreateForm) Keyboard.dismiss();
+                            setShowCreateForm(open => !open);
+                        }}
                         style={[styles.createDisclosure, { borderColor: colors.border, backgroundColor: colors.surface }]}
                     >
                         <Ionicons accessible={false} name="add-circle-outline" size={20} color={accent} />
@@ -622,6 +712,7 @@ export default function ScheduleCalendarsScreen() {
                     </Pressable>
                     {showCreateForm ? (
                         <Animated.View entering={createFormEntry} style={styles.section}>
+                            {!largeText && <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>이름</Text>}
                             <View style={[styles.inputRow, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                                 <TextInput
                                     accessibilityLabel="새 캘린더 이름"
@@ -638,24 +729,34 @@ export default function ScheduleCalendarsScreen() {
                                 <Pressable
                                     accessibilityRole="button"
                                     accessibilityLabel="공유 캘린더 추가"
+                                    accessibilityState={{ disabled: !newTitle.trim() || busy, busy }}
                                     disabled={!newTitle.trim() || busy}
                                     onPress={createCalendar}
-                                    style={[styles.addButton, addButtonStateStyle]}
+                                    style={[styles.addButton, largeText ? addButtonStateStyle : styles.createTextButton]}
                                 >
-                                    {busy ? <BrandedLoader accessibilityLabel="캘린더 생성 중" size="button" variant="share" /> : <Ionicons name="add" size={22} color="#FFFFFF" />}
+                                    {mutating ? <BrandedLoader accessibilityLabel="캘린더 생성 중" size="button" variant="share" />
+                                        : largeText ? <Ionicons name="add" size={22} color="#FFFFFF" />
+                                        : <Text style={[styles.createTextButtonLabel, { color: newTitle.trim() ? accent : colors.textSecondary }]}>만들기</Text>}
                                 </Pressable>
                             </View>
                             <ColorPicker value={newColor} onChange={setNewColor} />
+                            {!largeText && <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>공유 범위</Text>}
                             <ContentModeControl value={newContentMode} onChange={setNewContentMode} />
                         </Animated.View>
                     ) : null}
                 </View>
 
-                <View style={styles.section}>
-                    <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.sectionTitle, { color: colors.textPrimary }]}>내 캘린더</Text>
+                <View style={styles.calendarList}>
+                    <View style={[styles.listHeading, !largeText && styles.listHeadingStandard, { borderBottomColor: colors.border }]}>
+                        <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.sectionTitle, { color: colors.textPrimary }]}>내 캘린더</Text>
+                        {!loading && calendars.length > 0 ? (
+                            <Text accessibilityLabel={`${calendars.length}개`} maxFontSizeMultiplier={2}
+                                style={[styles.memberCount, { color: colors.textSecondary }]}>{calendars.length}</Text>
+                        ) : null}
+                    </View>
                     {loading ? (
                         <View style={styles.loadingRow}><BrandedLoader accessibilityLabel="캘린더 불러오는 중" variant="share" /><Text style={{ color: colors.textSecondary }}>불러오는 중</Text></View>
-                    ) : calendars.length === 0 ? (
+                    ) : calendarListVerified && calendars.length === 0 ? (
                         <View style={[styles.empty, { borderColor: colors.border }]}>
                             <Ionicons name="people-outline" size={24} color={colors.textSecondary} />
                             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>공유 캘린더가 없어요</Text>
@@ -666,14 +767,14 @@ export default function ScheduleCalendarsScreen() {
                             <Pressable
                                 key={calendar.id}
                                 accessibilityRole="button"
-                                accessibilityLabel={`${calendar.title}, ${roleLabel(calendar.myRole)}, ${calendar.memberCount}명, ${contentModeLabel(calendar.defaultContentMode)}`}
+                                accessibilityLabel={`${calendar.title}, ${roleLabel(calendar.myRole)}, ${calendar.memberCount}명`}
                                 accessibilityState={{ selected: selectedRow }}
-                                onPress={() => selectCalendar(calendar.id)}
+                                onPress={() => selectCalendarRow(calendar.id)}
                                 style={[
                                     styles.calendarRow,
                                     {
-                                        backgroundColor: colors.surface,
-                                        borderColor: selectedRow ? accent : colors.border,
+                                        backgroundColor: selectedRow ? subtleAccent : colors.background,
+                                        borderColor: colors.border,
                                     },
                                 ]}
                             >
@@ -681,10 +782,11 @@ export default function ScheduleCalendarsScreen() {
                                 <View style={styles.rowText}>
                                     <Text style={[styles.rowTitle, { color: colors.textPrimary }]} numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word">{calendar.title}</Text>
                                     <Text style={[styles.rowMeta, { color: colors.textSecondary }]} numberOfLines={largeText ? undefined : 1} maxFontSizeMultiplier={1.8} lineBreakStrategyIOS="hangul-word">
-                                        {roleLabel(calendar.myRole)} · {calendar.memberCount}명 · {contentModeLabel(calendar.defaultContentMode)}
+                                        {!largeText && calendar.myRole === "VIEWER" ? "보기 전용" : roleLabel(calendar.myRole)} · {calendar.memberCount}명
                                     </Text>
                                 </View>
-                                <Ionicons accessible={false} name={selectedRow ? "checkmark-outline" : "chevron-forward-outline"} size={18} color={selectedRow ? accent : colors.textSecondary} />
+                                <Ionicons accessible={false} name={selectedRow ? largeText ? "checkmark-outline" : "checkmark-circle-outline" : "chevron-forward-outline"}
+                                    size={18} color={selectedRow ? accent : colors.textSecondary} />
                             </Pressable>
                         );
                     })}
@@ -692,28 +794,34 @@ export default function ScheduleCalendarsScreen() {
 
                 </>}
 
+                {focusedCalendarView && !selected && !calendarListVerified && !calendarListError ? (
+                    <View style={styles.loadingRow}>
+                        <BrandedLoader accessibilityLabel="캘린더 불러오는 중" variant="share" />
+                        <Text style={{ color: colors.textSecondary }}>불러오는 중</Text>
+                    </View>
+                ) : null}
                 {focusedCalendarView && calendarListVerified && !selected ? (
                     <Text accessibilityRole="alert" style={[styles.emptyText, { color: colors.textSecondary }]}>
                         이 공유 캘린더를 열 수 없어요.
                     </Text>
                 ) : null}
-                {selected ? detailReady ? (
-                    <Animated.View key={selected.id} entering={calendarDetailEntry} style={[styles.detailBand, { borderTopColor: colors.border }]}>
+                {selected ? (detailReady || (hasSelectedDetail && returnCategoryIdRef.current === selected.id)) ? (
+                    <Animated.View key={selected.id} entering={calendarDetailEntry}
+                        onLayout={event => onSettingsLayout(selected.id, event)}
+                        pointerEvents={detailReady ? "auto" : "none"}
+                        accessibilityElementsHidden={!detailReady}
+                        importantForAccessibility={detailReady ? "auto" : "no-hide-descendants"}
+                        style={[styles.detailBand, { borderTopColor: colors.border }]}>
                         <View style={[styles.detailHeader, largeText && styles.detailHeaderStacked]}>
                             <View style={styles.rowText}>
-                                <View style={styles.titleHeading}>
-                                    <Text accessibilityRole="header" maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word"
-                                        style={[styles.sectionTitle, styles.rowText, { color: colors.textPrimary }]}>{focusedCalendarView ? selected.title : `${selected.title} 설정`}</Text>
-                                    {isOwner && editingTitle === undefined ? (
-                                        <Pressable accessibilityRole="button" accessibilityLabel="캘린더 이름 수정"
-                                            disabled={busy} accessibilityState={{ disabled: busy }}
-                                            onPress={() => setTitleDrafts(current => ({ ...current, [selected.id]: selected.title }))}
-                                            style={styles.inlineIconButton}>
-                                            <Ionicons name="pencil-outline" size={19} color={accent} />
-                                        </Pressable>
-                                    ) : null}
-                                </View>
-                                <Text maxFontSizeMultiplier={1.8} style={[styles.rowMeta, { color: colors.textSecondary }]}>{roleLabel(selected.myRole)} 권한</Text>
+                                <Animated.Text key={savedTitle?.calendarId === selected.id ? savedTitle.revision : 0}
+                                    entering={savedTitle?.calendarId === selected.id ? calendarDetailEntry : undefined}
+                                    accessibilityRole="header" maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word"
+                                    style={[styles.detailTitle, { color: colors.textPrimary }]}>{selected.title}</Animated.Text>
+                                <Text maxFontSizeMultiplier={1.8} style={[styles.detailRole, {
+                                    backgroundColor: isOwner ? subtleAccent : colors.surface2,
+                                    color: isOwner ? accent : colors.textSecondary,
+                                }]}>{!largeText && selected.myRole === "VIEWER" ? "보기 전용" : `${roleLabel(selected.myRole)} 권한`}</Text>
                             </View>
                             {isOwner ? (
                                 <Pressable
@@ -732,36 +840,16 @@ export default function ScheduleCalendarsScreen() {
                             ) : null}
                         </View>
 
-                        {selected.myRole !== "VIEWER" ? (
-                            <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel={`${selected.title} 카테고리 관리`}
-                                onPress={() => {
-                                    if (!isCurrentDetailTarget(selected.id)) return;
-                                    router.push({
-                                        pathname: "/schedule/categories",
-                                        params: {
-                                            calendarId: String(selected.id),
-                                            calendarTitle: selected.title,
-                                            returnTo: sceneActivity === undefined ? "calendar-stack" : "calendars",
-                                        },
-                                    });
-                                }}
-                                style={({ pressed }) => [
-                                    styles.categoryManageButton,
-                                    {
-                                        borderColor: colors.border,
-                                        backgroundColor: colors.surface,
-                                        opacity: pressed ? 0.65 : 1,
-                                    },
-                                ]}
-                            >
-                                <Ionicons name="pricetags-outline" size={18} color={accent} />
-                                <View style={styles.rowText}>
-                                    <Text maxFontSizeMultiplier={1.8} style={[styles.preferenceTitle, { color: colors.textPrimary }]}>카테고리 관리</Text>
-                                    <Text maxFontSizeMultiplier={1.8} style={[styles.rowMeta, { color: colors.textSecondary }]}>이 캘린더에서만 사용하는 카테고리</Text>
-                                </View>
-                                <Ionicons name="chevron-forward-outline" size={17} color={colors.textSecondary} />
+                        {isOwner && editingTitle === undefined ? (
+                            <Pressable accessibilityRole="button" accessibilityLabel="캘린더 이름 수정"
+                                accessibilityState={{ expanded: false, disabled: busy }} disabled={busy}
+                                onPress={() => setTitleDrafts(current => ({ ...current, [selected.id]: selected.title }))}
+                                style={({ pressed }) => [styles.renameDisclosure, {
+                                    borderColor: colors.border, backgroundColor: colors.surface, opacity: pressed ? 0.65 : 1,
+                                }]}>
+                                <Ionicons accessible={false} name="pencil-outline" size={18} color={accent} />
+                                <Text maxFontSizeMultiplier={1.8} style={[styles.preferenceTitle, styles.rowText, { color: colors.textPrimary }]}>이름 변경</Text>
+                                <Ionicons accessible={false} name="chevron-down-outline" size={17} color={colors.textSecondary} />
                             </Pressable>
                         ) : null}
 
@@ -787,6 +875,42 @@ export default function ScheduleCalendarsScreen() {
                             </Animated.View>
                         ) : null}
 
+                        {selected.myRole !== "VIEWER" ? (
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={`${selected.title} 카테고리 관리`}
+                                ref={categoryButtonRef}
+                                onPress={() => {
+                                    if (!isCurrentDetailTarget(selected.id)) return;
+                                    Keyboard.dismiss();
+                                    returnCategoryIdRef.current = selected.id;
+                                    router.push({
+                                        pathname: "/schedule/categories",
+                                        params: {
+                                            calendarId: String(selected.id),
+                                            calendarTitle: selected.title,
+                                            returnTo: "calendar-stack",
+                                        },
+                                    });
+                                }}
+                                style={({ pressed }) => [
+                                    styles.categoryManageButton,
+                                    {
+                                        borderColor: colors.border,
+                                        backgroundColor: colors.surface,
+                                        opacity: pressed ? 0.65 : 1,
+                                    },
+                                ]}
+                            >
+                                <Ionicons name="pricetags-outline" size={18} color={accent} />
+                                <View style={styles.rowText}>
+                                    <Text maxFontSizeMultiplier={1.8} style={[styles.preferenceTitle, { color: colors.textPrimary }]}>카테고리 관리</Text>
+                                    <Text maxFontSizeMultiplier={1.8} style={[styles.rowMeta, { color: colors.textSecondary }]}>이 캘린더에서만 사용하는 카테고리</Text>
+                                </View>
+                                <Ionicons name="chevron-forward-outline" size={17} color={colors.textSecondary} />
+                            </Pressable>
+                        ) : null}
+
                         <Text maxFontSizeMultiplier={1.8} style={[styles.fieldLabel, { color: colors.textSecondary }]}>공유 범위</Text>
                         {isOwner ? (
                             <ContentModeControl
@@ -795,14 +919,19 @@ export default function ScheduleCalendarsScreen() {
                                     if (!isOwner) return;
                                     updateMode(value).catch((error) => Alert.alert("공유 범위 변경 실패", errorMessage(error)));
                                 }}
-                                disabled={!isOwner}
+                                disabled={busy}
+                                busy={savingScope}
                             />
                         ) : (
-                            <Text maxFontSizeMultiplier={1.8} style={[styles.rowMeta, { color: colors.textPrimary }]}>
-                                {contentModeLabel(selected.defaultContentMode)}
-                            </Text>
+                            <View style={[styles.scopeSummary, !largeText && styles.scopeSummaryStandard, { backgroundColor: colors.surface2 }]}>
+                                <Ionicons accessible={false} name={selected.defaultContentMode === "SCHEDULE_AND_TRAVEL" ? "navigate-outline" : "calendar-outline"} size={17} color={accent} />
+                                <Text maxFontSizeMultiplier={1.8} style={[styles.scopeSummaryText, { color: colors.textPrimary }]}>
+                                    {contentModeLabel(selected.defaultContentMode)}
+                                </Text>
+                            </View>
                         )}
 
+                        <Text maxFontSizeMultiplier={1.8} style={[styles.fieldLabel, { color: colors.textSecondary }]}>내 알림</Text>
                         <View style={styles.preferenceRow}>
                             <View style={styles.rowText}>
                                 <Text maxFontSizeMultiplier={1.8} style={[styles.preferenceTitle, { color: colors.textPrimary }]}>경로 미설정 알림</Text>
@@ -810,6 +939,7 @@ export default function ScheduleCalendarsScreen() {
                             </View>
                             <Switch
                                 accessibilityLabel="경로 미설정 알림"
+                                accessibilityState={{ disabled: busy, busy }}
                                 value={selected.routeReminderEnabled}
                                 disabled={busy}
                                 onValueChange={toggleMyReminder}
@@ -817,11 +947,11 @@ export default function ScheduleCalendarsScreen() {
                             />
                         </View>
 
-                        <View style={styles.memberHeader}>
+                        <View style={[styles.memberHeader, !largeText && styles.memberHeaderStandard, { borderTopColor: colors.border }]}>
                             <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.sectionTitle, { color: colors.textPrimary }]}>멤버</Text>
                             <Text style={[styles.memberCount, { color: colors.textSecondary }]}>{members.length}명</Text>
                         </View>
-                        {membersLoading ? (
+                        {membersLoading && members.length === 0 ? (
                             <View style={styles.loadingRow}><BrandedLoader accessibilityLabel="캘린더 멤버 불러오는 중" variant="share" /></View>
                         ) : members.map((member) => (
                             <MemberRow
@@ -847,7 +977,7 @@ export default function ScheduleCalendarsScreen() {
                             </Text>
                         </Pressable>
                     </Animated.View>
-                ) : (
+                ) : calendarListError ? null : (
                     <View
                         accessibilityLabel={`${selected.title} 설정 불러오는 중`}
                         style={[styles.detailLoading, { borderTopColor: colors.border }]}

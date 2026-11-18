@@ -41,14 +41,21 @@ export function createTimelineStyles(options: ScheduleIndexStylesOptions) {
         letterSpacing: 0,
     },
         dayTimelineEmptyText: {
-        marginTop: 8,
-        paddingLeft: 4,
-        fontSize: 13,
-        fontWeight: "700",
-        letterSpacing: 0,
+        paddingHorizontal: 13,
+        paddingVertical: 7,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        fontSize: 12,
+        lineHeight: 17,
     },
         dayTimelineCanvas: {
         height: DAY_MINUTES / 60 * DAY_TIMELINE_HOUR_HEIGHT + DAY_TIMELINE_END_PADDING,
+    },
+        dayTimelineGutterRule: {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        left: DAY_TIMELINE_GUTTER + 18,
+        width: StyleSheet.hairlineWidth,
     },
         multiDayDateHeadings: {
         flexDirection: "row",
@@ -115,7 +122,14 @@ export function createTimelineStyles(options: ScheduleIndexStylesOptions) {
         height: 1.5,
         borderRadius: 1,
     },
+        multiDayEventHeading: {
+        flexDirection: "row",
+        alignItems: "baseline",
+        columnGap: 4,
+    },
         multiDayEventTitle: {
+        flex: 1,
+        minWidth: 0,
         fontSize: 11,
         lineHeight: 14,
         fontWeight: "800",
@@ -125,6 +139,10 @@ export function createTimelineStyles(options: ScheduleIndexStylesOptions) {
         fontSize: 10,
         lineHeight: 14,
         fontWeight: "600",
+    },
+        multiDayInlineTime: {
+        flexShrink: 0,
+        fontVariant: ["tabular-nums"],
     },
         dayHourRow: {
         position: "absolute",

@@ -1,3 +1,5 @@
+import React from "react";
+import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import {
     buildSavedRouteMapPresentation,
     getSavedRouteFitCoords,
@@ -8,9 +10,108 @@ import {
     resolveDetailedWalkGeometrySource,
 } from "../src/modules/map/savedRouteMapPresentation";
 import type { RouteAlternativeOption, TransitLegDetail } from "../src/modules/map/routingService";
+import { buildRouteInfoFromAlternative } from "../src/modules/schedule/routeInfo";
+import { buildRouteInfoPathOverlays as buildPlannerRouteInfoOverlays } from "../src/modules/schedule/routePlanner/routePlannerRouteInfo";
+import { buildTransitLegSegmentGeometry, normalizeRouteAlternativeToSegments } from "../src/modules/schedule/routePlanner/routeTransitGeometryBuilder";
+import { buildTransitEventMarkers as buildPlannerTransitEventMarkers } from "../src/modules/schedule/routePlanner/routeTransitMarkers";
+import { useRoutePlannerMapOverlays } from "../src/modules/schedule/routePlanner/useRoutePlannerMapOverlays";
 
 const origin = { name: "출발지", lat: 37.56, lng: 126.97 };
 const destination = { name: "도착지", lat: 37.5, lng: 127.03 };
+
+describe("intercity bus route geometry", () => {
+    const start = { lat: 37.449, lng: 126.452 };
+    const end = { lat: 36.625, lng: 127.432 };
+    const middle = { lat: 37.103, lng: 127.054 };
+    const mapPoint = ({ lat, lng }: typeof start) => ({ latitude: lat, longitude: lng });
+    const routeFor = (kind: TransitLegDetail["kind"], pathCoords: TransitLegDetail["pathCoords"]): RouteAlternativeOption => ({
+        id: "intercity-review", mode: "TRANSIT", source: "api", minutes: 85, pathCoords,
+        transitLegs: [{
+            kind, label: "우등", startName: "공항터미널", endName: "시외버스터미널",
+            startCoord: start, endCoord: end, pathCoords, pathGeometrySource: "UNKNOWN",
+        }],
+    });
+
+    it.each(["INTERCITY_BUS", "EXPRESS_BUS", "COACH"] as const)(
+        "keeps %s endpoints and timetable details without drawing them as a line",
+        kind => {
+            for (const coords of [[start, end], [start, start, end], undefined]) {
+                const route = routeFor(kind, coords);
+                const stale = { ...route, pathCoords: [start, middle, end], storedPathOverlays: [
+                    { id: "stale-aggregate", coords: [start, end] },
+                ] };
+                const saved = buildSavedRouteMapPresentation({ route: stale, mapZoom: 13, isDark: false, focusedLegIndex: 0 });
+                expect(saved.pathOverlays).toEqual([]);
+                expect(saved.fitCoords).toEqual([mapPoint(start), mapPoint(end)]);
+                expect(buildTransitLegSegmentGeometry(route.id, route.transitLegs, 0, kind).coordinates).toEqual([]);
+                const info = buildRouteInfoFromAlternative(route);
+                const busStep = info.steps.find(step => step.type === kind)!;
+                expect(busStep.title).toBe("공항터미널");
+                expect(busStep.coordinates).toBeUndefined();
+                const legacy = { ...info, steps: info.steps.map(step => step.id === busStep.id
+                    ? { ...step, coordinates: [mapPoint(start), mapPoint(end)] } : step) };
+                expect(buildPlannerRouteInfoOverlays(legacy, 13)).toEqual([]);
+                expect(buildSavedRouteMapPresentation({
+                    route: { ...stale, transitLegs: undefined, routeInfo: legacy }, mapZoom: 13, isDark: true,
+                }).pathOverlays).toEqual([]);
+            }
+        },
+    );
+
+    it("keeps the detailed intercity line and does not restore a stored two-point shortcut", () => {
+        const route = routeFor("INTERCITY_BUS", [start, middle, end]);
+        const saved = buildSavedRouteMapPresentation({
+            route: { ...route, storedPathOverlays: [{ id: "stale-aggregate", coords: [start, end] }] },
+            mapZoom: 13, isDark: false,
+        });
+        expect(saved.pathOverlays).toEqual([
+            expect.objectContaining({ color: "#0F766E", coords: [start, middle, end].map(mapPoint) }),
+        ]);
+        expect(buildTransitLegSegmentGeometry(route.id, route.transitLegs, 0, "INTERCITY_BUS").coordinates)
+            .toEqual(expect.arrayContaining([expect.objectContaining(mapPoint(middle))]));
+        const routeInfo = buildRouteInfoFromAlternative(route);
+        expect(buildPlannerRouteInfoOverlays(routeInfo, 13)[0]?.color).toBe("#0F766E");
+    });
+
+    it("does not reconnect the endpoints through the preview's aggregate fallback", async () => {
+        const endpoints = routeFor("INTERCITY_BUS", [start, end]);
+        const detailed = routeFor("INTERCITY_BUS", [start, middle, end]);
+        let overlays: ReturnType<typeof useRoutePlannerMapOverlays>["mapPathOverlays"] = [];
+        function Preview({ route, normalized }: { route: RouteAlternativeOption; normalized: boolean }) {
+            overlays = useRoutePlannerMapOverlays({
+                hasRouteReady: true,
+                isRouteQaBaseOnly: false,
+                mapZoom: 13,
+                pathRouteCoords: route.pathCoords,
+                qaLayerMode: "ALL",
+                routeAlternatives: [route],
+                routeEndpointAccessPaths: [],
+                selectedAlternativeId: route.id,
+                selectedNormalizedRoute: normalized ? normalizeRouteAlternativeToSegments(route) : undefined,
+                selectedRouteInfo: buildRouteInfoFromAlternative(route),
+                shouldRenderTransitDetailDark: false,
+                transitConnectorOverlays: [],
+                transitWalkDetailOverlays: [],
+                travelMode: "TRANSIT",
+            }).mapPathOverlays;
+            return null;
+        }
+
+        let renderer: ReactTestRenderer | undefined;
+        try {
+            await act(async () => {
+                renderer = TestRenderer.create(React.createElement(Preview, { route: endpoints, normalized: true }));
+            });
+            expect(overlays).toEqual([]);
+            await act(async () => renderer?.update(React.createElement(Preview, { route: endpoints, normalized: false })));
+            expect(overlays).toEqual([]);
+            await act(async () => renderer?.update(React.createElement(Preview, { route: detailed, normalized: true })));
+            expect(overlays).toContainEqual(expect.objectContaining({ color: "#0F766E" }));
+        } finally {
+            await act(async () => renderer?.unmount());
+        }
+    });
+});
 
 const transitRoute: RouteAlternativeOption = {
     id: "saved-transit-route",
@@ -41,6 +142,7 @@ const transitRoute: RouteAlternativeOption = {
             kind: "SUBWAY",
             label: "2호선",
             lineName: "2호선",
+            pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
             lineColor: "00B140",
             startName: "시청역",
             endName: "강남역",
@@ -151,6 +253,7 @@ describe("saved route map presentation", () => {
                     kind: "SUBWAY",
                     label: "8호선",
                     lineName: "8호선",
+                    startName: "석촌역",
                     startCoord: secondRideStart,
                     endCoord: secondRideEnd,
                     pathCoords: [secondRideStart, secondRideEnd],
@@ -216,6 +319,21 @@ describe("saved route map presentation", () => {
             latitude: secondRideStart.lat,
             longitude: secondRideStart.lng,
         });
+        expect(buildSavedRouteMapPresentation({
+            route: legacyRoute, origin: legacyOrigin, destination: legacyDestination, mapZoom: 11, isDark: true,
+        }).markers).toContainEqual(expect.objectContaining({
+            id: "saved-transit-event-legacy-odsay-saved-3-transfer-label",
+            badgeLabel: "석촌역",
+            badgeVariant: "stop",
+            latitude: secondRideStart.lat,
+            longitude: secondRideStart.lng,
+        }));
+        expect(buildPlannerTransitEventMarkers(legacyRoute.id, presentation.routeLegs, 11, true))
+            .toContainEqual(expect.objectContaining({
+                eventIntent: "transfer",
+                badgeLabel: "석촌역",
+                badgeVariant: "stop",
+            }));
         expect(presentation.routeOption?.pathCoords?.at(-1)).toEqual({
             lat: legacyDestination.lat,
             lng: legacyDestination.lng,
@@ -475,6 +593,263 @@ describe("saved route map presentation", () => {
         )).toBe(false);
     });
 
+    it("shows stations without drawing their coordinates as railway geometry", () => {
+        const start = { lat: 37.5547, lng: 126.9728 };
+        const end = { lat: 37.4765, lng: 126.9816 };
+        const leg: TransitLegDetail = {
+            kind: "SUBWAY", label: "4호선", lineName: "4호선", stationCount: 7,
+            startCoord: start, endCoord: end, pathCoords: [start, end],
+        };
+        const route = { id: "rail-sparse", mode: "TRANSIT", minutes: 20, pathCoords: [start, end], transitLegs: [leg] };
+        const input = { route, origin, destination, mapZoom: 13, isDark: true };
+        expect(buildSavedRouteMapPresentation(input).pathOverlays).toEqual([]);
+        expect(buildTransitLegSegmentGeometry(route.id, [leg], 0, "SUBWAY").coordinates).toEqual([]);
+        const mislabeled = { ...leg, pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING" as const, pathCoordsIsExact: true };
+        expect(buildTransitLegSegmentGeometry(route.id, [mislabeled], 0, "SUBWAY").coordinates).toEqual([]);
+        expect(buildSavedRouteMapPresentation({ ...input, route: { ...route, transitLegs: [mislabeled] } }).pathOverlays)
+            .toEqual([]);
+        const exact = { ...mislabeled, stationCount: 1 };
+        expect(buildTransitLegSegmentGeometry(route.id, [exact], 0, "SUBWAY").coordinates).toHaveLength(2);
+        expect(buildSavedRouteMapPresentation({ ...input, route: { ...route, transitLegs: [exact] } }).pathOverlays)
+            .toHaveLength(1);
+
+        const intermediate = { lat: 37.529, lng: 126.967 };
+        const stationPath = [start, intermediate, end];
+        const stationPoint = { latitude: intermediate.lat, longitude: intermediate.lng };
+        const withStops: TransitLegDetail = {
+            ...leg,
+            pathCoords: stationPath,
+            passStops: [
+                { name: "서울역", coord: start },
+                { name: "신용산역", coord: intermediate },
+                { name: "사당역", coord: end },
+            ],
+        };
+        for (const pathGeometrySource of [undefined, "PASS_STOP_LIST", "TRANSIT_PASS_SHAPE_LINESTRING"] as const) {
+            const stationLeg = {
+                ...withStops, pathGeometrySource,
+                pathCoordsIsExact: pathGeometrySource === "TRANSIT_PASS_SHAPE_LINESTRING" ? true : undefined,
+            };
+            const stopsRoute = {
+                ...route,
+                pathCoords: stationPath,
+                transitLegs: [stationLeg],
+                storedPathOverlays: [{ id: "legacy-ride", coords: stationPath }],
+            };
+            expect(buildTransitLegSegmentGeometry(route.id, [stationLeg], 0, "SUBWAY").coordinates).toEqual([]);
+            const presentation = buildSavedRouteMapPresentation({
+                ...input, route: stopsRoute, mapZoom: 17, focusedLegIndex: 0,
+                selectedTransitStop: { legIndex: 0, stopIndex: 1 },
+            });
+            expect(presentation.pathOverlays).toEqual([]);
+            expect(presentation.fitCoords).toContainEqual(stationPoint);
+            expect(presentation.markers).toContainEqual(expect.objectContaining({
+                ...stationPoint, caption: "신용산역",
+            }));
+        }
+
+        const shiftedStationPath = [start, { ...intermediate, lat: intermediate.lat + 0.0001 }, end];
+        const shiftedStationLeg: TransitLegDetail = {
+            ...withStops,
+            pathCoords: shiftedStationPath,
+            pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
+            pathCoordsIsExact: true,
+        };
+        expect(buildTransitLegSegmentGeometry(route.id, [shiftedStationLeg], 0, "SUBWAY").coordinates).toEqual([]);
+        const presentation = buildSavedRouteMapPresentation({
+            ...input, route: { ...route, pathCoords: shiftedStationPath, transitLegs: [shiftedStationLeg] },
+        });
+        expect(presentation.pathOverlays).toEqual([]);
+    });
+
+    it("uses verified rail steps instead of flattened legacy lines when provider legs were not saved", async () => {
+        const seoul = { lat: 37.5547, lng: 126.9728 };
+        const sadang = { lat: 37.4765, lng: 126.9816 };
+        const gangnam = { lat: 37.4979, lng: 127.0276 };
+        const line4 = [seoul, { lat: 37.518, lng: 126.969 }, sadang];
+        const line2 = [sadang, { lat: 37.4875, lng: 126.9976 }, gangnam];
+        const route: RouteAlternativeOption = {
+            id: "seoul-sadang-gangnam", mode: "TRANSIT", source: "api", minutes: 39,
+            transitLegs: [
+                { kind: "SUBWAY", label: "4호선", startCoord: seoul, endCoord: sadang, stationCount: 7, pathCoords: line4, pathCoordsIsExact: true },
+                { kind: "SUBWAY", label: "2호선", startCoord: sadang, endCoord: gangnam, stationCount: 4, pathCoords: line2, pathCoordsIsExact: true },
+            ],
+        };
+        const routeInfo = buildRouteInfoFromAlternative(route);
+        const legacyRouteInfo = {
+            ...routeInfo,
+            steps: routeInfo.steps.map(step => ({ ...step, railGeometryVerified: undefined })),
+        };
+        const outlier = { lat: 37.72, lng: 126.88 };
+        const outlierOnMap = { latitude: outlier.lat, longitude: outlier.lng };
+        const stored = {
+            id: route.id, mode: route.mode, minutes: route.minutes,
+            pathCoords: [seoul, outlier, gangnam],
+            storedPathOverlays: [{ id: "legacy-rail", coords: [seoul, outlier, gangnam] }],
+        };
+        const input = { origin: { name: "서울역", ...seoul }, destination: { name: "강남역", ...gangnam }, mapZoom: 13, isDark: true };
+        const legacy = buildSavedRouteMapPresentation({ ...input, route: { ...stored, routeInfo: legacyRouteInfo } });
+        expect(legacy.pathOverlays).toEqual([]);
+        expect(legacy.pathCoords).toEqual([]);
+        expect(legacy.fitCoords).not.toContainEqual(outlierOnMap);
+        expect(buildPlannerRouteInfoOverlays(legacyRouteInfo, 13)).toEqual([]);
+
+        const current = buildSavedRouteMapPresentation({ ...input, route: { ...stored, routeInfo } });
+        expect(current.pathOverlays.map(overlay => overlay.coords)).toEqual(
+            [line4, line2].map(line => line.map(({ lat, lng }) => ({ latitude: lat, longitude: lng }))),
+        );
+        expect(current.fitCoords).not.toContainEqual(outlierOnMap);
+        expect(buildPlannerRouteInfoOverlays(routeInfo, 13)).toHaveLength(2);
+
+        const legacyCandidate = { ...route, transitLegs: undefined, pathCoords: stored.pathCoords };
+        let plannerOverlays: ReturnType<typeof useRoutePlannerMapOverlays>["mapPathOverlays"] = [];
+        function Planner({ info }: { info: typeof routeInfo }) {
+            plannerOverlays = useRoutePlannerMapOverlays({
+                hasRouteReady: true,
+                isRouteQaBaseOnly: false,
+                mapZoom: input.mapZoom,
+                pathRouteCoords: legacyCandidate.pathCoords,
+                qaLayerMode: "ALL",
+                routeAlternatives: [legacyCandidate],
+                routeEndpointAccessPaths: [],
+                selectedAlternativeId: legacyCandidate.id,
+                selectedRouteInfo: info,
+                shouldRenderTransitDetailDark: input.isDark,
+                transitConnectorOverlays: [],
+                transitWalkDetailOverlays: [],
+                travelMode: "TRANSIT",
+            }).mapPathOverlays;
+            return null;
+        }
+        let renderer: ReactTestRenderer | undefined;
+        try {
+            await act(async () => { renderer = TestRenderer.create(React.createElement(Planner, { info: legacyRouteInfo })); });
+            expect(plannerOverlays).toEqual([]);
+            await act(async () => { renderer?.update(React.createElement(Planner, { info: routeInfo })); });
+            expect(plannerOverlays.map(overlay => overlay.coords)).toEqual(
+                current.pathOverlays.map(overlay => overlay.coords),
+            );
+        } finally {
+            await act(async () => { renderer?.unmount(); });
+        }
+    });
+
+    it("keeps the 4 → 2 transfer while suppressing a line that misses or reorders its stations", () => {
+        const start = { lat: 37.553514, lng: 126.972713 };
+        const sinyongsan = { lat: 37.529241, lng: 126.967948 };
+        const ichon = { lat: 37.522427, lng: 126.974396 };
+        const dongjak = { lat: 37.502915, lng: 126.980341 };
+        const sadang = { lat: 37.476798, lng: 126.981668 };
+        const gangnam = { lat: 37.497952, lng: 127.027619 };
+        const track = [start, sinyongsan, ichon, { lat: 37.5139, lng: 126.9791 }, dongjak, sadang];
+        const line4: TransitLegDetail = {
+            kind: "SUBWAY", label: "4호선", lineName: "4호선", startCoord: start, endCoord: sadang,
+            pathCoordsIsExact: true, pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
+            passStops: [
+                { name: "서울역", coord: start }, { name: "신용산역", coord: sinyongsan },
+                { name: "이촌역", coord: ichon }, { name: "동작역", coord: dongjak },
+                { name: "사당역", coord: sadang },
+            ],
+        };
+        const line2: TransitLegDetail = {
+            kind: "SUBWAY", label: "2호선", lineName: "2호선", startCoord: sadang, endCoord: gangnam,
+            pathCoords: [sadang, { lat: 37.481, lng: 126.997 }, gangnam],
+            pathCoordsIsExact: true, pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
+        };
+        const makeRoute = (pathCoords: TransitLegDetail["pathCoords"]): RouteAlternativeOption => ({
+            id: "rail-transfer", mode: "TRANSIT", source: "api", minutes: 39,
+            transitLegs: [{ ...line4, pathCoords }, line2],
+        });
+        for (const path of [
+            [start, { lat: 37.521, lng: 126.991 }, sadang],
+            [start, ichon, sinyongsan, { lat: 37.516, lng: 126.968 }, dongjak, sadang],
+            [...track.slice(0, 3), { lat: NaN, lng: 126.977 }, ...track.slice(3)],
+        ]) {
+            const route = makeRoute(path);
+            const map = buildSavedRouteMapPresentation({ route, mapZoom: 15, isDark: true });
+            expect(map.pathOverlays.map(overlay => overlay.color)).toEqual(["#00B140"]);
+            expect(buildTransitLegSegmentGeometry(route.id, route.transitLegs, 0, "SUBWAY").coordinates).toEqual([]);
+            const subwaySteps = buildRouteInfoFromAlternative(route).steps.filter(step => step.type === "SUBWAY");
+            expect(subwaySteps.map(step => step.lineName)).toEqual(["4호선", "2호선"]);
+            expect(subwaySteps[0].passStops?.map(stop => stop.name)).toContain("이촌역");
+            expect(subwaySteps[0].coordinates).toBeUndefined();
+        }
+        const route = makeRoute(track);
+        const map = buildSavedRouteMapPresentation({ route, mapZoom: 15, isDark: true });
+        expect(map.pathOverlays.map(overlay => overlay.color)).toEqual(["#00A4E3", "#00B140"]);
+        expect(buildTransitLegSegmentGeometry(route.id, route.transitLegs, 0, "SUBWAY").coordinates.length).toBeGreaterThan(2);
+
+        const incompleteLeg: TransitLegDetail = {
+            ...line4, pathCoords: track,
+            navigationEvidence: { version: 1, provider: "odsay", stopOccurrences: [], geometryInputComplete: false },
+        };
+        const incompleteRoute = { ...route, transitLegs: [incompleteLeg, line2] };
+        expect(buildSavedRouteMapPresentation({ route: incompleteRoute, mapZoom: 15, isDark: true })
+            .pathOverlays.map(overlay => overlay.color)).toEqual(["#00B140"]);
+        expect(buildTransitLegSegmentGeometry(route.id, incompleteRoute.transitLegs, 0, "SUBWAY").coordinates).toEqual([]);
+
+        // Older routes can have an otherwise complete stop list with only one mapped intermediate station.
+        const sparsePassStops = [{ name: "서울역" }, { name: "이촌역", coord: ichon }, { name: "사당역" }];
+        for (const pathCoords of [track, [start, { lat: 37.521, lng: 126.991 }, sadang]]) {
+            const sparseRoute = { ...route, transitLegs: [{ ...line4, passStops: sparsePassStops, pathCoords }, line2] };
+            const map = buildSavedRouteMapPresentation({ route: sparseRoute, mapZoom: 15, isDark: true });
+            const colors = pathCoords === track ? ["#00A4E3", "#00B140"] : ["#00B140"];
+            expect(map.pathOverlays.map(overlay => overlay.color)).toEqual(colors);
+            expect(buildRouteInfoFromAlternative(sparseRoute).steps.find(step => step.type === "SUBWAY")?.railGeometryVerified).toBe(
+                pathCoords === track ? true : undefined,
+            );
+            expect(buildTransitLegSegmentGeometry(route.id, sparseRoute.transitLegs, 0, "SUBWAY").coordinates.length > 0)
+                .toBe(pathCoords === track);
+        }
+
+        const offStationTrack = [...track.slice(0, -1), { lat: 37.479, lng: 126.981668 }];
+        const sparseLeg = { ...line4, passStops: [], pathCoords: offStationTrack };
+        const sparseRoute = { ...route, transitLegs: [sparseLeg, line2] };
+        const sparseMap = buildSavedRouteMapPresentation({ route: sparseRoute, mapZoom: 15, isDark: true });
+        expect(sparseMap.pathOverlays.map(overlay => overlay.color)).toEqual(["#00B140"]);
+        expect(buildTransitLegSegmentGeometry(route.id, sparseRoute.transitLegs, 0, "SUBWAY").coordinates).toEqual([]);
+    });
+
+    it("keeps stations visible without restoring a snapped itinerary as a railway", () => {
+        const start = { lat: 37.5547, lng: 126.9728 };
+        const middle = { lat: 37.515, lng: 126.969 };
+        const roadPoint = { lat: 37.515, lng: 126.975 };
+        const end = { lat: 37.4765, lng: 126.9816 };
+        const leg: TransitLegDetail = {
+            kind: "SUBWAY", label: "4호선", lineName: "4호선", stationCount: 7,
+            startCoord: start, endCoord: end, pathCoords: [start, roadPoint, end],
+            pathGeometrySource: "ITINERARY_PATH_SNAP",
+            passStops: [{ name: "서울역", coord: start }, { name: "동작역", coord: middle }, { name: "사당역", coord: end }],
+        };
+        const route = { id: "rail-snap", mode: "TRANSIT", minutes: 20, pathCoords: leg.pathCoords, transitLegs: [leg] };
+        const presentation = buildSavedRouteMapPresentation({
+            route, origin, destination, mapZoom: 17, isDark: true,
+            focusedLegIndex: 0, selectedTransitStop: { legIndex: 0, stopIndex: 1 },
+        });
+        expect(presentation.pathOverlays).toEqual([]);
+        expect(presentation.markers).toContainEqual(expect.objectContaining({
+            caption: "동작역", latitude: middle.lat, longitude: middle.lng,
+        }));
+        expect(buildTransitLegSegmentGeometry(route.id, [leg], 0, "SUBWAY").coordinates).toEqual([]);
+
+        for (const pathGeometrySource of [undefined, "UNKNOWN"] as const) {
+            const legacy = { ...leg, pathGeometrySource };
+            expect(buildTransitLegSegmentGeometry(route.id, [legacy], 0, "SUBWAY").coordinates).toEqual([]);
+            expect(buildSavedRouteMapPresentation({
+                route: { ...route, transitLegs: [legacy] }, origin, destination, mapZoom: 17, isDark: true,
+            }).pathOverlays).toEqual([]);
+        }
+
+        const exact: TransitLegDetail = {
+            ...leg, pathCoords: [start, { lat: 37.536, lng: 126.972 }, middle, end],
+            pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING", pathCoordsIsExact: true,
+        };
+        expect(buildTransitLegSegmentGeometry(route.id, [exact], 0, "SUBWAY").coordinates).toHaveLength(4);
+        expect(buildSavedRouteMapPresentation({
+            route: { ...route, transitLegs: [exact] }, origin, destination, mapZoom: 17, isDark: true,
+        }).pathOverlays).toHaveLength(1);
+    });
+
     it("uses the normal map walking style when restoring RouteInfo geometry", () => {
         const walkingRouteInfo = {
             id: "legacy-walk",
@@ -705,6 +1080,7 @@ describe("saved route map presentation", () => {
         const leg: TransitLegDetail = {
             kind: "SUBWAY",
             label: "2호선",
+            pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
             lineName: "2호선",
             lineColor: "00B140",
             pathCoords: [
@@ -753,6 +1129,7 @@ describe("saved route map presentation", () => {
         const leg: TransitLegDetail = {
             kind: "SUBWAY",
             label: "2호선",
+            pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
             lineName: "2호선",
             lineColor: "00B140",
             pathCoords: [
@@ -832,6 +1209,7 @@ describe("saved route map presentation", () => {
                 kind: "SUBWAY",
                 label: "2호선",
                 lineColor: "00B140",
+                pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
                 pathCoords: [
                     { lat: 37.558, lng: 126.974 },
                     { lat: 37.54, lng: 127.0 },
@@ -1031,6 +1409,7 @@ describe("saved route map presentation", () => {
                 kind: "SUBWAY",
                 label: "2호선",
                 lineColor: "00B140",
+                pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
                 pathCoords: rawRide,
             }],
             storedPathOverlays: [{
@@ -1084,6 +1463,7 @@ describe("saved route map presentation", () => {
                 kind: "SUBWAY",
                 label: "2호선",
                 lineColor: "00B140",
+                pathCoordsIsExact: true,
                 pathCoords: [
                     { lat: 37.558, lng: 126.973 },
                     { lat: 37.52, lng: 127.01 },
@@ -1156,6 +1536,7 @@ describe("saved route map presentation", () => {
             {
                 kind: "SUBWAY",
                 label: "1호선",
+                pathCoordsIsExact: true,
                 pathCoords: [
                     { lat: 37.56, lng: 126.97 },
                     { lat: 37.55, lng: 126.98 },
@@ -1172,6 +1553,7 @@ describe("saved route map presentation", () => {
             {
                 kind: "SUBWAY",
                 label: "2호선",
+                pathCoordsIsExact: true,
                 pathCoords: [
                     { lat: 37.549, lng: 126.982 },
                     { lat: 37.54, lng: 126.99 },
@@ -1556,8 +1938,8 @@ describe("saved route map presentation", () => {
                     pathCoords: rootPath.slice(0, 2),
                 },
                 {
-                    kind: "SUBWAY" as const,
-                    label: "좌표가 유실된 지하철",
+                    kind: "BUS" as const,
+                    label: "좌표가 유실된 버스",
                     startName: "승차역",
                     endName: "하차역",
                 },
@@ -1604,6 +1986,32 @@ describe("saved route map presentation", () => {
             outlineOpacity: 0.76,
             zIndex: 20,
         });
+    });
+
+    it("does not draw an aggregate shortcut under a rail leg when a walk is missing", () => {
+        const start = { lat: 37.5538, lng: 126.9721 };
+        const end = { lat: 37.4765, lng: 126.9816 };
+        const track = [start, { lat: 37.5292, lng: 126.9682 }, end];
+        const shortcut = { lat: 37.527, lng: 126.98 };
+        const route: RouteAlternativeOption = {
+            id: "rail-with-missing-walk",
+            mode: "TRANSIT",
+            source: "api",
+            minutes: 20,
+            pathCoords: [start, shortcut, end],
+            transitLegs: [
+                { kind: "WALK", label: "출발지에서 도보" },
+                {
+                    kind: "SUBWAY", label: "4호선", startCoord: start, endCoord: end,
+                    stationCount: 7, pathCoords: track, pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
+                },
+            ],
+        };
+        const { pathOverlays, fitCoords } = buildSavedRouteMapPresentation({
+            route, origin, destination, mapZoom: 15, isDark: true,
+        });
+        expect(pathOverlays.map(overlay => overlay.id)).toEqual(["saved-route-leg-1"]);
+        expect(fitCoords).not.toContainEqual({ latitude: shortcut.lat, longitude: shortcut.lng });
     });
 
     it("does not fabricate a root fallback by joining remaining legs when no root path was saved", () => {
@@ -1732,6 +2140,7 @@ describe("saved route map presentation", () => {
                 label: "2호선",
                 startCoord: stationAnchor,
                 endCoord: ridePath[ridePath.length - 1],
+                pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING" as const,
                 pathCoords: ridePath,
             }],
             storedPathOverlays: [

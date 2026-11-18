@@ -147,6 +147,8 @@ export type TransitLegDetail = {
     waitingMinutes?: number;
     /** 공급자가 식별하는 노선 ID. ODsay 버스는 busID, 지하철은 도시-노선 코드다. */
     providerRouteId?: string;
+    /** Other lines from the same ODsay stop pair in the provider's published order. */
+    alternateBusLines?: OdsayBusLine[];
     /** 지역 BIS가 식별하는 버스 노선 ID. */
     localRouteId?: string;
     /** 노선이 속한 도시 코드와 BIS 공급자 코드. */
@@ -230,7 +232,46 @@ export type TransitRouteOption = {
     attributionUrl?: string;
 };
 
+export type TransitTimetablePreview = {
+    departureAt: string;
+    arrivalAt: string;
+    entranceWalk?: { seconds: number; distanceMeters: number };
+    exitWalk?: { seconds: number; distanceMeters: number };
+    rides?: { boardingAt: string; arrivalAt: string }[];
+    transferTimings?: { previousArrivalAt: string; boardingAt: string; walkingSeconds: number; requiredMarginSeconds?: number }[];
+};
+
+export type TransitBusPreview = {
+    departureAt: string;
+    boardingAt: string;
+    alightingAt: string;
+    arrivalAt: string;
+    sourceUpdatedAt: string;
+    accessSeconds: number;
+    egressSeconds: number;
+    providerRouteId: string;
+    targetArrivalAt?: string;
+    transfer?: {
+        firstAlightingAt: string;
+        secondBoardingAt: string;
+        secondProviderRouteId: string;
+        walkingSeconds: number;
+        requiredMarginSeconds: number;
+    } | null;
+};
+
+export type OdsayBusLine = {
+    providerRouteId: string;
+    lineName: string;
+    localRouteId: string;
+    routeCityCode?: string;
+    routeProviderCode?: string;
+    lineColor?: string;
+};
+
 export type RouteAlternativeOption = {
+    odsayTimetablePreview?: TransitTimetablePreview;
+    odsayBusPreview?: TransitBusPreview;
     intercityJourney?: IntercityJourney;
     importedTicket?: ImportedTrainTicket;
     /** Separate raw pedestrian candidate; never substituted for transit navigationEvidence. */

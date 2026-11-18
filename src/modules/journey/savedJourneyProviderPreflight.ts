@@ -21,7 +21,7 @@ export function savedJourneyProviderPreflight(input: JourneyRouteInput | null, s
     const checks: Check[] = [];
     const add = (code: string, present: boolean, good: string, missing: string) =>
         checks.push({ code, state: present ? 'PRESENT' : 'MISSING', detail: present ? good : missing });
-    add('ROUTE_INPUT', !issue, subway?'도보와 지하철이 연결된 시험 입력이 있어요.':'도보와 버스가 연결된 입력이 있어요.', issue ?? '저장 경로 입력이 필요해요.');
+    add('ROUTE_INPUT', !issue, subway?'도보와 지하철이 연결된 경로예요.':'도보와 버스가 연결된 경로예요.', issue ?? '저장 경로 입력이 필요해요.');
     add('BUS_PROVIDER', input?.provider === 'odsay' && input.source === 'api',
         'ODsay 저장 경로 형식이에요. 실제 공급자 검증은 아직 필요해요.',
         '현재 버스 연결은 ODsay의 서울 버스 원본 식별자가 필요해요. TMAP·공개 정류장 자료만으로는 준비하지 않아요.');
@@ -61,7 +61,7 @@ export function savedJourneyProviderPreflight(input: JourneyRouteInput | null, s
     add('BUS_IDENTIFIERS', mappingPresent, subway?'저장 경로의 지하철 ID·역 순서 입력이 있어요. 서울 역 ID 대응의 증명은 아니에요.':'서울 버스 원본 ID·정류장 순서 입력이 있어요. 누락된 방면·정류장 수는 서버 공식 자료로 다시 대조해야 해요.',
         '서울 버스 원본 ID·정류장 순서를 확인할 수 없어요. 노선명·표시용 정류장으로 대체하지 않아요.');
     if(subwayTrial&&input?.legs.some(leg=>leg.kind==='SUBWAY'))checks.push({code:'SUBWAY_CATALOG',state:'RECHECK_REQUIRED',
-        detail:'지하철 초기 연결 시험입니다. 공식 역 대응·정차 순서와 실시간 열차를 서버에서 다시 확인하며, 환승·하차 확정은 지원하지 않습니다.'});
+        detail:'공식 역 대응·정차 순서와 실시간 열차는 안내를 준비할 때 다시 확인해요. 현재 지하철 환승과 하차 자동 확정은 지원하지 않아요.'});
     // Coarse endpoint/connection preflight only. Native/server still check every segment,
     // ambiguity, official shape occurrences and final-walk admission independently.
     const path=(i:number)=>input?.walkingSnapshot?.walks.find(w=>w.legIndex===i)?.points.map(p=>({latitude:p.lat,longitude:p.lng})) ?? input?.legs[i].coordinates ?? [];

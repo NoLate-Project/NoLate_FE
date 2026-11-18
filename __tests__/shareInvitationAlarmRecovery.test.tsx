@@ -1,10 +1,13 @@
 import React from "react";
+import { Dimensions } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 const mockAcceptShareInvitation = jest.fn();
 const mockGetShareInbox = jest.fn();
 const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
 const mockRouterReplace = jest.fn();
+const mockRouterDismissTo = jest.fn();
+let mockIsAuthenticated = true;
 const mockSearchParams: {
     token: string;
     autoAccept?: string;
@@ -17,6 +20,7 @@ jest.mock("expo-router", () => ({
     useLocalSearchParams: () => mockSearchParams,
     useRouter: () => ({
         replace: mockRouterReplace,
+        dismissTo: mockRouterDismissTo,
     }),
 }));
 jest.mock("react-native-safe-area-context", () => ({
@@ -29,7 +33,7 @@ jest.mock("../src/api/scheduleSharing", () => ({
 }));
 jest.mock("../src/modules/auth/AuthContext", () => ({
     useAuth: () => ({
-        isAuthenticated: true,
+        isAuthenticated: mockIsAuthenticated,
         isCurationCompleted: true,
         isLoading: false,
     }),
@@ -53,6 +57,7 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
 
 import ShareInvitationAcceptScreen from "../app/share/[token]";
+import { ApiResponseError } from "../src/api/response";
 
 describe("share invitation departure-alarm recovery", () => {
     let renderer: ReactTestRenderer | undefined;
@@ -65,6 +70,7 @@ describe("share invitation departure-alarm recovery", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockIsAuthenticated = true;
         mockGetShareInbox.mockResolvedValue({ receivedShares: [] });
         mockSearchParams.token = "abcdefghijklmnop";
         delete mockSearchParams.autoAccept;
@@ -74,10 +80,33 @@ describe("share invitation departure-alarm recovery", () => {
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
+        jest.restoreAllMocks();
+    });
+
+    it("carries the invitation into login only when the recipient chooses to accept it", async () => {
+        mockIsAuthenticated = false;
+        await act(async () => {
+            renderer = TestRenderer.create(<ShareInvitationAcceptScreen />);
+        });
+
+        const press = (label: string) => act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: label }).props.onPress();
+        });
+
+        await press("로그인 화면으로 돌아가기");
+        expect(mockRouterReplace).toHaveBeenLastCalledWith("/auth/login");
+
+        await press("로그인하고 수락");
+        expect(mockRouterReplace).toHaveBeenLastCalledWith({
+            pathname: "/auth/login",
+            params: { shareToken: "abcdefghijklmnop" },
+        });
+        expect(mockAcceptShareInvitation).not.toHaveBeenCalled();
     });
 
     it("awaits one recovery after invitation acceptance succeeds", async () => {
         mockAcceptShareInvitation.mockResolvedValue({
+            scheduleTitle: "  팀 디자인 회의  ",
             invitation: {
                 id: "1",
                 resourceType: "SCHEDULE",
@@ -103,6 +132,7 @@ describe("share invitation departure-alarm recovery", () => {
             renderer = TestRenderer.create(<ShareInvitationAcceptScreen />);
             await Promise.resolve();
         });
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "공유함에서 보기" })).toHaveLength(0);
         await act(async () => {
             await renderer!.root
                 .findByProps({ accessibilityLabel: "공유 초대 수락" })
@@ -113,13 +143,26 @@ describe("share invitation departure-alarm recovery", () => {
         expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
         expect(mockAcceptShareInvitation.mock.invocationCallOrder[0])
             .toBeLessThan(mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0]);
+        expect(renderer!.root.findByProps({ accessibilityRole: "header" }).props.children).toBe("팀 디자인 회의");
+        expect(mockGetShareInbox).not.toHaveBeenCalled();
         expect(renderer!.root.findAllByProps({
             accessibilityLabel: "공유 초대 수락",
         })).toHaveLength(0);
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "공유함에서 보기" }).props.onPress());
+        expect(mockRouterReplace).toHaveBeenLastCalledWith({
+            pathname: "/share/inbox",
+            params: { tab: "schedule", focusScheduleId: "41" },
+        });
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "받은 일정 열기" }).props.onPress());
+        expect(mockRouterReplace).toHaveBeenLastCalledWith({
+            pathname: "/schedule/[id]",
+            params: { id: "41" },
+        });
     });
 
     it("opens the calendar membership returned by a calendar invitation", async () => {
         mockAcceptShareInvitation.mockResolvedValue({
+            calendarTitle: "  주간 회의  ",
             invitation: {
                 id: "1",
                 resourceType: "CALENDAR",
@@ -158,6 +201,9 @@ describe("share invitation departure-alarm recovery", () => {
                 .findByProps({ accessibilityLabel: "공유 초대 수락" })
                 .props.onPress();
         });
+        expect(renderer!.root.findAllByProps({ accessibilityRole: "header", children: "주간 회의" }).length).toBeGreaterThan(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "공유함에서 보기" })).toHaveLength(0);
+        expect(mockGetShareInbox).not.toHaveBeenCalled();
         await act(async () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "캘린더 설정 열기" })
@@ -166,7 +212,7 @@ describe("share invitation departure-alarm recovery", () => {
 
         expect(mockRouterReplace).toHaveBeenCalledWith({
             pathname: "/schedule/calendars",
-            params: { id: "73" },
+            params: { id: "73", view: "settings" },
         });
     });
 
@@ -322,19 +368,58 @@ describe("share invitation departure-alarm recovery", () => {
         expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
     });
 
-    it("offers a new link and calendar return for expired invitations", async () => {
-        mockAcceptShareInvitation.mockRejectedValue(new Error("초대 링크가 만료되었습니다."));
+    it.each([
+        ["초대 링크가 만료되었습니다.", "초대 링크가 만료됐어요"],
+        ["폐기된 초대 링크입니다.", "초대 링크가 비활성화됐어요"],
+        ["초대 링크 수락 가능 횟수를 초과했습니다.", "사용할 수 없는 초대 링크예요"],
+    ])("offers a new link and calendar return for %s", async (message, title) => {
+        mockAcceptShareInvitation.mockRejectedValue(new Error(message));
         await act(async () => { renderer = TestRenderer.create(<ShareInvitationAcceptScreen />); });
         await act(async () => {
             await renderer!.root.findByProps({ accessibilityLabel: "공유 초대 수락" }).props.onPress();
         });
+        expect(renderer!.root.findAllByProps({ accessibilityRole: "header", children: title }).length).toBeGreaterThan(0);
         expect(renderer!.root.findAllByProps({ children: "보낸 사람에게 새 초대 링크를 요청해 주세요." }).length).toBeGreaterThan(0);
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "캘린더로 돌아가기" }).props.onPress();
+        });
+        expect(mockRouterDismissTo).toHaveBeenCalledWith("/schedule");
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "공유 초대 수락" })).toHaveLength(0);
         expect(mockGetShareInbox).not.toHaveBeenCalled();
     });
 
-    it("does not recover when invitation acceptance fails", async () => {
-        mockAcceptShareInvitation.mockRejectedValue(new Error("accept failed"));
+    it.each(["invalid", "abcdefghijklmnop"])("offers a fresh link when %s cannot be found", async (token) => {
+        mockSearchParams.token = token;
+        mockAcceptShareInvitation.mockRejectedValue(new ApiResponseError(
+            "일정 공유 초대가 존재하지 않습니다.",
+            { errorCode: "S007", status: 404 },
+        ));
+        await act(async () => { renderer = TestRenderer.create(<ShareInvitationAcceptScreen />); });
+        const accept = renderer!.root.findAllByProps({ accessibilityLabel: "공유 초대 수락" })[0];
+        if (token === "invalid") {
+            expect(accept).toBeUndefined();
+            expect(mockAcceptShareInvitation).not.toHaveBeenCalled();
+        } else {
+            await act(async () => { await accept.props.onPress(); });
+            expect(mockAcceptShareInvitation).toHaveBeenCalledWith(token);
+        }
+        expect(renderer!.root.findAllByProps({
+            accessibilityRole: "header", children: "유효하지 않은 초대 링크예요",
+        }).length).toBeGreaterThan(0);
+        expect(renderer!.root.findAllByProps({ children: "보낸 사람에게 새 초대 링크를 요청해 주세요." }).length).toBeGreaterThan(0);
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "캘린더로 돌아가기" }).props.onPress();
+        });
+        expect(mockRouterDismissTo).toHaveBeenCalledWith("/schedule");
+        expect(mockGetShareInbox).not.toHaveBeenCalled();
+    });
+
+    it.each(["accept failed", "로그인 세션이 만료되었어요."])("keeps retry available after %s", async (message) => {
+        mockAcceptShareInvitation.mockRejectedValue(new Error(message));
+        const getDimensions = Dimensions.get.bind(Dimensions);
+        jest.spyOn(Dimensions, "get").mockImplementation(name => ({
+            ...getDimensions(name), fontScale: 1,
+        }));
 
         await act(async () => {
             renderer = TestRenderer.create(<ShareInvitationAcceptScreen />);
@@ -347,9 +432,30 @@ describe("share invitation departure-alarm recovery", () => {
         });
 
         expect(mockRecoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
+        const retry = renderer!.root.findByProps({ accessibilityLabel: "다시 시도" });
+        expect(retry.props.disabled).toBe(false);
+        expect(renderer!.root.findAllByProps({
+            accessibilityRole: "header", children: "초대를 수락하지 못했어요",
+        }).length).toBeGreaterThan(0);
         expect(renderer!.root.findByProps({
             accessibilityRole: "alert",
         })).toBeTruthy();
+        await act(async () => { await retry.props.onPress(); });
+        expect(mockAcceptShareInvitation).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns to the calendar for a blocked invitation without naming the blocking party", async () => {
+        mockAcceptShareInvitation.mockRejectedValue(new ApiResponseError(
+            "차단 관계에 있는 회원과는 공유할 수 없습니다.",
+            { errorCode: "S011", status: 403 },
+        ));
+        await act(async () => { renderer = TestRenderer.create(<ShareInvitationAcceptScreen />); });
+        await act(async () => {
+            await renderer!.root.findByProps({ accessibilityLabel: "공유 초대 수락" }).props.onPress();
+        });
+        expect(renderer!.root.findAllByProps({ children: "차단 관계에 있는 사용자와는 공유할 수 없어요." }).length).toBeGreaterThan(0);
+        expect(renderer!.root.findAllByProps({ children: "캘린더로 돌아가기" }).length).toBeGreaterThan(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "공유 초대 수락" })).toHaveLength(0);
     });
 });
 

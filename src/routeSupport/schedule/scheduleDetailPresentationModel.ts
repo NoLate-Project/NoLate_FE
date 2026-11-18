@@ -1,4 +1,5 @@
 import { getUserVisibleScheduleNotes } from '../../modules/schedule/calendarImportNotes';
+import { isTransitRideKind } from '../../modules/map/transitModes';
 import { PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT } from '../../modules/schedule/components/detail/PlainScheduleDetailView';
 import {
   buildDepartureParticipantPresentations,
@@ -23,6 +24,11 @@ import {
 import type { ScheduleDetailController } from './useScheduleDetailController';
 import { getTransitEtaTrustPresentation, SAVED_TRANSIT_ESTIMATE_WARNING } from '../../modules/schedule/transitEtaTrustPresentation';
 import { formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from '../../modules/schedule/transitRouteProgress';
+
+function formatRouteHeaderPlaceName(name: string): string {
+  // Search results can suffix station names with a transport classification.
+  return name.replace(/(역)\s*\[(?:KTX\s*정차역|수도권\s*\d+호선)\]$/u, '$1');
+}
 
 /**
  * 컨트롤러의 원시 상태를 일정 상세 각 영역이 바로 표시할 수 있는 읽기 전용 화면 모델로 변환한다.
@@ -55,18 +61,25 @@ export function buildScheduleDetailPresentation(
   } = controller;
   if (!item) return null;
 
-  const routeTitle =
+  const originName = displayOrigin?.name;
+  const destinationName = displayDestination?.name;
+  const endpointTitle = originName && destinationName
+    ? `${originName} → ${destinationName}`
+    : undefined;
+  const locationTitle =
     item.locationName ||
-    (displayOrigin?.name && displayDestination?.name
-      ? `${displayOrigin.name} → ${displayDestination.name}`
-      : undefined) ||
-    displayDestination?.name ||
-    displayOrigin?.name ||
+    endpointTitle ||
+    destinationName ||
+    originName ||
     '선택된 경로가 없어요';
-  const routeIdentityTitle =
-    displayOrigin?.name && displayDestination?.name
-      ? `${displayOrigin.name} → ${displayDestination.name}`
-      : routeTitle;
+  const routeIdentityTitle = endpointTitle ?? locationTitle;
+  const headerDestination = destinationName && formatRouteHeaderPlaceName(destinationName);
+  const headerLocation = item.locationName && formatRouteHeaderPlaceName(item.locationName);
+  const compactEndpointTitle = !controller.largeRouteHeader && originName && headerDestination &&
+    (inspectedTravelPlan || !headerLocation || headerLocation === headerDestination || item.locationName === endpointTitle)
+    ? `${formatRouteHeaderPlaceName(originName)} → ${headerDestination}`
+    : undefined;
+  const routeTitle = compactEndpointTitle ?? (inspectedTravelPlan ? routeIdentityTitle : locationTitle);
   const savedTravelText = savedDisplayTravelMinutes
     ? `${travelModeLabel(
         displayTravelMode ?? undefined,
@@ -119,11 +132,11 @@ export function buildScheduleDetailPresentation(
     nowMs,
   );
   const arrivalTimeLabel = hhmmText(fromISO(item.startAt));
-  const hasRenderableDetailedRoute = displayPathOverlays.some(
-    overlay => overlay.coords.length >= 2,
-  );
+  // A saved itinerary can still describe boarding and stops when its line cannot be drawn.
+  const hasItineraryDetails = routeDetailInfo?.steps.some(step => isTransitRideKind(step.type)) ?? false;
+  const hasRenderablePath = displayPathOverlays.some(overlay => overlay.coords.length >= 2);
   const routeSummaryKind = getSavedRouteSummaryKind(
-    hasRenderableDetailedRoute,
+    hasRenderablePath || hasItineraryDetails,
     savedDisplayTravelMinutes ?? undefined,
   );
   const hasRouteSummary = routeSummaryKind !== 'none';
@@ -216,10 +229,15 @@ export function buildScheduleDetailPresentation(
         .filter(Boolean)
         .join(', ')
     : undefined;
-  // Use the same transit legs as the summary bar. Older timelines can store a
-  // physical transfer walk as TRANSFER, which can also mean waiting.
+  // A saved ODsay timetable keeps its verified walk lengths in the timeline steps.
+  // Older routes can store a physical transfer walk as TRANSFER, which can also mean waiting.
   const transitLegs = routeOption?.transitLegs;
-  const routeWalkingMinutes = transitLegs?.length
+  const timetableSteps = routeDetailInfo?.provider === 'odsay' && routeDetailInfo.timeBasis === 'provider_schedule' &&
+    routeDetailInfo.providerTimeBasis === 'timetable' ? routeDetailInfo.steps : undefined;
+  const routeWalkingMinutes = timetableSteps
+    ? getTransitRouteWalkingMinutes(timetableSteps.filter(step => step.type === 'WALK')
+      .map(({ durationMinutes, durationSeconds }) => ({ kind: 'WALK', durationMinutes, durationSeconds })), undefined, true)
+    : transitLegs?.length
     ? getTransitRouteWalkingMinutes(transitLegs)
     : routeDetailInfo?.steps.reduce(
       (total, step) =>
@@ -247,9 +265,10 @@ export function buildScheduleDetailPresentation(
   return {
     ...controller,
     item,
-    routeTitle: inspectedTravelPlan ? routeIdentityTitle : routeTitle,
+    routeTitle,
     routeIdentityTitle,
-    showRouteIdentityInSheet: !showTopRouteBar || (!inspectedTravelPlan && routeIdentityTitle !== routeTitle),
+    showRouteIdentityInSheet: !showTopRouteBar ||
+      (!compactEndpointTitle && !inspectedTravelPlan && routeIdentityTitle !== routeTitle),
     travelText,
     departureTimeLabel,
     hasDepartureInfo,
@@ -267,7 +286,6 @@ export function buildScheduleDetailPresentation(
     scheduleCountdownEndAt,
     scheduleCountdown,
     arrivalTimeLabel,
-    hasRenderableDetailedRoute,
     routeSummaryKind,
     hasRouteSummary,
     hasDetailedRoute,

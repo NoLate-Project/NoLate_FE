@@ -1,9 +1,9 @@
 import React from "react";
-import { StyleSheet, Text } from "react-native";
+import { StyleSheet, View } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import type { AutomaticJourneyBinding, AutomaticJourneySnapshot } from "../src/modules/journey/automaticJourney";
 import type { JourneyRouteInput } from "../src/modules/journey/journeyRouteInput";
-import { SavedJourneyGuidanceCard } from "../src/modules/journey/SavedJourneyGuidanceCard";
+import { SavedJourneyGuidanceCard, SavedJourneyInstruction } from "../src/modules/journey/SavedJourneyGuidanceCard";
 import { SavedJourneyRouteTimeline } from "../src/modules/journey/SavedJourneyRouteTimeline";
 import { SavedJourneyRouteBar } from "../src/modules/journey/SavedJourneyRouteBar";
 import type { RouteInfo } from "../src/modules/schedule/routeInfo";
@@ -120,6 +120,27 @@ it('compact detail uses the same marker without the diagnostic card and hides it
     expect(view.root.findAllByProps({ testID: 'saved-journey-route-leg-2' }).length).toBeGreaterThan(0);
     act(() => view.unmount());
 });
+it('keeps the route through location loss and restores only the confirmed compact marker', async () => {
+    const recovered = { legIndex: 0, legProgress: 0.6, barFraction: 0.2, waiting: false };
+    const render = (position: typeof recovered | null) => <SavedJourneyRouteBar input={input}
+        position={position} compact showCopy={false} />;
+    let view!: ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(render(recovered)); });
+    expect(view.root.findByProps({ testID: 'saved-journey-route-marker' })).toBeDefined();
+    await act(async () => view.update(render(null)));
+    expect(view.root.findAllByProps({ testID: 'saved-journey-route-marker' })).toHaveLength(0);
+    expect(view.root.findByProps({ testID: 'saved-journey-route-leg-2' })).toBeDefined();
+    await act(async () => view.update(render(recovered)));
+    expect(view.root.findByProps({ testID: 'saved-journey-route-marker' })).toBeDefined();
+    expect(view.root.findAllByProps({ testID: 'saved-journey-route-position' })).toHaveLength(0);
+    await act(async () => view.update(<SavedJourneyInstruction
+        stage={{ title: '위치 확인 중', action: '', activeLegIndex: null }}
+        value={{ phase: 'UNAVAILABLE', instruction: '', progress: null, fresh: false }}
+        reduceMotion isDark={false} />));
+    expect(JSON.stringify(view.toJSON())).toContain('위치가 확인되면 안내를 이어가요.');
+    expect(view.root.findAllByProps({ testID: 'saved-journey-route-bar' })).toHaveLength(0);
+    act(() => view.unmount());
+});
 it("never subscribes for an unarmed or different saved route", async () => {
     mockBinding.mockReturnValue(null);
     const interval = jest.spyOn(globalThis, "setInterval");
@@ -155,11 +176,17 @@ it('timeline current step follows GPS, not map selection, and disappears on stal
         ...input.legs.map(leg => ({ id: `leg-${leg.index}`, type: leg.kind, title: leg.kind })),
         { id: 'destination', type: 'DESTINATION', title: '도착' }] } as RouteInfo;
     const onStepPress = jest.fn();
+    const currentRow = React.createRef<View>();
     mockRead.mockResolvedValue({ ...snapshot, guidance: { ...snapshot.guidance, phase: 'WALKING_TO_STOP', activeLegIndex: 0, walkProgress: 0.5 } });
     let view!: ReactTestRenderer;
     await act(async () => { view = TestRenderer.create(<SavedJourneyRouteTimeline input={input} scheduleId="9001" routeInfo={route}
-        selectedStepId="leg-2" onStepPress={onStepPress} compact />); });
+        selectedStepId="leg-2" onStepPress={onStepPress} currentGuidanceRowRef={currentRow} compact />,
+        { createNodeMock: () => ({}) }); });
     expect(view.root.findAllByProps({ testID: 'journey-current-step-leg-0' }).length).toBeGreaterThan(0);
+    expect(StyleSheet.flatten(view.root.findByProps({ testID: 'journey-current-step-leg-0' }).props.style).position).toBe('absolute');
+    expect(view.root.findByProps({ testID: 'route-step-row-leg-0' }).props.accessibilityLabel).toContain('현재 구간');
+    expect(view.root.findByProps({ testID: 'route-step-row-leg-0' }).props.accessibilityLabel).not.toContain('도보 약 100m');
+    expect(currentRow.current).not.toBeNull();
     expect(view.root.findAllByProps({ testID: 'journey-current-step-leg-2' })).toHaveLength(0);
     act(() => view.root.findByProps({ testID: 'route-step-row-leg-2' }).props.onPress());
     expect(onStepPress).toHaveBeenCalledTimes(1);
@@ -169,6 +196,7 @@ it('timeline current step follows GPS, not map selection, and disappears on stal
     expect(view.root.findAllByProps({ testID: 'journey-current-step-leg-1' }).length).toBeGreaterThan(0);
     act(() => jest.advanceTimersByTime(15000));
     expect(view.root.findAllByProps({ testID: 'journey-current-step-leg-1' })).toHaveLength(0);
+    expect(currentRow.current).toBeNull();
     act(() => view.unmount()); expect(mockDetach).toHaveBeenCalledTimes(1); expect(jest.getTimerCount()).toBe(0);
 });
 it('disabled timeline rows still expose full names and grow without fixed line heights', async () => {
@@ -205,8 +233,8 @@ it('renders native-budgeted time proportions, provider color/name and matching G
     await act(async () => { view = TestRenderer.create(<SavedJourneyGuidanceCard input={route} scheduleId="9001" />); });
     expect(view.root.findByProps({ testID: 'saved-journey-route-leg-1' }).props.style[1]).toMatchObject({ flex: 5 / 9, backgroundColor: '#E8752B' });
     expect(view.root.findByProps({ testID: 'saved-journey-route-marker' }).props.style[1].left).toBe(`${0.6 * (2 / 9) * 100}%`);
-    const arrow = view.root.findByProps({ testID: 'saved-journey-route-marker' }).findByType(Text);
-    expect(arrow.props.maxFontSizeMultiplier).toBe(1); expect(arrow.props.accessible).toBe(false);
+    const arrow = view.root.findByProps({ testID: 'saved-journey-route-marker' }).findByProps({ name: 'navigate-outline' });
+    expect(arrow.props.accessible).toBe(false);
     const track = view.root.findAll(node => typeof node.props.accessibilityLabel === 'string' && node.props.accessibilityLabel.includes('예정 시간 비례'))[0];
     expect(track.props.accessibilityLabel).toContain('601 예정 5분'); expect(track.props.accessibilityLabel).toContain('전체 여정 완료율이 아닙니다');
     act(() => view.unmount());

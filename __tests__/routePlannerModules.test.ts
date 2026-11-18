@@ -2,6 +2,7 @@ import type { RouteAlternativeOption } from "../src/modules/map/routingService";
 import { routeSegmentModeToProgressKind } from "../src/modules/schedule/routePlanner/routePlannerRouteInfo";
 import { getTransitStopCameraCenter } from "../src/modules/schedule/routePlanner/routeMapCamera";
 import { estimateMetersPerPixel } from "../src/modules/schedule/routePlanner/routeMapCoordinate";
+import { buildRouteInfoFromAlternative } from "../src/modules/schedule/routeInfo";
 import {
     getBottomSheetSnapFromGesture,
     getBottomSheetSnapTarget,
@@ -24,6 +25,7 @@ import {
     formatDistance,
     formatDuration,
     getMapRouteChoiceLabels,
+    getRouteOverviewAccessWalk,
     getRoutePlannerQualityNotice,
     getTransitModeLabels,
     shouldShowTransitDurationOnly,
@@ -85,6 +87,32 @@ describe("route planner query params", () => {
 });
 
 describe("route planner presentation", () => {
+    it("uses the next boarding line when a walk has no destination and starts at the boarding station", () => {
+        const route = routeOption("subway-access", 33, {
+            mode: "TRANSIT",
+            transitLegs: [
+                { kind: "WALK", label: "도보", distanceMeters: 263, durationMinutes: 4 },
+                { kind: "SUBWAY", label: "수도권 4호선", startName: "서울역" },
+            ],
+        });
+        expect(getRouteOverviewAccessWalk(route, "서울역")).toEqual({
+            origin: "서울역", destination: "4호선 타는 곳", walking: "도보 263m · 4분",
+        });
+        expect(getRouteOverviewAccessWalk(route, "서울역 버스환승센터")?.destination).toBe("서울역");
+    });
+
+    it("does not substitute a boarding stop reached after a second walking leg", () => {
+        const route = routeOption("separate-access-legs", 33, {
+            mode: "TRANSIT",
+            transitLegs: [
+                { kind: "WALK", label: "도보", durationMinutes: 3 },
+                { kind: "WALK", label: "도보", durationMinutes: 4 },
+                { kind: "BUS", label: "361", startName: "환승센터" },
+            ],
+        });
+        expect(getRouteOverviewAccessWalk(route, "서울역")?.destination).toBeUndefined();
+    });
+
     it("uses the differing bus line to distinguish two 43-minute mixed routes", () => {
         const mixed = (bus: string) => routeOption(bus, 43, {
             mode: "TRANSIT",
@@ -94,12 +122,59 @@ describe("route planner presentation", () => {
                 { kind: "BUS", label: bus },
             ],
         });
-        expect(getMapRouteChoiceLabels([
+        const options = [
             mixed("간선 740"),
             { ...mixed("401"), minutes: 46 },
             mixed("간선 140"),
-        ])).toEqual(["추천 · 740 · 43분", "버스+지하철 · 46분", "140 · 43분"]);
+        ];
+        expect(getMapRouteChoiceLabels(options)).toEqual(["추천 · 740 · 43분", "401 · 46분", "140 · 43분"]);
+        expect(getMapRouteChoiceLabels(options, { compareLinesAcrossDurations: false })).toEqual([
+            "추천 · 740 · 43분", "버스+지하철 · 46분", "140 · 43분",
+        ]);
     });
+
+    it("shows the shared boarding line before the differing transfer line", () => {
+        const subway = (line: string, minutes: number) => routeOption(line, minutes, {
+            mode: "TRANSIT",
+            transitLegs: [
+                { kind: "SUBWAY", label: "수도권 4호선" },
+                { kind: "WALK", label: "환승 도보" },
+                { kind: "SUBWAY", label: `수도권 ${line}` },
+            ],
+        });
+        expect(getMapRouteChoiceLabels([subway("2호선", 33), subway("9호선", 39)])).toEqual([
+            "추천 · 4호선→2호선 · 33분", "4호선→9호선 · 39분",
+        ]);
+        expect(getMapRouteChoiceLabels([subway("2호선", 33), subway("9호선", 39)], {
+            compareLinesAcrossDurations: false,
+        })).toEqual([
+            "추천 · 4호선 + 환승 1회 · 33분", "4호선 + 환승 1회 · 39분",
+        ]);
+    });
+
+    it.each([
+        ["startName", "승차"],
+        ["endName", "하차"],
+    ] as const)("uses the differing %s when time and line match", (stopField, action) => {
+        const bus = (stop: string) => routeOption(stop, 43, {
+            mode: "TRANSIT",
+            transitLegs: [{ kind: "BUS", label: "740", [stopField]: stop }],
+        });
+        expect(getMapRouteChoiceLabels([bus("보라매역"), bus("신림역")])).toEqual([
+            `추천 · 보라매역 ${action} · 43분`, `신림역 ${action} · 43분`,
+        ]);
+    });
+
+    it("uses the displayed candidate order when no line or stop distinguishes duplicate tabs", () => {
+        const bus = (id: string) => routeOption(id, 43, {
+            mode: "TRANSIT",
+            transitLegs: [{ kind: "BUS", label: "740", startName: "보라매역", endName: "신림역" }],
+        });
+        expect(getMapRouteChoiceLabels([bus("a"), bus("b"), bus("c")])).toEqual([
+            "추천 · 43분", "버스 · 43분 · 2번 후보", "버스 · 43분 · 3번 후보",
+        ]);
+    });
+
     it("adjusts stop framing for the map SDK scale at the previous zoom", () => {
         const stop = { lat: 37.55, lng: 126.97 };
         const center = getTransitStopCameraCenter(stop, 17, 840, 122, 330, {
@@ -197,6 +272,22 @@ describe("route planner presentation", () => {
         expect(meta.departureText).toBe("오후 11:50");
         expect(meta.arrivalText).toBe("다음날 오전 12:15");
         expect(meta.combinedText).toContain("1,500원");
+    });
+
+    it("지도 상세와 일정 저장은 같은 ODsay 초 단위 추정값으로 도착시각을 계산한다", () => {
+        const departureAt = new Date("2026-11-18T11:29:05+09:00");
+        const option = routeOption("entrance-walk-estimate", 7, {
+            mode: "TRANSIT",
+            provider: "odsay",
+            providerTimeBasis: "route_estimate",
+            totalDurationSeconds: 403,
+        });
+
+        const routeInfo = buildRouteInfoFromAlternative(option, undefined, undefined, departureAt);
+        expect(routeInfo.arrivalTime).toBe("2026-11-18T02:35:48.000Z");
+        expect(buildTransitRouteTimeMeta(option, departureAt).arrivalText).toBe("오전 11:35");
+        expect(buildTransitRouteTimeMeta({ ...option, totalDurationSeconds: Infinity }, departureAt).arrivalText)
+            .toBe("오전 11:36");
     });
 
     it("운행 시각을 알 수 없는 지도 상세는 예상 소요 시간과 요금을 표시한다", () => {

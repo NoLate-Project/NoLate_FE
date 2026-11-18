@@ -86,6 +86,16 @@ final class NoLateSavedGuidanceRidePolicyTests: XCTestCase {
     }
     let parsed=Policy.vehicles(try data(),session:s,admission:a,now:1005)
     XCTAssertEqual(parsed.first?.metersPastAlighting,100);XCTAssertEqual(parsed.first?.sourceAt,1002)
+    XCTAssertFalse(parsed.first?.shapeOccurrenceAmbiguous ?? true)
+    let ambiguousDeparture=Policy.vehicles(try data(["positionScope":"AMBIGUOUS_AFTER_ALIGHTING"]),
+      session:s,admission:a,now:1005)
+    XCTAssertEqual(ambiguousDeparture.first?.metersPastAlighting,100)
+    XCTAssertTrue(ambiguousDeparture.first?.shapeOccurrenceAmbiguous == true)
+    let ambiguousSelected=Policy.vehicles(try data(["positionScope":"AMBIGUOUS_SELECTED_SEGMENT",
+      "metersPastAlighting":NSNull(),"coordinate":["latitude":37.5665,"longitude":126.978+500/scale]]),
+      session:s,admission:a,now:1005)
+    XCTAssertNil(ambiguousSelected.first?.metersPastAlighting)
+    XCTAssertTrue(ambiguousSelected.first?.shapeOccurrenceAmbiguous == true)
     for patch:[String:Any] in [["positionScope":"RIDING"],["metersPastAlighting":25],["metersPastAlighting":301],
       ["metersPastAlighting":true],["positionScope":"SELECTED_SEGMENT"],["coordinate":["latitude":37.5665,"longitude":126.978]],
       ["sourceAt":1006],["id":"bad"],["direction":"반대"]] {

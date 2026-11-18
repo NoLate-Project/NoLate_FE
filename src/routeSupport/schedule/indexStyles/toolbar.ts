@@ -164,6 +164,14 @@ export function createToolbarStyles(options: ScheduleIndexStylesOptions) {
         borderRadius: 18,
         backgroundColor: "rgba(255, 255, 255, 0.035)",
     },
+        toolbarViewModeLabelRow: {
+        width: LIQUID_TOOLBAR_SLOT_WIDTH,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 2,
+    },
+        toolbarViewModeLabel: { flexShrink: 1, fontSize: 11, fontWeight: "600" },
         toolbarDropdownBackdrop: {
         ...StyleSheet.absoluteFillObject,
         zIndex: 42,
@@ -245,12 +253,17 @@ export function createToolbarStyles(options: ScheduleIndexStylesOptions) {
         position: "relative",
         overflow: "hidden",
     },
-        viewModeIconGrid: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        paddingHorizontal: 10,
+        viewModeCopy: {
+        flex: 1,
+        minWidth: 0,
+        gap: 2,
+    },
+        viewModeTitle: {
+        fontSize: 15,
+        fontWeight: "700",
+    },
+        viewModeSubtitle: {
+        fontSize: 11,
     },
         dayViewModeMenu: {
         paddingHorizontal: 8,
@@ -258,15 +271,6 @@ export function createToolbarStyles(options: ScheduleIndexStylesOptions) {
     },
         dayViewModeIconSlot: {
         width: 24,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-        viewModeIconOption: {
-        width: 40,
-        height: 42,
-        borderRadius: 17,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: "transparent",
         alignItems: "center",
         justifyContent: "center",
     },

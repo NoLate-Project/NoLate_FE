@@ -1,0 +1,80 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "3279A0BC-5155-458B-8922-B1D68BCD6E2E.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-arrived_0_DD36BA81-AD51-42EB-9204-205F518F963B.png",
+        "timestamp" : 1794761150.884
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "D19A4780-F4C6-4216-8373-0F1BA1E324D0.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-final-walk_0_889D2AEA-A08A-48AD-BE3E-D41A7E3CD6C5.png",
+        "timestamp" : 1794761039.572
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "89D6B220-D70E-46A1-AAD8-4FA9C121CF67.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-destination-station_0_6F6513F7-9160-439E-957B-24C6721C7B4D.png",
+        "timestamp" : 1794760996.255
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "BFAFBD25-1218-41A5-82EA-62444E11CC4A.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-intermediate-station_0_48C4537A-A62A-4957-8336-62D46B30277A.png",
+        "timestamp" : 1794760936.856
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "48F8EBF6-292F-4248-8F03-5E5236F7DE10.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-map-before-movement_0_F9336EEC-B452-448A-9546-16CDFA2DC409.png",
+        "timestamp" : 1794760831.529
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "64E2B293-5913-4588-9DF9-F9DC1091F09F.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-gps-session-armed_0_BDCA861A-6366-40F5-8FED-0338753C8E6B.png",
+        "timestamp" : 1794760829.9
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "FDBEEC75-CA27-4D3F-B311-8FE465C54C58.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-preparation-in-route-sheet_0_96A2059F-B061-4720-95D4-EE5082A57555.png",
+        "timestamp" : 1794760822.986
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "A72C4571-00AE-4FE4-9D5B-306EB2862736.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-ready-on-route-map_0_AC39DD2F-61C7-48AD-9D3F-ECAA677A0D2F.png",
+        "timestamp" : 1794760820.073
+      }
+    ],
+    "testIdentifier" : "NoLateE2ETests/testIsolatedSavedRouteNavigationEntry()",
+    "testIdentifierURL" : "test://com.apple.xcode/NoLateE2E/NoLateE2ETests/NoLateE2ETests/testIsolatedSavedRouteNavigationEntry"
+  }
+]

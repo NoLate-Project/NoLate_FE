@@ -1,8 +1,11 @@
 import { formatTransferBoardingTarget, isTransitRideKind, isIntercityRideKind, transitModeLabel, intercityRideColor } from "../../modules/map/transitModes";
 import type { RouteAlternativeOption } from "../../modules/map/routingService";
 import {
-    compactTransitLineLabel as compactSharedTransitLineLabel,
-    getBusLineColor as getSharedBusLineColor,
+    formatRouteDuration,
+    formatRouteClock,
+    getTimetableWalkSeconds,
+    roundRouteArrivalMinute,
+    getTransitBusLineColor,
     getSubwayLineColor as getSharedSubwayLineColor,
 } from "../../modules/schedule/routeInfo";
 import {
@@ -10,9 +13,21 @@ import {
     getNaverLikeRouteTransferCount,
     selectNaverLikeRouteAlternatives,
 } from "../../modules/schedule/routeAlternativeRanking";
-import { formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from "../../modules/schedule/transitRouteProgress";
-import { shouldShowTransitDurationOnly, TRANSIT_ESTIMATED_DURATION_LABEL } from "../../modules/schedule/routePlanner/presentation";
+import {
+    buildTransitRouteProgressSegments,
+    formatTransitWalkingSummary,
+    getTransitLegDisplayMinutes,
+    getTransitRideLineLabel,
+    getTransitRouteWalkingMinutes,
+} from "../../modules/schedule/transitRouteProgress";
+import {
+    formatTransitClockWithDayContext,
+    shouldShowTransitDurationOnly,
+    TRANSIT_ESTIMATED_DURATION_LABEL,
+} from "../../modules/schedule/routePlanner/presentation";
 import type { TravelMode } from "../../modules/schedule/types";
+
+export { formatRouteClock };
 import {
     resolveSelectedRouteTiming,
     type SelectedRouteTimingInfo,
@@ -22,7 +37,6 @@ import {
     type RouteDropdownSummaryItem,
     type RouteDropdownSummaryKind,
     type RouteMetricChip,
-    type RouteProgressSegment,
     type RouteSelectTransitLeg,
     type TransitRouteFilter,
 } from "./RouteSelectAnimatedControls";
@@ -38,16 +52,6 @@ export function formatDistance(distanceMeters?: number): string | undefined {
 export function formatSearchResultDistance(distanceMeters?: number): string | undefined {
     const formatted = formatDistance(distanceMeters);
     return formatted ? `기준점에서 ${formatted}` : undefined;
-}
-
-// 카드에서 쓰는 오전/오후 시간 문자열을 만든다.
-/** 경로 시각을 로컬 24시간제 HH:mm 문자열로 변환한다. */
-export function formatRouteClock(date: Date): string {
-    const hours = date.getHours();
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const period = hours < 12 ? "오전" : "오후";
-    const displayHour = hours % 12 || 12;
-    return `${period} ${displayHour}:${minutes}`;
 }
 
 /** 현재 시각 기반 경로 안내에 표시할 출발 시각 문구를 만든다. */
@@ -94,7 +98,7 @@ export function resolveRouteOptionTiming(
         timeBasis: "estimated" as const,
     });
     return resolveSelectedRouteTiming({
-        targetArrivalAt: hasNextServiceDeparture ? undefined : timing.targetArrivalAt,
+        targetArrivalAt: hasNextServiceDeparture || option.odsayBusPreview ? undefined : timing.targetArrivalAt,
         routeInfo: hasNextServiceDeparture && routeInfo.timeBasis !== "provider_schedule"
             ? { ...routeInfo, departureTime: nextServiceDeparture.toISOString() }
             : routeInfo,
@@ -113,6 +117,15 @@ export function formatRouteTimeFare(
     const chunks: string[] = [];
     if (option.intercityJourney) {
         chunks.push(`선택 편 ${option.intercityJourney.service.departureAt.slice(11, 16)} 출발 · ${formatRouteClock(new Date(option.intercityJourney.arrivalAt))} 예상 도착`);
+    } else if (option.odsayTimetablePreview) {
+        const departure = new Date(option.odsayTimetablePreview.departureAt);
+        const arrival = roundRouteArrivalMinute(option.odsayTimetablePreview.arrivalAt);
+        const arrivalClock = arrival ? formatTransitClockWithDayContext(arrival, departure) : "";
+        chunks.push(`시간표 기준 · ${formatRouteClock(departure)} 출발 · ${arrivalClock} 예상 도착 (목적지)`);
+    } else if (option.odsayBusPreview) {
+        const departure = new Date(option.odsayBusPreview.departureAt);
+        const arrival = new Date(option.odsayBusPreview.arrivalAt);
+        chunks.push(`실시간 반영 · ${formatRouteClock(departure)} 출발 · ${formatTransitClockWithDayContext(arrival, departure)} 예상 도착`);
     } else if (shouldShowTransitDurationOnly(option)) {
         if (showDurationEstimate) chunks.push(TRANSIT_ESTIMATED_DURATION_LABEL);
     } else if (option.mode === "TRANSIT" && option.transitServiceState === "not_operating") {
@@ -152,110 +165,26 @@ export function sortRouteAlternativesForDisplay(
     }).slice(0, 4);
 }
 
-// 노선명을 카드 막대 아래에 들어갈 짧은 라벨로 정리한다.
-/** 버스·지하철 노선명을 카드 안에 들어가는 짧은 표기로 정규화한다. */
-export function compactLineLabel(leg: RouteSelectTransitLeg): string | undefined {
-    const sharedLabel = compactSharedTransitLineLabel(leg.lineName) ?? compactSharedTransitLineLabel(leg.label);
-    if (sharedLabel) return sharedLabel;
-
-    const raw = (leg.lineName || leg.label || "").trim();
-    if (!raw) return undefined;
-    let normalized = raw;
-    const leadingTokenRegex = /^(승차|하차|환승|승|하|환|버스|지하철)\s*/i;
-    for (let index = 0; index < 3; index += 1) {
-        const next = normalized.replace(leadingTokenRegex, "").trim();
-        if (next === normalized) break;
-        normalized = next;
-    }
-    normalized = normalized
-        .replace(/간선\s*[:：]?\s*/g, "")
-        .replace(/지선\s*[:：]?\s*/g, "")
-        .replace(/광역\s*[:：]?\s*/g, "")
-        .replace(/순환\s*[:：]?\s*/g, "")
-        .replace(/마을\s*[:：]?\s*/g, "")
-        .replace(/공항\s*[:：]?\s*/g, "")
-        .replace(/버스\s*/g, "")
-        .replace(/수도권\s*/g, "")
-        .replace(/노선$/u, "")
-        .trim();
-
-    const lineMatch = normalized.match(/\d+호선/);
-    if (lineMatch?.[0]) return lineMatch[0];
-    const first = normalized.split(",")[0]?.trim() ?? normalized;
-    if (!first) return undefined;
-    return first.length > 10 ? `${first.slice(0, 10)}…` : first;
-}
-
 // 지하철 노선명을 기준으로 실제 노선색에 가까운 색을 찾는다.
 /** 지하철 노선명에 대응하는 대표 색상을 반환하고 알 수 없는 노선에는 기본색을 사용한다. */
-export function getSubwayLineColor(lineName?: string): string {
-    return getSharedSubwayLineColor(lineName);
+export function getSubwayLineColor(lineName?: string, lineColor?: string): string {
+    return getSharedSubwayLineColor(lineName, lineColor);
 }
 
 // 대중교통 구간의 노선색을 결정한다.
 /** 대중교통 구간 종류와 노선 정보를 바탕으로 진행 막대에 사용할 색상을 선택한다. */
 export function getTransitLegColor(leg: RouteSelectTransitLeg): string {
-    const lineLabel = compactLineLabel(leg) ?? leg.lineName ?? leg.label;
-    if (leg.kind === "BUS") return getSharedBusLineColor(lineLabel, leg.lineColor);
-    if (leg.kind === "SUBWAY") return getSubwayLineColor(lineLabel);
+    if (leg.kind === "BUS") return getTransitBusLineColor(leg);
+    if (leg.kind === "SUBWAY") return getSubwayLineColor(getTransitRideLineLabel(leg), leg.lineColor);
     const intercityColor = intercityRideColor(leg.kind);
     if (intercityColor) return intercityColor;
     if (leg.kind === "WALK") return ROUTE_SEGMENT_FALLBACK_COLORS.walk;
     return ROUTE_SEGMENT_FALLBACK_COLORS.etc;
 }
 
-// 구간별 소요 시간을 분 단위로 정규화한다.
-/** 구간의 초·분 단위 정보를 정규화해 최소 1분 단위 화면 값으로 계산한다. */
-export function getLegDurationMinutes(leg: RouteSelectTransitLeg): number {
-    if (typeof leg.durationMinutes === "number" && Number.isFinite(leg.durationMinutes)) {
-        return Math.max(1, Math.round(leg.durationMinutes));
-    }
-    if (typeof leg.distanceMeters === "number" && leg.distanceMeters > 0) {
-        const metersPerMinute = leg.kind === "WALK" ? 67 : 350;
-        return Math.max(1, Math.round(leg.distanceMeters / metersPerMinute));
-    }
-    return 1;
-}
-
-// 경로 후보를 공용 구간 막대 데이터로 변환한다.
-/** 도보·승차·환승 구간을 진행 막대가 소비할 비율·색상·라벨 모델로 변환한다. */
-export function buildRouteProgressSegments(option: RouteAlternativeOption): RouteProgressSegment[] {
-    const legs = option.transitLegs ?? [];
-    if (!legs.length) return [];
-
-    return legs
-        .map((leg, index) => {
-            const minutes = getLegDurationMinutes(leg);
-            const prevLeg = legs[index - 1];
-            const nextLeg = legs[index + 1];
-            const isTransferWalk = leg.kind === "WALK" &&
-                index > 0 &&
-                index < legs.length - 1 &&
-                isRideLegKind(prevLeg?.kind) &&
-                isRideLegKind(nextLeg?.kind);
-            const lineLabel = leg.kind === "WALK" || leg.journeyPhase === "BUFFER" ? undefined : compactLineLabel(leg);
-            const segmentKind: RouteProgressSegment["kind"] = isTransferWalk || leg.journeyPhase === "BUFFER" ? "TRANSFER" : leg.kind;
-            const color = isTransferWalk ? ROUTE_SEGMENT_FALLBACK_COLORS.etc : getTransitLegColor(leg);
-            return {
-                key: `${segmentKind}:${lineLabel ?? leg.label}:${index}`,
-                label: `${minutes}분`,
-                lineLabel,
-                minutes,
-                color,
-                kind: segmentKind,
-                flex: Math.max(0.8, minutes),
-                isRide: isRideLegKind(segmentKind),
-            };
-        })
-        .filter((segment) => segment.minutes > 0);
-}
-
-/** 대중교통 구간 종류를 한국어 사용자 표시명으로 변환한다. */
-export function getTransitKindLabel(kind: RouteSelectTransitLeg["kind"]): string {
-    if (kind === "SUBWAY") return "지하철";
-    if (kind === "BUS") return "버스";
-    if (kind === "WALK") return "도보";
-    return transitModeLabel(kind);
+/** 후보와 저장한 일정에 같은 구간 요약을 사용한다. */
+export function buildRouteProgressSegments(option: RouteAlternativeOption) {
+    return buildTransitRouteProgressSegments(option.transitLegs);
 }
 
 /** 구간이 실제 차량 탑승 구간인지 판별해 도보·환승 표현과 구분한다. */
@@ -274,7 +203,7 @@ export function buildRouteMetricChips(option: RouteAlternativeOption): RouteMetr
 
     if (option.mode === "TRANSIT") {
         chips.push({ key: "transfer", label: `환승 ${getRouteTransferCount(option)}회` });
-        const walk = formatTransitWalkingSummary(getTransitRouteWalkingMinutes(option.transitLegs ?? []));
+        const walk = formatTransitWalkingSummary(getTransitRouteWalkingMinutes(option.transitLegs ?? [], option.odsayTimetablePreview));
         if (walk) chips.push({ key: "walk", label: walk });
     } else {
         const distance = formatDistance(option.distanceMeters);
@@ -332,7 +261,7 @@ export function buildRouteBoardingSummary(
     if (!rideLegs.length) return undefined;
 
     return rideLegs.map((leg, index) => {
-        const lineLabel = compactLineLabel(leg) ?? getTransitKindLabel(leg.kind);
+        const lineLabel = getTransitRideLineLabel(leg);
         const startName = formatRouteFlowStopDisplayName(leg.startName, leg.kind) ??
             formatRouteFlowPointName(originName);
         const action = index === 0 ? "승차" : "환승";
@@ -409,9 +338,26 @@ export function buildRouteDropdownSummaryItems(
 
     const originFallback = formatDropdownPlaceName(originName) ?? "출발지";
     const destinationFallback = formatDropdownPlaceName(destinationName) ?? "도착지";
+    const bus = option.odsayBusPreview;
+    const busIndex = bus ? legs.findIndex(leg => leg.kind === "BUS") : -1;
+    const lastBusIndex = bus?.transfer ? legs.findIndex((leg, index) => index > busIndex && leg.kind === "BUS") : busIndex;
+    let rideIndex = 0;
 
-    return legs.map((leg, index) => {
-        const minutes = getLegDurationMinutes(leg);
+    const items = legs.map((leg, index): RouteDropdownSummaryItem => {
+        const ridePosition = isRideLegKind(leg.kind) ? rideIndex++ : -1;
+        const busRide = bus && (index === busIndex
+            ? { boardingAt: bus.boardingAt, arrivalAt: bus.transfer?.firstAlightingAt ?? bus.alightingAt }
+            : bus.transfer && index === lastBusIndex
+                ? { boardingAt: bus.transfer.secondBoardingAt, arrivalAt: bus.alightingAt } : undefined);
+        const ride = busRide || option.odsayTimetablePreview?.rides?.[ridePosition];
+        const walkingSeconds = bus && index === 0 && busIndex === 1 ? bus.accessSeconds
+            : bus && index === legs.length - 1 && lastBusIndex === legs.length - 2 ? bus.egressSeconds
+                : bus?.transfer && lastBusIndex === busIndex + 2 && index === busIndex + 1
+                    ? bus.transfer.walkingSeconds : getTimetableWalkSeconds(legs, index, rideIndex, option.odsayTimetablePreview);
+        const minutes = ride ? Math.ceil((Date.parse(ride.arrivalAt) - Date.parse(ride.boardingAt)) / 60_000)
+            : walkingSeconds !== undefined ? Math.ceil(walkingSeconds / 60) : getTransitLegDisplayMinutes(leg);
+        const duration = minutes === undefined ? undefined : formatRouteDuration(minutes);
+        const timeSuffix = duration ? ` ${duration}` : "";
         const prevLeg = legs[index - 1];
         const nextLeg = legs[index + 1];
         const startName = formatDropdownPlaceName(leg.startName, leg.kind);
@@ -419,15 +365,29 @@ export function buildRouteDropdownSummaryItems(
         const key = `${option.id}:${leg.kind}:${leg.label}:${index}`;
 
         if (leg.journeyPhase === "BUFFER") {
-            return { key, kind: "TRANSFER" as const, title: `${leg.label} · ${minutes}분`, subtitle: "역·터미널 여유시간" };
+            const preparation = option.intercityJourney?.boardingBufferMinutes;
+            const onlyPreparation = nextLeg?.intercityService && preparation !== undefined && (
+                leg.durationSeconds === undefined ? leg.durationMinutes === preparation : leg.durationSeconds === preparation * 60
+            );
+            const label = onlyPreparation ? "탑승 준비·대기" : leg.label;
+            return { key, kind: "WAIT", title: [label, duration].filter(Boolean).join(" · "), subtitle: "역·터미널 여유시간" };
         }
         if (leg.kind === "WALK") {
             if (isRideLegKind(prevLeg?.kind) && nextLeg && isTransitRideKind(nextLeg.kind)) {
+                const transfer = option.odsayTimetablePreview?.transferTimings?.[rideIndex - 1];
+                const busTransfer = bus?.transfer;
+                const waiting = busTransfer && index === busIndex + 1 ? Math.ceil(
+                    (Date.parse(busTransfer.secondBoardingAt) - Date.parse(busTransfer.firstAlightingAt) -
+                        busTransfer.walkingSeconds * 1000) / 60_000,
+                ) : transfer ? Math.ceil(
+                    (Date.parse(transfer.boardingAt) - Date.parse(transfer.previousArrivalAt) - transfer.walkingSeconds * 1000) / 60_000,
+                ) : 0;
                 return {
                     key,
                     kind: "TRANSFER" as const,
-                    title: `환승 도보 ${minutes}분`,
-                    subtitle: formatTransferBoardingTarget(nextLeg.kind, compactLineLabel(nextLeg)),
+                    title: duration ? `환승 도보 ${duration}` : "환승 도보",
+                    subtitle: [formatTransferBoardingTarget(nextLeg.kind, getTransitRideLineLabel(nextLeg)),
+                        waiting > 0 ? `예상 대기 ${formatRouteDuration(waiting)}` : undefined].filter(Boolean).join(" · "),
                 };
             }
 
@@ -437,7 +397,7 @@ export function buildRouteDropdownSummaryItems(
             return {
                 key,
                 kind: "WALK" as const,
-                title: `도보 ${minutes}분`,
+                title: `도보${timeSuffix}`,
                 subtitle: index === legs.length - 1
                     ? "도착지까지"
                     : `${nextStopName ?? "다음 지점"}까지`,
@@ -445,23 +405,34 @@ export function buildRouteDropdownSummaryItems(
         }
 
         if (isRideLegKind(leg.kind)) {
-            const lineLabel = compactLineLabel(leg) ?? getTransitKindLabel(leg.kind);
+            const lineLabel = getTransitRideLineLabel(leg);
             const placeName = startName ?? (index === 0 ? originFallback : undefined);
             const stopCountText = formatRideLegStopCount(leg);
+            const modeLabel = transitModeLabel(leg.kind);
+            const prefix = isIntercityRideKind(leg.kind) && lineLabel !== modeLabel ? `${modeLabel} · ` : "";
+            const rideClock = ride
+                ? `${formatCurrentRouteNoticeTime(new Date(ride.boardingAt))} 승차 → ${formatCurrentRouteNoticeTime(new Date(ride.arrivalAt))} ${busRide ? "하차 예측" : "하차 예정"}`
+                : undefined;
             return {
                 key,
                 kind: leg.kind,
                 color: getTransitLegColor(leg),
-                title: `${isIntercityRideKind(leg.kind) ? transitModeLabel(leg.kind) + " · " : ""}${lineLabel} ${minutes}분`,
-                subtitle: [placeName, stopCountText, leg.intercityService && `${leg.intercityService.departureAt.slice(11, 16)} → ${leg.intercityService.arrivalAt.slice(11, 16)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · "),
+                title: `${prefix}${lineLabel}${timeSuffix}`,
+                subtitle: [placeName, stopCountText, rideClock, leg.intercityService && `${leg.intercityService.departureAt.slice(11, 16)} → ${leg.intercityService.arrivalAt.slice(11, 16)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · "),
             };
         }
 
         return {
             key,
             kind: "ETC" as const,
-            title: `이동 ${minutes}분`,
+            title: `이동${timeSuffix}`,
             subtitle: startName ?? endName,
         };
     });
+    const entrance = option.odsayTimetablePreview?.entranceWalk;
+    if (entrance && legs[0]?.kind === "SUBWAY") {
+        items.unshift({ key: `${option.id}:entrance`, kind: "WALK",
+            title: `역 출구까지 도보 ${formatRouteDuration(Math.ceil(entrance.seconds / 60))}` });
+    }
+    return items;
 }

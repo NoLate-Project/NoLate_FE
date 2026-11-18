@@ -297,6 +297,31 @@ private final class ShareAPIClient {
   }
 }
 
+enum ShareTicketColors {
+  static let background = themed(light: 0xFFFFFF, dark: 0x17202D)
+  static let text = themed(light: 0x172131, dark: 0xEDF4FF)
+  static let detail = themed(light: 0x526174, dark: 0xB5C2D6)
+  static let surface = themed(light: 0xF2F5F9, dark: 0x222F42)
+  static let separator = themed(light: 0xE1E7EF, dark: 0x3B4B62)
+  static let accent = themed(light: 0x205DD1, dark: 0xA5C9FF)
+  static let action = color(0x205DD1)
+  static let loading = themed(light: 0xEAF2FF, dark: 0x293F60)
+  static let success = themed(light: 0x14754C, dark: 0xA2E6BF)
+  static let successSurface = themed(light: 0xE5F6ED, dark: 0x1E3E35)
+  static let warning = themed(light: 0x9B4C16, dark: 0xFFC291)
+  static let warningSurface = themed(light: 0xFFF0E3, dark: 0x463127)
+  static let error = themed(light: 0xAB2E32, dark: 0xFFB9BC)
+
+  private static func themed(light: UInt32, dark: UInt32) -> UIColor {
+    UIColor { color($0.userInterfaceStyle == .dark ? dark : light) }
+  }
+
+  private static func color(_ value: UInt32) -> UIColor {
+    UIColor(red: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255,
+            blue: CGFloat(value & 255) / 255, alpha: 1)
+  }
+}
+
 final class ShareViewController: UIViewController {
   private static let brandColor = UIColor(
     red: 36.0 / 255.0,
@@ -312,13 +337,19 @@ final class ShareViewController: UIViewController {
   private let messageLabel = UILabel()
   private let savedNameLabel = UILabel()
   private let primaryButton = UIButton(type: .system)
+  private let secondaryButton = UIButton(type: .system)
+  private let statusActions = UIStackView()
   private let closeButton = UIButton(type: .system)
+  private let statusScroll = UIScrollView()
   private var sharedText = ""
   private var saveTask: Task<Void, Never>?
   private enum PrimaryAction { case openApp, finish }
   private var primaryAction: PrimaryAction = .finish
-  private var showingSaving = true
+  private enum StatusPhase { case reading, reviewing, saving, finished }
+  private var statusPhase: StatusPhase = .reading
   private var playedSavingMotion = false
+  private var savingMotionReady = false
+  private var usesStandardLayout: Bool { !traitCollection.preferredContentSizeCategory.isAccessibilityCategory }
 
   private static let secondaryContent = UIColor { traits in
     traits.userInterfaceStyle == .dark
@@ -375,48 +406,70 @@ final class ShareViewController: UIViewController {
   deinit { NotificationCenter.default.removeObserver(self) }
 
   @objc private func updateSavingMotion() {
-    iconContainer.layer.removeAnimation(forKey: "nolate.saving.depth")
-    guard showingSaving, !playedSavingMotion, view.window != nil else { return }
+    if UIAccessibility.isReduceMotionEnabled {
+      iconContainer.layer.removeAnimation(forKey: "nolate.saving.depth")
+    }
+    guard statusPhase == .saving, savingMotionReady, !playedSavingMotion, view.window != nil else { return }
     playedSavingMotion = true
-    guard !UIAccessibility.isReduceMotionEnabled else { return }
     playStatusMotion(duration: 0.36, saving: true)
   }
 
   private func playStatusMotion(duration: CFTimeInterval, saving: Bool) {
     guard !UIAccessibility.isReduceMotionEnabled else { return }
-    func pose(_ scale: CGFloat, _ xAngle: CGFloat, _ yAngle: CGFloat) -> CATransform3D {
+    let standard = usesStandardLayout
+    func pose(_ scale: CGFloat, _ xAngle: CGFloat, _ yAngle: CGFloat, _ depth: CGFloat) -> CATransform3D {
       var transform = CATransform3DIdentity
       transform.m34 = -1 / 650
-      transform = CATransform3DScale(transform, scale, scale, 1)
+      if !standard { transform = CATransform3DScale(transform, scale, scale, 1) }
       transform = CATransform3DRotate(transform, xAngle, 1, 0, 0)
-      return CATransform3DRotate(transform, yAngle, 0, 1, 0)
+      transform = CATransform3DRotate(transform, yAngle, 0, 1, 0)
+      transform = CATransform3DTranslate(transform, 0, 0, depth)
+      return standard ? CATransform3DScale(transform, scale, scale, 1) : transform
     }
     let depth = CAKeyframeAnimation(keyPath: "transform")
-    depth.values = [NSValue(caTransform3D: pose(0.92, saving ? 0.35 : 0, saving ? -0.42 : 0)),
-                    NSValue(caTransform3D: pose(1.02, saving ? -0.07 : 0, saving ? 0.09 : 0)),
+    depth.values = [NSValue(caTransform3D: pose(0.92, saving ? 0.35 : 0, saving ? -0.42 : 0, standard && saving ? -16 : 0)),
+                    NSValue(caTransform3D: pose(standard && !saving ? 1.03 : 1.02, saving ? -0.07 : 0, saving ? 0.09 : 0,
+                                                standard && saving ? 3 : 0)),
                     NSValue(caTransform3D: CATransform3DIdentity)]
     depth.keyTimes = [0, 0.72, 1]
     depth.duration = duration
-    depth.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
-    iconContainer.layer.add(depth, forKey: "nolate.saving.depth")
+    let easing = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+    if standard {
+      let fade = CAKeyframeAnimation(keyPath: "opacity")
+      fade.values = [saving ? 0.65 : 0.6, 1, 1]
+      fade.keyTimes = depth.keyTimes
+      fade.duration = duration
+      let motion = CAAnimationGroup()
+      motion.animations = [depth, fade]
+      motion.duration = duration
+      motion.timingFunction = easing
+      iconContainer.layer.add(motion, forKey: "nolate.saving.depth")
+    } else {
+      depth.timingFunction = easing
+      iconContainer.layer.add(depth, forKey: "nolate.saving.depth")
+    }
   }
 
   private func stopSavingMotion() {
-    showingSaving = false
+    statusPhase = .finished
     iconContainer.layer.removeAnimation(forKey: "nolate.saving.depth")
     iconContainer.layer.shadowOpacity = 0
     iconView.contentMode = .center
   }
 
   private func configureUI() {
+    let standard = usesStandardLayout
+    let sceneSize: CGFloat = standard ? 82 : 88
+    let logoSize: CGFloat = standard ? 74 : sceneSize
     view.backgroundColor = .systemGroupedBackground
     view.tintColor = Self.brandColor
 
     iconView.image = UIImage(named: "icon")
     iconView.tintColor = Self.brandColor
-    iconView.backgroundColor = Self.brandColor.withAlphaComponent(0.12)
+    iconContainer.backgroundColor = standard ? ShareTicketColors.loading : Self.brandColor.withAlphaComponent(0.12)
+    iconContainer.layer.cornerRadius = 22
     iconView.contentMode = .scaleAspectFill
-    iconView.layer.cornerRadius = 22
+    iconView.layer.cornerRadius = standard ? 18 : 22
     iconView.clipsToBounds = true
     iconView.translatesAutoresizingMaskIntoConstraints = false
     iconContainer.addSubview(iconView)
@@ -424,29 +477,32 @@ final class ShareViewController: UIViewController {
     iconContainer.layer.shadowOffset = CGSize(width: 0, height: 6)
     iconContainer.layer.shadowRadius = 12
     NSLayoutConstraint.activate([
-      iconContainer.widthAnchor.constraint(equalToConstant: 88),
-      iconContainer.heightAnchor.constraint(equalToConstant: 88),
-      iconView.leadingAnchor.constraint(equalTo: iconContainer.leadingAnchor),
-      iconView.trailingAnchor.constraint(equalTo: iconContainer.trailingAnchor),
-      iconView.topAnchor.constraint(equalTo: iconContainer.topAnchor),
-      iconView.bottomAnchor.constraint(equalTo: iconContainer.bottomAnchor),
+      iconContainer.widthAnchor.constraint(equalToConstant: sceneSize),
+      iconContainer.heightAnchor.constraint(equalToConstant: sceneSize),
+      iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+      iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor),
+      iconView.widthAnchor.constraint(equalToConstant: logoSize),
+      iconView.heightAnchor.constraint(equalToConstant: logoSize),
     ])
 
-    titleLabel.text = "일정을 저장하고 있어요"
-    titleLabel.font = UIFontMetrics(forTextStyle: .title2).scaledFont(for: .systemFont(ofSize: 22, weight: .semibold))
+    titleLabel.text = "공유한 내용을 확인하고 있어요"
+    titleLabel.font = UIFontMetrics(forTextStyle: .title2).scaledFont(for: .systemFont(ofSize: standard ? 24 : 22, weight: standard ? .bold : .semibold))
+    titleLabel.textColor = standard ? ShareTicketColors.text : .label
     titleLabel.adjustsFontForContentSizeCategory = true
     titleLabel.textAlignment = .center
     titleLabel.numberOfLines = 0
+    titleLabel.accessibilityTraits.insert(.header)
 
-    messageLabel.text = "공유한 내용을 정리하는 중이에요.\n이동 경로는 앱에서 나중에 설정할 수 있어요."
-    messageLabel.font = .preferredFont(forTextStyle: .body)
+    messageLabel.isHidden = true
+    messageLabel.font = .preferredFont(forTextStyle: standard ? .subheadline : .body)
     messageLabel.adjustsFontForContentSizeCategory = true
-    messageLabel.textColor = Self.secondaryContent
+    messageLabel.textColor = standard ? ShareTicketColors.detail : Self.secondaryContent
     messageLabel.textAlignment = .center
     messageLabel.numberOfLines = 0
 
     let nameFont = UIFont.preferredFont(forTextStyle: .headline)
     savedNameLabel.font = nameFont
+    savedNameLabel.textColor = standard ? ShareTicketColors.text : .label
     savedNameLabel.adjustsFontForContentSizeCategory = true
     savedNameLabel.textAlignment = .center
     savedNameLabel.numberOfLines = 0
@@ -454,13 +510,34 @@ final class ShareViewController: UIViewController {
 
     var primaryConfiguration = UIButton.Configuration.filled()
     primaryConfiguration.title = "NoLate 열기"
-    primaryConfiguration.baseBackgroundColor = Self.brandColor
-    primaryConfiguration.cornerStyle = .large
+    primaryConfiguration.baseBackgroundColor = standard ? ShareTicketColors.action : Self.brandColor
+    primaryConfiguration.baseForegroundColor = .white
+    primaryConfiguration.cornerStyle = standard ? .fixed : .large
+    if standard { primaryConfiguration.background.cornerRadius = 12 }
     primaryConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 15, leading: 24, bottom: 15, trailing: 24)
+    primaryConfiguration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+      var attributes = attributes
+      attributes.font = .preferredFont(forTextStyle: .headline)
+      return attributes
+    }
     primaryButton.configuration = primaryConfiguration
-    primaryButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
     primaryButton.addTarget(self, action: #selector(performPrimaryAction), for: .touchUpInside)
     primaryButton.isHidden = true
+
+    var secondaryConfiguration = UIButton.Configuration.plain()
+    secondaryConfiguration.title = "닫기"
+    secondaryConfiguration.baseForegroundColor = Self.secondaryContent
+    secondaryButton.configuration = secondaryConfiguration
+    secondaryButton.addTarget(self, action: #selector(closeStatus), for: .touchUpInside)
+    secondaryButton.isHidden = true
+
+    statusScroll.translatesAutoresizingMaskIntoConstraints = false
+    statusScroll.contentInsetAdjustmentBehavior = .never
+    statusScroll.accessibilityIdentifier = "share-status-scroll"
+    let content = UIView()
+    content.translatesAutoresizingMaskIntoConstraints = false
+    statusScroll.addSubview(content)
+    view.addSubview(statusScroll)
 
     var closeConfiguration = UIButton.Configuration.plain()
     // Ionicons close-circle-outline, from the same font used by the app.
@@ -472,26 +549,58 @@ final class ShareViewController: UIViewController {
     closeButton.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(closeButton)
 
-    let stack = UIStackView(arrangedSubviews: [iconContainer, titleLabel, savedNameLabel, messageLabel, primaryButton])
+    statusActions.addArrangedSubview(primaryButton)
+    statusActions.addArrangedSubview(secondaryButton)
+    statusActions.axis = .vertical
+    statusActions.spacing = 4
+    statusActions.isHidden = true
+    let stack = UIStackView(arrangedSubviews: [iconContainer, titleLabel, savedNameLabel, messageLabel, statusActions])
     stack.axis = .vertical
     stack.alignment = .center
-    stack.spacing = 18
-    stack.setCustomSpacing(24, after: iconContainer)
-    stack.setCustomSpacing(28, after: messageLabel)
+    stack.spacing = standard ? 12 : 18
+    stack.setCustomSpacing(standard ? 18 : 24, after: iconContainer)
+    stack.setCustomSpacing(standard ? 16 : 28, after: messageLabel)
     stack.translatesAutoresizingMaskIntoConstraints = false
-    view.addSubview(stack)
+    content.addSubview(stack)
+
+    let fitViewport = content.heightAnchor.constraint(equalTo: statusScroll.frameLayoutGuide.heightAnchor)
+    fitViewport.priority = .defaultLow
+    let actionHeights = [(primaryButton, CGFloat(standard ? 46 : 54)), (secondaryButton, CGFloat(44))].map { button, height in
+      let constraint = button.heightAnchor.constraint(greaterThanOrEqualToConstant: height)
+      constraint.priority = .defaultHigh
+      return constraint
+    }
+    let safeArea = view.safeAreaLayoutGuide
+    // Reserve room for the fixed close button. The result stays centered when it fits.
+    let statusPadding: CGFloat = 68
+    let actionWidth = standard
+      ? statusActions.widthAnchor.constraint(equalToConstant: 270)
+      : statusActions.widthAnchor.constraint(equalTo: stack.widthAnchor)
+    if standard { actionWidth.priority = .defaultHigh }
 
     NSLayoutConstraint.activate([
-      closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 14),
+      statusScroll.topAnchor.constraint(equalTo: safeArea.topAnchor),
+      statusScroll.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
+      statusScroll.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
+      statusScroll.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
+      content.topAnchor.constraint(equalTo: statusScroll.contentLayoutGuide.topAnchor),
+      content.bottomAnchor.constraint(equalTo: statusScroll.contentLayoutGuide.bottomAnchor),
+      content.leadingAnchor.constraint(equalTo: statusScroll.contentLayoutGuide.leadingAnchor),
+      content.trailingAnchor.constraint(equalTo: statusScroll.contentLayoutGuide.trailingAnchor),
+      content.widthAnchor.constraint(equalTo: statusScroll.frameLayoutGuide.widthAnchor),
+      fitViewport,
+      closeButton.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 14),
       closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
       closeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
       closeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-      stack.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
-      stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28),
-      stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -28),
-      primaryButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
-      primaryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 54),
-    ])
+      stack.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+      stack.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: statusPadding),
+      stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -statusPadding),
+      stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+      stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+      statusActions.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
+      actionWidth,
+    ] + actionHeights)
   }
 
   @MainActor
@@ -561,6 +670,7 @@ final class ShareViewController: UIViewController {
         "routeSetupRequired": true,
       ])
       try Task.checkCancellation()
+      beginSaving()
       let _: SavedSchedule = try await api.post("api/schedules", json: payload)
       try Task.checkCancellation()
       showSaved(title: scheduleTitle)
@@ -585,36 +695,72 @@ final class ShareViewController: UIViewController {
   }
 
   @MainActor
+  private func beginSaving() {
+    prepareSaving()
+    revealSaving()
+  }
+
+  private func prepareSaving() {
+    statusPhase = .saving
+    savingMotionReady = false
+    if usesStandardLayout { view.backgroundColor = ShareTicketColors.background }
+    titleLabel.text = "일정을 저장하고 있어요"
+    messageLabel.text = "완료되면 저장한 일정을 보여드릴게요."
+    messageLabel.isHidden = false
+    playedSavingMotion = false
+  }
+
+  private func revealSaving() {
+    savingMotionReady = true
+    updateSavingMotion()
+    showStatusHeading()
+  }
+
+  @MainActor
   private func showSaved(title: String) {
     stopSavingMotion()
+    view.backgroundColor = usesStandardLayout ? ShareTicketColors.background : .systemBackground
+    closeButton.isHidden = true
+    secondaryButton.isHidden = true
     // Ionicons checkmark-circle-outline.
-    iconView.image = Self.outlineIcon(61983, size: 34)
-    iconView.tintColor = UIColor { traits in
+    iconView.image = Self.outlineIcon(61983, size: usesStandardLayout ? 46 : 34)
+    iconView.tintColor = usesStandardLayout ? ShareTicketColors.success : UIColor { traits in
       traits.userInterfaceStyle == .dark ? UIColor(red: 69 / 255, green: 212 / 255, blue: 131 / 255, alpha: 1) : UIColor(red: 23 / 255, green: 134 / 255, blue: 73 / 255, alpha: 1)
     }
-    iconView.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.12)
+    iconContainer.backgroundColor = usesStandardLayout ? ShareTicketColors.successSurface : UIColor.systemGreen.withAlphaComponent(0.12)
     titleLabel.text = "일정을 저장했어요"
     savedNameLabel.text = title
     savedNameLabel.isHidden = false
     messageLabel.text = "이동 경로와 알림은 NoLate에서 설정할 수 있어요."
+    messageLabel.isHidden = false
     setPrimaryAction(.finish, title: "완료")
     playStatusMotion(duration: 0.18, saving: false)
-    UIAccessibility.post(notification: .announcement, argument: "일정을 저장했어요. \(title)")
+    showStatusHeading()
   }
 
   @MainActor
-  private func showFailure(title: String, message: String, canOpenApp: Bool = false) {
+  private func showFailure(title: String, message: String, canOpenApp: Bool = false, appOpenFailed: Bool = false) {
     stopSavingMotion()
-    // Ionicons alert-circle-outline.
-    iconView.image = Self.outlineIcon(61716, size: 34)
-    iconView.tintColor = UIColor { traits in
+    closeButton.isHidden = true
+    secondaryButton.isHidden = !canOpenApp
+    if appOpenFailed || usesStandardLayout { view.backgroundColor = usesStandardLayout ? ShareTicketColors.background : .systemBackground }
+    // Ionicons close-outline and alert-circle-outline.
+    iconView.image = Self.outlineIcon(usesStandardLayout || appOpenFailed ? 62030 : 61716, size: usesStandardLayout ? 46 : 34)
+    iconView.tintColor = usesStandardLayout ? ShareTicketColors.warning : UIColor { traits in
       traits.userInterfaceStyle == .dark ? UIColor(red: 255 / 255, green: 181 / 255, blue: 101 / 255, alpha: 1) : UIColor(red: 143 / 255, green: 74 / 255, blue: 0, alpha: 1)
     }
-    iconView.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.12)
+    iconContainer.backgroundColor = usesStandardLayout ? ShareTicketColors.warningSurface : UIColor.systemOrange.withAlphaComponent(0.12)
     titleLabel.text = title
     messageLabel.text = message
+    messageLabel.isHidden = false
     setPrimaryAction(canOpenApp ? .openApp : .finish, title: canOpenApp ? "NoLate 열기" : "닫기")
-    UIAccessibility.post(notification: .announcement, argument: "\(title). \(message)")
+    showStatusHeading()
+  }
+
+  private func showStatusHeading() {
+    view.layoutIfNeeded()
+    statusScroll.setContentOffset(.zero, animated: false)
+    UIAccessibility.post(notification: .screenChanged, argument: titleLabel)
   }
 
   @MainActor
@@ -624,19 +770,21 @@ final class ShareViewController: UIViewController {
       throw ShareAPIError.server("승차권 정보는 개인 카테고리에 저장합니다. 앱에서 개인 카테고리를 먼저 만들어 주세요.")
     }
     try Task.checkCancellation()
-    titleLabel.text = "승차권 내용을 확인해 주세요"
+    statusPhase = .reviewing
+    let preparesSavingDuringDismissal = usesStandardLayout
     let payload: [String: Any]? = await withCheckedContinuation { continuation in
-      let review = TrainTicketReviewController(draft: TrainTicketDraft.parse(text), source: source, categoryName: category.title) {
+      let review = TrainTicketReviewController(
+        draft: TrainTicketDraft.parse(text), source: source, categoryName: category.title,
+        willSave: preparesSavingDuringDismissal ? { [weak self] in self?.prepareSaving() } : nil
+      ) {
         continuation.resume(returning: $0)
       }
-      present(review, animated: true)
+      present(review, animated: !UIAccessibility.isReduceMotionEnabled)
     }
     try Task.checkCancellation()
     guard let ticket = payload else { extensionContext?.completeRequest(returningItems: nil); return }
-    titleLabel.text = "일정을 저장하고 있어요"
-    messageLabel.text = "완료되면 저장한 일정을 보여드릴게요."
-    playedSavingMotion = false
-    updateSavingMotion()
+    if preparesSavingDuringDismissal { revealSaving() }
+    else { beginSaving() }
     let departure = ticket["departureName"] as? String ?? ""
     let arrival = ticket["arrivalName"] as? String ?? ""
     let arrivalAt = ticket["arrivalAt"] as? String ?? ""
@@ -774,6 +922,7 @@ final class ShareViewController: UIViewController {
     primaryButton.configuration = configuration
     primaryButton.isEnabled = true
     primaryButton.isHidden = false
+    statusActions.isHidden = false
   }
 
   @objc private func performPrimaryAction() {
@@ -797,7 +946,8 @@ final class ShareViewController: UIViewController {
         } else {
           self.showFailure(
             title: "NoLate를 열 수 없어요",
-            message: "이 창을 닫고 홈 화면에서 NoLate를 직접 열어 주세요."
+            message: "이 창을 닫고 홈 화면에서 NoLate를 직접 열어 주세요.",
+            appOpenFailed: true
           )
         }
       }
@@ -805,7 +955,7 @@ final class ShareViewController: UIViewController {
   }
 
   @objc private func closeStatus() {
-    if !showingSaving {
+    if statusPhase == .finished {
       extensionContext?.completeRequest(returningItems: nil)
       return
     }

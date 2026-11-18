@@ -23,11 +23,40 @@ export function createVoiceStyles(options: QuickScheduleModalStylesOptions) {
         width: "100%",
         alignItems: "center",
     },
+        voicePermissionPanel: {
+            minHeight: 0,
+        },
+        voicePermissionNotice: {
+            gap: 4,
+        },
+        voicePermissionCopy: {
+            textAlign: "left",
+        },
+        voiceSettingsButton: {
+            alignSelf: "flex-start",
+            minHeight: 44,
+            justifyContent: "center",
+            paddingHorizontal: 16,
+            marginTop: 4,
+            borderRadius: 12,
+            borderWidth: StyleSheet.hairlineWidth,
+        },
+        voiceSettingsText: {
+            color: BLUE,
+            fontSize: 13,
+            fontWeight: "700",
+        },
         voiceOrbWrap: {
-        width: 150,
-        height: 146,
+        width: 90,
+        height: 83,
         alignItems: "center",
         justifyContent: "center",
+    },
+        voiceSpectrumMotion: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: "center",
+        justifyContent: "center",
+        transform: [{ scale: 0.69 }],
     },
         voiceSpectrum: {
         position: "absolute",
@@ -75,9 +104,9 @@ export function createVoiceStyles(options: QuickScheduleModalStylesOptions) {
         shadowRadius: 4,
     },
         voiceOrb: {
-        width: 62,
-        height: 62,
-        borderRadius: 31,
+        width: 58,
+        height: 58,
+        borderRadius: 29,
         borderWidth: 1,
         alignItems: "center",
         justifyContent: "center",

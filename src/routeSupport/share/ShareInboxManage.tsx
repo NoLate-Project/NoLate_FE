@@ -465,20 +465,25 @@ export function InlineErrorCard({
   colors,
   text,
   onRetry,
+  pinned = false,
+  refreshing = false,
 }: {
   colors: AppColors;
   text: string;
   onRetry: () => void;
+  pinned?: boolean;
+  refreshing?: boolean;
 }) {
   return (
     <View
       accessibilityLiveRegion="polite"
       style={[
         styles.inlineError,
+        pinned && styles.pinnedError,
         { backgroundColor: colors.surface2, borderColor: colors.border },
       ]}
     >
-      <Ionicons name="alert-circle-outline" size={18} color={ROUTE_AMBER} />
+      <Ionicons accessible={false} name={refreshing ? 'refresh-outline' : 'alert-circle-outline'} size={18} color={ROUTE_AMBER} />
       <Text
         numberOfLines={2}
         style={[styles.inlineErrorText, { color: colors.textSecondary }]}
@@ -488,10 +493,13 @@ export function InlineErrorCard({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="공유함 다시 조회"
+        accessibilityState={{ disabled: refreshing, busy: refreshing }}
+        disabled={refreshing}
         onPress={onRetry}
+        style={pinned ? styles.pinnedRetry : undefined}
         hitSlop={8}
       >
-        <Text style={[styles.inlineRetryText, { color: colors.textPrimary }]}>
+        <Text style={[styles.inlineRetryText, { color: refreshing ? colors.textSecondary : colors.textPrimary }]}>
           다시 시도
         </Text>
       </Pressable>
@@ -502,40 +510,77 @@ export function InlineErrorCard({
 /** 검색·필터 여부와 공유 종류에 맞는 빈 목록 안내를 표시합니다. */
 export function EmptyState({
   colors,
-  searching,
+  accent,
   tab,
+  standardText,
+  onClearSearch,
+  onClearFilters,
 }: {
   colors: AppColors;
-  searching: boolean;
+  accent: string;
   tab: ShareLibraryTab;
+  standardText: boolean;
+  onClearSearch?: () => void;
+  onClearFilters?: () => void;
 }) {
+  const stateBackground = standardText ? `${accent}15` : colors.surface2;
   return (
-    <View style={styles.emptyState}>
-      <View style={[styles.emptyIcon, { backgroundColor: colors.surface2 }]}>
+    <View style={[styles.emptyState, standardText && styles.standardEmptyState]}>
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+        style={[
+          styles.emptyIcon,
+          standardText && styles.standardEmptyIcon,
+          { backgroundColor: stateBackground },
+        ]}>
         <Ionicons
           name={
-            searching
+            onClearSearch
               ? 'search-outline'
+              : onClearFilters
+              ? 'options-outline'
               : tab === 'schedule'
               ? 'calendar-outline'
               : 'calendar-clear-outline'
           }
-          size={25}
+          size={standardText ? 21 : 25}
           color={colors.textSecondary}
         />
       </View>
-      <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-        {searching
+      <Text accessibilityLiveRegion="polite" style={[
+        styles.emptyTitle, standardText && styles.standardEmptyText, { color: colors.textPrimary },
+      ]}>
+        {onClearSearch
           ? '검색 결과가 없어요'
+          : onClearFilters
+          ? '조건에 맞는 공유가 없어요'
           : tab === 'schedule'
           ? '공유 일정이 없어요'
           : '공유 캘린더가 없어요'}
       </Text>
-      <Text style={[styles.emptyDescription, { color: colors.textSecondary }]}>
-        {searching
-          ? '다른 이름이나 공유자를 입력해 보세요.'
-          : '공유받거나 내가 공유한 항목이 여기에 모여요.'}
-      </Text>
+      {onClearSearch || onClearFilters ? (
+        <View style={[styles.emptyActions, standardText && styles.standardEmptyActions]}>
+          {[
+            { title: '검색어 지우기', onPress: onClearSearch },
+            { title: '필터 해제', onPress: onClearFilters },
+          ].map(({ title, onPress }) => onPress && (
+            <Pressable key={title} accessibilityRole="button" accessibilityLabel={title} onPress={onPress}
+              style={({ pressed }) => [
+                styles.emptyAction,
+                { backgroundColor: stateBackground, opacity: pressed ? 0.62 : 1 },
+              ]}>
+              <Text style={[
+                styles.inlineRetryText,
+                standardText && styles.standardEmptyActionText,
+                { color: standardText ? colors.textPrimary : accent },
+              ]}>{title}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : !standardText ? (
+        <Text style={[styles.emptyDescription, { color: colors.textSecondary }]}>
+          공유받거나 내가 공유한 항목이 여기에 모여요.
+        </Text>
+      ) : null}
     </View>
   );
 }

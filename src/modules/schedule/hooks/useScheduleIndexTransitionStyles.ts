@@ -112,7 +112,7 @@ export function useScheduleIndexTransitionStyles({
     activeToolbarMenu === 'add'
       ? Math.min(dropdownMaxWidth, 196)
       : activeToolbarMenu === 'view'
-      ? Math.min(dropdownMaxWidth, 210)
+      ? Math.min(dropdownMaxWidth, calendarDepth === 'day' ? 210 : 246)
       : Math.min(dropdownMaxWidth, 224);
   const toolbarDropdownTop =
     calendarDepth === 'day'

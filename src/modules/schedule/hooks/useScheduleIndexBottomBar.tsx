@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SCHEDULE_ICONS } from '../components/shared/ScheduleIcon';
 import type { FloatingBarAction } from '../components/shared/GlobalFloatingActionBar';
@@ -18,6 +18,7 @@ import type { CalendarViewMode } from '../components/calendar/viewMode';
 import type { MonthAgendaPanelKind } from '../calendarMotion';
 import { sanitizeCalendarTransitionError } from './scheduleIndexControllerModel';
 import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
+import type { AgendaFocusTarget } from '../components/list/ScheduleAgendaViews';
 
 const MemoizedSelectedDayAgendaPanel = React.memo(SelectedDayAgendaPanel);
 const MemoizedMonthAgendaList = React.memo(MonthAgendaList);
@@ -25,6 +26,8 @@ const MemoizedMonthAgendaList = React.memo(MonthAgendaList);
 type UseScheduleIndexBottomBarParams = {
   agendaReturnHighlight?: React.ComponentProps<typeof MonthAgendaList>['returnHighlight'];
   savedAgendaTarget?: { day: string; itemId: string; categoryId?: string };
+  guidanceReturnTarget?: AgendaFocusTarget & { day: string };
+  isMonthViewTransitionActive: boolean;
   saveReturnVisible: boolean;
   reduceMotionEnabled: boolean;
   activeCalendarScope: CalendarScope;
@@ -32,7 +35,7 @@ type UseScheduleIndexBottomBarParams = {
   calendarScopeSelectorVisible: boolean;
   handleCalendarViewModeChange: (mode: CalendarViewMode) => void;
   handleGoToday: () => void;
-  handleOpenScheduleFromDayDisplay: (scheduleId: string) => void;
+  handleOpenScheduleFromDayDisplay: (scheduleId: string, restoreFocus?: () => void) => void;
   getScheduleSwipeActions: ScheduleSwipeActionResolver;
   onRequestScheduleActions: (item: ScheduleItem) => void;
   itemsArray: ScheduleItem[];
@@ -59,6 +62,8 @@ type UseScheduleIndexBottomBarParams = {
 export function useScheduleIndexBottomBar({
   agendaReturnHighlight,
   savedAgendaTarget,
+  guidanceReturnTarget,
+  isMonthViewTransitionActive,
   saveReturnVisible,
   reduceMotionEnabled,
   activeCalendarScope,
@@ -86,6 +91,17 @@ export function useScheduleIndexBottomBar({
 }: UseScheduleIndexBottomBarParams) {
   const router = useRouter();
   const { runWithTransitionShell } = useImmediateNavigationTransition();
+  const [agendaCategoryId, setAgendaCategoryId] = useState<string | null>(null);
+  const [handledAgendaSave, setHandledAgendaSave] = useState<string>();
+  const agendaCategoryFilter = useMemo(
+    () => ({
+      id: agendaCategoryId,
+      onChange: setAgendaCategoryId,
+      handledSavedItem: handledAgendaSave,
+      onHandleSavedItem: setHandledAgendaSave,
+    }),
+    [agendaCategoryId, handledAgendaSave],
+  );
   const activeCalendarPresentation = useMemo(
     () => getCalendarScopePresentation(activeCalendarScope, scheduleCalendars),
     [activeCalendarScope, scheduleCalendars],
@@ -98,10 +114,12 @@ export function useScheduleIndexBottomBar({
   );
   const monthAgendaLoading =
     !hasMonthAgendaCache && (scheduleLoading || scheduleError === null);
-  const agendaEntryDate = savedAgendaTarget?.day === monthDisplaySelectedDay &&
+  const agendaEntryDate =
     monthDisplaySelectedDay.slice(0, 7) === monthDisplayFocusedMonth.slice(0, 7)
     ? monthDisplaySelectedDay
     : undefined;
+  const savedEntry = savedAgendaTarget?.day === agendaEntryDate ? savedAgendaTarget : undefined;
+  const guidanceEntry = guidanceReturnTarget?.day === agendaEntryDate ? guidanceReturnTarget : undefined;
 
   /** 공유 초대와 수신 일정이 모인 공유함의 전체 탭으로 이동한다. */
   const openInvitesShortcut = useCallback(() => {
@@ -194,7 +212,8 @@ export function useScheduleIndexBottomBar({
       panelKind === 'detail' ? (
         <MemoizedSelectedDayAgendaPanel
           selectedDay={monthDisplaySelectedDay}
-          savedItemId={agendaEntryDate ? savedAgendaTarget?.itemId : undefined}
+          savedItemId={savedEntry?.itemId}
+          focusTarget={guidanceEntry}
           saveReturnVisible={saveReturnVisible}
           reduceEntryMotion={reduceMotionEnabled}
           items={itemsArray}
@@ -213,8 +232,12 @@ export function useScheduleIndexBottomBar({
       ) : (
         <MemoizedMonthAgendaList
           visibleMonth={monthDisplayFocusedMonth}
+          calendarScope={activeCalendarScope}
+          categoryFilter={agendaCategoryFilter}
           entryDate={agendaEntryDate}
-          savedEntry={agendaEntryDate ? savedAgendaTarget : undefined}
+          entryLayoutTransitionActive={isMonthViewTransitionActive}
+          savedEntry={savedEntry}
+          focusTarget={guidanceEntry}
           saveReturnVisible={saveReturnVisible}
           reduceEntryMotion={reduceMotionEnabled}
           items={itemsArray}
@@ -232,12 +255,16 @@ export function useScheduleIndexBottomBar({
         />
       ),
     [
+      activeCalendarScope,
+      agendaCategoryFilter,
       agendaEntryDate,
       agendaReturnHighlight,
+      guidanceEntry,
       bottomInset,
       handleCalendarViewModeChange,
       handleOpenScheduleFromDayDisplay,
       getScheduleSwipeActions,
+      isMonthViewTransitionActive,
       onRequestScheduleActions,
       itemsArray,
       loadSchedules,
@@ -246,7 +273,7 @@ export function useScheduleIndexBottomBar({
       monthDisplaySelectedDay,
       reduceMotionEnabled,
       openRouteSetupTarget,
-      savedAgendaTarget,
+      savedEntry,
       saveReturnVisible,
       routeSetupRequiredCount,
       scheduleError,

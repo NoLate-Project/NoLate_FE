@@ -61,6 +61,8 @@ export type TransitRouteProvenance =
     | "ODSAY_ALTERNATIVE_ROUTE";
 
 export type TransitTimingBasis =
+    | "SAME_BUS_BOARDING_AND_ALIGHTING_REALTIME"
+    | "BUS_TRANSFER_BOARDING_AND_ALIGHTING_REALTIME"
     | "FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE"
     | "FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED"
     | "FIRST_BOARDING_TIMETABLE_TRANSFER_OBSERVED"
@@ -83,6 +85,7 @@ export type EffectiveTransitRideTiming = {
         toStationCode: string;
         terminalName: string;
         boardingAt: string;
+        boardingStationArrivalAt?: string | null;
         arrivalAt: string;
         fetchedAt: string;
         realtimeTrainNumber?: string | null;
@@ -90,7 +93,8 @@ export type EffectiveTransitRideTiming = {
     predictedBoardingAt: string;
     predictedArrivalAt: string;
     observationSourceUpdatedAt?: string | null;
-    basis: "TIMETABLE" | "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE"
+    basis: "TIMETABLE" | "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE" | "FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME"
+        | "FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING"
         | "TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE" | "TRANSFER_ALIGHTING_REALTIME";
 };
 
@@ -103,15 +107,20 @@ export type EffectiveTransitRouteSegment = {
     fromName?: string | null;
     toName?: string | null;
     directionName?: string | null;
+    busRidePrediction?: {
+        boardingAt: string;
+        alightingAt: string;
+        sourceUpdatedAt: string;
+    } | null;
     walkingScope?: "ACCESS" | "TRANSFER" | "EGRESS" | "UNKNOWN" | null;
     /** Original WALK seconds, not inferred from rounded minutes. */
     durationSeconds?: number | null;
-    /** Provider leg endpoints; station-interior/platform coverage is not established. */
+    /** Provider leg or walking path endpoints; station-interior/platform coverage is unknown. */
     walkingGeometry?: {
         from?: { lat: number; lng: number } | null;
         to?: { lat: number; lng: number } | null;
         distanceMeters?: number | null;
-        endpointBasis?: "UNKNOWN" | "PROVIDER_LEG_ENDPOINTS";
+        endpointBasis?: "UNKNOWN" | "PROVIDER_LEG_ENDPOINTS" | "PROVIDER_PATH_ENDPOINTS";
         /** 도보 공급자 조회용 연결 좌표. 역 출입구/승강장 좌표라는 뜻은 아니다. */
         providerQueryEndpoints?: {
             start: { lat: number; lng: number };
@@ -133,7 +142,7 @@ export type EffectiveTransitRouteSegment = {
     rideTiming?: EffectiveTransitRideTiming | null;
     /** 보행 예상과 공식 참조값을 구분한다. 참조값을 ETA에 다시 합산하지 않는다. */
     walkingTiming?: {
-        source: "ROUTE_MINUTES" | "PROVIDER_LINK_SECONDS" | "ODSAY_FULL_PATH_SECONDS";
+        source: "ROUTE_MINUTES" | "PROVIDER_LINK_SECONDS" | "ODSAY_FULL_PATH_SECONDS" | "ODSAY_ENTRANCE_WALK_SECONDS" | "ODSAY_EXIT_WALK_SECONDS";
         originalDurationMinutes: number;
         movementSeconds: number;
         fetchedAt?: string | null;
@@ -167,6 +176,8 @@ export type ScheduleDepartureStatus = {
     scheduleId: number;
     travelMinutes: number | null;
     recommendedDepartureAt: string | null;
+    /** Saved transit route clock when realtime is uncertain, independent of the protected departure. */
+    savedRouteEstimatedDepartureAt?: string | null;
     evaluatedAt: string;
     liveFetchedAt: string | null;
     source: ScheduleDepartureEtaSource | null;
@@ -416,6 +427,7 @@ export async function getUpcomingSchedules(fromAt?: string, limit?: number): Pro
 export async function searchSchedules(params: {
     keyword?: string;
     categoryId?: string;
+    calendarScope?: "personal" | `${number}`;
     startAt?: string;
     endAt?: string;
     limit?: number;

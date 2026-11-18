@@ -1,6 +1,12 @@
 import Foundation
 
 struct TrainTicketDraft {
+  struct ValidationError: LocalizedError {
+    enum Field: Int { case departure, arrival, departureTime, arrivalTime, trainNumber, grade }
+    let field: Field?
+    let errorDescription: String?
+  }
+
   var kind = "TRAIN"
   var cancelled = false
   var departureName = ""
@@ -9,6 +15,16 @@ struct TrainTicketDraft {
   var arrivalTime = ""
   var trainNumber = ""
   var grade = ""
+
+  static func ticketTimeFormatter() -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+    formatter.isLenient = false
+    formatter.dateFormat = "yyyy-MM-dd HH:mm"
+    return formatter
+  }
 
   static func isTicketText(_ text: String) -> Bool {
     text.range(of: "승차권|코레일|KORAIL|KTX|ITX|무궁화|새마을|SRT|시외버스|고속버스|버스타고|티머니GO", options: [.regularExpression, .caseInsensitive]) != nil
@@ -53,32 +69,33 @@ struct TrainTicketDraft {
   }
 
   func confirmedPayload(source: String, now: Date = Date(), id: UUID = UUID()) throws -> [String: Any] {
-    func fail(_ message: String) throws -> Never {
-      throw NSError(domain: "TrainTicketImport", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    func fail(_ message: String, at field: ValidationError.Field? = nil) throws -> Never {
+      throw ValidationError(field: field, errorDescription: message)
     }
     guard !cancelled else { try fail("취소·환불된 표는 이동 계획으로 가져올 수 없어요. 유효한 승차권을 공유해 주세요.") }
     let departure = departureName.trimmingCharacters(in: .whitespacesAndNewlines)
     let arrival = arrivalName.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !departure.isEmpty, !arrival.isEmpty, departure.count <= 60, arrival.count <= 60, departure != arrival else {
-      try fail("서로 다른 출발지와 도착지을 입력해 주세요.")
-    }
+    guard !departure.isEmpty, departure.count <= 60 else { try fail("출발지를 1~60자로 입력해 주세요.", at: .departure) }
+    guard !arrival.isEmpty, arrival.count <= 60 else { try fail("도착지를 1~60자로 입력해 주세요.", at: .arrival) }
+    guard departure != arrival else { try fail("출발지와 다른 도착지를 입력해 주세요.", at: .arrival) }
     guard ["TRAIN", "EXPRESS_BUS", "INTERCITY_BUS"].contains(kind) else { try fail("교통수단을 선택해 주세요.") }
     if kind == "TRAIN" {
-      guard trainNumber.range(of: "^[0-9]{1,6}$", options: .regularExpression) != nil else { try fail("열차번호를 숫자로 입력해 주세요.") }
+      guard trainNumber.range(of: "^[0-9]{1,6}$", options: .regularExpression) != nil else {
+        try fail("열차번호를 숫자 1~6자리로 입력해 주세요.", at: .trainNumber)
+      }
     } else {
-      guard !grade.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, grade.count <= 40 else { try fail("승차권에 표시된 버스 등급을 입력해 주세요.") }
+      guard !grade.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, grade.count <= 40 else {
+        try fail("승차권에 표시된 버스 등급을 입력해 주세요.", at: .grade)
+      }
     }
-    let formatter = DateFormatter()
-    formatter.calendar = Calendar(identifier: .gregorian)
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
-    formatter.isLenient = false
-    formatter.dateFormat = "yyyy-MM-dd HH:mm"
-    guard let dep = formatter.date(from: departureTime), formatter.string(from: dep) == departureTime,
-          let arr = formatter.date(from: arrivalTime), formatter.string(from: arr) == arrivalTime else {
-      try fail("출발·도착 시각을 YYYY-MM-DD HH:mm 형식으로 확인해 주세요. 날짜가 바뀌면 도착 날짜도 수정하세요.")
+    let formatter = Self.ticketTimeFormatter()
+    guard let dep = formatter.date(from: departureTime), formatter.string(from: dep) == departureTime, dep > now else {
+      try fail("현재보다 늦은 출발 날짜와 시각을 선택해 주세요.", at: .departureTime)
     }
-    guard dep > now, arr > dep, arr.timeIntervalSince(dep) <= 86400 else { try fail("미래 출발 시각과 24시간 이내의 도착 시각을 확인해 주세요.") }
+    guard let arr = formatter.date(from: arrivalTime), formatter.string(from: arr) == arrivalTime,
+          arr > dep, arr.timeIntervalSince(dep) <= 86400 else {
+      try fail("도착은 출발 후 24시간 이내여야 해요. 자정을 넘기면 다음 날을 선택해 주세요.", at: .arrivalTime)
+    }
     guard ["IOS_SHARE_TEXT", "IOS_SHARE_IMAGE", "IOS_SHARE_PDF"].contains(source) else { try fail("공유 형식을 확인해 주세요.") }
     formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXXXX"
     var payload: [String: Any] = ["version": 1, "id": "ticket:\(id.uuidString.lowercased())", "kind": kind, "source": source,

@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal } from "react-native";
+import { Dimensions, Modal, ScrollView, Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import CalendarScopeSheet from "../src/modules/schedule/components/calendar/CalendarScopeSheet";
@@ -55,6 +55,7 @@ describe("CalendarScopeSheet", () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
         jest.clearAllMocks();
+        jest.restoreAllMocks();
     });
 
     const renderSheet = async (overrides: Partial<React.ComponentProps<typeof CalendarScopeSheet>> = {}) => {
@@ -76,12 +77,16 @@ describe("CalendarScopeSheet", () => {
     };
 
     test("현재 캘린더를 선택 상태로 표시한다", async () => {
+        jest.spyOn(require("react-native"), "useWindowDimensions")
+            .mockReturnValue({ ...Dimensions.get("window"), fontScale: 1 });
         await renderSheet();
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "가족 캘린더 보기" }).props.accessibilityState)
-            .toEqual({ selected: true });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "전체 일정 보기" }).props.accessibilityState)
-            .toEqual({ selected: false });
+        const shared = renderer!.root.findByProps({ accessibilityLabel: "가족 캘린더 보기" });
+        const all = renderer!.root.findByProps({ accessibilityLabel: "전체 일정 보기" });
+        expect(shared.props.accessibilityState).toEqual({ selected: true });
+        expect(all.props.accessibilityState).toEqual({ selected: false });
+        expect(renderer!.root.findAllByProps({ children: "가족 캘린더", numberOfLines: 2 }).length).toBeGreaterThan(0);
+        expect(renderer!.root.findAllByProps({ children: "전체 일정", numberOfLines: 1 }).length).toBeGreaterThan(0);
     });
 
     test("캘린더를 선택하면 범위를 변경하고 시트를 닫는다", async () => {
@@ -98,7 +103,7 @@ describe("CalendarScopeSheet", () => {
     test("보기 설정에서 주 시작일을 바꾸고 같은 범위로 돌아간다", async () => {
         const props = await renderSheet({ reduceMotionEnabled: true });
 
-        expect(renderer!.root.findAllByProps({ accessibilityLabel: "캘린더 관리" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "공유 캘린더 관리" })).toHaveLength(0);
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "캘린더 보기 설정" }).props.onPress();
         });
@@ -141,19 +146,29 @@ describe("CalendarScopeSheet", () => {
             renderer!.root.findByProps({ accessibilityLabel: "가족 캘린더 공유하기" }).props.onPress();
         });
 
-        expect(props.onClose).toHaveBeenCalledTimes(1);
+        expect(props.onClose).not.toHaveBeenCalled();
         expect(props.onShareCalendar).toHaveBeenCalledWith(expect.objectContaining({ id: 21 }));
         expect(props.onChange).not.toHaveBeenCalled();
     });
 
-    test("선택 시트가 완전히 닫힌 뒤 후속 화면을 열 수 있도록 dismiss를 전달한다", async () => {
-        const onDismiss = jest.fn();
-        await renderSheet({ onDismiss });
-
+    test("공유 옵션에서 같은 캘린더와 목록 위치로 돌아온다", async () => {
+        const onCloseShare = jest.fn();
+        const props = await renderSheet({ onCloseShare });
+        const root = renderer!.root;
         await act(async () => {
-            renderer!.root.findByType(Modal).props.onDismiss();
+            root.findByType(ScrollView).props.onScroll({ nativeEvent: { contentOffset: { y: 160 } } });
+            root.findByProps({ accessibilityLabel: "가족 캘린더 공유하기" }).props.onPress();
+            renderer!.update(<CalendarScopeSheet {...props} shareContent={<Text>공유 옵션</Text>} />);
         });
+        expect(root.findAllByProps({ accessibilityLabel: "가족 캘린더 보기" })).toHaveLength(0);
+        await act(async () => root.findByType(Modal).props.onRequestClose());
+        expect(onCloseShare).toHaveBeenCalledTimes(1);
+        expect(props.onClose).not.toHaveBeenCalled();
 
-        expect(onDismiss).toHaveBeenCalledTimes(1);
+        await act(async () => renderer!.update(<CalendarScopeSheet {...props} />));
+        expect(root.findByType(ScrollView).props.contentOffset).toEqual({ x: 0, y: 160 });
+        expect(root.findByProps({ accessibilityLabel: "가족 캘린더 보기" }).props.accessibilityState)
+            .toEqual({ selected: true });
     });
+
 });

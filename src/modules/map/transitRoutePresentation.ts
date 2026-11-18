@@ -46,7 +46,6 @@ export const TRANSIT_ROUTE_ZOOM_STYLE = {
     // TMAP iOS는 casing과 본선을 서로 다른 polyline으로 그려 native dot 위상을
     // 동기화할 수 없다. 도보 점에는 별도 casing을 두지 않아 사다리 모양을 방지한다.
     walkCasingExtraWidth: 0,
-    // 카카오 실제 웹 경로의 줌별 반복 표시와 사용자 요구를 반영해 z11부터 진행 방향을 읽게 한다.
     // 확대 중 native layer signature가 바뀌지 않도록 방향표 투명도는 전 구간에서 고정한다.
     directionMinZoom: 11,
     directionOpacity: 0.96,
@@ -180,7 +179,9 @@ export function shouldRenderTransitNativeDirection(
     zoom: number,
     segmentDirectionEnabled = true
 ): boolean {
+    // 서울역→사당→강남처럼 도시 전체가 들어오는 지하철 개요도 방향을 유지한다.
+    const minimumZoom = mode === "SUBWAY" ? 10 : TRANSIT_ROUTE_ZOOM_STYLE.directionMinZoom;
     return segmentDirectionEnabled &&
         (isTransitRideKind(mode)) &&
-        zoom >= TRANSIT_ROUTE_ZOOM_STYLE.directionMinZoom;
+        zoom >= minimumZoom;
 }

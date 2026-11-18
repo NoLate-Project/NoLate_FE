@@ -70,6 +70,48 @@ function routeCoord(x: unknown, y: unknown): RoutePathCoord | undefined {
     return { lat, lng };
 }
 
+function nonNegativeInteger(value: unknown): number | undefined {
+    if (typeof value !== "number" && (typeof value !== "string" || !/^\d+$/.test(value))) return undefined;
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 && number <= 2_147_483_647 ? number : undefined;
+}
+
+/** Matches the server's maasRP walk timing checks. Connector time is not provided separately. */
+function completeWalkLinkSeconds(leg: any, minutes: number | undefined): number | undefined {
+    const links = leg?.routes;
+    const distance = nonNegativeInteger(leg?.distance);
+    if (distance === undefined || !Array.isArray(links) || links.length < 1 || links.length > 32) return undefined;
+
+    let totalDistance = 0;
+    let totalSeconds = 0;
+    let coordinateCount = 0;
+    let previous: RoutePathCoord | undefined;
+    for (const [index, link] of links.entries()) {
+        const length = nonNegativeInteger(link?.LENGTH);
+        const seconds = nonNegativeInteger(link?.DURATION);
+        const cross = link?.crossXYInfos;
+        const rawPoints = link?.xyInfos;
+        if (length === undefined || seconds === undefined || nonNegativeInteger(link?.rseq) !== index + 1 ||
+            (cross != null && (!Array.isArray(cross) || cross.length > 0)) ||
+            !Array.isArray(rawPoints) || rawPoints.length < 2 || rawPoints.length > 128) return undefined;
+        coordinateCount += rawPoints.length;
+        if (coordinateCount > 512) return undefined;
+        const points = rawPoints.map(point => {
+            const isCoordinateNumber = (value: unknown) => typeof value === "number" ||
+                (typeof value === "string" && value.trim() !== "");
+            return isCoordinateNumber(point?.x) && isCoordinateNumber(point?.y)
+                ? routeCoord(point.x, point.y) : undefined;
+        });
+        const first = points[0];
+        if (!first || points.some(point => !point) ||
+            (previous && (previous.lat !== first.lat || previous.lng !== first.lng))) return undefined;
+        previous = points[points.length - 1];
+        totalDistance += length;
+        totalSeconds += seconds;
+    }
+    return totalDistance === distance && Math.ceil(totalSeconds / 60) === minutes ? totalSeconds : undefined;
+}
+
 function sameCoord(left: RoutePathCoord, right: RoutePathCoord): boolean {
     return Math.abs(left.lat - right.lat) < 0.0000001 && Math.abs(left.lng - right.lng) < 0.0000001;
 }
@@ -376,12 +418,9 @@ function navigationInteger(value: unknown): number | undefined {
         : undefined;
 }
 
-function hasCompleteNavigationGraph(leg: any, delivered: RoutePathCoord[]): boolean {
-    // WALK routes는 여러 connector를 재조립하므로 이 slice에서는 완전성을 증명하지 않는다.
-    const kind = normalizeLegKind(leg?.trafficType);
-    if (kind !== "BUS" && kind !== "SUBWAY") return false;
-    if (typeof leg?.graph !== "string" || leg.graph.length > 200_000) return false;
-    const pairs: string[] = leg.graph.split("|");
+function hasCompleteRideGraph(raw: unknown, delivered: RoutePathCoord[]): boolean {
+    if (typeof raw !== "string" || raw.length > 200_000) return false;
+    const pairs = raw.split("|");
     // ODsay ride graph currently preserves every point; require exact order/count so a future
     // display simplifier cannot silently weaken navigation evidence.
     if (pairs.length < 2 || pairs.length !== delivered.length) return false;
@@ -400,7 +439,7 @@ function navigationIdentifier(value: unknown): string | undefined {
 }
 
 /** 표시용 passStops에서 손실되는 반복 정류장·빈 행·원본 순번을 별도로 보존한다. */
-function parseNavigationEvidence(leg: any, delivered: RoutePathCoord[]): TransitNavigationEvidence | undefined {
+function parseNavigationEvidence(leg: any, geometryInputComplete: boolean): TransitNavigationEvidence | undefined {
     const kind = normalizeLegKind(leg?.trafficType);
     const stations = ensureArray<any>(leg?.passStopList?.stations);
     if (stations.length > 500) return undefined;
@@ -447,7 +486,7 @@ function parseNavigationEvidence(leg: any, delivered: RoutePathCoord[]): Transit
         declaredStationCount: navigationInteger(leg?.stationCount),
         directionName: typeof leg?.way === "string" ? leg.way : undefined,
         directionCode: wayCode === 1 ? "UP" : wayCode === 2 ? "DOWN" : undefined,
-        geometryInputComplete: hasCompleteNavigationGraph(leg, delivered),
+        geometryInputComplete,
     };
 }
 
@@ -474,6 +513,26 @@ function formatOdsaySearchTime(date: Date): string {
 function lineNameForLeg(leg: any): string | undefined {
     const lane = ensureArray<any>(leg?.lane)[0];
     return textValue(lane?.name ?? lane?.busNo);
+}
+
+const WEEKDAYS_ONLY = /(?:^|[(.,·])\s*평일\s*운행\s*(?=[).,·]|$)/;
+
+function filterBusLanesForWeekend(leg: any): any {
+    if (normalizeLegKind(leg?.trafficType) !== "BUS") return leg;
+    const start = parseOdsayDateTime(leg?.startDateTime);
+    const end = parseOdsayDateTime(leg?.endDateTime);
+    if (!start || !end) return leg;
+    const departure = new Date(Date.parse(start) + 9 * 60 * 60 * 1000);
+    const arrival = new Date(Date.parse(end) + 9 * 60 * 60 * 1000);
+    const day = departure.getUTCDay();
+    // Keep uncertain overnight crossings and lanes whose day coverage was not stated by ODsay.
+    if ((day !== 0 && day !== 6) || departure.getUTCHours() < 3 ||
+        departure.toISOString().slice(0, 10) !== arrival.toISOString().slice(0, 10)) return leg;
+    const lanes = ensureArray<any>(leg?.lane);
+    const available = lanes.filter(lane => ![lane?.busNo, lane?.name]
+        .some(name => typeof name === "string" && WEEKDAYS_ONLY.test(name)));
+    if (available.length === lanes.length) return leg;
+    return available.length ? { ...leg, lane: available } : null;
 }
 
 function subwayServiceClass(lineName: string | undefined): TransitServiceClass {
@@ -513,10 +572,14 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
         const lane = ensureArray<any>(leg?.lane)[0];
         const passStops = parsePassStops(leg);
         const graphPath = kind === "WALK" ? parseWalkPath(leg) : parseGraph(leg?.graph);
+        const completeRideGraph = (kind === "SUBWAY" || kind === "BUS") && hasCompleteRideGraph(leg?.graph, graphPath);
+        // Dropping an invalid graph point can draw a straight shortcut across the missing track.
+        const hasGraphPath = graphPath.length >= 2 &&
+            (kind !== "SUBWAY" || completeRideGraph);
         const fallbackPath = passStops
             .map((stop) => stop.coord)
             .filter((coord): coord is RoutePathCoord => !!coord);
-        const pathCoords = graphPath.length >= 2 ? graphPath : fallbackPath;
+        const pathCoords = hasGraphPath ? graphPath : fallbackPath;
         const startCoord = routeCoord(leg?.startX, leg?.startY) ?? pathCoords[0];
         const endCoord = routeCoord(leg?.endX, leg?.endY) ?? pathCoords[pathCoords.length - 1];
         const startName = textValue(leg?.startName);
@@ -534,6 +597,7 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
                 ? "DOWN" as const
                 : undefined;
         const rawWaitingMinutes = safeNumber(leg?.waitingTime);
+        const durationMinutes = safeNumber(leg?.duration);
         const routeCityCode = kind === "BUS"
             ? textValue(lane?.busCityCode)
             : kind === "SUBWAY"
@@ -541,11 +605,23 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
                 : undefined;
         const detail: Omit<TransitLegDetail, "label"> = {
             kind,
-            durationMinutes: safeNumber(leg?.duration),
+            durationMinutes,
+            durationSeconds: kind === "WALK" ? completeWalkLinkSeconds(leg, durationMinutes) : undefined,
             waitingMinutes: typeof rawWaitingMinutes === "number" && rawWaitingMinutes >= 0
                 ? rawWaitingMinutes
                 : undefined,
             providerRouteId: providerRouteIdForLeg(kind, lane),
+            alternateBusLines: kind === "BUS" ? ensureArray<any>(leg?.lane).slice(1).flatMap(alternate => {
+                const providerRouteId = providerRouteIdForLeg("BUS", alternate);
+                const localRouteId = textValue(alternate?.busLocalBlID);
+                const lineName = textValue(alternate?.busNo ?? alternate?.name);
+                if (!providerRouteId || !localRouteId || !lineName) return [];
+                return [{ providerRouteId, localRouteId, lineName,
+                    routeCityCode: textValue(alternate?.busCityCode),
+                    routeProviderCode: textValue(alternate?.busProviderCode),
+                    lineColor: normalizeHexColor(alternate?.busLaneColor ?? alternate?.color),
+                }];
+            }) : undefined,
             localRouteId: kind === "BUS" ? textValue(lane?.busLocalBlID) : undefined,
             routeCityCode,
             routeProviderCode: kind === "BUS" ? textValue(lane?.busProviderCode) : undefined,
@@ -577,10 +653,10 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
             startCoord,
             endCoord,
             passStops: passStops.length ? passStops : undefined,
-            navigationEvidence: parseNavigationEvidence(leg, graphPath),
+            navigationEvidence: parseNavigationEvidence(leg, completeRideGraph),
             pathCoords: pathCoords.length >= 2 ? pathCoords : undefined,
-            pathCoordsIsExact: graphPath.length >= 2,
-            pathGeometrySource: graphPath.length >= 2
+            pathCoordsIsExact: hasGraphPath,
+            pathGeometrySource: hasGraphPath
                 ? kind === "WALK" ? "WALK_STEPS_LINESTRING" : "TRANSIT_PASS_SHAPE_LINESTRING"
                 : fallbackPath.length >= 2 ? "PASS_STOP_LIST" : "UNKNOWN",
             rawPathPointCount: pathCoords.length || undefined,
@@ -617,15 +693,30 @@ export function parseTransitOptionsFromOdsay(data: any): TransitRouteOption[] {
             const minutes = safeNumber(path?.totalTime);
             if (typeof minutes !== "number" || minutes <= 0) return undefined;
 
-            const transitLegs = parseLegs(path?.rps);
+            const legs = ensureArray<any>(path?.rps).map(filterBusLanesForWeekend);
+            if (legs.some(leg => leg == null)) return undefined;
+            const transitLegs = parseLegs(legs);
             const rideCount = transitLegs.filter((leg) => isTransitRideKind(leg.kind)).length;
             const walkMeters = transitLegs
                 .filter((leg) => leg.kind === "WALK")
                 .reduce((sum, leg) => sum + (leg.distanceMeters ?? 0), 0);
             const pathCoords = buildOptionPath(transitLegs);
+            const departureAt = parseOdsayDateTime(path?.startDateTime);
+            const arrivalAt = parseOdsayDateTime(path?.endDateTime);
+            let totalDurationSeconds: number | undefined;
+            if (departureAt && arrivalAt && transitLegs.some(leg => leg.kind === "BUS") &&
+                legs.every(leg => nonNegativeInteger(leg?.duration) !== undefined)) {
+                const roundedSeconds = transitLegs.reduce((sum, leg) => sum + leg.durationMinutes! * 60, 0);
+                const timelineMs = Date.parse(arrivalAt) - Date.parse(departureAt);
+                if (timelineMs === roundedSeconds * 1000 && Math.ceil(roundedSeconds / 60) === minutes) {
+                    const seconds = transitLegs.reduce((sum, leg) => sum + (leg.durationSeconds ?? leg.durationMinutes! * 60), 0);
+                    if (seconds > 0 && seconds < roundedSeconds) totalDurationSeconds = seconds;
+                }
+            }
             const option: TransitRouteOption = {
                 id: `odsay-transit-${index}-${Math.round(minutes)}-${rideCount}`,
-                minutes: Math.max(1, Math.round(minutes)),
+                minutes: totalDurationSeconds === undefined ? Math.max(1, Math.round(minutes)) : Math.ceil(totalDurationSeconds / 60),
+                ...(totalDurationSeconds === undefined ? {} : { totalDurationSeconds }),
                 distanceMeters: safeNumber(path?.totalDistance),
                 transferCount: Math.max(0, rideCount - 1),
                 walkMeters: Math.round(walkMeters),
@@ -636,8 +727,8 @@ export function parseTransitOptionsFromOdsay(data: any): TransitRouteOption[] {
                 pathCoords,
                 source: "api",
                 provider: "odsay",
-                providerDepartureAt: parseOdsayDateTime(path?.startDateTime),
-                providerArrivalAt: parseOdsayDateTime(path?.endDateTime),
+                providerDepartureAt: departureAt,
+                providerArrivalAt: arrivalAt,
                 providerTimeBasis: "route_estimate",
                 attributionText: "ODsay",
                 attributionUrl: ODSAY_ATTRIBUTION_URL,

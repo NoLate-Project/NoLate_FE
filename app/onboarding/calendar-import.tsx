@@ -48,9 +48,12 @@ WebBrowser.maybeCompleteAuthSession();
 import CalendarImportStatusMark from '../../src/routeSupport/onboarding/CalendarImportStatusMark';
 import CalendarImportEarlySteps from '../../src/routeSupport/onboarding/CalendarImportEarlySteps';
 import { useCalendarImportController } from '../../src/routeSupport/onboarding/useCalendarImportController';
+import BrandedLoader from '../../src/ui/BrandedLoader';
+import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
 
 /** 캘린더 가져오기 흐름의 상태를 화면 단계별 UI에 연결합니다. */
 export default function CalendarImportOnboarding() {
+  useScreenFirstPaintPerformance('/onboarding/calendar-import');
   const {
     acceptedCalendarConsentIds,
     allCalendarConsentsAccepted,
@@ -94,6 +97,8 @@ export default function CalendarImportOnboarding() {
       isManagementEntry,
     trackScroll,
     lastImportPreparedRoutes,
+    lastCandidateButtonRef,
+    lastCandidateId,
     loadCategories,
     notificationReadyCount,
     mode,
@@ -107,10 +112,12 @@ export default function CalendarImportOnboarding() {
     providerOptions,
     routeCandidateCount,
     routePreparationEnabled,
-    routesReadyForImport,
     scanCalendars,
+    candidateContinueButtonRef,
+    scanButtonRef,
     scanStage,
     scanStatusMessage,
+    scanWasStopped,
     scrollViewRef,
     searchDefaultOrigin,
     selectAllCandidates,
@@ -137,6 +144,7 @@ export default function CalendarImportOnboarding() {
     toggleCalendarConsent,
     toggleCalendarConsentDetail,
     toggleCandidate,
+    setLastCandidateId,
     toggleCandidateSourceGroup,
     toggleProvider,
     travelMinutes,
@@ -189,7 +197,11 @@ export default function CalendarImportOnboarding() {
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          step === 'scanning' && styles.scanContent,
+          (step === 'select' || step === 'enrich') && styles.choicesContent,
+        ]}
       >
         <Animated.View style={[styles.stepMotion, stepMotionStyle]}>
           <CalendarImportEarlySteps
@@ -214,14 +226,14 @@ export default function CalendarImportOnboarding() {
 
           {step === 'select' && (
             <View style={styles.stepWrap}>
-              <Text pointerEvents="none" accessibilityRole="header" style={styles.title}>
-                가져올 일정을{'\n'}확인해 주세요
-              </Text>
-              <Text pointerEvents="none" style={styles.subtitle}>
-                {allCandidatesSelected
-                  ? '다가오는 일정을 모두 선택했어요. 필요 없는 일정만 해제하면 돼요.'
-                  : '캘린더별로 선택하거나 개별 일정을 펼쳐 조정할 수 있어요.'}
-              </Text>
+              <View style={styles.choicesHeading}>
+                <Text accessibilityRole="header" style={[styles.title, styles.choicesTitle]}>
+                  {candidates.length > 0 ? '필요한 일정만\n선택해 주세요' : '가져올 일정 확인'}
+                </Text>
+                {candidates.length > 0 ? (
+                  <Text style={styles.subtitle}>원본 일정은 그대로예요. 저장할 일정만 체크하세요.</Text>
+                ) : null}
+              </View>
               {errorMessage ? (
                 <View
                   accessibilityLiveRegion="polite"
@@ -291,7 +303,11 @@ export default function CalendarImportOnboarding() {
                               key={candidate.id}
                               candidate={candidate}
                               selected={selectedIds.has(candidate.id)}
-                              onPress={() => toggleCandidate(candidate)}
+                              buttonRef={lastCandidateId === candidate.id ? lastCandidateButtonRef : undefined}
+                              onPress={() => {
+                                setLastCandidateId(candidate.id);
+                                toggleCandidate(candidate);
+                              }}
                             />
                           ))}
                       </View>
@@ -319,14 +335,15 @@ export default function CalendarImportOnboarding() {
 
           {step === 'enrich' && (
             <View style={styles.stepWrap}>
-              <Text accessibilityRole="header" style={styles.title}>
-                기본 카테고리를{'\n'}선택해 주세요
+              <Text accessibilityRole="header" style={[styles.title, styles.choicesTitle]}>
+                저장할 카테고리를 정해 주세요
               </Text>
-              <Text style={styles.subtitle}>
-                {routeCandidateCount > 0
-                  ? '필요하면 출발 알림도 함께 준비할 수 있어요.'
-                  : `${selectedCandidates.length}개 일정을 저장할 카테고리를 정해 주세요.`}
-              </Text>
+              <View style={styles.importChoiceSummary}>
+                <Text style={styles.categoryDefaultTitle}>저장할 일정</Text>
+                <Text style={styles.categoryDefaultHint}>
+                  {selectedCandidates.length}개 · {selectedCandidateSourceGroups.length}개 캘린더
+                </Text>
+              </View>
 
               {categoryLoading && categories.length === 0 ? (
                 <View
@@ -343,41 +360,36 @@ export default function CalendarImportOnboarding() {
                 </View>
               ) : categories.length > 0 ? (
                 <>
-                  <View style={styles.categoryDefaultHeader}>
-                    <Text style={styles.categoryDefaultTitle}>
-                      기본 카테고리
-                    </Text>
-                    <Text style={styles.categoryDefaultHint}>
-                      {selectedCandidates.length}개 일정에 적용
-                    </Text>
-                  </View>
-                  <View style={styles.categoryGroupList}>
-                    {categoryGroups.map(group => (
-                      <View key={group.key} style={styles.categoryGroup}>
-                        <View style={styles.categoryGroupHeader}>
-                          <Ionicons accessible={false} importantForAccessibility="no"
-                            name={group.calendarId === null ? 'person-outline' : 'people-outline'}
-                            size={15}
-                            color={colors.textSecondary}
-                          />
-                          <Text numberOfLines={1} style={styles.categoryGroupTitle}>
-                            {group.title}
-                          </Text>
-                          <Text style={styles.categoryGroupScope}>{group.scopeLabel}</Text>
-                        </View>
-                        <View style={styles.chipRow}>
-                          {group.categories.map(category => (
-                            <OptionChip
-                              key={category.id}
-                              label={category.title}
-                              active={category.id === selectedCategory?.id}
-                              color={category.color}
-                              onPress={() => selectDefaultCategory(category.id)}
+                  <View style={styles.categoryDefaultCard}>
+                    <Text accessibilityRole="header" style={styles.categoryDefaultTitle}>기본 카테고리</Text>
+                    <View style={styles.categoryGroupList}>
+                      {categoryGroups.map(group => (
+                        <View key={group.key} style={styles.categoryGroup}>
+                          <View style={styles.categoryGroupHeader}>
+                            <Ionicons accessible={false} importantForAccessibility="no"
+                              name={group.calendarId === null ? 'person-outline' : 'people-outline'}
+                              size={15}
+                              color={colors.textSecondary}
                             />
-                          ))}
+                            <Text numberOfLines={1} style={styles.categoryGroupTitle}>
+                              {group.title}
+                            </Text>
+                            <Text style={styles.categoryGroupScope}>{group.scopeLabel}</Text>
+                          </View>
+                          <View style={styles.chipRow}>
+                            {group.categories.map(category => (
+                              <OptionChip
+                                key={category.id}
+                                label={category.title}
+                                active={category.id === selectedCategory?.id}
+                                color={category.color}
+                                onPress={() => selectDefaultCategory(category.id)}
+                              />
+                            ))}
                         </View>
                       </View>
                     ))}
+                    </View>
                   </View>
                   {selectedCandidateSourceGroups.length > 1 ? (
                     <View style={styles.categoryAssignmentSection}>
@@ -510,20 +522,17 @@ export default function CalendarImportOnboarding() {
 
               {routeCandidateCount > 0 ? (
                 <>
-                  <SectionTitle label="출발 알림" />
-                  <Text style={styles.sectionDescription}>
-                    선택 사항이에요. 필요할 때만 켜도 돼요.
-                  </Text>
+                  <SectionTitle label="선택 설정" />
                   <View style={styles.switchRow}>
+                    <View style={styles.departureOptionIcon}>
+                      <Ionicons accessible={false} importantForAccessibility="no" name="alarm-outline" size={20} color={BRAND_BLUE} />
+                    </View>
                     <View style={styles.switchTextWrap}>
                       <Text style={styles.switchTitle}>
                         출발 알림 함께 준비
                       </Text>
                       <Text style={styles.switchHint}>
-                        {routePreparationEnabled && !defaultOriginReady
-                          ? '기본 출발지를 선택해 주세요'
-
-                          : '장소가 있는 일정의 경로와 알림을 만들어요'}
+                        장소가 있는 일정에 적용
                       </Text>
                     </View>
                     <View style={styles.switchControlWrap}>
@@ -542,8 +551,8 @@ export default function CalendarImportOnboarding() {
                   </View>
 
                   {routePreparationEnabled ? (
-                    <>
-                      <SectionTitle label="기본 출발지" />
+                    <View style={styles.departureOptionsCard}>
+                      <Text style={styles.departureFieldTitle}>기본 출발지</Text>
                       <DefaultOriginPicker
                         favorites={favoriteDeparturePlaces}
                         selected={defaultOrigin}
@@ -556,19 +565,13 @@ export default function CalendarImportOnboarding() {
                         onSelect={selectDefaultOrigin}
                       />
 
-                      <View style={styles.routePreparationNotice}>
-                        <Ionicons accessible={false} importantForAccessibility="no"
-                          name="information-circle-outline"
-                          size={17}
-                          color={BRAND_BLUE}
-                        />
-                        <Text style={styles.routePreparationNoticeText}>
-                          일정 메모에 출발지가 있으면 우선 사용하고, 없으면 기본
-                          출발지에서 경로를 만들어요.
-                        </Text>
-                      </View>
+                      <Text style={styles.routePreparationNoticeText}>
+                        {defaultOriginReady
+                          ? '일정 메모에 출발지가 있으면 우선 사용해요.'
+                          : '기본 출발지를 고르지 않으면 일정만 가져와요.'}
+                      </Text>
 
-                      <SectionTitle label="이동수단" />
+                      <Text style={styles.departureFieldTitle}>이동수단</Text>
                       <View style={styles.chipRow}>
                         {TRAVEL_MODES.map(option => (
                           <OptionChip
@@ -581,7 +584,7 @@ export default function CalendarImportOnboarding() {
                         ))}
                       </View>
 
-                      <SectionTitle label="경로가 없을 때 예상 이동시간" />
+                      <Text style={styles.departureFieldTitle}>경로가 없을 때 예상 이동시간</Text>
                       <View style={styles.chipRow}>
                         {TRAVEL_MINUTES.map(minutes => (
                           <OptionChip
@@ -592,7 +595,7 @@ export default function CalendarImportOnboarding() {
                           />
                         ))}
                       </View>
-                    </>
+                    </View>
                   ) : null}
                 </>
               ) : null}
@@ -604,22 +607,25 @@ export default function CalendarImportOnboarding() {
               <View style={styles.centeredStatusHeader}>
                 <CalendarImportStatusMark partial={failedImportCount > 0} />
               </View>
-              <Text accessibilityRole="header" style={styles.title}>
-                {failedImportCount > 0
-                  ? '일부 일정을 가져오지 못했어요'
-                  : importedCount > 0
-                  ? `${importedCount}개 일정을 가져왔어요`
-                  : '선택한 일정은 이미 NoLate에 있어요'}
-              </Text>
-              <Text style={styles.subtitle}>
-                {failedImportCount > 0
-                  ? '원래 캘린더의 일정은 그대로 있어요.'
-                  : importedCount === 0
-                  ? '중복 없이 기존 일정을 유지했어요.'
-                  : lastImportPreparedRoutes
-                  ? '가져온 일정과 준비된 출발 알림을 확인해 보세요.'
-                  : '가져온 일정은 내 일정에서 바로 확인할 수 있어요.'}
-              </Text>
+              <View style={styles.importResultHeading}>
+                <Text style={styles.importResultKicker}>가져오기 완료</Text>
+                <Text accessibilityRole="header" style={[styles.title, styles.importResultTitle]}>
+                  {failedImportCount > 0
+                    ? '일부 일정을 가져오지 못했어요'
+                    : importedCount > 0
+                    ? `${importedCount}개 일정을 가져왔어요`
+                    : '선택한 일정은 이미 NoLate에 있어요'}
+                </Text>
+                {failedImportCount === 0 && (
+                  <Text style={styles.subtitle}>
+                    {importedCount === 0
+                      ? '중복 없이 기존 일정을 유지했어요.'
+                      : lastImportPreparedRoutes
+                      ? '가져온 일정과 준비된 출발 알림을 확인해 보세요.'
+                      : '가져온 일정은 내 일정에서 바로 확인할 수 있어요.'}
+                  </Text>
+                )}
+              </View>
               <ImportResultSummary
                 importedCount={importedCount}
                 alreadyImportedCount={alreadyImportedCount}
@@ -683,9 +689,10 @@ export default function CalendarImportOnboarding() {
         {step === 'permission' && (
           <>
             <PrimaryButton
+              buttonRef={scanButtonRef}
               label={
                 allCalendarConsentsAccepted
-                  ? '동의하고 일정 찾기'
+                  ? scanWasStopped ? '다시 일정 찾기' : '동의하고 일정 찾기'
                   : '필수 항목을 확인해 주세요'
               }
               disabled={!allCalendarConsentsAccepted}
@@ -711,6 +718,7 @@ export default function CalendarImportOnboarding() {
               />
             ) : (
               <PrimaryButton
+                buttonRef={candidateContinueButtonRef}
                 label={
                   selectedIds.size > 0
                     ? `${selectedIds.size}개 일정 계속하기`
@@ -728,18 +736,6 @@ export default function CalendarImportOnboarding() {
         )}
         {step === 'enrich' && (
           <>
-            {routePreparationEnabled && !routesReadyForImport && !importing ? (
-              <View style={styles.footerNotice}>
-                <Ionicons accessible={false} importantForAccessibility="no"
-                  name="information-circle-outline"
-                  size={15}
-                  color={colors.textSecondary}
-                />
-                <Text style={styles.footerNoticeText}>
-                  출발지를 고르지 않으면 일정만 가져와요
-                </Text>
-              </View>
-            ) : null}
             <PrimaryButton
               label={
                 categoryCreating
@@ -789,7 +785,9 @@ export default function CalendarImportOnboarding() {
             }}
             style={styles.importLoadingCard}
           >
-            <ActivityIndicator size="large" color={BRAND_BLUE} />
+            <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+              <BrandedLoader accessibilityLabel="일정을 가져오고 있어요" />
+            </View>
             <Text style={styles.importLoadingTitle}>일정을 가져오고 있어요</Text>
             <Text style={styles.importLoadingText}>
               {importProgress > 0

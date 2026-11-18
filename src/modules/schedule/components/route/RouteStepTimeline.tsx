@@ -1,7 +1,9 @@
-import { isTransitRideKind, transitModeLabel } from "../../../map/transitModes";
+import { isIntercityRideKind, isTransitRideKind, transitModeLabel } from "../../../map/transitModes";
 import styles from "./RouteStepTimeline.styles";
 import BusBookingAction from './BusBookingAction';
 import TrainBookingAction from './TrainBookingAction';
+import { RouteBusBoardingContext } from './RouteBusBoardingContext';
+import { DottedWalkingRail } from './DottedWalkingRail';
 import { routeColorForWhiteIcon, routeColorInk } from '../../routeColorContrast';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -24,6 +26,10 @@ import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotio
 import {
     getRouteStepDirectionHint,
     getRouteStepColor,
+    formatRouteDurationSeconds,
+    isOdsayTimetableRouteInfo,
+    roundRouteArrivalMinute,
+    normalizeStopName,
     type RouteStep,
 } from "../../routeInfo";
 import {
@@ -41,9 +47,11 @@ import {
     getArrivalWaitText,
     getPointLabel,
     getTransferWalkDestination,
+    hasPassedArrivalEstimate,
     Ionicons,
     buildStepDescription,
     StepIconGlyph,
+    stripStopAction,
     type ArrivalRequest,
     type RouteStepTimelineProps as Props,
 } from "./RouteStepTimeline.helpers";
@@ -55,6 +63,38 @@ import {
     type TransitArrivalLoadState,
 } from "./transitArrivalPresentation";
 
+type ArrivalLookup = { step: RouteStep; request: ArrivalRequest };
+
+async function loadArrivals(requests: ArrivalLookup[]) {
+    return Promise.all(requests.map(async ({ step, request }) => {
+        try {
+            const arrivals = request.kind === "BUS"
+                ? await getBusArrivals({
+                    arsId: request.arsId,
+                    cityCode: request.cityCode,
+                    nodeId: request.nodeId,
+                    stationName: request.stationName,
+                    routeName: request.routeName,
+                    limit: 2,
+                })
+                : await getSubwayArrivals({
+                    stationName: request.stationName,
+                    lineName: request.lineName,
+                    directionName: request.directionName,
+                    directionCode: request.directionCode,
+                    limit: 3,
+                });
+            return [
+                step.id,
+                arrivals,
+                arrivals.length > 0 ? "ready" : "empty",
+                getArrivalUpdatedAt(arrivals, new Date().toISOString()),
+            ] as const;
+        } catch {
+            return [step.id, [] as TransitArrivalInfo[], "error", undefined] as const;
+        }
+    }));
+}
 
 export default function RouteStepTimeline({
     routeInfo,
@@ -74,9 +114,12 @@ export default function RouteStepTimeline({
     initialExpandedStepId,
     compact = false,
     inlineStationRail = false,
+    busBoardingScroll,
     realtimeArrivalsEnabled = true,
+    realtimeArrivalsActive = true,
     showEstimatedClockHeading = false,
     currentGuidance,
+    currentGuidanceRowRef,
     stepDisplayNames,
 }: Props) {
     const { fontScale } = useWindowDimensions();
@@ -86,6 +129,7 @@ export default function RouteStepTimeline({
     const isDark = forceDark ?? mode === "dark";
     const primaryColor = primaryTextColor ?? colors.textPrimary;
     const secondaryColor = secondaryTextColor ?? colors.textSecondary;
+    const neutralRailColor = isDark ? "#3A404A" : "#D1D5DB";
     const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(() => (
         initialExpandedStepId ? new Set([initialExpandedStepId]) : new Set()
     ));
@@ -97,6 +141,7 @@ export default function RouteStepTimeline({
     const [arrivalUpdatedAtByStepId, setArrivalUpdatedAtByStepId] = useState<Record<string, string>>({});
     const arrivalLookupKey = useMemo(() => buildArrivalLookupKey(routeInfo.steps), [routeInfo.steps]);
     const arrivalCacheKey = useRef<string | undefined>(undefined);
+    const pendingArrivals = useRef(new Map<string, ReturnType<typeof loadArrivals>>());
     const canShowCachedArrivals = compact && realtimeArrivalsEnabled && arrivalCacheKey.current === arrivalLookupKey;
     let runningOffsetSeconds = 0;
     let offsetKnown = true;
@@ -115,21 +160,34 @@ export default function RouteStepTimeline({
         }
         return { start, end: offsetKnown ? runningOffsetSeconds : undefined };
     });
+    const usesOdsayTimetable = routeInfo.provider === "odsay" && routeInfo.timeBasis === "provider_schedule" &&
+        routeInfo.providerTimeBasis === "timetable";
+    const hasExactTimeline = routeInfo.matchedTimeline || usesOdsayTimetable;
     const scheduleSourceLabel = routeInfo.matchedTimeline ? "현재 보정 여정" : routeInfo.intercityJourney ? (routeInfo.intercityJourney.service.timingBasis === "TICKET" ? "승차권 입력 시각 · 앞뒤 이동 예상 · 예매 상태 미검증" : "선택 운행편 · 앞뒤 이동 예상 · 예매 미확인") : routeInfo.timeBasis === "provider_schedule"
         ? "운행 시간표"
         : "경로 예상 시간";
     const labelsEstimatedClocks = compact && showEstimatedClockHeading &&
-        routeInfo.timeBasis === "estimated" && !routeInfo.intercityJourney &&
+        routeInfo.timeBasis === "estimated" && !routeInfo.matchedTimeline && !routeInfo.intercityJourney &&
         routeInfo.steps.length > 0 && Boolean(formatArrivalClock(routeInfo.departureTime, 0));
     const arrivalRequests = useMemo(() => routeInfo.steps
         .map((step) => ({ step, request: getArrivalRequest(step) }))
-        .filter((item): item is { step: RouteStep; request: ArrivalRequest } => !!item.request),
+        .filter((item): item is ArrivalLookup => !!item.request),
     [routeInfo.steps]);
+    const latestArrivalRequests = useRef(arrivalRequests);
+    useEffect(() => {
+        latestArrivalRequests.current = arrivalRequests;
+    }, [arrivalRequests]);
+    const firstArrivalRequest = arrivalRequests[0];
+    const sharedArrivalState = firstArrivalRequest && arrivalStateByStepId[firstArrivalRequest.step.id];
     const showSharedArrivalNotice = labelsEstimatedClocks && canShowCachedArrivals &&
+        (sharedArrivalState === "error" || sharedArrivalState === "empty") &&
         arrivalRequests.length > 1 && arrivalRequests.every(({ step }) => (
-            (arrivalStateByStepId[step.id] === "error" || arrivalStateByStepId[step.id] === "empty") &&
+            arrivalStateByStepId[step.id] === sharedArrivalState &&
             !arrivalByStepId[step.id]?.length
         ));
+    const estimatedClockHeading = showSharedArrivalNotice
+        ? sharedArrivalState === "error" ? "구간별 예상 시각 · 실시간 도착 조회 실패" : "구간별 예상 시각 · 실시간 도착 정보 없음"
+        : "구간별 예상 시각";
 
     useEffect(() => {
         if (!initialExpandedStepId) return;
@@ -161,26 +219,18 @@ export default function RouteStepTimeline({
     }, [routeInfo.steps, stepToDisclose]);
 
     useEffect(() => {
-        if (arrivalCacheKey.current !== arrivalLookupKey) {
-            arrivalCacheKey.current = arrivalLookupKey;
+        const requests = latestArrivalRequests.current;
+        const canLoadArrivals = compact && realtimeArrivalsEnabled && requests.length > 0;
+        const nextCacheKey = canLoadArrivals ? arrivalLookupKey : undefined;
+        if (arrivalCacheKey.current !== nextCacheKey) {
+            arrivalCacheKey.current = nextCacheKey;
             setArrivalByStepId({});
             setArrivalStateByStepId({});
             setArrivalUpdatedAtByStepId({});
         }
-        if (!compact || !realtimeArrivalsEnabled) {
-            setArrivalByStepId({});
-            setArrivalStateByStepId({});
-            setArrivalUpdatedAtByStepId({});
-            return;
-        }
+        if (!canLoadArrivals || !realtimeArrivalsActive) return;
 
-        if (arrivalRequests.length === 0) {
-            setArrivalByStepId({});
-            setArrivalStateByStepId({});
-            setArrivalUpdatedAtByStepId({});
-            return;
-        }
-
+        const pending = pendingArrivals.current;
         let cancelled = false;
         let refreshing = false;
         const refreshArrivals = async () => {
@@ -188,42 +238,15 @@ export default function RouteStepTimeline({
             refreshing = true;
             setArrivalStateByStepId((prev) => {
                 const next = { ...prev };
-                arrivalRequests.forEach(({ step }) => {
+                requests.forEach(({ step }) => {
                     if (!next[step.id]) next[step.id] = "loading";
                 });
                 return next;
             });
-            const entries = await Promise.all(
-                arrivalRequests.map(async ({ step, request }) => {
-                    try {
-                        const arrivals = request.kind === "BUS"
-                            ? await getBusArrivals({
-                                arsId: request.arsId,
-                                cityCode: request.cityCode,
-                                nodeId: request.nodeId,
-                                stationName: request.stationName,
-                                routeName: request.routeName,
-                                limit: 2,
-                            })
-                            : await getSubwayArrivals({
-                                stationName: request.stationName,
-                                lineName: request.lineName,
-                                directionName: request.directionName,
-                                directionCode: request.directionCode,
-                                limit: 3,
-                            });
-                        const completedAt = new Date().toISOString();
-                        return [
-                            step.id,
-                            arrivals,
-                            arrivals.length > 0 ? "ready" : "empty",
-                            getArrivalUpdatedAt(arrivals, completedAt),
-                        ] as const;
-                    } catch {
-                        return [step.id, [] as TransitArrivalInfo[], "error", undefined] as const;
-                    }
-                })
-            );
+            const response = pending.get(arrivalLookupKey) ?? loadArrivals(requests);
+            pending.set(arrivalLookupKey, response);
+            const entries = await response;
+            if (pending.get(arrivalLookupKey) === response) pending.delete(arrivalLookupKey);
 
             refreshing = false;
             if (cancelled) return;
@@ -257,7 +280,7 @@ export default function RouteStepTimeline({
             cancelled = true;
             clearInterval(timer);
         };
-    }, [arrivalLookupKey, arrivalRequests, compact, realtimeArrivalsEnabled]);
+    }, [arrivalLookupKey, compact, realtimeArrivalsActive, realtimeArrivalsEnabled]);
 
     const toggleStepDisclosure = (step: RouteStep, inlineStops = false) => {
         const opening = !expandedStepIds.has(step.id);
@@ -280,7 +303,7 @@ export default function RouteStepTimeline({
                     lineBreakStrategyIOS="hangul-word"
                     style={[styles.estimatedClockHeading, { color: secondaryColor }]}
                 >
-                    {showSharedArrivalNotice ? "구간별 예상 시각 · 실시간 도착 정보 없음" : "구간별 예상 시각"}
+                    {estimatedClockHeading}
                 </Text>
             )}
             {routeInfo.intercityJourney?.service.timingBasis !== 'TICKET' && routeInfo.steps.some(step => step.type === 'TRAIN') && <TrainBookingAction dark={isDark} />}
@@ -297,49 +320,74 @@ export default function RouteStepTimeline({
                 const expandable = hasBadge && Array.isArray(step.passStops) && step.passStops.length > 0;
                 const inlineStops = inlineStationRail && compact && expandable && (step.type === "SUBWAY" || step.type === "BUS");
                 const expanded = expandedStepIds.has(step.id);
-                const rideDescription = hasBadge ? buildRideDescription(step) : undefined;
+                const intercityRide = isIntercityRideKind(step.type);
+                const modeLabel = transitModeLabel(step.type);
+                const intercityLine = intercityRide
+                    ? (step.lineName ?? step.badgeText)?.trim().replace(`${modeLabel} · `, "")
+                    : undefined;
+                const rideDescription = hasBadge ? [
+                    intercityLine !== modeLabel && intercityLine !== stripStopAction(step.title) && intercityLine,
+                    buildRideDescription(step),
+                ].filter(Boolean).join(" · ") || undefined : undefined;
                 const stopSummaryParts = [
                     typeof step.stationCount === "number" && `${step.stationCount}${step.type === "BUS" ? "개 정류장" : "정거장"}`,
                     typeof step.durationMinutes === "number" && `${step.durationMinutes}분`,
                 ].filter(Boolean);
-                const stopSummary = stopSummaryParts.join(" · ") || "경유지";
                 const lastStopName = step.passStops?.at(-1)?.name;
-                const alightingName = compact && inlineStationRail && step.matchedTimeline && step.alightingName
-                    ? step.alightingName
+                const alightingStop = compact && inlineStationRail && hasBadge && step.alightingName
+                    ? normalizeStopName(step.alightingName)
                     : inlineStops && lastStopName && rideDescription?.split(" · ").includes(`${lastStopName}까지`)
                         ? lastStopName : undefined;
-                const boardingDescription = inlineStops || alightingName
+                const alightingName = alightingStop && (stripStopAction(alightingStop) || undefined);
+                const isAlightingHint = (part: string) => alightingName && part.endsWith("까지")
+                    && stripStopAction(part.slice(0, -2)) === alightingName;
+                const boardingDescription = inlineStops || alightingStop
                     ? rideDescription?.split(" · ").filter(part =>
-                        part !== (alightingName && `${alightingName}까지`) &&
-                        !/^\d+(?:개\s*)?\s*(?:정거장|정류장|분)$/u.test(part),
+                        !isAlightingHint(part) &&
+                        (!inlineStops || !/^\d+(?:개\s*)?\s*(?:정거장|정류장|분)$/u.test(part)),
                     ).join(" · ")
                     : rideDescription;
-                const rideDirectionLabel = hasBadge ? getRouteStepDirectionHint(step, rideDescription) : undefined;
+                const directionHint = hasBadge ? getRouteStepDirectionHint(step, rideDescription) : undefined;
+                const rideDirectionLabel = directionHint && !isAlightingHint(directionHint) && !boardingDescription?.split(" · ").includes(directionHint)
+                    ? directionHint : undefined;
                 const boardingGuideItems = hasBadge ? buildBoardingGuideItems(step) : [];
                 const arrivalRequest = realtimeArrivalsEnabled && hasBadge
                     ? getArrivalRequest(step)
                     : undefined;
-                const realtimeArrivals = hasBadge && canShowCachedArrivals ? arrivalByStepId[step.id] ?? [] : [];
+                const arrivalNow = Date.now();
+                const arrivals = hasBadge && canShowCachedArrivals ? arrivalByStepId[step.id] ?? [] : [];
+                const realtimeArrivals = arrivals.filter(arrival =>
+                    arrival.arrivalStatus !== "DEPARTED" && !hasPassedArrivalEstimate(arrival, arrivalNow));
+                const allArrivalsPassed = arrivals.length > 0 && realtimeArrivals.length === 0;
                 const arrivalState = hasBadge && canShowCachedArrivals ? arrivalStateByStepId[step.id] : undefined;
                 const arrivalUpdatedAt = hasBadge && canShowCachedArrivals ? arrivalUpdatedAtByStepId[step.id] : undefined;
                 const arrivalPresentation = getTransitArrivalPresentation({
                     hasRequest: !!arrivalRequest,
                     loadState: arrivalState,
                     arrivalCount: realtimeArrivals.length,
+                    allEstimatesPassed: allArrivalsPassed,
                     updatedAt: arrivalUpdatedAt,
+                    nowMs: arrivalNow,
                 });
                 const stepStartOffsetSeconds = stepOffsets[index].start;
-                const matchedClock = step.type === "ORIGIN" ? routeInfo.departureTime
-                    : step.type === "DESTINATION" ? routeInfo.arrivalTime : step.matchedTimeline?.startAt;
-                const timelineClockText = !compact ? undefined : routeInfo.matchedTimeline
-                    ? matchedClock && formatArrivalClock(matchedClock, 0)
+                const scheduledArrivalClock = step.type === "DESTINATION" && !routeInfo.matchedTimeline && isOdsayTimetableRouteInfo(routeInfo)
+                    ? roundRouteArrivalMinute(routeInfo.arrivalTime)?.toISOString() : routeInfo.arrivalTime;
+                const exactClock = step.type === "ORIGIN" ? routeInfo.departureTime
+                    : step.type === "DESTINATION" ? scheduledArrivalClock
+                    : routeInfo.matchedTimeline ? step.matchedTimeline?.startAt : step.scheduledRide?.boardingAt;
+                const timelineClockText = !compact ? undefined : hasExactTimeline
+                    ? exactClock ? formatArrivalClock(exactClock, 0) : undefined
                     : stepStartOffsetSeconds === undefined ? undefined
                         : formatArrivalClock(routeInfo.departureTime, stepStartOffsetSeconds / 60);
                 const endOffset = stepOffsets[index].end;
-                const endClock = !alightingName ? undefined : routeInfo.matchedTimeline
-                    ? step.matchedTimeline && formatArrivalClock(step.matchedTimeline.endAt, 0)
+                const exactAlighting = routeInfo.matchedTimeline ? step.matchedTimeline?.endAt : step.scheduledRide?.arrivalAt;
+                const transferWaitSeconds = routeInfo.matchedTimeline ? step.matchedTimeline?.transferWaitSeconds : undefined;
+                const transferWaitLabel = typeof transferWaitSeconds === "number" &&
+                    transferWaitSeconds > 0 && Number.isSafeInteger(transferWaitSeconds)
+                    ? `환승 대기 예상 ${formatRouteDurationSeconds(transferWaitSeconds)}` : undefined;
+                const alightingClock = !alightingName ? undefined : hasExactTimeline
+                    ? exactAlighting && formatArrivalClock(exactAlighting, 0)
                     : endOffset === undefined ? undefined : formatArrivalClock(routeInfo.departureTime, endOffset / 60);
-                const alightingClock = endClock === "--:--" ? undefined : endClock;
                 const repeatsAlightingClock = (step.type === "WALK" || step.type === "TRANSFER") && previousAlightingClock !== undefined &&
                     timelineClockText === previousAlightingClock;
                 previousAlightingClock = alightingClock;
@@ -349,7 +397,7 @@ export default function RouteStepTimeline({
                 const arrivalInlineMessage = usesScheduledClock
                     ? labelsEstimatedClocks
                         ? (arrivalRequest && !showSharedArrivalNotice ? arrivalPresentation.inlineMessage : undefined)
-                        : arrivalRequest && (arrivalState === "error" || arrivalState === "empty")
+                        : arrivalRequest && (allArrivalsPassed || arrivalState === "error" || arrivalState === "empty")
                         ? `${arrivalPresentation.inlineMessage} ${scheduledClockBasis}이에요.`
                         : scheduledClockBasis
                     : getTransitArrivalInlineMessage(arrivalPresentation, timelineClockText, scheduleSourceLabel);
@@ -359,16 +407,29 @@ export default function RouteStepTimeline({
                     : isDark ? "#FF8C86" : "#B42318";
                 const prioritizeStops = expanded && !inlineStops && stackTimelineText && Boolean(onRevealFirstStop);
                 const transferDestination = compact ? getTransferWalkDestination(routeInfo.steps, index) : undefined;
+                const walkingTransfer = compact && step.journeyPhase !== "BUFFER" &&
+                    (Boolean(transferDestination) || step.type === "TRANSFER");
+                const alightingIntoTransfer = !!alightingName &&
+                    !!getTransferWalkDestination(routeInfo.steps, index + 1);
                 const stepTitle = buildStepTitle(step, transferDestination ? "환승 도보" : undefined);
+                const lineBadgeText = intercityRide ? modeLabel : step.badgeText ?? step.lineName ?? modeLabel;
+                const showsLineBadge = hasBadge && (!compact || stepTitle !== lineBadgeText);
+                const fullStepName = stepDisplayNames?.[step.id];
+                const bareLineName = step.type === "SUBWAY" ? fullStepName?.replace(/^수도권\s*/u, "") : fullStepName;
+                const repeatsLineName = hasBadge && bareLineName?.replace(/\s+/gu, "") === lineBadgeText.replace(/\s+/gu, "");
+                const showsFullStepName = !!fullStepName && (fontScale > 1.35 || !repeatsLineName);
                 const stepDescription = transferDestination ?? buildStepDescription(step, stepTitle);
                 const firstStopIsBoarding = prioritizeStops && step.passStops?.[0]?.name.trim() === stepTitle.trim();
-                const combineClockAndLine = stackTimelineText && hasBadge && !!timelineClockText;
+                const combineClockAndLine = stackTimelineText && showsLineBadge && !!timelineClockText;
                 const shouldShowTimelineClock = !!timelineClockText && !repeatsAlightingClock && (
                     step.type !== "WALK" ||
                     (index > 1 && !isLast)
                 );
+                const stationArrivalLabel = shouldShowTimelineClock && routeInfo.matchedTimeline &&
+                    step.matchedTimeline?.startsWithStationArrivalPrediction ? "열차 도착 예측" : undefined;
                 const clockAccessibilityLabel = shouldShowTimelineClock
-                    ? labelsEstimatedClocks ? `예상 ${timelineClockText}` : timelineClockText
+                    ? stationArrivalLabel ? `${timelineClockText} ${stationArrivalLabel}`
+                        : labelsEstimatedClocks ? `예상 ${timelineClockText}` : timelineClockText
                     : undefined;
                 const isWalkStep = step.type === "WALK";
                 const isPointStep = step.type === "ORIGIN" || step.type === "DESTINATION";
@@ -408,10 +469,10 @@ export default function RouteStepTimeline({
                         </Text>
                     </View>
                 ) : null;
-                const lineBadge = hasBadge ? (
-                    <View style={[styles.badge, compact && styles.badgeCompact, stackTimelineText && styles.badgeExpanded, { backgroundColor: transitBadgeColor }]}>
+                const lineBadge = showsLineBadge ? (
+                    <View style={[styles.badge, compact && styles.badgeCompact, intercityRide && styles.badgeIntercity, stackTimelineText && styles.badgeExpanded, { backgroundColor: transitBadgeColor }]}>
                         <Text numberOfLines={stackTimelineText ? undefined : 1} maxFontSizeMultiplier={1.5} style={[styles.badgeText, compact && styles.badgeTextCompact, { color: routeColorInk(transitBadgeColor) }]}>
-                            {step.badgeText ?? step.lineName ?? transitModeLabel(step.type)}
+                            {lineBadgeText}
                         </Text>
                     </View>
                 ) : null;
@@ -421,13 +482,20 @@ export default function RouteStepTimeline({
                     selectedPassStop?.stepId === step.id && selectedPassStop.stopIndex === stopIndex;
                 const canMapStop = (stopIndex: number) =>
                     Boolean(onPassStopPress && canShowPassStopOnMap?.(step.id, stopIndex));
+                const repeatsEndpoint = (stop: typeof stops[number], stopIndex: number) =>
+                    (stopIndex === 0 && normalizeStopName(stop.name) === normalizeStopName(stepTitle)) ||
+                    (stopIndex === stops.length - 1 && stripStopAction(normalizeStopName(stop.name) ?? stop.name) === alightingName);
                 const showsStop = (stop: typeof stops[number], stopIndex: number) => !inlineStops ||
-                    canMapStop(stopIndex) || isStopSelected(stopIndex) ||
-                    !((stopIndex === 0 && stop.name === stepTitle) ||
-                        (stopIndex === stops.length - 1 && stop.name === alightingName));
+                    canMapStop(stopIndex) || isStopSelected(stopIndex) || !repeatsEndpoint(stop, stopIndex);
                 const firstVisibleStopIndex = (expanded || inlineStops) ? stops.findIndex(showsStop) : -1;
+                const knownIntermediateStops = inlineStops && typeof step.stationCount !== "number"
+                    ? stops.filter((stop, index) => !repeatsEndpoint(stop, index)).length : 0;
+                const stopSummary = [
+                    knownIntermediateStops > 0 && `${step.type === "BUS" ? "경유 정류장" : "경유역"} ${knownIntermediateStops}곳`,
+                    ...stopSummaryParts,
+                ].filter(Boolean).join(" · ") || "경유지";
                 const StopList = inlineStops ? Reanimated.View : View;
-                const stopList = expanded && Array.isArray(step.passStops) && step.passStops.length > 0 && (
+                const stopList = expanded && firstVisibleStopIndex !== -1 && (
                     <StopList
                         entering={inlineStops && !reduceMotion ? inlineStopsEntrance : undefined}
                         style={inlineStops ? styles.inlineStopList : [styles.stopList, { borderColor: isDark ? "rgba(255,255,255,0.10)" : "#E5E7EB" }]}
@@ -522,7 +590,7 @@ export default function RouteStepTimeline({
                 const content = (
                     <>
                         <View style={[styles.rail, compact && styles.railCompact]}>
-                            <View
+                            {!walkingTransfer && <View
                                 style={[
                                     styles.dot,
                                     compact && styles.dotCompact,
@@ -532,8 +600,13 @@ export default function RouteStepTimeline({
                                     },
                                 ]}
                             >
-                                <StepIconGlyph type={transferDestination ? "TRANSFER" : step.type} color={iconColor} compact={compact} />
-                            </View>
+                                <StepIconGlyph
+                                    type={step.type}
+                                    isWaiting={step.journeyPhase === "BUFFER"}
+                                    color={iconColor}
+                                    compact={compact}
+                                />
+                            </View>}
                             {!stackTimelineText && clockBadge}
                             {!isLast && (
                                 <View
@@ -541,12 +614,15 @@ export default function RouteStepTimeline({
                                         styles.line,
                                         compact && styles.lineCompact,
                                         {
-                                            backgroundColor: step.type === "WALK" || step.type === "ORIGIN" || step.type === "DESTINATION"
-                                                ? (isDark ? "#3A404A" : "#D1D5DB")
+                                            backgroundColor: walkingTransfer ? "transparent" :
+                                                step.type === "WALK" || step.type === "ORIGIN" || step.type === "DESTINATION"
+                                                ? neutralRailColor
                                                 : stepColor,
                                         },
                                     ]}
-                                />
+                                >
+                                    {walkingTransfer && <DottedWalkingRail color={neutralRailColor} />}
+                                </View>
                             )}
                         </View>
                         <View style={[styles.body, compact && styles.bodyCompact]}>
@@ -556,17 +632,15 @@ export default function RouteStepTimeline({
                                     {lineBadge}
                                 </View>
                             ) : stackTimelineText && clockBadge}
-                            {current && <View testID={`journey-current-step-${step.id}`} style={styles.guidanceCurrent}>
-                                <Text style={styles.guidanceCurrentText} accessibilityLiveRegion="polite">현재 위치 · {currentGuidance?.label}</Text>
-                            </View>}
                             {!firstStopIsBoarding && <TitleRow
                                 testID={inlineStops ? `route-step-row-${step.id}` : undefined}
                                 accessibilityRole={inlineStops && stepPressEnabled ? "button" : undefined}
                                 accessibilityHint={inlineStops && stepPressEnabled ? "지도에서 이 지점을 표시합니다" : undefined}
                                 accessibilityState={inlineStops && stepPressEnabled ? { selected } : undefined}
                                 accessibilityLabel={inlineStops && stepPressEnabled
-                                    ? [step.badgeText ?? step.lineName, stepTitle, "승차", clockAccessibilityLabel,
-                                        routeInfo.matchedTimeline && alightingClock ? `${alightingClock} 예상 하차` : undefined].filter(Boolean).join(" ")
+                                    ? [step.badgeText ?? step.lineName, stepTitle, stationArrivalLabel ? undefined : "승차", clockAccessibilityLabel,
+                                        hasExactTimeline && alightingClock ? `${alightingClock} 예상 하차` : undefined,
+                                        current ? "현재 구간" : undefined].filter(Boolean).join(" ")
                                     : undefined}
                                 onPress={inlineStops && stepPressEnabled ? () => onStepPress?.(step) : undefined}
                                 style={[
@@ -598,10 +672,14 @@ export default function RouteStepTimeline({
                                     )}
                                 </Text>
                             </TitleRow>}
-                            {stepDisplayNames?.[step.id] && <Text testID={`route-step-full-name-${step.id}`}
-                                style={[styles.description, { color: primaryColor }]}>{stepDisplayNames[step.id]}</Text>}
+                            {showsFullStepName && <Text testID={`route-step-full-name-${step.id}`}
+                                style={[styles.description, { color: primaryColor }]}>{fullStepName}</Text>}
                             {hasBadge && !compact && (
-                                <Text numberOfLines={1} style={[styles.description, compact && styles.descriptionCompact, { color: secondaryColor }]}>
+                                <Text
+                                    numberOfLines={intercityRide ? undefined : 1}
+                                    lineBreakStrategyIOS="hangul-word"
+                                    style={[styles.description, { color: secondaryColor }]}
+                                >
                                     {rideDescription}
                                 </Text>
                             )}
@@ -610,14 +688,22 @@ export default function RouteStepTimeline({
                                 <>
                                     <View style={[styles.rideInfoRow, stackTimelineText && styles.rideInfoRowExpanded]}>
                                         <View style={[styles.rideInfoTextStack, stackTimelineText && styles.rideInfoTextStackExpanded]}>
+                                            {!!stationArrivalLabel && (
+                                                <Text style={[styles.rideAssistText, { color: secondaryColor }]}>{stationArrivalLabel}</Text>
+                                            )}
                                             {!!boardingDescription && (
-                                                <Text numberOfLines={stackTimelineText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.description, styles.descriptionCompact, { color: secondaryColor }]}>
+                                                <Text numberOfLines={stackTimelineText || intercityRide ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.description, styles.descriptionCompact, { color: secondaryColor }]}>
                                                     {boardingDescription}
                                                 </Text>
                                             )}
                                             {!!rideDirectionLabel && (
                                                 <Text numberOfLines={stackTimelineText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.rideAssistText, { color: secondaryColor }]}>
                                                     {rideDirectionLabel}
+                                                </Text>
+                                            )}
+                                            {!!transferWaitLabel && (
+                                                <Text style={[styles.rideAssistText, { color: secondaryColor }]}>
+                                                    {transferWaitLabel}
                                                 </Text>
                                             )}
                                         </View>
@@ -670,7 +756,7 @@ export default function RouteStepTimeline({
                                                     return (
                                                         <View key={`${step.id}-bus-arrival-${arrivalIndex}`} style={[styles.busArrivalRow, stackTimelineText && styles.arrivalRowExpanded]}>
                                                             <Text style={[styles.arrivalWaitText, { color: arrivalWaitColor }]}>
-                                                                {getArrivalWaitText(arrival)}
+                                                                {getArrivalWaitText(arrival, arrivalNow)}
                                                             </Text>
                                                             <Text numberOfLines={stackTimelineText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.arrivalMutedText, stackTimelineText && styles.arrivalDirectionExpanded, { color: secondaryColor }]}>
                                                                 {getArrivalDirectionText(
@@ -694,16 +780,19 @@ export default function RouteStepTimeline({
                                         ) : (
                                             realtimeArrivals.slice(0, 3).map((arrival, arrivalIndex) => {
                                                 const attributeLabels = getTransitArrivalAttributeLabels(arrival);
+                                                const arrivalClock = getArrivalClockText(arrival);
                                                 return (
                                                     <View key={`${step.id}-arrival-${arrivalIndex}`} style={[styles.trainArrivalRow, stackTimelineText && styles.arrivalRowExpanded]}>
-                                                        <Text style={[styles.arrivalClockText, { color: primaryColor }]}>
-                                                            {getArrivalClockText(arrival)}
-                                                        </Text>
+                                                        {arrivalClock && (
+                                                            <Text style={[styles.arrivalClockText, { color: primaryColor }]}>
+                                                                {arrivalClock}
+                                                            </Text>
+                                                        )}
                                                         <Text style={[styles.arrivalWaitText, { color: arrivalWaitColor }]}>
-                                                            {getArrivalWaitText(arrival)}
+                                                            {getArrivalWaitText(arrival, arrivalNow)}
                                                         </Text>
                                                         <Text numberOfLines={stackTimelineText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.arrivalMutedText, stackTimelineText && styles.arrivalDirectionExpanded, { color: secondaryColor }]}>
-                                                            {getArrivalDirectionText(arrival, rideDirectionLabel?.replace(/\s*방면$/u, "행"))}
+                                                            {getArrivalDirectionText(arrival, directionHint?.replace(/\s*방면$/u, "행"))}
                                                         </Text>
                                                         {attributeLabels.length > 0 && (
                                                             <View style={styles.arrivalAttributeList}>
@@ -760,10 +849,28 @@ export default function RouteStepTimeline({
                             {!prioritizeStops && stopList}
                             {alightingName && (
                                 <View style={[styles.inlineAlighting, alightingClock && styles.inlineAlightingTimed]}>
+                                    {!isLast && (
+                                        <View
+                                            testID={`route-step-alighting-connector-${step.id}`}
+                                            pointerEvents="none"
+                                            style={[
+                                                styles.inlineAlightingConnector,
+                                                alightingClock && !stackTimelineText && styles.inlineAlightingConnectorTimed,
+                                                { backgroundColor: alightingIntoTransfer
+                                                    ? isDark ? "#181D25" : "#F6F8FA"
+                                                    : neutralRailColor },
+                                            ]}
+                                        >
+                                            {alightingIntoTransfer && <DottedWalkingRail color={neutralRailColor} />}
+                                        </View>
+                                    )}
                                     <View pointerEvents="none" style={[styles.inlineStopRail, alightingClock && !stackTimelineText && styles.inlineAlightingRail]}>
-                                        <View style={[styles.stopDot, styles.inlineStopDot, { borderColor: stepColor, backgroundColor: stepColor }]} />
+                                        <View testID={`route-step-alighting-marker-${step.id}`}
+                                            style={[styles.inlineAlightingMarker, { backgroundColor: isDark ? "#2B3748" : "#E6EDF6", borderColor: isDark ? "#181D25" : "#F6F8FA" }]}>
+                                            <Ionicons accessible={false} name={alightingIntoTransfer ? "walk-outline" : "checkmark-outline"} size={14} color={isDark ? "#F5F7FA" : "#334155"} />
+                                        </View>
                                     </View>
-                                    <Text style={[styles.inlineDisclosureText, { color: primaryColor }]}>{alightingName} 하차</Text>
+                                    <Text style={[styles.inlineDisclosureText, { color: primaryColor }]}>{`${alightingName} 하차`}</Text>
                                     {alightingClock && (
                                         <View style={[
                                             styles.timelineClockBadge,
@@ -813,13 +920,14 @@ export default function RouteStepTimeline({
                         stepTitle,
                         hasBadge ? rideDescription : stepDescription,
                         clockAccessibilityLabel,
-                        routeInfo.matchedTimeline && alightingClock ? `${alightingClock} 예상 하차` : undefined,
+                        hasExactTimeline && alightingClock ? `${alightingClock} 예상 하차` : undefined,
+                        compact ? transferWaitLabel : undefined,
                         compact && hasBadge && !arrivalPresentation.showArrivalCard ? arrivalInlineMessage : undefined,
                         arrivalPresentation.showArrivalCard ? arrivalStatusLabel : undefined,
                         arrivalPresentation.showArrivalCard ? arrivalPresentation.freshnessLabel : undefined,
                         ...(arrivalPresentation.showArrivalCard
                             ? realtimeArrivals.slice(0, step.type === "BUS" ? 2 : 3).map(arrival => [
-                                getArrivalWaitText(arrival),
+                                getArrivalWaitText(arrival, arrivalNow),
                                 getArrivalDirectionText(arrival),
                                 ...getTransitArrivalAttributeLabels(arrival),
                             ].filter(Boolean).join(" · "))
@@ -829,18 +937,32 @@ export default function RouteStepTimeline({
                 return (
                     <View
                         key={step.id}
-                        ref={expandable && onRevealFirstStop ? node => {
-                            if (node) boardingRows.current.set(step.id, node);
-                            else boardingRows.current.delete(step.id);
+                        ref={current || (expandable && onRevealFirstStop) ? node => {
+                            if (current && currentGuidanceRowRef) currentGuidanceRowRef.current = node;
+                            if (expandable && onRevealFirstStop) {
+                                if (node) boardingRows.current.set(step.id, node);
+                                else boardingRows.current.delete(step.id);
+                            }
                         } : undefined}
-                        collapsable={expandable && onRevealFirstStop ? false : undefined}
+                        collapsable={current || (expandable && onRevealFirstStop) ? false : undefined}
                         style={[
                             styles.item,
                             compact && styles.itemCompact,
                             selectedStyle,
-                            current && styles.guidanceCurrentRow,
                         ]}
                     >
+                        {current && (
+                            <View
+                                testID={`journey-current-step-${step.id}`}
+                                pointerEvents="none"
+                                accessibilityElementsHidden
+                                importantForAccessibility="no-hide-descendants"
+                                style={[styles.guidanceCurrentRow, {
+                                    borderLeftColor: isDark ? '#75A9F2' : '#2979FF',
+                                    backgroundColor: isDark ? 'rgba(117,169,242,0.16)' : 'rgba(41,121,255,0.10)',
+                                }]}
+                            />
+                        )}
                         {showLegFocus && selected && !current && (
                             <Reanimated.View
                                 pointerEvents="none"
@@ -855,7 +977,7 @@ export default function RouteStepTimeline({
                             accessible
                             disabled={!stepPressEnabled}
                             accessibilityRole={stepPressEnabled ? "button" : undefined}
-                            accessibilityLabel={[stepAccessibilityLabel, current ? `현재 위치, ${currentGuidance?.label}` : null].filter(Boolean).join(', ')}
+                            accessibilityLabel={[stepAccessibilityLabel, current ? '현재 구간' : null].filter(Boolean).join(', ')}
                             accessibilityState={stepPressEnabled ? {
                                 selected,
                             } : undefined}
@@ -867,6 +989,11 @@ export default function RouteStepTimeline({
                         >
                             {content}
                         </Pressable>}
+                        {busBoardingScroll && !stackTimelineText && inlineStops && expanded && step.type === "BUS" && firstVisibleStopIndex >= 0 && (
+                            <RouteBusBoardingContext scroll={busBoardingScroll} getRow={() => boardingRows.current.get(step.id)}
+                                line={step.badgeText ?? step.lineName ?? "버스"} clock={timelineClockText} stop={stepTitle}
+                                color={stepColor} textColor={primaryColor} surface={busBoardingScroll.surface} border={busBoardingScroll.border} />
+                        )}
                         {expandable && !inlineStops && (
                             <Pressable
                                 testID={`route-step-disclosure-${step.id}`}

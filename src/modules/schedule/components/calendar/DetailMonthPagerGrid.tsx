@@ -8,6 +8,7 @@ import {
     type CalendarDayMetadata,
 } from "../../calendarMetadata";
 import { getCalendarTodayAccent } from "./calendarTodayAccent";
+import { useCalendarYearDateTarget } from "./CalendarYearDateHandoff";
 import {
     DETAIL_MONTH_EVENT_MARKER_LIMIT,
     DETAIL_MONTH_GRID_COLUMN_COUNT,
@@ -37,6 +38,7 @@ export type DetailMonthGridCellProps = {
     marking?: CalendarDayComponentProps["marking"];
     metadata?: CalendarDayMetadata;
     todayDateString: string;
+    isSelected?: boolean;
     textPrimary: string;
     textSecondary: string;
     colorMode: "dark" | "light";
@@ -44,7 +46,7 @@ export type DetailMonthGridCellProps = {
 };
 
 /** 상세 월의 날짜 한 칸에 오늘·공휴일·음력·일정 표식을 조합하고 접근성 설명을 제공한다. */
-export function DetailMonthGridCell({
+export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
     model,
     date,
     cellHeight,
@@ -52,12 +54,14 @@ export function DetailMonthGridCell({
     marking,
     metadata,
     todayDateString,
+    isSelected = false,
     textPrimary,
     textSecondary,
     colorMode,
     onPress,
 }: DetailMonthGridCellProps) {
     const isDisabled = date.dateString.slice(0, 7) !== model.monthKey;
+    const handoffTarget = useCalendarYearDateTarget(isSelected && !isDisabled ? date.dateString : undefined, "grid");
     const isToday = date.dateString === todayDateString;
     const weekday = new Date(
         date.year,
@@ -112,6 +116,7 @@ export function DetailMonthGridCell({
             accessibilityLabel={accessibilityLabel}
             accessibilityState={{
                 disabled: false,
+                selected: isSelected,
             }}
             style={({ pressed }) => [
                 styles.detailMonthGridCell,
@@ -120,6 +125,8 @@ export function DetailMonthGridCell({
             ]}
         >
                 <View
+                    ref={handoffTarget}
+                    collapsable={!isSelected || isDisabled}
                     testID="calendar-day-circle"
                     style={[
                         styles.detailMonthGridDayCircle,
@@ -238,7 +245,7 @@ export function DetailMonthGridCell({
                 ) : null}
         </Pressable>
     );
-}
+});
 
 /** 월 격자에 실제로 보이는 날짜 데이터만 비교해 불필요한 전체 월 재렌더링을 막는다. */
 export function areDetailMonthPagerGridPropsEqual(
@@ -247,6 +254,7 @@ export function areDetailMonthPagerGridPropsEqual(
 ): boolean {
     if (
         previous.day !== next.day
+        || previous.selectedDay !== next.selectedDay
         || previous.firstDay !== next.firstDay
         || previous.detailCellHeight !== next.detailCellHeight
         || previous.todayDateString !== next.todayDateString
@@ -276,6 +284,7 @@ export function areDetailMonthPagerGridPropsEqual(
 export const DetailMonthPagerGrid = React.memo(
     function DetailMonthPagerGrid({
         day,
+        selectedDay,
         firstDay,
         markedDates,
         calendarDaysByDate,
@@ -292,7 +301,7 @@ export const DetailMonthPagerGrid = React.memo(
             32,
             detailCellHeight ?? CALENDAR_DAY_HEIGHTS.detail
         );
-        const geometry = getDetailMonthCellGeometry(cellHeight);
+        const geometry = React.useMemo(() => getDetailMonthCellGeometry(cellHeight), [cellHeight]);
         return (
             <View
                 testID={`detail-month-grid-${model.monthKey}`}
@@ -341,6 +350,7 @@ export const DetailMonthPagerGrid = React.memo(
                                         calendarDaysByDate[date.dateString]
                                     }
                                     todayDateString={todayDateString}
+                                    isSelected={date.dateString === selectedDay}
                                     textPrimary={textPrimary}
                                     textSecondary={textSecondary}
                                     colorMode={colorMode}

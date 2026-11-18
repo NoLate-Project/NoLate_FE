@@ -18,6 +18,7 @@ import {
 import type { TravelMode } from "../../types";
 import ScheduleIcon, { SCHEDULE_TRAVEL_ICONS } from "../shared/ScheduleIcon";
 import { getCalendarTodayAccent } from "./calendarTodayAccent";
+import { useCalendarYearDateTarget } from "./CalendarYearDateHandoff";
 import { getStackEventBackground, STACK_CALENDAR_GEOMETRY } from "./stackCalendarAppearance";
 import { CALENDAR_DAY_HEIGHTS, type CalendarViewMode } from "./viewMode";
 import type {
@@ -74,6 +75,7 @@ type Props = {
     animatedSelectedDayKey?: SharedValue<number>;
     detailPagerMonthOrdinal?: number;
     detailCellHeight?: number;
+    stackCellHeight?: number;
     stackPresentation?: StackDayPresentation;
     stackEventTop?: number;
     hideStackEventLabels?: boolean;
@@ -103,12 +105,13 @@ function CustomDay({
     animatedSelectedDayKey,
     detailPagerMonthOrdinal,
     detailCellHeight,
+    stackCellHeight,
     stackPresentation,
     stackEventTop,
     hideStackEventLabels = false,
 }: Props) {
     const { colors, mode } = useTheme();
-    const cellHeight = CALENDAR_DAY_HEIGHTS[viewMode];
+    const cellHeight = viewMode === "stack" ? stackCellHeight ?? CALENDAR_DAY_HEIGHTS.stack : CALENDAR_DAY_HEIGHTS[viewMode];
     const usesResponsiveDetailGeometry = viewMode === "detail"
         && (
             Boolean(animatedCellHeight)
@@ -120,6 +123,7 @@ function CustomDay({
     const isPressDisabled = isDisabled && !allowDisabledPress;
     const isToday = state === "today";
     const isSelected = pressedSelection || (isSelectedDay ?? marking?.selected);
+    const handoffTarget = useCalendarYearDateTarget(isSelected && !isDisabled ? date?.dateString : undefined, "grid");
     const dateKey = date
         ? date.year * 10_000 + date.month * 100 + date.day
         : 0;
@@ -446,6 +450,8 @@ function CustomDay({
                 ]}
             >
             <Reanimated.View
+                ref={handoffTarget}
+                collapsable={!isSelected || isDisabled}
                 testID="calendar-day-circle"
                 style={[
                     styles.dayCircle,
@@ -698,6 +704,7 @@ function areCustomDayPropsEqual(previous: Props, next: Props): boolean {
         && previous.animatedCellHeight === next.animatedCellHeight
         && previous.animatedSelectedDayKey === next.animatedSelectedDayKey
         && previous.detailCellHeight === next.detailCellHeight
+        && previous.stackCellHeight === next.stackCellHeight
         && previous.stackPresentation === next.stackPresentation
         && previous.stackEventTop === next.stackEventTop
         && previous.hideStackEventLabels === next.hideStackEventLabels

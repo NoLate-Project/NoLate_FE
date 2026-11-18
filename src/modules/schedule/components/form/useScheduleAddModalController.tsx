@@ -1,8 +1,8 @@
 import { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { usePathname, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Animated, Keyboard, Platform, useWindowDimensions, View } from 'react-native';
-import Reanimated, { cancelAnimation } from 'react-native-reanimated';
+import Reanimated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import styles from './ScheduleAddModal.styles';
 
@@ -16,8 +16,10 @@ import {
 } from '../../routePlannerSession';
 import { resolveScheduleAlertModePayload } from '../../scheduleAlertMode';
 import { getImportedTicket } from '../../importedTicket';
+import { getRouteInfoFromRoute, isSameScheduleDraftRoute } from '../../routeInfo';
 import {
   getScheduleCalendarDateKey,
+  getScheduleFormEndWhenMovingStartDate,
   normalizeScheduleFormRange,
   startOfLocalScheduleDay,
 } from '../../scheduleFormDate';
@@ -25,10 +27,8 @@ import {
   buildScheduleFormLocationName,
   buildScheduleFormPlace,
 } from '../../scheduleFormPlace';
-import {
-  hasPersistableScheduleRoute,
-  reconcileScheduleRouteTiming,
-} from '../../scheduleRouteTiming';
+import { hasPersistableScheduleRoute } from '../../scheduleRouteTiming';
+import { refreshOdsayScheduleTiming } from '../../refreshOdsayScheduleTiming';
 import CalendarGlassSurface from '../calendar/CalendarGlassSurface';
 
 import {
@@ -213,7 +213,7 @@ export function useScheduleAddModalController({
     openSheet,
     posY,
     requestClose,
-    resetCloseLifecycle,
+    resumeMorphAfterRoute,
   } = useScheduleAddSheetLifecycle({
     closePromptVisibleRef,
     discardDraft,
@@ -238,6 +238,7 @@ export function useScheduleAddModalController({
     visible,
   });
 
+  const [routeReturn, setRouteReturn] = useState<{ sessionId: string; applied: boolean }>();
   useEffect(() => {
     if (!visible || !routePlannerSessionId) return;
     const observation = observeRoutePlannerReturn(
@@ -251,46 +252,37 @@ export function useScheduleAddModalController({
     const selectedTargetArrivalAt = pendingRouteTimingTargetArrivalRef.current;
     pendingRouteTimingTargetArrivalRef.current = undefined;
     setRoutePlannerSessionId(undefined);
-    if (!result) {
-      setRoutePlannerHidden(false);
-      setRendered(true);
-      if (isMorphPresentation) {
-        resetCloseLifecycle();
-        cancelAnimation(morphProgress);
-        morphProgress.value = 1;
-        setMorphContentMounted(true);
-        setMorphSheetRasterized(true);
-      } else {
-        posY.setValue(SHEET_HIDDEN_Y);
-        openSheet();
+    const nextRoute = result && getRouteInfoFromRoute(result.route, result);
+    const routeChanged = result != null && (
+      travelMode !== result.travelMode ||
+      !isSameScheduleDraftRoute(routeInfo, nextRoute)
+    );
+    setRouteReturn({ sessionId: routePlannerSessionId, applied: routeChanged });
+    if (result) {
+      setOriginText(result.origin?.name ?? '');
+      setOriginAddress(result.origin?.address);
+      setOriginLat(result.origin?.lat);
+      setOriginLng(result.origin?.lng);
+      setDestinationText(result.destination?.name ?? '');
+      setDestinationAddress(result.destination?.address);
+      setDestinationLat(result.destination?.lat);
+      setDestinationLng(result.destination?.lng);
+      setTravelMode(result.travelMode);
+      setTravelMinutes(result.travelMinutes);
+      setDepartAt(result.departureAt);
+      setRoute(result.route);
+      if (routeChanged) {
+        setRouteDraftChange(previous => ({ kind: 'applied', revision: (previous?.revision ?? 0) + 1 }));
       }
-      return;
+      routeTimingTargetArrivalRef.current =
+        selectedTargetArrivalAt ?? result.targetArrivalAt;
+      markFormDirty();
     }
 
-    setOriginText(result.origin?.name ?? '');
-    setOriginAddress(result.origin?.address);
-    setOriginLat(result.origin?.lat);
-    setOriginLng(result.origin?.lng);
-    setDestinationText(result.destination?.name ?? '');
-    setDestinationAddress(result.destination?.address);
-    setDestinationLat(result.destination?.lat);
-    setDestinationLng(result.destination?.lng);
-    setTravelMode(result.travelMode);
-    setTravelMinutes(result.travelMinutes);
-    setDepartAt(result.departureAt);
-    setRoute(result.route);
-    setRouteDraftChange(previous => ({ kind: 'applied', revision: (previous?.revision ?? 0) + 1 }));
-    routeTimingTargetArrivalRef.current =
-      selectedTargetArrivalAt ?? result.targetArrivalAt;
-    markFormDirty();
     setRoutePlannerHidden(false);
     setRendered(true);
     if (isMorphPresentation) {
-      resetCloseLifecycle();
-      cancelAnimation(morphProgress);
-      morphProgress.value = 1;
-      setMorphContentMounted(true);
-      setMorphSheetRasterized(true);
+      resumeMorphAfterRoute();
     } else {
       posY.setValue(SHEET_HIDDEN_Y);
       openSheet();
@@ -298,11 +290,11 @@ export function useScheduleAddModalController({
   }, [
     isMorphPresentation,
     pendingRouteTimingTargetArrivalRef,
-    morphProgress,
     openSheet,
     pathname,
     posY,
-    resetCloseLifecycle,
+    resumeMorphAfterRoute,
+    routeInfo,
     routePlannerAwayRef,
     routePlannerSessionId,
     routeTimingTargetArrivalRef,
@@ -311,8 +303,6 @@ export function useScheduleAddModalController({
     setDestinationLat,
     setDestinationLng,
     setDestinationText,
-    setMorphContentMounted,
-    setMorphSheetRasterized,
     setOriginAddress,
     setOriginLat,
     setOriginLng,
@@ -324,6 +314,7 @@ export function useScheduleAddModalController({
     setRoutePlannerSessionId,
     setTravelMinutes,
     setTravelMode,
+    travelMode,
     visible,
     markFormDirty,
   ]);
@@ -377,7 +368,8 @@ export function useScheduleAddModalController({
       }), returnToScheduleDraft: true },
     );
 
-    setPicker(null);
+    Keyboard.dismiss();
+    setTitleFocused(false);
     // 모달 state가 먼저 갱신돼도 경로 화면을 실제로 다녀오기 전에는 빈 결과를 소비하지 않는다.
     routePlannerAwayRef.current = false;
     setRoutePlannerSessionId(sessionId);
@@ -402,9 +394,9 @@ export function useScheduleAddModalController({
     routePlannerAwayRef,
     startDay,
     startTime,
-    setPicker,
     setRoutePlannerHidden,
     setRoutePlannerSessionId,
+    setTitleFocused,
     submitInFlightRef,
     travelMinutes,
     travelMode,
@@ -492,26 +484,22 @@ export function useScheduleAddModalController({
       nextDestination,
     );
     const nextStartAt = normalizedRange.startAt.toISOString();
-    const reconciledRouteTiming = reconcileScheduleRouteTiming({
-      departAt,
-      route,
-      travelMinutes,
-      plannedArrivalAt: routeTimingTargetArrivalRef.current,
-      nextArrivalAt: nextStartAt,
-    });
-    const hasRoutePlan = hasPersistableScheduleRoute(
-      reconciledRouteTiming.route,
-      travelMinutes,
-      nextOrigin,
-      nextDestination,
-    );
-
-    const importedTicket = getImportedTicket(reconciledRouteTiming.route);
-
     try {
       submitInFlightRef.current = true;
       setSubmitting(true);
       setFormError(null);
+      const reconciledRouteTiming = await refreshOdsayScheduleTiming({
+        departAt,
+        route,
+        travelMinutes,
+        plannedArrivalAt: routeTimingTargetArrivalRef.current,
+        nextArrivalAt: nextStartAt,
+        origin: nextOrigin,
+        destination: nextDestination,
+      });
+      const finalTravelMinutes = reconciledRouteTiming.travelMinutes;
+      const hasRoutePlan = hasPersistableScheduleRoute(reconciledRouteTiming.route, finalTravelMinutes, nextOrigin, nextDestination);
+      const importedTicket = getImportedTicket(reconciledRouteTiming.route);
       await onSubmit({
         title: t,
         startAt: nextStartAt,
@@ -524,7 +512,7 @@ export function useScheduleAddModalController({
         calendarId: null,
         calendarContentModeOverride: null,
         travelMode: hasRoutePlan ? travelMode : importedTicket ? 'TRANSIT' : undefined,
-        travelMinutes: hasRoutePlan ? travelMinutes : undefined,
+        travelMinutes: hasRoutePlan ? finalTravelMinutes : undefined,
         departAt: hasRoutePlan ? reconciledRouteTiming.departAt : undefined,
         route: hasRoutePlan ? reconciledRouteTiming.route : importedTicket
           ? { schemaVersion: 3, importedTicket }
@@ -568,9 +556,16 @@ export function useScheduleAddModalController({
       const selected = new Date(`${day.dateString}T00:00:00`);
       markFormDirty();
       if (picker === 'startDate') {
+        const nextEnd = getScheduleFormEndWhenMovingStartDate(
+          { startDay, startTime, endDay, endTime, allDay, hasEndTime }, selected,
+        );
         setStartDay(selected);
-        if (allDay && selected.getTime() > endDay.getTime())
+        if (nextEnd) {
+          setEndDay(startOfLocalScheduleDay(nextEnd));
+          setEndTime(nextEnd);
+        } else if (allDay && selected.getTime() > endDay.getTime()) {
           setEndDay(selected);
+        }
       } else if (picker === 'endDate') {
         if (!allDay) setHasEndTime(true);
         setEndDay(selected);
@@ -580,12 +575,16 @@ export function useScheduleAddModalController({
     [
       allDay,
       endDay,
+      endTime,
+      hasEndTime,
       markFormDirty,
       picker,
       setEndDay,
       setHasEndTime,
       setStartDay,
       startDay,
+      startTime,
+      setEndTime,
     ],
   );
 
@@ -638,12 +637,12 @@ export function useScheduleAddModalController({
     ? FORM_ACCENT
     : colors.border;
   const saveDisabled = submitting || !title.trim() || !category;
-  const saveBackgroundColor = saveDisabled
+  const saveBackgroundColor = saveDisabled && !submitting
     ? mode === 'dark'
       ? '#2C2C2E'
       : '#E9E9EE'
     : FORM_ACCENT;
-  const saveTextColor = saveDisabled
+  const saveTextColor = saveDisabled && !submitting
     ? mode === 'dark'
       ? '#8E8E93'
       : '#7D7D82'
@@ -729,6 +728,7 @@ export function useScheduleAddModalController({
     categoryPickerOpen,
     clearRoute,
     routeDraftChange,
+    routeReturn,
     colors,
     contentFade,
     destinationText,
@@ -774,6 +774,7 @@ export function useScheduleAddModalController({
     requestClose,
     routeInfo,
     routeReady,
+    routePlannedArrivalAt: routeTimingTargetArrivalRef.current,
     saveBackgroundColor,
     saveDisabled,
     saveTextColor,

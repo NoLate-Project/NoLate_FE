@@ -10,7 +10,8 @@ import { getImportedTicket } from "../importedTicket";
 import { resolveScheduleAlertModePayload } from "../scheduleAlertMode";
 import { normalizeScheduleFormRange } from "../scheduleFormDate";
 import { buildScheduleFormLocationName, buildScheduleFormPlace } from "../scheduleFormPlace";
-import { hasPersistableScheduleRoute, reconcileScheduleRouteTiming } from "../scheduleRouteTiming";
+import { hasPersistableScheduleRoute } from "../scheduleRouteTiming";
+import { refreshOdsayScheduleTiming } from "../refreshOdsayScheduleTiming";
 import { useScheduleStore } from "../store";
 import { applyTravelPlanToScheduleItem } from "../travelPlanPresentation";
 import type { ScheduleAlertMode, ScheduleCategory, ScheduleItem, TravelMode } from "../types";
@@ -50,6 +51,7 @@ type ScheduleEditMutationContext = {
     notes: string;
     dispatch: ReturnType<typeof useScheduleStore>["dispatch"];
     markFormDirty: () => void;
+    onSaved?: (previous: ScheduleItem, updated: ScheduleItem) => void;
     closeEditScreen: () => void;
     setMutationPending: Dispatch<SetStateAction<boolean>>;
     discardChanges: () => void;
@@ -88,42 +90,29 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
         });
         const locationName = buildScheduleFormLocationName(nextOrigin, nextDestination);
         const nextStartAt = normalizedRange.startAt.toISOString();
-        const reconciledRouteTiming = reconcileScheduleRouteTiming({
-            departAt,
-            route,
-            travelMinutes,
-            plannedArrivalAt: routeTimingTargetArrivalRef.current,
-            nextArrivalAt: nextStartAt,
-        });
-        const hasRoutePlan = hasPersistableScheduleRoute(
-            reconciledRouteTiming.route,
-            travelMinutes,
-            nextOrigin,
-            nextDestination
-        );
-        const importedTicket = getImportedTicket(reconciledRouteTiming.route);
-        const resolvedNotificationEnabled = hasRoutePlan && notificationEnabled;
-        const resolvedNotificationLeadMinutes = resolvedNotificationEnabled
-            ? notificationLeadMinutes
-            : undefined;
-        const resolvedNotificationIntervalMinutes = resolvedNotificationEnabled
-            ? notificationIntervalMinutes
-            : undefined;
-        const resolvedAlertMode = resolveScheduleAlertModePayload({
-            hasRoutePlan,
-            notificationEnabled,
-            selectedMode: alertMode,
-        });
-        const personalTravelPlanPayload = (
-            item.sharePermission != null
-            && hasRoutePlan
-            && typeof travelMinutes === "number"
-            && Number.isFinite(travelMinutes)
-            && travelMinutes > 0
-            && hasCompletePersonalTravelPlanCoordinates(nextOrigin)
-            && hasCompletePersonalTravelPlanCoordinates(nextDestination)
-        ) ? {
-                travelMinutes,
+        let commonUpdateSucceeded = false;
+        try {
+            mutationPendingRef.current = true;
+            setMutationPending(true);
+            const reconciledRouteTiming = await refreshOdsayScheduleTiming({
+                departAt, route, travelMinutes, plannedArrivalAt: routeTimingTargetArrivalRef.current,
+                nextArrivalAt: nextStartAt, origin: nextOrigin, destination: nextDestination,
+            });
+            const finalTravelMinutes = reconciledRouteTiming.travelMinutes;
+            const hasRoutePlan = hasPersistableScheduleRoute(reconciledRouteTiming.route, finalTravelMinutes, nextOrigin, nextDestination);
+            const importedTicket = getImportedTicket(reconciledRouteTiming.route);
+            const resolvedNotificationEnabled = hasRoutePlan && notificationEnabled;
+            const resolvedNotificationLeadMinutes = resolvedNotificationEnabled ? notificationLeadMinutes : undefined;
+            const resolvedNotificationIntervalMinutes = resolvedNotificationEnabled ? notificationIntervalMinutes : undefined;
+            const resolvedAlertMode = resolveScheduleAlertModePayload({
+                hasRoutePlan, notificationEnabled, selectedMode: alertMode,
+            });
+            const personalTravelPlanPayload = (
+                item.sharePermission != null && hasRoutePlan && typeof finalTravelMinutes === "number" &&
+                Number.isFinite(finalTravelMinutes) && finalTravelMinutes > 0 &&
+                hasCompletePersonalTravelPlanCoordinates(nextOrigin) && hasCompletePersonalTravelPlanCoordinates(nextDestination)
+            ) ? {
+                travelMinutes: finalTravelMinutes,
                 departAt: reconciledRouteTiming.departAt,
                 travelMode,
                 origin: nextOrigin,
@@ -132,13 +121,7 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
                 notificationLeadMinutes: resolvedNotificationLeadMinutes,
                 notificationIntervalMinutes: resolvedNotificationIntervalMinutes,
                 alertMode: resolvedAlertMode,
-            }
-            : undefined;
-
-        let commonUpdateSucceeded = false;
-        try {
-            mutationPendingRef.current = true;
-            setMutationPending(true);
+            } : undefined;
             const updated = await updateSchedule(item.id, {
                 title: t,
                 category,
@@ -148,7 +131,7 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
                 endAt: normalizedRange.endAt.toISOString(),
                 hasEndTime: normalizedRange.hasEndTime,
                 travelMode: hasRoutePlan ? travelMode : importedTicket ? "TRANSIT" : undefined,
-                travelMinutes: hasRoutePlan ? travelMinutes : undefined,
+                travelMinutes: hasRoutePlan ? finalTravelMinutes : undefined,
                 departAt: hasRoutePlan ? reconciledRouteTiming.departAt : undefined,
                 locationName,
                 destination: nextDestination,
@@ -165,6 +148,7 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
                 alertMode: resolvedAlertMode,
             });
             commonUpdateSucceeded = true;
+            let savedItem = updated;
             dispatch({ type: "UPDATE_ITEM", item: updated });
 
             if (personalTravelPlanPayload) {
@@ -173,10 +157,8 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
                         item.id,
                         personalTravelPlanPayload,
                     );
-                    dispatch({
-                        type: "UPDATE_ITEM",
-                        item: applyTravelPlanToScheduleItem(updated, plan),
-                    });
+                    savedItem = applyTravelPlanToScheduleItem(updated, plan);
+                    dispatch({ type: "UPDATE_ITEM", item: savedItem });
                 } catch {
                     markFormDirty();
                     try {
@@ -193,6 +175,7 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
                 }
             }
 
+            context.onSaved?.(item, savedItem);
             closeEditScreen();
         } catch (error) {
             Alert.alert("일정 수정 실패", getErrorMessage(error));

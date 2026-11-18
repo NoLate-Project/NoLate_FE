@@ -29,6 +29,49 @@ describe("Tmap native map facade", () => {
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
+        jest.useRealTimers();
+    });
+
+    it("restarts an unresponsive iOS map once with the same route data", async () => {
+        jest.useFakeTimers();
+        const onLoadStateChange = jest.fn();
+        const camera = { latitude: 37.5665, longitude: 126.978, zoom: 15 };
+        const pathOverlays = [{ id: "saved-route", coords: [camera, { latitude: 37.57, longitude: 126.99 }] }];
+        const nativeView = () => renderer!.root.find(node => (node.type as unknown) === "NoLateTMapNativeMock");
+        await act(async () => {
+            renderer = TestRenderer.create(<TmapMapView camera={camera} pathOverlays={pathOverlays} onLoadStateChange={onLoadStateChange} />);
+        });
+
+        expect(nativeView().props.data.revision).toBe(0);
+        act(() => jest.advanceTimersByTime(15_000));
+        expect(nativeView().props.data).toMatchObject({ revision: 1, camera, pathOverlays });
+        expect(onLoadStateChange).toHaveBeenLastCalledWith("loading");
+        expect(onLoadStateChange).not.toHaveBeenCalledWith("error");
+
+        act(() => jest.advanceTimersByTime(15_000));
+        expect(onLoadStateChange).toHaveBeenLastCalledWith("error");
+        act(() => jest.advanceTimersByTime(15_000));
+        expect(nativeView().props.data.revision).toBe(1);
+    });
+
+    it("reports a native error without restarting the map", async () => {
+        jest.useFakeTimers();
+        const onLoadStateChange = jest.fn();
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <TmapMapView camera={{ latitude: 37.5665, longitude: 126.978 }} onLoadStateChange={onLoadStateChange} />
+            );
+        });
+        const nativeView = renderer!.root.find(node => (node.type as unknown) === "NoLateTMapNativeMock");
+        const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            act(() => nativeView.props.onMapError({ nativeEvent: { code: "TMAP_APP_KEY_REJECTED" } }));
+        } finally {
+            warning.mockRestore();
+        }
+        act(() => jest.advanceTimersByTime(30_000));
+        expect(onLoadStateChange).toHaveBeenLastCalledWith("error");
+        expect(nativeView.props.data.revision).toBe(0);
     });
 
     it("passes one data snapshot and preserves batched imperative commands", async () => {

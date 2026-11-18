@@ -1,6 +1,9 @@
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
+jest.mock("../src/ui/LoadingIndicator", () => "LoadingIndicator");
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 import React from 'react';
+import { Dimensions, Platform, Text } from 'react-native';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import IntercityTimetableSheet from '../src/modules/schedule/components/route/IntercityTimetableSheet';
 import { getIntercityCities, getIntercityServices, getIntercityStops } from '../src/api/intercityTimetable';
@@ -12,10 +15,13 @@ const service = { id: 'tago:test', kind: 'TRAIN', departureId: 'NATH30000', arri
 const page = (items: unknown[]) => ({ status: 'AVAILABLE', items, page: 1, hasMore: false, source: 'TAGO', fetchedAt: new Date().toISOString() });
 beforeEach(() => {
   jest.clearAllMocks();
-  (getIntercityCities as jest.Mock).mockResolvedValue(page([{ code: '11', name: '서울특별시' }]));
+  (getIntercityCities as jest.Mock).mockResolvedValue(page([
+    { code: '11', name: '서울특별시' }, { code: '44', name: '충청남도' },
+  ]));
   (getIntercityStops as jest.Mock).mockResolvedValueOnce(page([{ id: 'NATH30000', name: '수서' }])).mockResolvedValueOnce(page([{ id: 'NATH20438', name: '공주' }]));
   (getIntercityServices as jest.Mock).mockResolvedValue(page([service]));
 });
+afterEach(() => jest.restoreAllMocks());
 function get(view: ReactTestRenderer, label: string) {
   const button = view.root.findAll(node => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function')[0];
   if (!button) throw new Error(`Missing button: ${label}`);
@@ -27,16 +33,23 @@ async function choose(onSelect: (selection: IntercitySelection, isCurrent: () =>
   let view!: ReactTestRenderer;
   await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date('2099-10-13T00:00:00+09:00')} dark={false} departureName="수서" arrivalName="공주" onClose={close} onSelect={onSelect} />); });
   await press(view, '출발 역·터미널 선택');
+  expect(view.root.findAll(node => node.props.accessibilityLabel === '서울특별시')).toHaveLength(0);
+  await press(view, '시·도 선택');
   expect(get(view, '서울특별시')).toBeTruthy();
   await press(view, '서울특별시');
+  expect(get(view, '시·도 선택, 서울특별시').props.accessibilityState.expanded).toBe(false);
   await press(view, '역 터미널 검색');
   expect(get(view, '수서 NATH30000')).toBeTruthy();
   await press(view, '수서 NATH30000');
   await press(view, '도착 역·터미널 선택');
+  await press(view, '시·도 선택');
+  await press(view, '충청남도');
   await press(view, '역 터미널 검색');
   expect(get(view, '공주 NATH20438')).toBeTruthy();
   await press(view, '공주 NATH20438');
-  await press(view, '운행편 조회');
+  const lookup = get(view, '운행편 조회').props.onPress;
+  await act(async () => { lookup(); lookup(); });
+  expect(getIntercityServices).toHaveBeenCalledTimes(1);
   expect(get(view, '12:20 123 운행편 선택')).toBeTruthy();
   await press(view, '12:20 123 운행편 선택');
   return { view, close };
@@ -50,6 +63,7 @@ test('lookup and row selection do not apply a journey until station mapping is c
   await press(view, '같은 승하차 장소입니다');
   await press(view, '이 운행편으로 경로 연결');
   expect(close).toHaveBeenCalledTimes(1);
+  expect(get(view, '이 운행편으로 경로 연결').props.accessibilityState.busy).toBe(false);
   expect(select).toHaveBeenCalledWith(expect.objectContaining({ service, mappingConfirmed: true, boardingBufferMinutes: 15, alightingBufferMinutes: 5 }), expect.any(Function));
 });
 test('invalid buffers prevent a connection and returning restores the same service and buffers', async () => {
@@ -74,7 +88,52 @@ test('invalid buffers prevent a connection and returning restores the same servi
   expect(select).toHaveBeenCalledWith(expect.objectContaining({ alightingBufferMinutes: 0 }), expect.any(Function));
 });
 
+test('reselecting the active transport keeps the stops and timetable results', async () => {
+  const { view } = await choose(jest.fn().mockResolvedValue(undefined));
+  await press(view, '운행편 선택 취소');
+  await press(view, '기차');
+  expect(get(view, '출발 수서')).toBeTruthy();
+  expect(get(view, '도착 공주')).toBeTruthy();
+  expect(get(view, '12:20 123 운행편 선택')).toBeTruthy();
+  expect(getIntercityServices).toHaveBeenCalledTimes(1);
+});
+
+test('canceling a station search keeps each field’s query and region until transport changes', async () => {
+  let view!: ReactTestRenderer;
+  await act(async () => {
+    view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date()} dark={false} departureName="수서" arrivalName="공주" onClose={jest.fn()} />);
+  });
+  const input = () => view.root.findAll(node => node.props.accessibilityLabel === '역 터미널 검색어'
+    && typeof node.props.onChangeText === 'function')[0];
+  await press(view, '출발 역·터미널 선택');
+  await press(view, '시·도 선택');
+  await press(view, '서울특별시');
+  await act(async () => input().props.onChangeText('서울역'));
+  await press(view, '역 터미널 선택 취소');
+  await press(view, '도착 역·터미널 선택');
+  expect(input().props.value).toBe('공주');
+  expect(get(view, '시·도 선택')).toBeTruthy();
+  expect(get(view, '역 터미널 검색').props.disabled).toBe(true);
+  await press(view, '시·도 선택');
+  await press(view, '충청남도');
+  await act(async () => input().props.onChangeText('공주역'));
+  await press(view, '역 터미널 선택 취소');
+  await press(view, '출발 역·터미널 선택');
+  expect(input().props.value).toBe('서울역');
+  expect(get(view, '시·도 선택, 서울특별시')).toBeTruthy();
+  await press(view, '역 터미널 선택 취소');
+  await press(view, '도착 역·터미널 선택');
+  expect(input().props.value).toBe('공주역');
+  expect(get(view, '시·도 선택, 충청남도')).toBeTruthy();
+  await press(view, '역 터미널 선택 취소');
+  await press(view, '고속버스');
+  await press(view, '출발 역·터미널 선택');
+  expect(input().props.value).toBe('수서');
+});
+
 test('station lookup retry keeps the search text', async () => {
+  const getDimensions = Dimensions.get.bind(Dimensions);
+  jest.spyOn(Dimensions, 'get').mockImplementation(name => ({ ...getDimensions(name), fontScale: 1 }));
   const search = jest.mocked(getIntercityStops);
   search.mockReset()
     .mockRejectedValueOnce(new Error('unavailable'))
@@ -84,12 +143,76 @@ test('station lookup retry keeps the search text', async () => {
     view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date()} dark={false} departureName="수서" onClose={jest.fn()} />);
   });
   await press(view, '출발 역·터미널 선택');
+  await press(view, '시·도 선택');
   await press(view, '서울특별시');
   await press(view, '역 터미널 검색');
+  expect(JSON.stringify(view.toJSON())).toContain('역 목록을 불러오지 못했어요.');
+  expect(JSON.stringify(view.toJSON())).toContain('다시 시도');
   await press(view, '역 터미널 검색 다시 시도');
   expect(search).toHaveBeenNthCalledWith(2, expect.objectContaining({ query: '수서', cityCode: '11' }));
   expect(get(view, '수서 NATH30000')).toBeTruthy();
 });
+
+test('changes the Korean service day only when the calendar selection is applied', async () => {
+  jest.replaceProperty(Platform, 'OS', 'ios');
+  const getDimensions = Dimensions.get.bind(Dimensions);
+  jest.spyOn(Dimensions, 'get').mockImplementation(name => ({ ...getDimensions(name), fontScale: 1 }));
+  const { view } = await choose(jest.fn().mockResolvedValue(undefined));
+  await press(view, '운행편 선택 취소');
+  const chooseNextDay = async () => {
+    await press(view, '운행일, 2099-10-13');
+    const picker = view.root.findByProps({ testID: 'intercity-service-date-picker' });
+    expect(picker.props.timeZoneName).toBe('Asia/Seoul');
+    await act(async () => {
+      picker.props.onChange({ type: 'set' }, new Date('2099-10-13T15:00:00Z'));
+    });
+    expect(get(view, '운행편 조회').props.disabled).toBe(true);
+  };
+  await chooseNextDay();
+  await press(view, '운행일 선택 취소');
+  expect(get(view, '12:20 123 운행편 선택')).toBeTruthy();
+  await chooseNextDay();
+  await press(view, '운행일 적용');
+  expect(get(view, '운행일, 2099-10-14')).toBeTruthy();
+  expect(view.root.findAllByProps({ accessibilityLabel: '12:20 123 운행편 선택' })).toHaveLength(0);
+  await press(view, '운행편 조회');
+  expect(getIntercityServices).toHaveBeenLastCalledWith(expect.objectContaining({ date: '2099-10-14' }));
+});
+
+test('explains an unsupported intercity bus date once and keeps both terminals selected', async () => {
+  const getDimensions = Dimensions.get.bind(Dimensions);
+  jest.spyOn(Dimensions, 'get').mockImplementation(name => ({ ...getDimensions(name), fontScale: 1 }));
+  const policy = '시외버스 공공 시간표는 당일 배차만 제공합니다.';
+  const unsupported = policy + ' 다른 날짜는 예매처에서 확인해 주세요.';
+  jest.mocked(getIntercityStops).mockReset()
+    .mockResolvedValueOnce({ ...page([]), status: 'AVAILABLE', source: 'TAGO', items: [{ id: 'NAI1', name: '인천공항T2' }] })
+    .mockResolvedValueOnce({ ...page([]), status: 'AVAILABLE', source: 'TAGO', items: [{ id: 'NAI2', name: '청주터미널' }] });
+  jest.mocked(getIntercityServices).mockReset()
+    .mockResolvedValueOnce({ ...page([]), status: 'DATE_UNSUPPORTED', source: 'TAGO', items: [], message: unsupported });
+  let view!: ReactTestRenderer;
+  await act(async () => {
+    view = TestRenderer.create(<IntercityTimetableSheet kind="INTERCITY_BUS" date={new Date('2099-10-14T00:00:00+09:00')}
+      dark={false} departureName="인천공항T2" arrivalName="청주터미널" onClose={jest.fn()} />);
+  });
+  try {
+    const policyMessages = () => view.root.findAllByType(Text).map(node => node.props.children)
+      .filter(child => typeof child === 'string' && child.startsWith(policy));
+    expect(policyMessages()).toEqual([policy]);
+    await press(view, '출발 역·터미널 선택');
+    await press(view, '역 터미널 검색');
+    await press(view, '인천공항T2 NAI1');
+    await press(view, '도착 역·터미널 선택');
+    await press(view, '역 터미널 검색');
+    await press(view, '청주터미널 NAI2');
+    await press(view, '운행편 조회');
+    expect(policyMessages()).toEqual([unsupported]);
+    expect(get(view, '출발 인천공항T2')).toBeTruthy();
+    expect(get(view, '도착 청주터미널')).toBeTruthy();
+  } finally {
+    await act(async () => view.unmount());
+  }
+});
+
 test.each(['cancel', 'unmount'])('%s invalidates a pending connection response', async action => {
   let finish!: () => void; let current!: () => boolean;
   const select = jest.fn((_selection, active) => { current = active; return new Promise<void>(resolve => { finish = resolve; }); });

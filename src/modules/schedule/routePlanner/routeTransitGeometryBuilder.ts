@@ -9,7 +9,7 @@ import {
 import { type TmapLatLng } from '../../map/TmapMapView';
 import { resolveDetailedWalkGeometrySource } from '../../map/savedRouteMapPresentation';
 import { validTotalDurationSeconds } from '../../map/routeDuration';
-import { splitWalkPathAtDiscontinuities } from '../../map/transitRouteGeometry';
+import { hasTransitLegLineGeometry, isRailKind, splitWalkPathAtDiscontinuities } from '../../map/transitRouteGeometry';
 import {
   getNormalizedFallbackRouteMode,
   getNormalizedTransitLegMode,
@@ -18,7 +18,6 @@ import {
   type Coordinate,
   ENABLE_NATIVE_ROUTE_DIRECTION,
   type GeometrySource,
-  getMapBusRouteColor,
   isTransitRideSegmentMode,
   type NormalizedRoute,
   normalizeRouteColor,
@@ -60,8 +59,9 @@ import {
 } from './routeTransitWalkGeometry';
 import {
   compactTransitLineLabel,
+  findTransitRideLineLabel,
   getBusBadgeType,
-  getBusLineColor as getSharedBusLineColor,
+  getTransitBusLineColor,
 } from '../routeInfo';
 
 /** 경로 후보가 QA용 수동 샘플 형상을 포함하는지 식별자로 판별합니다. */
@@ -155,6 +155,9 @@ export function buildTransitLegSegmentGeometry(
     return { coordinates: [] };
   const leg = legs[legIndex];
   const legSource = getLegGeometrySource(leg, mode);
+  if (!hasTransitLegLineGeometry(leg)) {
+    return { coordinates: [], geometrySource: legSource };
+  }
   const segmentId = `${routeId ?? 'route'}-segment-${legIndex}`;
 
   if (isRideLegKind(leg.kind)) {
@@ -392,7 +395,7 @@ export function buildTransitLegSegmentGeometry(
   }
 
   const passStopCoords = passStopsToMapCoordinates(leg.passStops);
-  if (passStopCoords.length >= 2) {
+  if (passStopCoords.length >= 2 && !isRailKind(leg.kind)) {
     warnRouteGeometryFallback('PASS_STOP_LIST', leg, legIndex);
     return {
       coordinates: passStopCoords,
@@ -541,22 +544,17 @@ export function normalizeRouteAlternativeToSegments(
         walkOverlayById,
         isManualSamplePath,
       );
-      const lineLabel =
-        compactTransitLineLabel(leg.lineName) ??
-        compactTransitLineLabel(leg.label);
+      const lineLabel = leg.kind === 'SUBWAY'
+        ? findTransitRideLineLabel(leg)
+        : compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
       const busType =
-        leg.kind === 'BUS' ? getBusBadgeType(lineLabel) : undefined;
+        leg.kind === 'BUS' ? getBusBadgeType(leg.lineName?.trim() || leg.label) : undefined;
       const routeColor =
         leg.kind === 'BUS'
-          ? normalizeRouteColor(leg.lineColor) ??
-            getSharedBusLineColor(lineLabel, leg.lineColor)
+          ? normalizeRouteColor(leg.lineColor) ?? getTransitBusLineColor(leg)
           : leg.kind === 'SUBWAY'
-          ? getSubwayLineColor(leg.lineName ?? leg.label)
+          ? getSubwayLineColor(lineLabel, leg.lineColor)
           : intercityRideColor(leg.kind);
-      const displayColor =
-        leg.kind === 'BUS'
-          ? getMapBusRouteColor(lineLabel, busType)
-          : routeColor;
       const baseSegment = ensureTransitSegmentPathOrder({
         id: `${option.id}-segment-${index}`,
         mode,
@@ -569,7 +567,7 @@ export function normalizeRouteAlternativeToSegments(
         lineName: lineLabel,
         lineColor: routeColor,
         routeColor,
-        displayColor,
+        displayColor: routeColor,
         busType,
         fromName: leg.startName,
         toName: leg.endName,

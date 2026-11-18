@@ -15,6 +15,7 @@ import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditS
 import { ScheduleDetail as ActualScheduleDetail } from "../schedule/[id]";
 import RouteSelectScreen from "../schedule/route-select";
 import { createScheduleInitialState } from "../../src/modules/schedule/initialState";
+import { buildRouteInfoFromAlternative } from "../../src/modules/schedule/routeInfo";
 import { ScheduleProvider, useScheduleStore } from "../../src/modules/schedule/store";
 import { setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
@@ -40,31 +41,6 @@ const previewWorkCategory: ScheduleCategory = {
     color: "#FF6B5F",
 };
 const previewCategories = [previewCategory, previewWorkCategory];
-
-const previewRoute = {
-    routeInfo: {
-        id: "preview-route",
-        originName: "서울역",
-        destinationName: "강남역",
-        totalDurationMinutes: 36,
-        departureTime: "2026-08-08T11:24:00+09:00",
-        arrivalTime: "2026-08-08T12:00:00+09:00",
-        timeBasis: "estimated" as const,
-        steps: [
-            {
-                id: "preview-subway-leg",
-                type: "SUBWAY" as const,
-                title: "지하철 이동",
-                durationMinutes: 36,
-                lineName: "2호선",
-                coordinates: [
-                    { latitude: 37.5547, longitude: 126.9706 },
-                    { latitude: 37.4979, longitude: 127.0276 },
-                ],
-            },
-        ],
-    },
-};
 
 const actualRouteDetailRoute = {
     id: "schedule-ui-preview-saved-transit-route",
@@ -109,6 +85,7 @@ const actualRouteDetailRoute = {
             directionName: "오이도 방면",
             durationMinutes: 20,
             stationCount: 7,
+            pathGeometrySource: "PASS_STOP_LIST" as const,
             startName: "서울역",
             endName: "사당역",
             startCoord: { lat: 37.5538, lng: 126.9721 },
@@ -155,7 +132,8 @@ const actualRouteDetailRoute = {
             lineColor: "00B140",
             directionName: "잠실 방면",
             durationMinutes: 6,
-            stationCount: 3,
+            stationCount: 4,
+            pathGeometrySource: "PASS_STOP_LIST" as const,
             startName: "사당역",
             endName: "강남역",
             startCoord: { lat: 37.4768, lng: 126.9820 },
@@ -216,7 +194,7 @@ const previewItem: ScheduleItem = {
     travelMode: "TRANSIT",
     travelMinutes: 36,
     departAt: "2026-08-08T11:24:00+09:00",
-    route: previewRoute,
+    route: actualRouteDetailRoute,
     notificationEnabled: true,
     notificationLeadMinutes: 30,
     notificationIntervalMinutes: 20,
@@ -235,7 +213,6 @@ const actualRouteDetailItem: ScheduleItem = {
     ...previewItem,
     ownerMemberId: 101,
     locationName: "서울역 → 강남역",
-    route: actualRouteDetailRoute,
     departureParticipants: [
         {
             memberId: 101,
@@ -283,7 +260,12 @@ const quickParseResult: ScheduleParseResult = {
     },
     travelMode: previewItem.travelMode,
     travelMinutes: previewItem.travelMinutes,
-    route: previewItem.route,
+    route: {
+        ...actualRouteDetailRoute,
+        routeInfo: buildRouteInfoFromAlternative(
+            actualRouteDetailRoute, previewItem.origin, previewItem.destination, new Date("2026-08-08T11:24:00+09:00"),
+        ),
+    },
     notificationEnabled: true,
     notificationLeadMinutes: 30,
     notificationIntervalMinutes: 20,
@@ -554,6 +536,7 @@ export default function ScheduleUiPreviewScreen() {
             <ScheduleAddModal
                 visible={visibleModalScreen === "create"}
                 presentation="morph"
+                initialValues={params.field === "notification" ? quickParseResult : undefined}
                 categories={previewCategories}
                 defaultDay={PREVIEW_DAY}
                 sourceTopOffset={4}

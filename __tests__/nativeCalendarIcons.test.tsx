@@ -71,7 +71,7 @@ describe('main calendar icon bridge', () => {
     expect(probes[1].props.icons).toBe(icons);
     expect(icons.fontFamily).toBe('ionicons');
     for (const [nativeName, iconName] of [
-      ['toolbar.view', SCHEDULE_ICONS.view],
+      ['chevron.down', SCHEDULE_ICONS.down],
       ['view.detail', SCHEDULE_ICONS.detail],
       ['view.list', SCHEDULE_ICONS.list],
       ['magnifyingglass', SCHEDULE_ICONS.search],

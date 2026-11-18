@@ -1,6 +1,7 @@
 /** Cell backgrounds and week-wide labels must share the same vertical geometry. */
 export const STACK_CALENDAR_GEOMETRY = {
     rowHeight: 104,
+    emptyRowHeight: 72,
     eventTop: 44,
     holidayEventTop: 54,
     holidayTop: 42,

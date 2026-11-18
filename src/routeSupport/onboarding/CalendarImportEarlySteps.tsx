@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image, Platform, Text, View } from 'react-native';
 
-import CalendarImportStatusMark from './CalendarImportStatusMark';
+import { CalendarScanLogo } from './CalendarImportStatusMark';
 import type { AppColors } from '../../modules/theme/ThemeContext';
 import { ProviderOptionRow } from './CalendarImportCandidates';
 import {
@@ -122,15 +122,6 @@ export default function CalendarImportEarlySteps({
           <Text style={styles.subtitle}>
             읽는 정보와 저장 범위를 먼저 확인해 주세요.
           </Text>
-          <CalendarConsentChecklist
-            items={calendarConsentItems}
-            acceptedIds={acceptedCalendarConsentIds}
-            expandedIds={expandedCalendarConsentIds}
-            allAccepted={allCalendarConsentsAccepted}
-            onToggleAll={onToggleAllCalendarConsents}
-            onToggleItem={onToggleCalendarConsent}
-            onToggleDetail={onToggleCalendarConsentDetail}
-          />
           {errorMessage ? (
             <View accessibilityLiveRegion="polite" style={styles.inlineNotice}>
               <Ionicons accessible={false} importantForAccessibility="no"
@@ -141,13 +132,22 @@ export default function CalendarImportEarlySteps({
               <Text style={styles.inlineNoticeText}>{errorMessage}</Text>
             </View>
           ) : null}
+          <CalendarConsentChecklist
+            items={calendarConsentItems}
+            acceptedIds={acceptedCalendarConsentIds}
+            expandedIds={expandedCalendarConsentIds}
+            allAccepted={allCalendarConsentsAccepted}
+            onToggleAll={onToggleAllCalendarConsents}
+            onToggleItem={onToggleCalendarConsent}
+            onToggleDetail={onToggleCalendarConsentDetail}
+          />
         </View>
       )}
 
       {step === 'scanning' && (
         <View style={styles.stepWrap}>
           <View style={styles.centeredStatusHeader}>
-            <CalendarImportStatusMark scanning />
+            <CalendarScanLogo />
             <Text accessibilityRole="header" style={[styles.title, { textAlign: 'center' }]}>가져올 일정을{'\n'}찾고 있어요</Text>
             <Text style={[styles.subtitle, { textAlign: 'center' }]}>
               {scanStatusMessage === SCAN_MESSAGES[scanStage] ? '선택한 캘린더에서 다가오는 일정을 확인합니다.' : scanStatusMessage}

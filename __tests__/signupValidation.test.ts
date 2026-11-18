@@ -1,10 +1,23 @@
 import {
+    getSignupFieldErrors,
     isValidSignupEmail,
     isValidSignupName,
     normalizeSignupEmail,
 } from "../src/modules/auth/signupValidation";
 
 describe("signup validation", () => {
+    test("returns the errors for all invalid fields in one pass", () => {
+        expect(getSignupFieldErrors({ name: "", email: "wrong", password: "short", confirmation: "" })).toEqual({
+            name: "이름을 입력해 주세요.",
+            email: "올바른 이메일 주소를 입력해 주세요.",
+            password: "영문, 숫자, !@#$%^&* 조합으로 8~16자를 입력해 주세요.",
+            confirmation: "비밀번호를 한 번 더 입력해 주세요.",
+        });
+        expect(getSignupFieldErrors({
+            name: "홍길동", email: "  USER@Example.COM ", password: "Example!1", confirmation: "Example!1",
+        })).toEqual({});
+    });
+
     test("normalizes email casing and surrounding whitespace", () => {
         expect(normalizeSignupEmail("  USER@Example.COM ")).toBe("user@example.com");
     });

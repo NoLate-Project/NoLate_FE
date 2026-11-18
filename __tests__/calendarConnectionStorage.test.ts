@@ -8,6 +8,9 @@ import {
 } from "../src/modules/onboarding/googleCalendarImport";
 import {
     clearCalendarConnectionSnapshot,
+    getCalendarConnectionSnapshot,
+    recordCalendarImportCompleted,
+    recordCalendarScan,
     refreshCalendarConnectionSnapshotFromDevice,
 } from "../src/modules/onboarding/calendarConnectionStorage";
 
@@ -87,5 +90,28 @@ describe("calendar connection refresh", () => {
 
         await expect(refresh).resolves.toBeNull();
         expect(mockedSetItem).not.toHaveBeenCalled();
+    });
+
+    it("keeps each import result when a rescan and another import are saved together", async () => {
+        let stored = STORED_SNAPSHOT;
+        mockedGetItem.mockImplementation(async () => stored);
+        mockedSetItem.mockImplementation(async (_key, value) => { stored = value; });
+
+        await recordCalendarImportCompleted(2, 1, 1);
+        await Promise.all([
+            recordCalendarScan({
+                provider: "APPLE_DEVICE", providerLabel: "Apple 캘린더",
+                calendarCount: 1, calendarNames: ["개인"], eventCandidateCount: 3,
+            }),
+            recordCalendarImportCompleted(1, 2, 0),
+        ]);
+
+        expect(await getCalendarConnectionSnapshot()).toMatchObject({
+            importedCount: 4,
+            importHistory: [
+                { imported: 1, duplicate: 2, failed: 0, providerLabels: ["Apple 캘린더"] },
+                { imported: 2, duplicate: 1, failed: 1, providerLabels: ["Google Calendar"] },
+            ],
+        });
     });
 });

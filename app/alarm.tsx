@@ -30,40 +30,42 @@ export default function NoLateCustomAlarmRoute() {
         () => parseNoLateCustomAlarmPresentation(params),
         [params],
     );
-    const [previewScheduleTitle, setPreviewScheduleTitle] = useState<string | null>(null);
+    const [scheduleTitle, setScheduleTitle] = useState<{ instanceKey: string; title: string }>();
+    const { canOpenRoute, instanceKey, isPreview, recipientMemberId, scheduleId } = presentation;
 
     useScreenContentReadyPerformance("alarm.content_ready", "/alarm", true);
 
     useEffect(() => {
-        if (!presentation.isPreview || !presentation.scheduleId) {
-            setPreviewScheduleTitle(null);
-            return;
-        }
+        if (!canOpenRoute || !scheduleId) return;
 
         let cancelled = false;
-        setPreviewScheduleTitle(null);
-        measurePerformanceInteraction(
-            "alarm.preview_schedule_load",
-            "/alarm",
-            () => getSchedule(presentation.scheduleId!),
-            "NETWORK",
-        )
-            .then(schedule => {
-                const title = schedule.title.trim();
-                if (!cancelled && title) setPreviewScheduleTitle(title);
+        const loadTitle = async () => {
+            if (!isPreview && (await getAuthMember())?.id !== recipientMemberId) return;
+            if (cancelled) return;
+            const schedule = await getSchedule(scheduleId);
+            if (schedule.id !== scheduleId) return;
+            if (!isPreview && (await getAuthMember())?.id !== recipientMemberId) return;
+            return schedule.title.trim();
+        };
+        const titleRequest = isPreview
+            ? measurePerformanceInteraction("alarm.preview_schedule_load", "/alarm", loadTitle, "NETWORK")
+            : loadTitle();
+        titleRequest
+            .then(title => {
+                if (!cancelled && title) setScheduleTitle({ instanceKey, title });
             })
             .catch(() => undefined);
 
         return () => {
             cancelled = true;
         };
-    }, [presentation.instanceKey, presentation.isPreview, presentation.scheduleId]);
+    }, [canOpenRoute, instanceKey, isPreview, recipientMemberId, scheduleId]);
 
     const visiblePresentation = useMemo(
-        () => previewScheduleTitle
-            ? { ...presentation, title: previewScheduleTitle }
+        () => scheduleTitle?.instanceKey === instanceKey
+            ? { ...presentation, title: scheduleTitle.title }
             : presentation,
-        [presentation, previewScheduleTitle],
+        [instanceKey, presentation, scheduleTitle],
     );
 
     const close = useCallback(() => {

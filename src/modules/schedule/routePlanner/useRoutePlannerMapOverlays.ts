@@ -6,10 +6,11 @@ import type {
 } from '../../map/routingService';
 import type { RouteEndpointAccessPath } from '../../map/routeEndpointAccess';
 import type { TmapLatLng, TmapPathOverlay } from '../../map/TmapMapView';
+import { hasTransitLegLineGeometry, requiresSegmentedTransitPath } from '../../map/transitRouteGeometry';
 import {
   applyTransitRouteThemeToOverlay,
   getTransitWalkGuidePresentation,
-  TRANSIT_ROUTE_ZOOM_STYLE,
+  shouldRenderTransitNativeDirection,
 } from '../../map/transitRoutePresentation';
 import {
   applyFocusedTransitRideOverlayOwnership,
@@ -49,19 +50,12 @@ import {
   shouldUseNativeTransitDirection,
   type NormalizedRoute,
 } from './routeMapTypesAndStyle';
-import {
-  getMapTransitLegVisualColor,
-  isRideLegKind,
-} from './routeTransitLegCoordinates';
+import { getTransitLegVisualColor } from './routeTransitLegCoordinates';
 import { getTransitLegMapCoords } from './routeTransitGeometryBuilder';
 import { toDisplayOverlayCoords } from './routeTransitWalkGeometry';
 
 // 전체 경로에서도 대중교통 노선색을 확인할 수 있도록 저배율부터 구간을 표시한다.
 const TRANSIT_SEGMENT_RENDER_MIN_ZOOM = 6;
-// 본선과 방향 화살표는 같은 native polyline의 확대 기준을 공유한다.
-const TRANSIT_NATIVE_DIRECTION_MIN_ZOOM =
-  TRANSIT_ROUTE_ZOOM_STYLE.directionMinZoom;
-
 type Options = {
   focusedTransitLegIndex?: number;
   hasRouteReady: boolean;
@@ -175,6 +169,15 @@ export function useRoutePlannerMapOverlays({
       selectedRouteInfo,
       mapZoom,
     );
+    // Older saved routes can contain a flattened path alongside their steps.
+    // Use the step coordinates when individual transit paths must remain separate.
+    if (
+      travelMode === 'TRANSIT' &&
+      !shouldUseTransitLegOverlays &&
+      selectedRouteInfo?.steps.some(step => requiresSegmentedTransitPath(step.type))
+    ) {
+      return [...endpointAccessOverlays, ...routeInfoStepOverlays];
+    }
     const hasSelectedMainPath =
       Array.isArray(selectedRoute?.pathCoords) &&
       selectedRoute.pathCoords.length >= 2;
@@ -330,7 +333,7 @@ export function useRoutePlannerMapOverlays({
               walkOverlayById,
             );
             if (legCoords.length < 2) return [];
-            const color = getMapTransitLegVisualColor(leg);
+            const color = getTransitLegVisualColor(leg);
             return [
               {
                 id: `${selectedRoute.id}-segment-base-${index}`,
@@ -347,10 +350,12 @@ export function useRoutePlannerMapOverlays({
                 strokeStyle: 'solid',
                 // 정규화 fallback도 본선 하나에 SDK native direction을 직접 적용한다.
                 nativeDirection:
-                  isRideLegKind(leg.kind) &&
                   index !== focusedTransitLegIndex &&
-                  ENABLE_NATIVE_ROUTE_DIRECTION &&
-                  mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
+                  shouldRenderTransitNativeDirection(
+                    leg.kind,
+                    mapZoom,
+                    ENABLE_NATIVE_ROUTE_DIRECTION,
+                  ),
                 nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
                 nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
                 zIndex: 40 + Math.min(index, 9) * 0.1,
@@ -466,8 +471,7 @@ export function useRoutePlannerMapOverlays({
             const focusedIsWalk = focusedLeg.kind === 'WALK';
             const focusedColor = focusedIsWalk
               ? ROUTE_WALK_GUIDE_COLOR
-              : getMapTransitLegVisualColor(focusedLeg);
-            const focusedIsRide = isRideLegKind(focusedLeg.kind);
+              : getTransitLegVisualColor(focusedLeg);
             return {
               id: `${selectedRoute.id}-focused-leg-${focusedTransitLegIndex}`,
               coords: focusedCoords,
@@ -500,10 +504,11 @@ export function useRoutePlannerMapOverlays({
                 ? transitWalkGuide.outlineStrokeStyle
                 : 'solid',
               // 포커스 강조선이 기본 본선을 덮어도 진행 방향이 사라지지 않게 유지한다.
-              nativeDirection:
-                focusedIsRide &&
-                ENABLE_NATIVE_ROUTE_DIRECTION &&
-                mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
+              nativeDirection: shouldRenderTransitNativeDirection(
+                focusedLeg.kind,
+                mapZoom,
+                ENABLE_NATIVE_ROUTE_DIRECTION,
+              ),
               nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
               nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
               zIndex: 90,
@@ -620,6 +625,10 @@ export function useRoutePlannerMapOverlays({
       }
       return overlays;
     }
+
+    if (shouldUseTransitLegOverlays && selectedRoute.transitLegs?.some(leg =>
+      !hasTransitLegLineGeometry(leg)
+    )) return endpointAccessOverlays;
 
     if (!selectedMainOverlay) {
       if (pathOverlayCoords && pathOverlayCoords.length >= 2) {

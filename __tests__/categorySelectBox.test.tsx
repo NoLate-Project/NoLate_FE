@@ -53,7 +53,7 @@ describe("CategorySelectBox inline options", () => {
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리" }).props.style,
         )).toMatchObject({ minHeight: 49 });
-        expect(renderer!.root.findAllByProps({ name: "checkmark" })[0].props.color).toBe("#2979FF");
+        expect(renderer!.root.findAllByProps({ name: "checkmark-outline" })[0].props.color).toBe("#2979FF");
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "category-divider-work" }).props.style,
         )).toMatchObject({

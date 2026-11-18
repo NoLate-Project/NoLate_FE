@@ -38,7 +38,7 @@ type Props = {
     transitionContext?: "idle" | "yearToMonth" | "monthToDay" | "dayToMonth";
     reduceMotionEnabled?: boolean;
     todayFocusTarget?: TodayFocusTarget | null;
-    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean };
+    savedDateTarget?: { day: string; itemId: string; stackPending?: boolean; requestKey?: string };
     onSavedStackPositionReady?: (itemId: string) => void;
     onTodayFocusReady?: (day: string) => void;
     onRegisterDetailMonthMotionCancel?: (
@@ -546,6 +546,8 @@ export default function ScheduleCalendar({
                                         >
                                             <DetailMonthPagerGrid
                                                 day={page.day}
+                                                selectedDay={selectedDay.slice(0, 7) === page.day.slice(0, 7)
+                                                    ? selectedDay : undefined}
                                                 firstDay={firstDay}
                                                 markedDates={
                                                     calendarEventMarkings

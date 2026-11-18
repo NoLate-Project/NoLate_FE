@@ -4,6 +4,7 @@ import type { Place } from "../modules/schedule/types";
 
 export type FavoritePlace = Place & {
     id?: string;
+    placeName?: string;
     categoryId?: string;
     categoryName?: string;
     provider?: string;
@@ -117,6 +118,7 @@ function normalizeFavoritePlace(dto: FavoritePlaceDto): FavoritePlace {
         categoryId: dto.categoryId === undefined || dto.categoryId === null ? undefined : String(dto.categoryId),
         categoryName: dto.category?.name?.trim() || undefined,
         name: dto.label?.trim() || dto.placeName?.trim() || dto.address?.trim() || "즐겨찾기 장소",
+        placeName: dto.placeName?.trim() || undefined,
         address: dto.address?.trim() || undefined,
         lat: typeof dto.lat === "number" ? dto.lat : undefined,
         lng: typeof dto.lng === "number" ? dto.lng : undefined,

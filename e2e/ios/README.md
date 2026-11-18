@@ -305,9 +305,10 @@ python3 e2e/ios/run-eta-real-isolated.py --java '<JDK 21 java 경로>' \
 
 BE 테스트 클래스 `EtaRealProviderSimulatorServer`는 명시적인
 `-Dnolate.eta.real-isolated=true`로만 실행한다. 출력 경로는
-`/private/tmp/nolate-eta-real-e2e.*`, API는 5523, 저장은 H2에 고정한다.
-기존 합성 일정 367의 선택 경로를 296/363으로 복사하고 실제 Tmap·서울 어댑터 및
-실제 평가 시계를 사용한다. 푸시 ACK만 모의이므로 FCM 수신 성공으로 표현하지 않는다.
+`/private/tmp/nolate-eta-real-e2e.*`, API 기본 포트는 5523, 저장은 H2에 고정한다.
+기본 공급자는 ODsay다. 승인된 좌표로 실제 ODsay 경로를 조회해 시험 일정 296/363에
+저장하고, 서울 시간표·실시간 도착과 실제 시계로 평가한다. 기존 Tmap 저장 경로 검증에는
+`--journey-provider tmap`을 명시한다. 푸시 ACK만 모의이므로 FCM 수신 성공으로 표현하지 않는다.
 기존 모의 공급자 서버와 readiness 헤더도 구분한다.
 
 `run-eta.py --only testVerifyIsolatedRealProviderEta --real-isolated

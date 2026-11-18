@@ -11,7 +11,15 @@ import { useTheme } from "../../modules/theme/ThemeContext";
 import styles from "./calendars.styles";
 
 const BRAND_BLUE = "#2F80FF";
-const CALENDAR_COLORS = ["#2F80FF", "#16A085", "#34C759", "#FF3B30", "#AF52DE", "#FF9500"];
+const CALENDAR_COLORS = [
+    { color: BRAND_BLUE, name: "파랑" },
+    { color: "#16A085", name: "청록" },
+    { color: "#34C759", name: "초록" },
+    { color: "#FF3B30", name: "빨강" },
+    { color: "#AF52DE", name: "보라" },
+    { color: "#FF9500", name: "주황" },
+];
+const SINGLE_COLOR_ROW_WIDTH = 304;
 
 /** 캘린더 권한 코드를 멤버 목록에 표시할 짧은 한글 레이블로 변환합니다. */
 export function roleLabel(role: ScheduleCalendarRole) {
@@ -22,19 +30,47 @@ export function roleLabel(role: ScheduleCalendarRole) {
 
 /** 미리 정의된 캘린더 색상을 단일 선택 라디오 목록으로 렌더링합니다. */
 export function ColorPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+    const { colors, mode } = useTheme();
+    const { width, fontScale } = useWindowDimensions();
+    const [measuredWidth, setMeasuredWidth] = React.useState(0);
+    const standardLayout = fontScale <= 1.35;
+    const availableWidth = measuredWidth || width - 36;
+    const groups = standardLayout && availableWidth < SINGLE_COLOR_ROW_WIDTH
+        ? [CALENDAR_COLORS.slice(0, 3), CALENDAR_COLORS.slice(3)]
+        : [CALENDAR_COLORS];
+    const selectedName = CALENDAR_COLORS.find(option => option.color === value)?.name;
     return (
-        <View style={styles.colorRow}>
-            {CALENDAR_COLORS.map((color) => (
-                <Pressable
-                    key={color}
-                    accessibilityRole="radio"
-                    accessibilityLabel={`${color} 색상`}
-                    accessibilityState={{ selected: value === color }}
-                    onPress={() => onChange(color)}
-                    style={[styles.colorButton, value === color && styles.colorButtonSelected]}
-                >
-                    <View style={[styles.colorSwatch, { backgroundColor: color }]} />
-                </Pressable>
+        <View
+            style={standardLayout && styles.colorPicker}
+            onLayout={standardLayout ? event => setMeasuredWidth(event.nativeEvent.layout.width) : undefined}
+        >
+            {standardLayout && <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                {selectedName ? `색상 · ${selectedName}` : "색상"}
+            </Text>}
+            {groups.map(group => (
+                <View key={group[0].color} style={[styles.colorRow, standardLayout && styles.colorRowStandard]}>
+                    {group.map(({ color, name }) => {
+                        const selected = value === color;
+                        return (
+                            <Pressable
+                                key={color}
+                                accessibilityRole="radio"
+                                accessibilityLabel={`${standardLayout ? name : color} 색상`}
+                                accessibilityState={{ selected }}
+                                onPress={() => onChange(color)}
+                                style={[
+                                    styles.colorButton,
+                                    selected && styles.colorButtonSelected,
+                                    selected && standardLayout && mode === "dark" && styles.colorButtonSelectedDark,
+                                ]}
+                            >
+                                <View style={[styles.colorSwatch, { backgroundColor: color }]}>
+                                    {selected && standardLayout && <Ionicons accessible={false} name="checkmark-outline" size={17} color="#111827" />}
+                                </View>
+                            </Pressable>
+                        );
+                    })}
+                </View>
             ))}
         </View>
     );
@@ -45,10 +81,12 @@ export function ContentModeControl({
     value,
     onChange,
     disabled = false,
+    busy = false,
 }: {
     value: ScheduleShareContentMode;
     onChange: (value: ScheduleShareContentMode) => void;
     disabled?: boolean;
+    busy?: boolean;
 }) {
     const { colors, mode } = useTheme();
     const largeText = useWindowDimensions().fontScale > 1.35;
@@ -64,12 +102,13 @@ export function ContentModeControl({
                     <Pressable
                         key={modeValue}
                         accessibilityRole="radio"
-                        accessibilityState={{ selected: active, disabled }}
+                        accessibilityLabel={label}
+                        accessibilityState={{ selected: active, disabled, busy }}
                         disabled={disabled}
                         onPress={() => onChange(modeValue)}
                         style={[styles.modeOption, largeText && styles.modeOptionStacked, active && { backgroundColor: colors.surface, borderColor: colors.border }]}
                     >
-                        <Ionicons name={icon} size={16} color={active ? accent : colors.textSecondary} />
+                        <Ionicons accessible={false} name={icon} size={16} color={active ? accent : colors.textSecondary} />
                         <Text style={[styles.modeText, { color: active ? accent : colors.textSecondary }]} maxFontSizeMultiplier={1.8} lineBreakStrategyIOS="hangul-word">{label}</Text>
                     </Pressable>
                 );

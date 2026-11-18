@@ -143,7 +143,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
             if (!authenticated) {
                 // With no refresh credential there is nothing recoverable to keep.
                 if (!refreshToken) {
-                    await clearAuthTokens();
+                    // On a fresh install there is no account to retire. Invoking the
+                    // invalidation listener here supersedes this bootstrap and can leave
+                    // its loading flag owned by unrelated native cleanup.
+                    await clearAuthTokens({ notifyListeners: Boolean(accessToken || storedMember) });
                     accessToken = null;
                     storedMember = null;
                 }
@@ -169,6 +172,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
                     if (!authenticated) curationCompleted = false;
                 }
             }
+
 
             if (!isCurrent()) return false;
 

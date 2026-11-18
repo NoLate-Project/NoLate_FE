@@ -1,5 +1,5 @@
 import React from "react";
-import { KeyboardAvoidingView, Text } from "react-native";
+import { KeyboardAvoidingView, Text, TextInput } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import { AuthInput, AuthScreen } from "../src/modules/auth/components/AuthScreen";
@@ -79,6 +79,28 @@ describe("AuthScreen accessibility focus", () => {
 
         // react-native의 View mock과 host View가 모두 같은 접근성 속성을 전달한다.
         expect(hiddenDecorations.length).toBeGreaterThanOrEqual(1);
+    });
+
+    test("iOS 기본 크기에서 비밀번호 자리 표시 문구를 별도 텍스트로 표시한다", async () => {
+        const dimensions = jest.spyOn(require("react-native"), "useWindowDimensions")
+            .mockReturnValue({ width: 375, height: 667, scale: 2, fontScale: 1 });
+        try {
+            await act(async () => {
+                renderer = TestRenderer.create(
+                    <ThemeProvider>
+                        <AuthInput label="이메일" icon="mail-outline" value="" placeholder="you@example.com" />
+                        <AuthInput label="비밀번호" icon="lock-closed-outline" value="" placeholder="비밀번호 입력" secureTextEntry />
+                    </ThemeProvider>
+                );
+            });
+
+            const fields = renderer!.root.findAllByType(TextInput);
+            expect(fields.map(field => field.props.placeholder)).toEqual(["you@example.com", undefined]);
+            expect(fields[1].props.secureTextEntry).toBe(true);
+            expect(renderer!.root.findAllByType(Text).some(node => node.props.children === "비밀번호 입력")).toBe(true);
+        } finally {
+            dimensions.mockRestore();
+        }
     });
 
     test("가입 요청 중에는 상단 뒤로가기를 비활성화해 진행 중인 화면을 이탈하지 않는다", async () => {

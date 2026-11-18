@@ -19,6 +19,7 @@ describe("iOS NoLate home and lock screen widget native contract", () => {
     const widgetBundle = read("ios/NoLateWidget/NoLateWidgetBundle.swift");
     const widgetUI = read("ios/NoLateWidget/NoLateWidget.swift");
     const widgetSnapshot = read("ios/NoLateWidget/NoLateWidgetSnapshot.swift");
+    const sharedSnapshot = read("ios/NoLateWidget/NoLateWidgetSharedSnapshot.swift");
     const nativeBridge = read("ios/NoLateFE/NoLateWidgetModule.swift");
     const nativeBridgeExport = read("ios/NoLateFE/NoLateWidgetModule.m");
     const widgetInfo = read("ios/NoLateWidget/Info.plist");
@@ -34,10 +35,13 @@ describe("iOS NoLate home and lock screen widget native contract", () => {
         ).toContain(appGroup);
         expect(appEntitlements).toContain(appGroup);
         expect(widgetEntitlements).toContain(appGroup);
-        expect(widgetSnapshot).toContain(`appGroupIdentifier = "${appGroup}"`);
-        expect(nativeBridge).toContain(`appGroupIdentifier = "${appGroup}"`);
-        expect(widgetSnapshot).toContain(`snapshotKey = "${snapshotKey}"`);
-        expect(nativeBridge).toContain(`snapshotKey = "${snapshotKey}"`);
+        expect(sharedSnapshot).toContain(`appGroupIdentifier = "${appGroup}"`);
+        expect(sharedSnapshot).toContain(`snapshotKey = "${snapshotKey}"`);
+        expect(sharedSnapshot).toContain("containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)");
+        expect(widgetSnapshot).toContain("NoLateWidgetSharedSnapshot.read(at: url");
+        expect(nativeBridge).toContain("NoLateWidgetSharedSnapshot.write(data, at: url)");
+        expect(nativeBridge).toContain("NoLateWidgetSharedSnapshot.write(Data(), at: url)");
+        expect(xcodeProject.match(/NoLateWidgetSharedSnapshot\.swift in Sources \*\/,/g)).toHaveLength(2);
         expect(widgetSnapshot).toContain("snapshot.version == 1");
         expect(nativeBridge).toContain("version.intValue == 1");
     });

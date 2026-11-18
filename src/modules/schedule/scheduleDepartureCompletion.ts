@@ -3,6 +3,7 @@ import { recoverDepartureAlarmsAfterMutation } from "../notification/departureAl
 import { endLiveActivityForSchedule } from "../notification/liveActivitySync";
 import type { ScheduleItem } from "./types";
 import { isJourneyGuidanceEnabled } from "../journey/journeyFeature";
+import { createScheduleDepartureMutationEvent, emitScheduleMutation } from "./scheduleMutationEvents";
 
 /**
  * Completes departure on the server before reconciling the current device's
@@ -13,6 +14,7 @@ export async function completeScheduleDeparture(
     scheduleId: string,
 ): Promise<ScheduleItem> {
     const updated = await markScheduleDeparted(scheduleId);
+    emitScheduleMutation(createScheduleDepartureMutationEvent(updated));
     await Promise.all([
         recoverDepartureAlarmsAfterMutation(),
         // With journeys enabled, the server owns departure-vs-journey termination.

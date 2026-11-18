@@ -3,13 +3,18 @@ import http.client
 import json
 
 PRIVATE_API_BASE = 'http://127.0.0.1:5523'
+INCIDENT_API_BASE = 'http://127.0.0.1:5525'
+REAL_ALTERNATE_API_BASE = 'http://127.0.0.1:5527'
+DATED_TIMETABLE_PORTS = (5529, 5533)
+DATED_TIMETABLE_API_BASES = tuple(f'http://127.0.0.1:{port}' for port in DATED_TIMETABLE_PORTS)
+QUOTA_ALTERNATE_API_BASE = 'http://127.0.0.1:5528'
 
 
 def require_memory_fixture_api(base):
-    if base != PRIVATE_API_BASE:
-        raise ValueError('Only the dedicated 5523 fixture is allowed; no HTTP request sent')
+    if base not in (PRIVATE_API_BASE, INCIDENT_API_BASE, QUOTA_ALTERNATE_API_BASE):
+        raise ValueError('Only a dedicated fixture is allowed; no HTTP request sent')
     # A direct connection never follows a redirect or an environment HTTP proxy.
-    connection = http.client.HTTPConnection('127.0.0.1', 5523, timeout=3)
+    connection = http.client.HTTPConnection('127.0.0.1', int(base.rsplit(':', 1)[1]), timeout=3)
     try:
         connection.request('GET', '/health/readiness')
         response = connection.getresponse()

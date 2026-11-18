@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import * as Device from "expo-device";
 import { journeyAuthenticationOrigin, journeyLoginGeneration, type JourneyAuthentication } from "./automaticJourneyAuthentication";
 
 /** Explicit development execution boundary. Neither a device identifier nor an authentication credential. */
@@ -31,6 +32,7 @@ export type AutomaticJourneySnapshot = {
     enabled: boolean; reason: string | null;
     status: "IDLE" | "ARMED" | "ACTIVE" | "STOPPED" | "EXPIRED";
     sessionId: string | null; routeRevision: number | null;
+    guidanceMemberId?: number;
     alongRouteMeters: number | null; crossTrackMeters: number | null; departureCount: number;
     quality: string; qualityReason: string; locationState: string; authorization: string;
     pendingDeparture: boolean; departureAcknowledged: boolean;
@@ -116,6 +118,9 @@ const officialSubwayAdmission = (value: unknown): OfficialSubwayAdmission | null
 
 export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourneyBinding | null {
     const binding = automaticRecord(value);
+    // A Release simulator may carry the same server-issued official bus proof
+    // during isolated E2E. Physical iPhones still require DEVICE execution.
+    const isolatedSimulatorBusProof = Platform.OS === "ios" && !Device.isDevice && binding?.execution === "SIMULATOR";
     if (!binding || !automaticUUID(binding.sessionId) || !automaticUUID(binding.clientOwnerId)
         || typeof binding.scheduleId !== "string" || !/^[1-9]\d{0,17}$/.test(binding.scheduleId)
         || !automaticPositiveInteger(binding.generation) || !automaticPositiveInteger(binding.routeRevision)
@@ -125,7 +130,7 @@ export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourn
         || binding.expiresAtEpochSeconds - binding.preparedAtEpochSeconds > (binding.syncScope === 'AUTHENTICATED' ? 7200.001 : 600.001)
         || !["SIMULATOR", "DEVICE"].includes(String(binding.execution))
         || binding.execution === "DEVICE" && binding.syncScope !== "AUTHENTICATED"
-        || binding.officialBusAdmission != null && (binding.execution !== 'DEVICE'
+        || binding.officialBusAdmission != null && (binding.execution !== 'DEVICE' && !isolatedSimulatorBusProof
             || binding.syncScope !== 'AUTHENTICATED' || !officialBusAdmission(binding.officialBusAdmission))
         || binding.officialSubwayAdmission != null && (binding.execution !== 'DEVICE'
             || binding.syncScope !== 'AUTHENTICATED' || !officialSubwayAdmission(binding.officialSubwayAdmission)
@@ -161,6 +166,7 @@ export function normalizeAutomaticJourneySnapshot(value: unknown): AutomaticJour
         enabled: item.enabled === true && validStatus, reason: safeCode(item.reason),
         status: validStatus ? item.status as AutomaticJourneySnapshot["status"] : "IDLE",
         sessionId: automaticUUID(item.sessionId) ? item.sessionId : null,
+        ...(automaticPositiveInteger(item.guidanceMemberId) ? { guidanceMemberId: item.guidanceMemberId } : {}),
         routeRevision: automaticPositiveInteger(item.routeRevision) ? item.routeRevision : null,
         alongRouteMeters: metric(item.alongRouteMeters), crossTrackMeters: metric(item.crossTrackMeters),
         departureCount: item.departureCount === 1 ? 1 : 0,
@@ -253,7 +259,9 @@ type NativeAutomaticJourney = {
     getAutomaticJourneySnapshot(): Promise<unknown>;
     armAutomaticJourney(routeJSON: string, bindingJSON: string): Promise<unknown>;
     restoreAutomaticJourney(routeJSON: string, bindingJSON: string): Promise<unknown>;
+    readSavedAutomaticJourneyCheckpointRoute(bindingJSON: string): Promise<unknown>;
     stopAutomaticJourney(): Promise<unknown>;
+    clearAutomaticJourneyArrivalHandoff(): Promise<unknown>;
     reconcileAutomaticJourneyTerminal(bindingJSON: string): Promise<unknown>;
     getAutomaticJourneyDeparture(): Promise<unknown>;
     acknowledgeAutomaticJourneyDeparture(eventKey: string, bindingJSON: string): Promise<unknown>;
@@ -325,6 +333,7 @@ export async function authenticatedAutomaticJourneyRequest(auth: JourneyAuthenti
     try { return JSON.parse(result.responseJSON) as unknown; } catch { throw new Error("INVALID_AUTOMATIC_SERVER_RESPONSE"); }
 }
 export const stopAutomaticJourney = async () => normalizeAutomaticJourneySnapshot(await invoke("stopAutomaticJourney"));
+export const clearAutomaticJourneyArrivalHandoff = () => invoke("clearAutomaticJourneyArrivalHandoff");
 export async function reconcileAutomaticJourneyTerminal(binding: AutomaticJourneyBinding): Promise<void> {
     const result = automaticRecord(await invoke("reconcileAutomaticJourneyTerminal", [JSON.stringify(binding)]));
     if (result?.accepted !== true) throw new Error("CHECKPOINT_TERMINAL_CLEANUP_REJECTED");
@@ -333,6 +342,13 @@ export const armAutomaticJourney = async (routeJSON: string, binding: AutomaticJ
     normalizeAutomaticJourneySnapshot(await invoke("armAutomaticJourney", [routeJSON, JSON.stringify(binding)]));
 export const restoreAutomaticJourney = async (routeJSON: string, binding: AutomaticJourneyBinding) =>
     normalizeAutomaticJourneySnapshot(await invoke("restoreAutomaticJourney", [routeJSON, JSON.stringify(binding)]));
+export async function readSavedAutomaticJourneyCheckpointRoute(binding: AutomaticJourneyBinding): Promise<string> {
+    const result = automaticRecord(await invoke("readSavedAutomaticJourneyCheckpointRoute", [JSON.stringify(binding)]));
+    if (result?.accepted !== true || typeof result.routeJSON !== "string" || result.routeJSON.length > 1_048_576) {
+        throw new Error("CHECKPOINT_ROUTE_UNAVAILABLE");
+    }
+    return result.routeJSON;
+}
 export const acknowledgeAutomaticJourneyDeparture = async (eventKey: string, binding: AutomaticJourneyBinding) =>
     normalizeAutomaticJourneySnapshot(await invoke("acknowledgeAutomaticJourneyDeparture", [eventKey, JSON.stringify(binding)]));
 export async function getAutomaticJourneyDeparture(binding: AutomaticJourneyBinding): Promise<AutomaticJourneyDeparture | null> {

@@ -15,7 +15,7 @@ it('never treats preview route selection as an authoritative saved route update'
     const effect = source.slice(source.indexOf('const item ='), source.indexOf('const canManageSchedule'));
     expect(effect).toContain('if (!item || currentMemberId == null || internalPreviewItem) return;');
     expect(effect).toContain('revalidateAutomaticJourneySavedRoute(String(item.id), input)');
-    expect(effect).toContain('[item, currentMemberId, internalPreviewItem]');
+    expect(effect).toContain('if (fromGuidanceActivity && (!authoritativeDetailLoaded || loadError)) return;');
 });
 it.each([[], [input.legs[0]], [...input.legs, input.legs[1]], input.legs.map(leg => ({ ...leg, kind: leg.index === 1 ? 'SUBWAY' : leg.kind }))].map(legs => ({ legs })))('blocks unsupported topology', ({ legs }) => {
     expect(savedJourneyEntryIssue({ ...input, legs } as JourneyRouteInput)).toContain('지하철 탑승');

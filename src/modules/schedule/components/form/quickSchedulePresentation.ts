@@ -36,6 +36,7 @@ type QuickSchedulePresentationOptions = {
   text: string;
   voiceDurationMillis: number;
   voiceMeterHistory: number[];
+  voicePermissionDenied: boolean;
   voiceStatusMessage: string;
   voiceTranscript: string;
   voiceUri: string | null;
@@ -58,6 +59,7 @@ export function buildQuickSchedulePresentation({
   text,
   voiceDurationMillis,
   voiceMeterHistory,
+  voicePermissionDenied,
   voiceStatusMessage,
   voiceTranscript,
   voiceUri,
@@ -66,20 +68,21 @@ export function buildQuickSchedulePresentation({
   const voiceSpectrumEnergy = isVoiceRecording
     ? voiceMeterHistory[voiceMeterHistory.length - 1] ?? 0
     : 0;
+  const hasRecording = voiceDurationMillis > 0 || Boolean(voiceUri);
   const voiceControlTitle = isVoiceRecording
     ? "녹음 중"
     : isVoiceFinalizing
       ? "확인 중"
       : voiceTranscript.trim() || voiceUri
         ? "다시 말하기"
-        : "말하기";
+        : "눌러서 말하기";
   const voiceControlMeta = isVoiceRecording
     ? voiceDurationText
     : isVoiceFinalizing
       ? "잠시만 기다려 주세요"
-      : voiceTranscript.trim() || voiceUri
+      : hasRecording
         ? voiceDurationText
-        : voiceStatusMessage || "눌러서 시작";
+        : voiceStatusMessage || "예) 내일 오후 3시 서울역에서 회의";
   const selectedPhotoAspectRatio =
     selectedPhoto?.width && selectedPhoto.height
       ? selectedPhoto.width / selectedPhoto.height
@@ -128,10 +131,12 @@ export function buildQuickSchedulePresentation({
             : "일정 미리보기";
   const inputModeDescription =
     inputMode === "photo"
-      ? "사진을 고르면 날짜와 장소를 자동으로 읽습니다."
+      ? "안내문이나 초대장을 불러올 수 있어요."
       : inputMode === "voice"
-        ? "마이크를 누르고 일정을 말해 주세요."
-        : "날짜·시간·장소를 한 문장으로 입력하세요.";
+        ? voicePermissionDenied
+          ? "날짜와 장소를 직접 적어 주세요."
+          : "날짜와 장소를 말하거나 적어 주세요."
+        : "일정 문장을 붙여넣거나 직접 적어 주세요.";
 
   return {
     canSubmit,

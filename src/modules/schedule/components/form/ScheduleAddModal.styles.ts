@@ -72,7 +72,10 @@ const styles = StyleSheet.create({
     handleWrap:    { alignItems: "center", paddingTop: 8, paddingBottom: 8 },
     handle:        { width: 36, height: 4, borderRadius: 2, opacity: 0.24 },
     scrollView: { maxHeight: "100%", flexShrink: 1 },
+    scrollViewLarge: { flex: 1, minHeight: 0 },
     scrollContent: { paddingHorizontal: 20, paddingBottom: 14 },
+    scrollContentLarge: { paddingTop: 4, paddingBottom: 24 },
+    formBodyLarge: { flexShrink: 0 },
     headerRow: {
         flexDirection: "row", alignItems: "center",
         justifyContent: "flex-end", minHeight: 36, marginBottom: 12,
@@ -238,6 +241,8 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
     },
+    compactToggleRowLarge: { paddingVertical: 8, gap: 12 },
+    compactToggleLabel: { flexShrink: 1 },
     compactDateTimeRow: {
         minHeight: 56,
         paddingLeft: 14,
@@ -247,6 +252,17 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     compactDateTimeRowLarge: { flexDirection: "column", gap: 0, paddingBottom: 6 },
+    compactFieldsRow: {
+        alignItems: "stretch",
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        gap: 6,
+    },
+    compactFieldLabel: {
+        alignSelf: "center",
+        paddingLeft: 4,
+        marginRight: 2,
+    },
     compactDatePressable: {
         flex: 1,
         minWidth: 0,
@@ -256,6 +272,25 @@ const styles = StyleSheet.create({
         borderRadius: 10,
     },
     compactDatePressableLarge: { flex: 0 },
+    compactAllDayPressable: {
+        gap: 4,
+    },
+    compactAllDayValueRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    compactAllDayDate: {
+        flexShrink: 1,
+    },
+    compactDatePressableInline: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignContent: 'center',
+        justifyContent: 'flex-start',
+        flexWrap: 'wrap',
+        columnGap: 8,
+    },
     compactValuePressable: {
         minHeight: 48,
         maxWidth: "52%",
@@ -267,6 +302,18 @@ const styles = StyleSheet.create({
         borderRadius: 10,
     },
     compactValuePressableLarge: { maxWidth: "100%", flexWrap: "wrap", justifyContent: "flex-start", gap: 6 },
+    compactTimeField: {
+        flex: 0.88,
+        maxWidth: "100%",
+        minWidth: 0,
+    },
+    compactField: {
+        minHeight: 44,
+        paddingHorizontal: 8,
+        columnGap: 4,
+    },
+    compactFieldValue: { flex: 1 },
+    compactTimeFieldValue: { flex: 1, fontSize: 13, fontVariant: ["tabular-nums"], textAlign: "left" },
     compactRowTitle: {
         fontSize: 14,
         fontWeight: "600",
@@ -275,6 +322,11 @@ const styles = StyleSheet.create({
         marginTop: 2,
         fontSize: 11,
         fontWeight: "600",
+    },
+    compactRowDate: {
+        fontSize: 13,
+        fontWeight: "600",
+        fontVariant: ["tabular-nums"],
     },
     compactRowValue: {
         flexShrink: 1,
@@ -312,6 +364,7 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: "600",
     },
+    memoCollapsedCardLarge: { paddingVertical: 12 },
     memoInputCard: {
         minHeight: 86,
         borderWidth: StyleSheet.hairlineWidth,
@@ -332,10 +385,11 @@ const styles = StyleSheet.create({
     saveBtn: {
         height: 48, borderRadius: 14,
         alignItems: "center", justifyContent: "center",
+        flexDirection: "row", gap: 8,
         borderWidth: StyleSheet.hairlineWidth,
     },
     saveBtnLarge: { height: "auto", minHeight: 50, paddingVertical: 8, paddingHorizontal: 14 },
-    saveFooter: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 20, paddingVertical: 10 },
+    saveFooter: { flexShrink: 0, borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 20, paddingVertical: 10 },
     saveBtnText: { fontWeight: "700", fontSize: 15 },
 });
 

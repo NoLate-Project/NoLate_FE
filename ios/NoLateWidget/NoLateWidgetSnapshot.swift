@@ -1,8 +1,6 @@
 import Foundation
 
 enum NoLateWidgetConstants {
-  static let appGroupIdentifier = "group.com.anonymous.nolatefe"
-  static let snapshotKey = "nolate.widget.snapshot.v1"
   static let widgetKind = "NoLateScheduleWidget"
 }
 
@@ -265,31 +263,19 @@ struct NoLateWidgetSchedule: Decodable, Identifiable, Hashable {
   }
 
   func effectiveEndDate(calendar: Calendar = .current) -> Date? {
-    if let endDate { return endDate }
-    guard let startDate else { return nil }
-    if allDay {
-      return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: startDate))
+    guard let startDate else { return endDate }
+    if allDay,
+       let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: startDate)) {
+      return max(endDate ?? nextDay, nextDay)
     }
-    return calendar.date(byAdding: .hour, value: 1, to: startDate)
+    return endDate ?? calendar.date(byAdding: .hour, value: 1, to: startDate)
   }
 }
 
 enum NoLateWidgetSnapshotStore {
   static func load() -> NoLateWidgetSnapshot? {
-    guard let defaults = UserDefaults(suiteName: NoLateWidgetConstants.appGroupIdentifier) else {
-      return nil
-    }
-
-    let data: Data?
-    if let storedData = defaults.data(forKey: NoLateWidgetConstants.snapshotKey) {
-      data = storedData
-    } else if let storedString = defaults.string(forKey: NoLateWidgetConstants.snapshotKey) {
-      data = storedString.data(using: .utf8)
-    } else {
-      data = nil
-    }
-
-    guard let data,
+    guard let url = NoLateWidgetSharedSnapshot.fileURL,
+          let data = NoLateWidgetSharedSnapshot.read(at: url, legacy: NoLateWidgetSharedSnapshot.readLegacyValue),
           let snapshot = try? JSONDecoder().decode(NoLateWidgetSnapshot.self, from: data),
           snapshot.version == 1 else {
       return nil
@@ -316,11 +302,8 @@ enum NoLateWidgetSnapshotStore {
     return snapshot.schedules
       .filter { schedule in
         guard let startDate = schedule.startDate else { return false }
-        if schedule.allDay && calendar.isDate(startDate, inSameDayAs: now) {
-          return true
-        }
         let endDate = schedule.effectiveEndDate(calendar: calendar) ?? startDate
-        return endDate >= now
+        return schedule.allDay ? now < endDate : now <= endDate
       }
       .sorted { left, right in
         guard let leftStart = left.startDate, let rightStart = right.startDate else {
@@ -337,6 +320,33 @@ enum NoLateWidgetSnapshotStore {
 
 /// Shared presentation rules for Home Screen and Lock Screen widgets.
 enum NoLateWidgetPresentation {
+  static func timelineDates(
+    for schedules: [NoLateWidgetSchedule],
+    after now: Date,
+    calendar: Calendar = .current
+  ) -> [Date] {
+    let horizon = now.addingTimeInterval(2 * 60 * 60)
+    var transitions: Set<Date> = [now]
+
+    func include(_ date: Date?) {
+      guard let date, date > now, date <= horizon else { return }
+      transitions.insert(date)
+    }
+
+    for schedule in schedules {
+      include(schedule.startDate)
+      if let end = schedule.effectiveEndDate(calendar: calendar) {
+        include(schedule.allDay ? end : end.addingTimeInterval(1))
+      }
+      if !schedule.departureCompleted {
+        include(schedule.departureDate)
+      }
+    }
+
+    include(calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)))
+    return transitions.sorted()
+  }
+
   static func featured(in schedules: [NoLateWidgetSchedule], at now: Date) -> NoLateWidgetSchedule? {
     // An all-day item must not hide the next timed appointment and its departure.
     schedules.first { !$0.allDay && ($0.startDate ?? .distantPast) > now && !$0.departureCompleted }

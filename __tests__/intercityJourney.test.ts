@@ -47,6 +47,24 @@ test('bounded re-query uses an earlier real request when the approach misses the
     expect(route.transitLegs![1].durationSeconds).toBe(1020);
 });
 
+test('stores seconds for connection legs returned in whole minutes', async () => {
+    const approach: RouteAlternativeOption = {
+        ...connection(),
+        transitLegs: [
+            { kind: 'WALK', label: '도보', durationMinutes: 2 },
+            { kind: 'SUBWAY', label: '지하철', durationMinutes: 18 },
+        ],
+    };
+    const search = jest.fn().mockResolvedValueOnce([approach]).mockResolvedValueOnce([connection()]);
+    const route = await buildIntercityJourney(args(search));
+    const legs = route.transitLegs!;
+
+    expect(legs.slice(0, 2).map(leg => leg.durationSeconds)).toEqual([120, 1080]);
+    expect(legs.reduce((total, leg) => total + leg.durationSeconds!, 0)).toBe(route.totalDurationSeconds);
+    expect(legs.find(leg => leg.kind === 'TRAIN')?.startDateTime).toBe(new Date(service.departureAt).toISOString());
+    expect(approach.transitLegs![0].durationSeconds).toBeUndefined();
+});
+
 test('serialization, map normalization, schedule selection and an appointment edit preserve the fixed service', async () => {
     const route = await buildIntercityJourney(args());
     const info = buildRouteInfoFromAlternative(route, origin, destination);
@@ -102,9 +120,16 @@ test('missing station coordinates and multiple intercity rides require a differe
 test('boarding buffers have preparation labels without becoming walking or rides', async () => {
     const route = await buildIntercityJourney(args());
     const dropdown = buildRouteDropdownSummaryItems(route, origin.name, destination.name);
-    expect(dropdown.filter(item => item.kind === 'TRANSFER').map(item => item.title)).toEqual(['탑승 준비·대기 (준비 15분 포함) · 15분', '하차 후 여유 · 5분']);
+    expect(dropdown.filter(item => item.kind === 'WAIT').map(item => item.title)).toEqual(['탑승 준비·대기 · 15분', '하차 후 여유 · 5분']);
     expect(dropdown.find(item => item.kind === 'TRAIN')!.subtitle).toContain('11:00 → 12:00 · 예매 미확인');
-    expect(buildRouteProgressSegments(route).filter(item => item.kind === 'TRANSFER').every(item => !item.isRide && !item.lineLabel)).toBe(true);
+    const waits = buildRouteProgressSegments(route).filter(item => item.kind === 'WAIT');
+    expect(waits.map(item => item.minutes)).toEqual([15, 5]);
+    expect(waits.every(item => !item.isRide && !item.lineLabel)).toBe(true);
+    const boardingBuffer = route.transitLegs!.find(leg => leg.journeyPhase === 'BUFFER')!;
+    boardingBuffer.durationMinutes = 18;
+    boardingBuffer.durationSeconds = 18 * 60;
+    expect(buildRouteDropdownSummaryItems(route).find(item => item.kind === 'WAIT')?.title)
+        .toBe('탑승 준비·대기 (준비 15분 포함) · 18분');
 });
 test('walking connection attribution survives composition', async () => {
     const board = option.transitLegs![1].startCoord!;

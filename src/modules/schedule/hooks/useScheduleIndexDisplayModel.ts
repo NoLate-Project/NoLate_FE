@@ -43,6 +43,7 @@ type UseScheduleIndexDisplayModelParams = {
   dayTransitionContext: DayTransitionContext;
   dayTransitionTargetDay: string | null;
   dayViewMode: DayViewMode;
+  fontScale: number;
   isDayTransitionActive: boolean;
   isYearDepthTransitionActive: boolean;
   primaryDatePillNativeRef: MutableRefObject<LiquidGlassIconButtonHandle | null>;
@@ -70,6 +71,7 @@ export function useScheduleIndexDisplayModel({
   dayTransitionContext,
   dayTransitionTargetDay,
   dayViewMode,
+  fontScale,
   isDayTransitionActive,
   isYearDepthTransitionActive,
   primaryDatePillNativeRef,
@@ -120,18 +122,20 @@ export function useScheduleIndexDisplayModel({
     ? 'month'
     : calendarDepth;
   const pillDisplayDay = dayTransitionTargetDay ?? selectedDay;
-  const detailMonthPrimaryLabel = `${visibleYear}년 ${Number(
-    visibleMonth.slice(5, 7),
-  )}월`;
-  const monthUsesCombinedPrimaryPill = usesMonthInPrimaryPill(calendarViewMode);
+  const primaryMonth = `${Number(visibleMonth.slice(5, 7))}월`;
+  const combinedMonthLabel = `${visibleYear}년 ${primaryMonth}`;
+  const monthUsesCombinedPrimaryPill = usesMonthInPrimaryPill(calendarViewMode, fontScale);
+  const primaryPillAccessibilityMonth = pillTargetDepth === 'month' && calendarViewMode === 'list' && monthUsesCombinedPrimaryPill
+    ? primaryMonth
+    : undefined;
   const visiblePrimaryLabel =
     pillTargetDepth === 'day'
       ? `${new Date(`${pillDisplayDay}T00:00:00`).getMonth() + 1}월`
       : pillTargetDepth === 'month' && monthUsesCombinedPrimaryPill
-      ? detailMonthPrimaryLabel
+      ? combinedMonthLabel
       : `${visibleYear}년`;
   const monthPrimaryLabel = monthUsesCombinedPrimaryPill
-    ? detailMonthPrimaryLabel
+    ? combinedMonthLabel
     : `${visibleYear}년`;
   const monthPrimaryPillLayout = resolveCalendarPrimaryPillLayout(
     'month',
@@ -177,7 +181,7 @@ export function useScheduleIndexDisplayModel({
     (day: string) => {
       if (
         pillTargetDepth !== 'month' ||
-        !usesMonthInPrimaryPill(calendarViewMode)
+        calendarViewMode !== 'detail'
       )
         return;
 
@@ -289,6 +293,7 @@ export function useScheduleIndexDisplayModel({
     monthDisplaySelectedDay,
     pillTargetDepth,
     primaryPillAnimatedStyle,
+    primaryPillAccessibilityMonth,
     primaryPillContentWidth,
     primaryPillVisible,
     selectedLiquidMode,

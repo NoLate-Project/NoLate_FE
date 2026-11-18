@@ -15,6 +15,7 @@ import LiquidGlassIconButton from '../../modules/schedule/components/calendar/Li
 import { type DetailMonthPageLayouts } from '../../modules/schedule/components/calendar/ScheduleCalendar';
 import {
   getPrimaryPillWeekdayGap,
+  usesMonthInPrimaryPill,
   type CalendarViewModePreference,
 } from '../../modules/schedule/components/calendar/viewMode';
 import {
@@ -25,6 +26,7 @@ import GlobalFloatingActionBar from '../../modules/schedule/components/shared/Gl
 import { SCHEDULE_ICONS } from '../../modules/schedule/components/shared/ScheduleIcon';
 import {
   getCalendarMonthWeekCount,
+  resolveCalendarPrimaryPillLayout,
   resolveDetailMonthPanelLayout,
 } from '../../modules/schedule/calendarMotion';
 import { useTheme } from '../../modules/theme/ThemeContext';
@@ -142,7 +144,7 @@ export default function CalendarMainPreview({
 }) {
   const { colors, mode } = useTheme();
   const insets = useSafeAreaInsets();
-  const { height, width } = useWindowDimensions();
+  const { fontScale, height, width } = useWindowDimensions();
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -232,7 +234,8 @@ export default function CalendarMainPreview({
     ).length,
     onOpenRouteSetup: showPreviewMessage('경로 설정'),
   };
-  const primaryPillWidth = viewMode === 'detail' ? 148 : 106;
+  const primaryPillLabel = usesMonthInPrimaryPill(viewMode, fontScale) ? '2026년 10월' : '2026년';
+  const primaryPillWidth = resolveCalendarPrimaryPillLayout('month', primaryPillLabel, width).width;
   const menuWidth = menuOpen ? width - 32 : 150;
 
   return (
@@ -332,7 +335,7 @@ export default function CalendarMainPreview({
       >
         <LiquidGlassIconButton
           leadingSymbolName="chevron.left"
-          label={viewMode === 'detail' ? '2026년 10월' : '2026년'}
+          label={primaryPillLabel}
           buttonWidth={primaryPillWidth}
           buttonHeight={44}
           colorScheme={mode}

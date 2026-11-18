@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-16",
+  "device": "NoLate Journey Candidate E2E 20261104 (iOS 27.0, independent simulator)",
+  "test": "NoLateE2ETests.testIsolatedSavedRouteNavigationEntry",
+  "result": "passed",
+  "route": "ODsay captured WALK/BUS 1711/WALK, Seoul Station to Gyeongbokgung",
+  "server": "loopback H2 isolated fixture; official Seoul static stop/path captures; TMAP walking",
+  "scope": "saved route login, ODsay 1711 map and route rendering, walking snapshot, server/native ARMED, detailed rail, collapsed route bar, stop",
+  "result_bundle": "/private/tmp/nolate-ui-real-bus-native-v23-20261116/result.xcresult",
+  "release_test": "1 passed, 0 failed; .env map settings included and API redirected to loopback",
+  "screenshots": ["01-armed-route-bar.png", "02-walking-preparation.png", "03-odsay-1711-map.png"],
+  "excluded": [
+    "physical GPS",
+    "actual live vehicle boarding",
+    "production APNs",
+    "production backend"
+  ]
+}

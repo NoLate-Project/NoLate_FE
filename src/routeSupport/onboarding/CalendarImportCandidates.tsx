@@ -123,9 +123,7 @@ export function CandidateSelectionSummaryRow({
       <View style={styles.selectionSummaryCopy}>
         <Text style={styles.selectionSummaryTitle}>전체 일정</Text>
         <Text style={styles.selectionSummaryDescription}>
-          {allSelected
-            ? `${totalCount}개 모두 가져오기`
-            : `${selectedCount}/${totalCount}개 선택`}
+          {totalCount}개 일정 중 {selectedCount}개 선택
         </Text>
       </View>
       <Text style={styles.selectionSummaryAction}>
@@ -164,16 +162,9 @@ export function IndividualScheduleDisclosure({
       <View style={styles.individualScheduleDisclosureIcon}>
         <Ionicons accessible={false} importantForAccessibility="no" name="list-outline" size={18} color={BRAND_BLUE} />
       </View>
-      <View style={styles.individualScheduleDisclosureCopy}>
-        <Text style={styles.individualScheduleDisclosureTitle}>
-          개별 일정 조정
-        </Text>
-        <Text style={styles.individualScheduleDisclosureDescription}>
-          필요한 일정만 하나씩 선택하거나 해제해요
-        </Text>
-      </View>
+      <Text style={styles.individualScheduleDisclosureTitle}>개별 일정 조정</Text>
       <Text style={styles.individualScheduleDisclosureCount}>
-        {selectedCount}개
+        {totalCount}개
       </Text>
       <Ionicons accessible={false} importantForAccessibility="no"
         name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
@@ -230,14 +221,10 @@ export function CandidateSourceRow({
           { backgroundColor: group.color ?? colors.textDisabled },
         ]}
       />
-      <View style={styles.sourceGroupCopy}>
-        <Text numberOfLines={1} style={styles.sourceGroupText}>
-          {group.title}
-        </Text>
-        <Text style={styles.sourceGroupCount}>
-          {group.selectedCount}/{group.totalCount}개 선택
-        </Text>
-      </View>
+      <Text numberOfLines={2} style={styles.sourceGroupText}>{group.title}</Text>
+      <Text style={styles.sourceGroupCount}>
+        {group.selectedCount}/{group.totalCount}개 선택
+      </Text>
     </Pressable>
   );
 }

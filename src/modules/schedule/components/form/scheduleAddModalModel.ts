@@ -20,7 +20,7 @@ export type Props = {
   categoryError?: string | null;
   categoryLoading?: boolean;
   onRetryCategories?: () => void;
-  onManageCategories?: () => void;
+  onManageCategories?: (calendarId?: number | null) => void;
   onCloseStart?: () => void;
   presentation?: 'sheet' | 'morph';
   sourceTopOffset?: number;

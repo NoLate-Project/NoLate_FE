@@ -5,12 +5,15 @@ import { useRouter } from "expo-router";
 import { useImmediateNavigationTransition } from "../../modules/performance/ImmediateNavigationTransition";
 import { usePreMountedSceneActivity } from "../../modules/performance/preMountedSceneActivity";
 import { useSystemReduceMotion } from "../../modules/performance/useSystemReduceMotion";
+import { applyOdsayBusPreview, applyOdsayEntranceEstimate, buildOdsayBusPreviewInput, buildOdsayTimetablePreviewInput, isFreshOdsayBusPreview } from "../../api/transitTimetablePreview";
+import { useOdsayTimetablePreview } from "../../modules/schedule/useOdsayTimetablePreview";
 
 import {
     getRouteAlternativeOptions,
     invalidateRouteSearch,
     RouteSearchError,
     type RouteAlternativeOption,
+    type RouteSearchErrorCode,
 } from "../../modules/map/routingService";
 import {
     getRouteCandidateListSnapshot,
@@ -19,7 +22,7 @@ import {
     setRoutePlannerInitial,
     setRoutePlannerResult,
 } from "../../modules/schedule/routePlannerSession";
-import { resolveScheduleRouteDepartureContext } from "../../modules/schedule/scheduleRouteTiming";
+import { isOdsayTimetableDepartureExpired, resolveScheduleRouteDepartureContext } from "../../modules/schedule/scheduleRouteTiming";
 import type { Place, TravelMode } from "../../modules/schedule/types";
 import { buildIntercityJourney, validateIntercityJourneyTiming, type IntercitySelection } from "../../modules/schedule/intercityJourney";
 import { buildRouteInfoFromAlternative } from "../../modules/schedule/routeInfo";
@@ -111,12 +114,14 @@ export function useRouteSelectRouteController({
     );
     const [transitRouteFilter, setTransitRouteFilter] = useState<TransitRouteFilter>(resumedList?.transitFilter ?? "ALL");
     const [routeLoading, setRouteLoading] = useState(false);
-    const [routeError, setRouteError] = useState<string>();
+    const [routeFailure, setRouteFailure] = useState<{ message: string; code?: RouteSearchErrorCode }>();
+    const routeError = routeFailure?.message;
     const [noProviderRoute, setNoProviderRoute] = useState(false);
     const reduceMotion = useSystemReduceMotion();
     const [routeRequestVersion, setRouteRequestVersion] = useState(0);
     const [routeSubmitPending, setRouteSubmitPending] = useState(false);
     const [pendingMapEntryContext, setPendingMapEntryContext] = useState<object>();
+    const [failedMapEntry, setFailedMapEntry] = useState<{ selection: object; routeId: string }>();
     const routeSubmitPendingRef = useRef(false);
     const pendingMapEntryRef = useRef<{ context: object } | undefined>(undefined);
     const routeSubmitResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -172,24 +177,54 @@ export function useRouteSelectRouteController({
         }, { ALL: 0, SUBWAY: 0, BUS: 0, MIXED: 0 }),
         [routeAlternatives]
     );
-    const visibleRouteAlternatives = useMemo(() => {
+    const [routeResultsTimingKey, setRouteResultsTimingKey] = useState<string>();
+    const baseVisibleRoutes = useMemo(() => {
         const sorted = sortRouteAlternativesForDisplay(routeAlternatives.filter(option => !option.intercityJourney), travelMode, transitRouteFilter);
         const anchored = routeAlternatives.filter(option => option.intercityJourney && (transitRouteFilter === "ALL" || getTransitFilterCount([option], transitRouteFilter) > 0));
         return [...anchored, ...sorted].slice(0, 5);
     }, [routeAlternatives, transitRouteFilter, travelMode]);
+    const baseSelection = baseVisibleRoutes.find(option => option.id === requestedRouteId) ?? baseVisibleRoutes[0];
+    const previewInput = useMemo(() => {
+        if (routeResultsTimingKey !== routeTimingKey && !usingResumedList) return undefined;
+        if (!baseSelection || routeLoading ||
+            !shouldShowRouteResults || sceneActive === false) return undefined;
+        if (explicitDeparture) {
+            const time = { requestedDepartureAt: explicitDeparture.toISOString() };
+            return { timetable: buildOdsayTimetablePreviewInput(baseSelection, time, origin, destination),
+                bus: buildOdsayBusPreviewInput(baseSelection, time, origin, destination) };
+        }
+        if (!routeTargetArrivalAt) return undefined;
+        const time = { targetArrivalAt: routeTargetArrivalAt.toISOString() };
+        return { timetable: buildOdsayTimetablePreviewInput(baseSelection, time, origin, destination),
+            bus: buildOdsayBusPreviewInput(baseSelection, time, origin, destination) };
+    }, [baseSelection, destination, explicitDeparture, origin, routeLoading, routeResultsTimingKey,
+        routeTargetArrivalAt, routeTimingKey, sceneActive, shouldShowRouteResults, usingResumedList]);
+    const { preview: currentPreview, missingEntranceWalk, busPreview, waiting: waitingForPreview } =
+        useOdsayTimetablePreview(previewInput?.timetable, previewInput?.bus);
+    const visibleRouteAlternatives = useMemo(() => (currentPreview || missingEntranceWalk || busPreview) && baseSelection
+        ? baseVisibleRoutes.map(option => option === baseSelection
+            ? busPreview ? applyOdsayBusPreview(option, busPreview)
+                : missingEntranceWalk ? applyOdsayEntranceEstimate(option, missingEntranceWalk)
+                    : { ...option, odsayTimetablePreview: currentPreview }
+            : option)
+        : baseVisibleRoutes, [baseSelection, baseVisibleRoutes, currentPreview, missingEntranceWalk, busPreview]);
     const selectedRoute = visibleRouteAlternatives.find(option => option.id === requestedRouteId)
         ?? visibleRouteAlternatives[0];
     const selectedRouteId = selectedRoute?.id;
+    const mapEntrySelection = useMemo(() => ({
+        routeTimingKey, transitRouteFilter, selectedRouteId,
+    }), [routeTimingKey, transitRouteFilter, selectedRouteId]);
     const mapEntryContext = useMemo(() => ({
-        routeTimingKey, transitRouteFilter, selectedRouteId, shouldShowRouteResults,
+        selection: mapEntrySelection, shouldShowRouteResults,
         sceneActive, collapsedCandidateId, visibleRouteAlternatives,
     }), [
-        routeTimingKey, transitRouteFilter, selectedRouteId, shouldShowRouteResults,
+        mapEntrySelection, shouldShowRouteResults,
         sceneActive, collapsedCandidateId, visibleRouteAlternatives,
     ]);
     const mapEntryContextRef = useRef(mapEntryContext);
     mapEntryContextRef.current = mapEntryContext;
     const routeMapPending = pendingMapEntryContext === mapEntryContext;
+    const failedMapRouteId = failedMapEntry?.selection === mapEntrySelection ? failedMapEntry.routeId : undefined;
     const visibleRouteSignature = useMemo(
         () => visibleRouteAlternatives.map((option) => option.id).join("|"),
         [visibleRouteAlternatives]
@@ -353,7 +388,7 @@ export function useRouteSelectRouteController({
         setSelectedRouteId(undefined);
         setCollapsedCandidateId(undefined);
         setRouteAlternatives([]);
-        setRouteError(undefined);
+        setRouteFailure(undefined);
         setNoProviderRoute(false);
 
         if (!hasRouteCoords) {
@@ -383,9 +418,10 @@ export function useRouteSelectRouteController({
                 const displayItems = sortRouteAlternativesForDisplay(candidates, travelMode, "ALL");
                 const firstDisplayRouteId = displayItems[0]?.id;
                 setRouteAlternatives(candidates);
+                setRouteResultsTimingKey(routeTimingKey);
                 setSelectedRouteId(firstDisplayRouteId);
-                setNoProviderRoute(items.length > 0 && candidates.length === 0);
-                setRouteError(candidates.length ? undefined : "표시할 경로가 없습니다.");
+                setNoProviderRoute(travelMode === "TRANSIT" && candidates.length === 0);
+                setRouteFailure(candidates.length ? undefined : { message: "표시할 경로가 없습니다." });
 
                 const firstRoute = displayItems[0];
                 if (
@@ -393,6 +429,9 @@ export function useRouteSelectRouteController({
                     !explicitDeparture &&
                     initial?.targetArrivalAt &&
                     firstRoute &&
+                    // maasRP의 SearchTime은 추정 구간의 기준 시각만 바꾼다.
+                    // 같은 후보를 다시 검색해도 예정 대기나 환승 시간이 보정되지 않는다.
+                    !(firstRoute.provider === "odsay" && firstRoute.providerTimeBasis === "route_estimate") &&
                     scheduleTimingRefinedRef.current !== routeTimingKey
                 ) {
                     scheduleTimingRefinedRef.current = routeTimingKey;
@@ -410,9 +449,10 @@ export function useRouteSelectRouteController({
             })
             .catch((error) => {
                 if (cancelled) return;
-                setNoProviderRoute(error instanceof RouteSearchError && error.code === "NO_PROVIDER_ROUTE");
+                const code = error instanceof RouteSearchError ? error.code : undefined;
+                setNoProviderRoute(code === "NO_PROVIDER_ROUTE");
                 const message = error instanceof Error ? error.message : "경로 계산에 실패했습니다.";
-                setRouteError(message);
+                setRouteFailure({ message, code });
             })
             .finally(() => {
                 if (!cancelled) setRouteLoading(false);
@@ -459,9 +499,12 @@ export function useRouteSelectRouteController({
         const entry = { context: mapEntryContext };
         pendingMapEntryRef.current = entry;
         setPendingMapEntryContext(mapEntryContext);
+        setFailedMapEntry(undefined);
+        const isCurrentEntry = () => selectionMountedRef.current &&
+            pendingMapEntryRef.current === entry && mapEntryContextRef.current === mapEntryContext;
         try {
             await showRouteDetailInterstitialIfEligible();
-            if (!selectionMountedRef.current || pendingMapEntryRef.current !== entry || mapEntryContextRef.current !== mapEntryContext) return;
+            if (!isCurrentEntry()) return;
             // Use the candidate and list the user still sees after the ad check.
             persistInitial(targetRoute.minutes, targetSessionId, targetRoute);
             setRouteCandidateListSnapshot(targetSessionId, {
@@ -482,13 +525,15 @@ export function useRouteSelectRouteController({
                     entrySource: "route-candidates",
                 },
             });
+        } catch {
+            if (isCurrentEntry()) setFailedMapEntry({ selection: mapEntrySelection, routeId: targetRoute.id });
         } finally {
             if (pendingMapEntryRef.current === entry) {
                 pendingMapEntryRef.current = undefined;
                 if (selectionMountedRef.current) setPendingMapEntryContext(undefined);
             }
         }
-    }, [collapsedCandidateId, importedTicket, mapEntryContext, persistInitial, routeAlternatives, routeDepartureAt, router, selectedRoute, sessionId, transitRouteFilter, visibleRouteAlternatives]);
+    }, [collapsedCandidateId, importedTicket, mapEntryContext, mapEntrySelection, persistInitial, routeAlternatives, routeDepartureAt, router, selectedRoute, sessionId, transitRouteFilter, visibleRouteAlternatives]);
 
     useEffect(() => {
         primeRouteDetailAdvertising().catch(() => undefined);
@@ -502,10 +547,11 @@ export function useRouteSelectRouteController({
         if (!selectionMountedRef.current || context !== selectionContextRef.current || !isCurrent()) throw new Error("경로가 변경되어 적용하지 않았습니다. 다시 선택해 주세요.");
         setRouteAlternatives(current => [connected, ...current.filter(item => !item.intercityJourney)]);
         setTransitRouteFilter("ALL"); setSelectedRouteId(connected.id);
+        return connected.id;
     }, [destination, importedTicket, initial?.targetArrivalAt, origin]);
 
     const saveRouteOption = useCallback((routeOption: RouteAlternativeOption, routeIndex: number) => {
-        if (routeSubmitPendingRef.current) return;
+        if (routeSubmitPendingRef.current || waitingForPreview) return;
         if (!sessionId) {
             Alert.alert("저장할 일정이 없어요", "일정 화면에서 이동 경로를 다시 열어 주세요.");
             return;
@@ -519,17 +565,37 @@ export function useRouteSelectRouteController({
             try { validateIntercityJourneyTiming(routeOption.intercityJourney, initial?.targetArrivalAt); }
             catch (cause) { Alert.alert("운행편 확인 필요", cause instanceof Error ? cause.message : "다시 선택해 주세요."); return; }
         }
+        // Preview data only belongs to this selected candidate and this search context.
+        const preview = routeOption.id === baseSelection?.id ? currentPreview : undefined;
+        const bus = routeOption.id === baseSelection?.id && isFreshOdsayBusPreview(busPreview) ? busPreview : undefined;
+        if (routeOption.odsayBusPreview && !bus) {
+            Alert.alert("버스 예측이 만료됐어요", "경로를 다시 검색해 최신 도착 시각을 확인해 주세요.", [
+                { text: "닫기", style: "cancel" },
+                { text: "다시 검색", onPress: retryRouteSearch },
+            ]);
+            return;
+        }
+        if (isOdsayTimetableDepartureExpired(preview?.departureAt)) {
+            Alert.alert("출발 시각이 지났어요", explicitDeparture
+                ? "지도에서 새 출발 시각을 선택한 뒤 경로를 다시 확인해 주세요."
+                : "다시 검색해 일정에 맞는 경로를 확인해 주세요.",
+                explicitDeparture ? undefined : [
+                    { text: "닫기", style: "cancel" },
+                    { text: "다시 검색", onPress: retryRouteSearch },
+                ]);
+            return;
+        }
         const nextOrigin = buildPlace(originText, originAddress, originLat, originLng);
         const nextDestination = buildPlace(destinationText, destinationAddress, destinationLat, destinationLng);
         const candidateRouteInfo = buildRouteInfoFromAlternative(
-            routeOption,
+            { ...routeOption, odsayTimetablePreview: preview, odsayBusPreview: bus },
             nextOrigin,
             nextDestination,
             routeDepartureAt,
             routeIndex
         );
         const selectedTiming = resolveRouteOptionTiming(routeOption, routeDepartureAt, {
-            targetArrivalAt: explicitDeparture ? undefined : initial?.targetArrivalAt,
+            targetArrivalAt: explicitDeparture || bus ? undefined : initial?.targetArrivalAt,
             routeInfo: candidateRouteInfo,
         });
         const routeInfo = {
@@ -553,6 +619,8 @@ export function useRouteSelectRouteController({
                 departureAt: routeInfo.departureTime,
                 route: {
                     ...routeOption,
+                    odsayTimetablePreview: undefined,
+                    odsayBusPreview: undefined,
                     schemaVersion: routeOption.intercityJourney ? 3 : 2,
                     routeInfo,
                 },
@@ -572,6 +640,7 @@ export function useRouteSelectRouteController({
             routeSubmitResetTimerRef.current = null;
         }, 800);
     }, [
+        busPreview,
         importedTicket,
         close,
         destinationAddress,
@@ -584,9 +653,13 @@ export function useRouteSelectRouteController({
         originLat,
         originLng,
         originText,
+        retryRouteSearch,
         routeDepartureAt,
         sessionId,
         travelMode,
+        baseSelection?.id,
+        currentPreview,
+        waitingForPreview,
     ]);
 
     useEffect(() => () => {
@@ -601,6 +674,7 @@ export function useRouteSelectRouteController({
         close,
         goToScheduleList,
         hasTransitFilters,
+        failedMapRouteId,
         openMapForOption,
         routeMapPending,
         openPlaceSettings,
@@ -616,11 +690,13 @@ export function useRouteSelectRouteController({
         routeDepartureAt,
         hasExplicitDeparture: Boolean(explicitDeparture),
         routeError,
+        routeErrorCode: routeFailure?.code,
         showTransitRecovery,
         routeListBottomPadding,
         routeLoading,
         routeScheduleBased,
         routeSubmitPending,
+        waitingForPreview,
         routeTargetArrivalAt,
         saveRouteOption,
         selectTransitFilter,

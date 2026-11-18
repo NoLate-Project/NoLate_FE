@@ -12,6 +12,7 @@ import {
     type MemberProfileDto,
 } from "../api/member";
 import { ApiResponseError } from "../api/response";
+import { getDefaultOriginFromApi } from "../api/favoritePlaces";
 import { useAuth } from "../modules/auth/AuthContext";
 import {
     getAuthMember,
@@ -50,13 +51,14 @@ function getAccountActionError(error: unknown, checksPassword = false): ProfileA
 }
 
 /** 프로필 화면의 조회·편집·로그아웃·탈퇴 상태와 사용자 작업을 한곳에서 관리합니다. */
-export function useProfileScreen() {
+export function useProfileScreen(visible: boolean) {
     const router = useRouter();
     const { runWithTransitionShell } = useImmediateNavigationTransition();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { signOut } = useAuth();
     const [profile, setProfile] = useState<MemberProfileDto | null>(null);
+    const [defaultOriginName, setDefaultOriginName] = useState<string>();
     const [account, setAccount] = useState<StoredAuthMember | null>(null);
     const [calendarConnection, setCalendarConnection] = useState<CalendarConnectionSnapshot | null>(null);
     const [calendarConnectionError, setCalendarConnectionError] = useState(false);
@@ -65,6 +67,7 @@ export function useProfileScreen() {
     const [loadingProfile, setLoadingProfile] = useState(true);
     const [editingProfile, setEditingProfile] = useState(false);
     const [savingProfile, setSavingProfile] = useState(false);
+    const [savedNameRevision, setSavedNameRevision] = useState(0);
     const [draftName, setDraftName] = useState("");
     const [memberIdCopied, setMemberIdCopied] = useState(false);
     const [profileError, setProfileError] = useState<string | null>(null);
@@ -93,6 +96,7 @@ export function useProfileScreen() {
         ? `NoLate ID #${displayMemberId} · ${displayLoginType}`
         : displayLoginType;
     const avatarInitial = displayAccountName.trim().slice(0, 1) || "N";
+    const canSaveName = Boolean(profile?.memberId && draftName.trim() && draftName.trim() !== displayAccountName);
 
     useEffect(() => {
         let active = true;
@@ -105,6 +109,15 @@ export function useProfileScreen() {
             active = false;
         };
     }, []);
+
+    useEffect(() => {
+        if (!visible) return;
+        let active = true;
+        getDefaultOriginFromApi().then(place => {
+            if (active) setDefaultOriginName(place?.name);
+        }).catch(() => undefined);
+        return () => { active = false; };
+    }, [visible]);
 
     /** 저장된 인증 계정을 우선 사용하고, 필수 메타데이터가 없으면 리프레시 토큰으로 안전하게 복구합니다. */
     const loadAccount = useCallback(async () => {
@@ -184,6 +197,7 @@ export function useProfileScreen() {
     const saveProfile = useCallback(async () => {
         if (savingProfileRef.current) return;
         const nickname = draftName.trim();
+        if (nickname === displayAccountName) return;
         if (!nickname) {
             Alert.alert("이름을 입력해 주세요", "프로필에 표시할 이름이 필요합니다.");
             return;
@@ -206,6 +220,7 @@ export function useProfileScreen() {
                 intro: profile.intro,
             });
             setProfile(updated);
+            setSavedNameRevision(revision => revision + 1);
             setEditingProfile(false);
         } catch (error) {
             Alert.alert("프로필 저장 실패", getErrorMessage(error));
@@ -213,9 +228,10 @@ export function useProfileScreen() {
             savingProfileRef.current = false;
             setSavingProfile(false);
         }
-    }, [draftName, profile]);
+    }, [displayAccountName, draftName, profile]);
 
     useEffect(() => {
+        if (!visible) return undefined;
         const task = runAfterScreenTransition(() => {
             loadProfile();
         });
@@ -223,7 +239,7 @@ export function useProfileScreen() {
             task.cancel();
             profileLoadSequenceRef.current += 1;
         };
-    }, [loadProfile]);
+    }, [loadProfile, visible]);
 
     useEffect(() => {
         if (!memberIdCopied) return;
@@ -352,11 +368,11 @@ export function useProfileScreen() {
 
     /** 프로필에서 진입했음을 표시해 캘린더 연결·가져오기 화면을 엽니다. */
     const openCalendarOnboarding = useCallback(() => {
-        router.push({
-            pathname: "/onboarding/calendar-import",
-            params: { source: "profile" },
-        });
-    }, [router]);
+        runWithTransitionShell(
+            { route: "/onboarding/calendar-import", title: "캘린더 가져오기", returnToCurrentScene: true },
+            () => router.push({ pathname: "/onboarding/calendar-import", params: { source: "profile" } }),
+        );
+    }, [router, runWithTransitionShell]);
 
     /** 기본 주소와 즐겨찾기 장소를 관리하는 설정 화면으로 이동합니다. */
     const openPlacesSettings = useCallback(() => {
@@ -401,6 +417,8 @@ export function useProfileScreen() {
         editingProfile,
         setEditingProfile,
         savingProfile,
+        savedNameRevision,
+        canSaveName,
         draftName,
         setDraftName,
         memberIdCopied,
@@ -433,6 +451,7 @@ export function useProfileScreen() {
         goBackToSchedule,
         openCalendarOnboarding,
         openPlacesSettings,
+        defaultOriginName,
         openPrivacyPolicy,
         openTermsOfService,
     };

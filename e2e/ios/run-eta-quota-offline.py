@@ -13,11 +13,11 @@ import time
 import urllib.request
 from eta_pinned_app import restore_private_endpoint, open_private_client_with_xcuitest
 from eta_fixture_snapshot import wait_for_phase_snapshot
+from eta_fixture_scope import PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE, require_memory_fixture_api
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
 DEVICE = '9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69'
-BASE = 'http://127.0.0.1:5523'
 SEOUL = dt.timezone(dt.timedelta(hours=9))
 # Probe arrival first: its first persisted due time is one full minute after baseline,
 # beyond the real 15s cache TTL. A valid cache hit is not an injected quota failure.
@@ -28,12 +28,16 @@ QUALITY_FAULTS = {'quality-unobserved': 'arrival:UNOBSERVED', 'quality-stale': '
                   'quality-timeout': 'arrival:TIMEOUT', 'quota-arrival': 'arrival:ERROR-337'}
 QUALITY_CODES = dict(zip(QUALITY_FAULTS, ('TRANSIT_TRAIN_NOT_YET_OBSERVED', 'TRANSIT_ARRIVAL_SOURCE_STALE',
     'TRANSIT_ARRIVAL_SOURCE_UNVERIFIED', 'TRANSIT_ARRIVAL_API_ERROR', 'TRANSIT_ARRIVAL_API_TIMEOUT', 'TRANSIT_ARRIVAL_RATE_LIMITED')))
+QUALITY_FAULTS['quality-departed'] = 'arrival:DEPARTED'
+QUALITY_CODES['quality-departed'] = 'TRANSIT_TRAIN_NOT_YET_OBSERVED'
 
 
-def suite_commands(quality=False, optimization=False):
+def suite_commands(quality=False, optimization=False, departed=False):
+    if departed:
+        return ['quality-departed', 'quota-recovered']
     if optimization:
         return ['optimization-timeout', 'quota-recovered']
-    return [*QUALITY_FAULTS, 'quota-recovered'] if quality else [item for fault in FAULTS for item in (fault, 'quota-recovered')]
+    return [*(fault for fault in QUALITY_FAULTS if fault != 'quality-departed'), 'quota-recovered'] if quality else [item for fault in FAULTS for item in (fault, 'quota-recovered')]
 walking_spec = importlib.util.spec_from_file_location('walking_fixture', Path(__file__).with_name('verify-eta-fixture.py'))
 walking_fixture = importlib.util.module_from_spec(walking_spec)
 walking_spec.loader.exec_module(walking_fixture)
@@ -187,10 +191,15 @@ def verify_case(value, baseline, previous, public):
             assert value['failureCode'] == QUALITY_CODES[value['scenario']]
             assert public.get('predictedArrivalAt') is None and public.get('effectiveTransitRoute') is None
             preview = public.get('futureTimetablePrediction')
-            if value['scenario'] == 'quality-unobserved':
+            if value['scenario'] in ('quality-unobserved', 'quality-departed', 'quality-stale'):
                 assert preview == value['effectiveSnapshot']['effectiveTransitRoute']
                 assert preview and value['effectiveSnapshot']['transitTimingBasis'] == 'TIMETABLE_ONLY'
                 assert all(s['rideTiming']['basis'] == 'TIMETABLE' for s in preview['segments'] if s['kind'] != 'WALK')
+                if value['scenario'] == 'quality-departed':
+                    gap = instant(value['nextCheckAt']) - instant(value['evaluatedAt'])
+                    assert dt.timedelta(0) < gap <= dt.timedelta(minutes=1)
+                    assert value['effectiveSnapshot'].get('firstBoardingObservation') is None
+                    assert public.get('firstBoardingObservation') is None
             else:
                 assert preview is None
     else:
@@ -225,7 +234,10 @@ def audit_run(root):
     assert report['classification'] == 'SYNTHETIC_QUOTA_REGRESSION' and report['result'] == 'PASSED'
     assert report['providersMocked'] is True and report['productionDatabaseModified'] is False
     assert report['actualProviderAcceptance'] == report['mapAccuracy'] == report['actualFcm'] == 'NOT_TESTED'
-    commands = suite_commands(report.get('arrivalQualitySuite', False), report.get('optimizationFailureSuite', False))
+    commands = suite_commands(report.get('arrivalQualitySuite', False), report.get('optimizationFailureSuite', False),
+                              report.get('departedTrainSuite', False))
+    base = report.get('apiBase', PRIVATE_API_BASE)
+    assert base in (PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE)
     assert len(report['cases']) == len(commands)
     baseline = previous = json.loads((root / 'case-0.json').read_text())
     assert baseline['source'] == 'LIVE_PROVIDER' and baseline['stale'] is False
@@ -241,7 +253,7 @@ def audit_run(root):
         if report['simulatorRequested']:
             run = root / f'ui-{index}-{command}'
             meta = json.loads((run / 'metadata.json').read_text())
-            assert meta['device'] == DEVICE and meta['memberScope'] == 296 and meta['apiBase'] == BASE
+            assert meta['device'] == DEVICE and meta['memberScope'] == 296 and meta['apiBase'] == base
             assert meta['method'] == 'testVerifyIsolatedQuotaEta' and meta['allowSave'] is False
             verify_ui_summary(json.loads(subprocess.check_output(['xcrun', 'xcresulttool', 'get', 'test-results',
                 'summary', '--path', str(run / 'result.xcresult')], timeout=30)))
@@ -274,12 +286,14 @@ def audit_run(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', default='java', help='JDK 21 java executable')
+    parser.add_argument('--api-port', type=int, choices=(5523, 5528), default=5523)
     parser.add_argument('--simulator', action='store_true', help='Also drive the pinned installed iOS app; own Metro on 8086 only')
     parser.add_argument('--arrival-quality', action='store_true', help='Future unobserved/source age/API diagnostics plus recovery; synthetic only')
+    parser.add_argument('--departed-train', action='store_true', help='Replay the just-departed row and subsequent observation in a bounded synthetic suite')
     parser.add_argument('--optimization-failure', action='store_true', help='Second route search times out after a verified journey; actual Worker/API/UI, synthetic feeds')
     parser.add_argument('--audit-root', type=Path, help='Read-only audit of an existing run; no server, simulator or API calls')
     args = parser.parse_args()
-    if args.arrival_quality and args.optimization_failure:
+    if sum((args.arrival_quality, args.optimization_failure, args.departed_train)) > 1:
         parser.error('Select one bounded regression suite')
     if args.audit_root is not None:
         try:
@@ -289,6 +303,7 @@ def main():
             print(json.dumps({'result': 'FAILED', 'failureKind': type(error).__name__}))
             return 1
     root = Path(tempfile.mkdtemp(prefix='nolate-eta-mock-e2e.', dir='/private/tmp')).resolve()
+    base = PRIVATE_API_BASE if args.api_port == 5523 else QUOTA_ALTERNATE_API_BASE
     server = metro = None
     ui_authenticated = False
     cases = []
@@ -296,7 +311,8 @@ def main():
     report = {'classification': 'SYNTHETIC_QUOTA_REGRESSION', 'result': 'FAILED', 'providersMocked': True,
               'actualProviderAcceptance': 'NOT_TESTED', 'mapAccuracy': 'NOT_TESTED', 'actualFcm': 'NOT_TESTED',
               'productionDatabaseModified': False, 'simulatorRequested': args.simulator, 'cases': cases,
-              'arrivalQualitySuite': args.arrival_quality, 'optimizationFailureSuite': args.optimization_failure}
+              'arrivalQualitySuite': args.arrival_quality, 'optimizationFailureSuite': args.optimization_failure,
+              'departedTrainSuite': args.departed_train, 'apiBase': base}
 
     def emit(**value):
         print(json.dumps(value), flush=True)
@@ -317,7 +333,7 @@ def main():
             try:
                 if check():
                     return
-            except (OSError, ValueError):
+            except (OSError, ValueError, RuntimeError):
                 pass
             time.sleep(0.5)
         raise RuntimeError('bounded_wait_timeout')
@@ -326,7 +342,7 @@ def main():
         headers = {'Content-Type': 'application/json'}
         if token:
             headers['Authorization'] = 'Bearer ' + token
-        req = urllib.request.Request(BASE + path, data=None if body is None else json.dumps(body).encode(), headers=headers)
+        req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers=headers)
         with urllib.request.urlopen(req, timeout=5) as response:
             assert response.headers.get('X-NoLate-Eta-Fixture') == 'h2-memory-only'
             return json.loads(response.read())
@@ -345,7 +361,7 @@ def main():
         operation = 'ui:' + name
         cmd = ['python3', 'e2e/ios/run-eta.py', '--device', DEVICE, '--output', str(root / name),
                '--only', method, '--title', 'ETA E2E isolated fixture', '--target-arrival', target,
-               '--api-base', BASE] + list(extra)
+               '--api-base', base] + list(extra)
         emit(state='ui_start', case=name)
         with log(name + '.log') as output:
             process = subprocess.Popen(cmd, cwd=FE, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -375,7 +391,7 @@ def main():
 
     try:
         emit(state='starting', evidenceRoot=str(root))
-        free(5523)
+        free(args.api_port)
         if args.simulator:
             free(8086)
         operation = 'compile_fixture'
@@ -386,11 +402,13 @@ def main():
         operation = 'start_fixture_server'
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.simulator-fixture=true',
+                f'-Dnolate.eta.simulator-fixture.port={args.api_port}',
+                f'-Dnolate.eta.simulator-fixture.departed-train-replay={str(args.departed_train).lower()}',
                 '-Dnolate.eta.native-delivery-lead-seconds=600', '-classpath', (root / 'classpath.txt').read_text(),
                 'com.noLate.eta.simulator.EtaSimulatorFixtureServer', str(root)], cwd=BE,
                 stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         operation = 'wait_fixture_readiness'
-        wait(lambda: request('/health/readiness')['status'] == 'UP', server)
+        wait(lambda: require_memory_fixture_api(base)['status'] == 'UP', server)
         operation = 'baseline_worker'
         baseline = previous = phase('success', 0)
         assert baseline['source'] == 'LIVE_PROVIDER' and baseline['stale'] is False
@@ -399,7 +417,7 @@ def main():
         token = None
         if args.simulator:
             operation = 'start_private_metro'
-            env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=BASE, EXPO_PUBLIC_TRANSIT_PROVIDER='tmap',
+            env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=base, EXPO_PUBLIC_TRANSIT_PROVIDER='tmap',
                        REACT_NATIVE_PACKAGER_HOSTNAME='127.0.0.1', CI='1')
             with log('metro.log') as output:
                 metro = subprocess.Popen(['npx', 'expo', 'start', '--dev-client', '--localhost', '--port', '8086', '--max-workers', '2'],
@@ -417,7 +435,7 @@ def main():
             ui_authenticated = True
         else:
             token = request('/api/member/auth/login', {key: credentials[key] for key in ('email', 'password')})['data']['accessToken']
-        commands = suite_commands(args.arrival_quality, args.optimization_failure)
+        commands = suite_commands(args.arrival_quality, args.optimization_failure, args.departed_train)
         for index, command in enumerate(commands, 1):
             operation = 'worker:' + command
             value = phase(command, index)

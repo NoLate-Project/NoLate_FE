@@ -27,6 +27,9 @@ final class NoLateGuidanceRoutePositionTests: XCTestCase {
     XCTAssertEqual(NoLateGuidanceRoutePositionPolicy.position(content(), legs: route, now: 1021)?.barFraction, 0.6 * (2.0/9))
     XCTAssertEqual(NoLateGuidanceRoutePositionPolicy.position(content(phase: "WAITING", index: 1, progress: 1), legs: route, now: 1021)?.barFraction, 2.0/9)
     XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.label(route[1]), "601")
+    XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.legendLabel(route[1]), "601번")
+    XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.legendLabel(.init(index: 1, kind: "BUS", lineName: "361번")), "361번")
+    XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.legendLabel(.init(index: 1, kind: "SUBWAY", lineName: "4호선")), "4호선")
     XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.safeColor("e8752b"), "#E8752B")
     XCTAssertNil(NoLateGuidanceRouteLayoutPolicy.safeColor("red")); XCTAssertNil(NoLateGuidanceRouteLayoutPolicy.safeName("bad\nname"))
     XCTAssertNil(NoLateGuidanceRouteLayoutPolicy.safeColor("ABCDEF\n"))
@@ -40,8 +43,40 @@ final class NoLateGuidanceRoutePositionTests: XCTestCase {
     XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.layout(route).fractions, [0.1, 0.8, 0.1])
     XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.layout(Array(route.prefix(2)) + [.init(index: 2, kind: "WALK")]).basis, "EQUAL")
   }
+  func testLegendIncludesLaterConfirmedRideInRouteOrder() {
+    let rides = [
+      NoLateGuidanceRouteLeg(index: 1, kind: "SUBWAY", lineName: "4호선"),
+      .init(index: 3, kind: "SUBWAY", lineName: "2호선"),
+      .init(index: 5, kind: "BUS", lineName: "361"),
+      .init(index: 7, kind: "BUS", lineName: "4312"),
+      .init(index: 9, kind: "BUS", lineName: "3412")
+    ]
+    func shown(_ active: Int?, rides: [NoLateGuidanceRouteLeg] = rides) -> [String] {
+      NoLateGuidanceRouteLayoutPolicy.visibleRideLegend(rides, activeLegIndex: active)
+        .map(NoLateGuidanceRouteLayoutPolicy.legendLabel)
+    }
+    XCTAssertEqual(shown(nil), ["4호선", "2호선", "361번"])
+    XCTAssertEqual(shown(5), ["4호선", "2호선", "361번"])
+    XCTAssertEqual(shown(7), ["361번", "4312번", "3412번"])
+    XCTAssertEqual(shown(9), ["361번", "4312번", "3412번"])
+    XCTAssertEqual(shown(8), ["4호선", "2호선", "361번"])
+    XCTAssertEqual(shown(5, rides: Array(rides.prefix(3))), ["4호선", "2호선", "361번"])
+  }
+  func testSubwayLegendMatchesRouteMapWithoutRecoloringARegionalLine() {
+    let rides = [
+      NoLateGuidanceRouteLeg(index: 0, kind: "SUBWAY", lineName: "수도권 4 호선", lineColor: "#000000"),
+      .init(index: 1, kind: "SUBWAY", lineName: "수도권 2호선"),
+      .init(index: 2, kind: "SUBWAY", lineName: "인천 2호선"),
+      .init(index: 3, kind: "SUBWAY", lineName: "부산 2호선", lineColor: "81BF48"),
+      .init(index: 4, kind: "SUBWAY", lineName: "11호선"),
+      .init(index: 5, kind: "SUBWAY")
+    ]
+    XCTAssertEqual(rides.map(NoLateGuidanceRouteLayoutPolicy.legendLabel), ["4호선", "2호선", "인천2호선", "부산2호선", "11호선", "지하철"])
+    XCTAssertEqual(rides.map(NoLateGuidanceRouteLayoutPolicy.routeColor), ["#00A4E3", "#00B140", "#ED8B00", "#81BF48", "#64748B", "#64748B"])
+  }
   func testLongMetadataBudgetFallsBackUniformlyAndPreservesThirtyTwoOriginalLegs() throws {
     let route = (0..<32).map { NoLateGuidanceRouteLeg(index: $0, kind: $0 == 0 ? "WALK" : "BUS",
+      boardingStopName: String(repeating: "가", count: 64),
       lineName: String(repeating: "가", count: 60), lineColor: "#E8752B", durationMinutes: 2) }
     let bounded = NoLateGuidanceRouteLayoutPolicy.budgeted(route)
     XCTAssertEqual(bounded.map(\.index), Array(0..<32)); XCTAssertEqual(bounded.map(\.kind), route.map(\.kind))
@@ -51,6 +86,31 @@ final class NoLateGuidanceRoutePositionTests: XCTestCase {
     let legacy = try JSONDecoder().decode(NoLateGuidanceRouteLeg.self, from: Data("{\"index\":0,\"kind\":\"WALK\"}".utf8))
     XCTAssertNil(legacy.lineName); XCTAssertNil(legacy.durationMinutes)
   }
+  func testMixedRouteWithLongStopNamesKeepsLinesAndPlannedTimeWeights() throws {
+    let stop = String(repeating: "가", count: 64)
+    let lines = ["수도권 4 호선", "수도권 2호선", "361", "4312"]
+    let colors = ["#00A4E3", "#00B140", "#0068B7", "#33A23D"]
+    let durations = [4.0, 16, 3, 9, 2, 3, 1, 2, 1]
+    let route = durations.enumerated().map { index, time -> NoLateGuidanceRouteLeg in
+      if index.isMultiple(of: 2) {
+        return .init(index: index, kind: "WALK", walkingLengthMeters: 141.1234567,
+          durationMinutes: time, distanceMeters: 141.1234567)
+      }
+      let ride = index / 2
+      return .init(index: index, kind: ride < 2 ? "SUBWAY" : "BUS", boardingStopName: stop,
+        lineName: lines[ride], lineColor: colors[ride], durationMinutes: time,
+        distanceMeters: 1_234.1234567, alightingStopName: stop)
+    }
+    XCTAssertGreaterThan(try JSONEncoder().encode(route).count, 2200)
+    let bounded = NoLateGuidanceRouteLayoutPolicy.budgeted(route)
+    XCTAssertLessThanOrEqual(try JSONEncoder().encode(bounded).count, 2200)
+    XCTAssertEqual(bounded.map(\.kind), route.map(\.kind))
+    XCTAssertEqual(bounded.map(\.walkingLengthMeters), route.map(\.walkingLengthMeters))
+    let rides = bounded.filter { $0.kind != "WALK" }
+    XCTAssertEqual(rides.map(NoLateGuidanceRouteLayoutPolicy.legendLabel), ["4호선", "2호선", "361번", "4312번"])
+    XCTAssertEqual(rides.map(NoLateGuidanceRouteLayoutPolicy.routeColor), colors)
+    XCTAssertEqual(NoLateGuidanceRouteLayoutPolicy.layout(bounded), NoLateGuidanceRouteLayoutPolicy.layout(route))
+  }
   func testFirstWalkPositionsUseFullTopologyNotWholeTripPercent() {
     for progress in [0.0, 0.25, 0.6, 1.0] {
       let position = NoLateGuidanceRoutePositionPolicy.position(content(progress: progress), legs: legs, now: 1021)
@@ -58,6 +118,12 @@ final class NoLateGuidanceRoutePositionTests: XCTestCase {
       XCTAssertEqual(position?.legProgress, progress)
       XCTAssertEqual(position?.barFraction, progress / 5)
     }
+  }
+  func testEndedPresentationHasNoLivePosition() {
+    let ended = content(status: "STOPPED")
+    let presentation = NoLateGuidancePresentationPolicy.presentation(ended, legs: legs, now: 1021, isStale: true)
+    XCTAssertEqual(presentation.title, "위치 안내를 종료했어요")
+    XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(ended, legs: legs, now: 1021))
   }
   func testWaitingRemainsAtBoardingBoundaryNotBusEnd() {
     let position = NoLateGuidanceRoutePositionPolicy.position(content(phase: "WAITING", index: 1, progress: 1), legs: legs, now: 1021)
@@ -71,6 +137,35 @@ final class NoLateGuidanceRoutePositionTests: XCTestCase {
       NoLateGuidanceRoutePositionPolicy.position(value, legs: legs, now: 1034))
     XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(value, legs: legs, now: 1035))
     XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(value, legs: legs, now: 1021, isStale: true))
+  }
+  func testLocalExpiryPublishesUnavailableWithOriginalObservationAndNoMarker() throws {
+    let value = NoLateGuidanceContent(sessionId: "session", scheduleId: "9001", generation: 1,
+      routeRevision: 2, routeInputDigest: String(repeating: "a", count: 64), sequence: 21,
+      status: "ACTIVE", phase: "RIDING", quality: "GOOD", instruction: "버스로 이동 중",
+      activeLegIndex: 1, walkProgress: nil, observedAt: 1020, validUntil: 1025,
+      rideProgress: 0.5, boardingConfirmed: true, alighting: .init(kind: "NEAR_STOP", remainingMeters: 30))
+    XCTAssertNotNil(NoLateGuidanceRoutePositionPolicy.position(value, legs: legs, now: 1024))
+    XCTAssertNil(value.expiringLocation(at: 1024.99))
+
+    let expired = try XCTUnwrap(value.expiringLocation(at: 1025))
+    XCTAssertEqual(expired.sessionId, value.sessionId)
+    XCTAssertEqual(expired.scheduleId, value.scheduleId)
+    XCTAssertEqual(expired.generation, value.generation)
+    XCTAssertEqual(expired.routeRevision, value.routeRevision)
+    XCTAssertEqual(expired.routeInputDigest, value.routeInputDigest)
+    XCTAssertEqual(expired.sequence, value.sequence)
+    XCTAssertEqual(expired.observedAt, value.observedAt)
+    XCTAssertEqual(expired.validUntil, value.validUntil)
+    XCTAssertEqual(expired.status, "ACTIVE")
+    XCTAssertEqual(expired.activeLegIndex, 0)
+    XCTAssertTrue(NoLateGuidancePublicationPolicy.isExpiredInvalidation(expired, now: 1025))
+    XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(expired, legs: legs, now: 1025))
+    XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(expired, legs: legs, now: 1025).title, "위치 확인 중")
+    XCTAssertNil(expired.expiringLocation(at: 1026))
+    for other in [content(status: "ARMED"), content(quality: "UNCERTAIN"), content(until: 1040)] {
+      XCTAssertNil(other.locationObservationDeadline)
+      XCTAssertNil(other.expiringLocation(at: 1050))
+    }
   }
   func testNoFabricatedRideOrCandidatePositions() {
     for value in [content(phase: "BOARDING_CANDIDATE"), content(phase: "RIDING", index: 1),
@@ -114,6 +209,24 @@ final class NoLateGuidanceRoutePositionTests: XCTestCase {
     .init(sessionId: "session", scheduleId: "9001", generation: 1, routeRevision: 1, routeInputDigest: String(repeating: "a", count: 64),
       sequence: 10, status: status, phase: phase, quality: quality, instruction: "시험", activeLegIndex: index,
       walkProgress: progress, observedAt: observed, validUntil: until)
+  }
+
+  func testLastConfirmedBusLabelNeverRestoresAStalePosition() throws {
+    let legs = [NoLateGuidanceRouteLeg(index: 0, kind: "WALK", walkingLengthMeters: 200),
+      NoLateGuidanceRouteLeg(index: 1, kind: "BUS", lineName: "1711"),
+      NoLateGuidanceRouteLeg(index: 2, kind: "WALK", walkingLengthMeters: 100)]
+    let value = NoLateGuidanceContent(sessionId: "session", scheduleId: "9001", generation: 1,
+      routeRevision: 1, routeInputDigest: String(repeating: "a", count: 64), sequence: 11,
+      status: "ACTIVE", phase: "UNAVAILABLE", quality: "UNCERTAIN", instruction: "최근 탑승 확인",
+      activeLegIndex: 1, walkProgress: nil, observedAt: 1036, validUntil: 1051,
+      lastConfirmedBus: .init(legIndex: 1, confirmedAt: 1036))
+    XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(value, legs: legs, now: 1052, isStale: true))
+    let label = NoLateGuidancePresentationPolicy.presentation(value, legs: legs, now: 1052, isStale: true)
+    XCTAssertEqual(label.title, "마지막 확인 · 1711")
+    XCTAssertTrue(label.action.contains("현재 위치 재확인 중"))
+    XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(value, legs: legs, now: 1126, isStale: true).title, "위치 확인 중")
+    let decoded = try JSONDecoder().decode(NoLateGuidanceContent.self, from: JSONEncoder().encode(value))
+    XCTAssertEqual(decoded.lastConfirmedBus, value.lastConfirmedBus)
   }
 
   func testWalkingCopyUsesRemainingGeometryDistanceAndVerifiedPlaceNotPercentage() {

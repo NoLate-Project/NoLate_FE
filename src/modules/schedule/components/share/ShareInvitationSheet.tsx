@@ -15,7 +15,7 @@ export { createShareInviteUrl } from "./shareInvitationModel";
 /** 일정·카테고리·캘린더의 직접 공유와 링크 초대 UI를 표시합니다. */
 export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
     const { visible, title, subtitle, onClose, resourceType, embedded = false } = props;
-    const { insets, colors, highlight, isDark, resourceLabel, shareMode, permission, setPermission, contentMode, setContentMode, targetQuery, setTargetQuery, lastDirectShareLabel, setLastDirectShareLabel, ttlHours, setTtlHours, maxAcceptCount, setMaxAcceptCount, loading, generatedLink, directError, setDirectError, linkError, revokingInvitationId, latestInvitation, loadInvitations, shareGeneratedLink, createInvitation, createDirectShare, revokeInvitation, submitting, submitDisabled, modeIndicatorWidth, modeIndicatorTranslateX, modeContentAnimatedStyle, handleModeSegmentLayout, switchShareMode } = useShareInvitationSheet(props);
+    const { insets, colors, highlight, isDark, resourceLabel, shareMode, permission, setPermission, contentMode, setContentMode, targetQuery, updateTargetQuery, lastDirectShareLabel, ttlHours, setTtlHours, maxAcceptCount, setMaxAcceptCount, loading, generatedLink, directError, linkError, revokingInvitationId, latestInvitation, loadInvitations, shareGeneratedLink, createInvitation, createDirectShare, revokeInvitation, submitting, submitDisabled, modeIndicatorWidth, modeIndicatorTranslateX, modeContentAnimatedStyle, handleModeSegmentLayout, switchShareMode } = useShareInvitationSheet(props);
     const permissionOptions = getPermissionOptions(resourceType);
 
     const panel = (
@@ -31,6 +31,7 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                             {
                                 backgroundColor: colors.surface,
                                 borderColor: colors.border,
+                                maxHeight: embedded ? "100%" : styles.sheet.maxHeight,
                                 paddingBottom: Math.max(insets.bottom, 14) + 10,
                             },
                         ]}
@@ -63,7 +64,7 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                         <Pressable
                             onPress={onClose}
                             accessibilityRole="button"
-                            accessibilityLabel="공유 닫기"
+                            accessibilityLabel={embedded ? "캘린더 선택으로 돌아가기" : "공유 닫기"}
                             style={({ pressed }) => [
                                 styles.closeButton,
                                 { backgroundColor: colors.surface2, opacity: pressed ? 0.65 : 1 },
@@ -233,11 +234,7 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                                     <TextInput
                                         accessibilityLabel="공유 대상 회원 번호 또는 이메일"
                                         value={targetQuery}
-                                        onChangeText={(value) => {
-                                            setTargetQuery(value);
-                                            setDirectError(null);
-                                            setLastDirectShareLabel(null);
-                                        }}
+                                        onChangeText={updateTargetQuery}
                                         autoCapitalize="none"
                                         autoCorrect={false}
                                         keyboardType="email-address"
@@ -253,10 +250,10 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                                         <Pressable
                                             accessibilityRole="button"
                                             accessibilityLabel="공유 대상 입력 지우기"
-                                            onPress={() => setTargetQuery("")}
-                                            hitSlop={8}
+                                            onPress={() => updateTargetQuery("")}
+                                            style={styles.targetInputClear}
                                         >
-                                            <Ionicons name="close-circle" size={19} color={colors.textSecondary} />
+                                            <Ionicons name="close-circle-outline" size={19} color={colors.textSecondary} accessible={false} />
                                         </Pressable>
                                     )}
                                 </View>
@@ -268,7 +265,7 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                                         accessibilityLiveRegion="polite"
                                         style={[styles.directSuccess, { backgroundColor: `${highlight}18` }]}
                                     >
-                                        <Ionicons name="checkmark-circle" size={19} color={highlight} />
+                                        <Ionicons name="checkmark-circle-outline" size={19} color={highlight} accessible={false} />
                                         <Text style={[styles.directSuccessText, { color: colors.textPrimary }]} numberOfLines={1}>
                                             {lastDirectShareLabel}에게 공유했습니다
                                         </Text>

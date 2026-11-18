@@ -93,7 +93,7 @@ export function RoutePlannerMapCanvas({ controller }: Props) {
           <Reanimated.View entering={routeLoadingEntrance} style={styles.routeMapLoadingContext}>
             <View style={styles.routeMapLoadingStatus}>
               <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                <BrandedLoader variant="route" size="button" markMotion="settle" accessibilityLabel="지도 준비 중" />
+                <BrandedLoader size="button" settleMark accessibilityLabel="지도 준비 중" />
               </View>
               <Text maxFontSizeMultiplier={2} style={[styles.routeMapLoadingTitle, { color: colors.textPrimary }]}>
                 지도 준비 중

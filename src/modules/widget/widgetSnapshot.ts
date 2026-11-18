@@ -97,10 +97,10 @@ function toWidgetSchedule(item: ScheduleItem): NoLateWidgetSchedule | null {
     let endAt = exactIso(item.endAt);
     if (!id || !title || !startAt || !endAt) return null;
 
-    if (item.allDay && new Date(endAt).getTime() <= new Date(startAt).getTime()) {
-        const nextDay = new Date(startAt);
+    if (item.allDay) {
+        const nextDay = startOfLocalDay(new Date(startAt));
         nextDay.setDate(nextDay.getDate() + 1);
-        endAt = nextDay.toISOString();
+        if (new Date(endAt).getTime() < nextDay.getTime()) endAt = nextDay.toISOString();
     }
 
     const locationName = exactText(item.locationName, 80);
@@ -142,6 +142,7 @@ export function buildNoLateWidgetSnapshot(
     const range = getNoLateWidgetScheduleRange(now);
     const startBoundary = new Date(range.startAt).getTime();
     const endBoundary = new Date(range.endAt).getTime();
+    const referenceTime = now.getTime();
     const schedulesById = new Map<string, NoLateWidgetSchedule>();
 
     items.forEach((item) => {
@@ -156,6 +157,11 @@ export function buildNoLateWidgetSnapshot(
     });
 
     const schedules = Array.from(schedulesById.values())
+        .filter((schedule) => {
+            // Match WidgetKit's end boundary before taking the first forty schedules.
+            const end = new Date(schedule.endAt).getTime();
+            return schedule.allDay ? referenceTime < end : referenceTime <= end;
+        })
         .sort((left, right) => {
             const startDifference = new Date(left.startAt).getTime() - new Date(right.startAt).getTime();
             if (startDifference !== 0) return startDifference;

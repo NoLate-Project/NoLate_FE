@@ -6,11 +6,17 @@ import {
 } from "../src/modules/map/transitMarkerPresentation";
 
 describe("transitMarkerPresentation", () => {
-    it("전체 경로 배율에서는 핵심 승차·환승 노드와 노선 태그를 보존한다", () => {
+    it("전체 경로 배율에서는 환승역 이름과 승차 노드를 표시한다", () => {
+        expect(getTransitEventMarkerPresentation("transfer", 9.9).visible).toBe(false);
+        expect(getTransitEventMarkerPresentation("transfer", 10)).toEqual({
+            visible: true,
+            nodeSize: 20,
+            showRouteLabel: true,
+        });
         expect(getTransitEventMarkerPresentation("transfer", 12)).toEqual({
             visible: true,
             nodeSize: 21,
-            showRouteLabel: false,
+            showRouteLabel: true,
         });
         expect(getTransitEventMarkerPresentation("board", 12)).toEqual({
             visible: true,

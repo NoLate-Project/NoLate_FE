@@ -18,12 +18,12 @@ export default function JourneyGuidanceScreen() {
     const insets = useSafeAreaInsets();
     const { colors } = useTheme();
     if (valid && isJourneyGuidanceEnabled() && isAutomaticJourneyEntryEnabled()) {
-        return <Redirect href={{ pathname: '/schedule/[id]', params: { id: scheduleId, openRouteDetail: '1' } }} />;
+        return <Redirect href={{ pathname: '/schedule/[id]', params: { id: scheduleId, navigationMode: '1' } }} />;
     }
     return <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top + 12 }]}>
         <Pressable accessibilityRole="button" accessibilityLabel="이전 화면으로 돌아가기" style={styles.back}
             onPress={() => router.canGoBack() ? router.back() : router.replace('/schedule')}>
-            <Ionicons name="chevron-back" size={25} color={colors.textPrimary} />
+            <Ionicons accessible={false} name="chevron-back-outline" size={24} color={colors.textPrimary} />
         </Pressable>
         <Text accessibilityRole="header" style={[styles.title, { color: colors.textPrimary }]}>대중교통 길안내</Text>
         <Text testID="journey-entry-unavailable" style={[styles.message, { color: colors.textSecondary }]}>{valid

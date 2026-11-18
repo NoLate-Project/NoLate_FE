@@ -18,6 +18,7 @@ import Reanimated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotion";
 import { ADD_MENU_SOURCE } from "../../addHandoffMotion";
 import type { QuickScheduleMediaInput } from "../../quickInputExtraction";
 import type {
@@ -59,6 +60,7 @@ import {
     FLOW_CARD_HEIGHT_BY_STEP,
     MODE_PILL_SPRING,
     PREWARM_PRESENTATION_OPACITY,
+    QUICK_ANALYSIS_MOTION,
     formatKoreanDate,
     type InputMode,
     type TabLayout,
@@ -198,6 +200,7 @@ export default function QuickScheduleModal({
         updateVoiceTranscript,
         voiceDurationMillis,
         voiceMeterHistory,
+        voicePermissionDenied,
         voiceRecognitionAlternatives,
         voiceRecognitionConfidence,
         voiceStatusMessage,
@@ -234,6 +237,7 @@ export default function QuickScheduleModal({
         resetDraftFlow,
         routePlannerHidden,
         routeDraftChange,
+        saveFailed,
         savePreview,
         setEditingAlertMode,
         setEditingValue,
@@ -251,6 +255,7 @@ export default function QuickScheduleModal({
         initialPreviewField,
         initialRequestId,
         initialText,
+        inlineSaveErrors: !largeText,
         inputMode,
         isPhotoRecognizing,
         isVoiceRecording,
@@ -259,6 +264,7 @@ export default function QuickScheduleModal({
         onSave,
         photoRecognitionConfidence,
         photoTranscript,
+        presentationOpacity,
         progress,
         resetVoiceInput,
         selectedCategory,
@@ -284,10 +290,12 @@ export default function QuickScheduleModal({
     }, [flowStep, setPreviewCategoryPickerOpen]);
 
     const [showAnalysisWait, setShowAnalysisWait] = useState(false);
+    const reduceMotion = useSystemReduceMotion();
     const [inputReturning, setInputReturning] = useState(false);
     const previousInputStep = useRef<"input" | "analysisError">("input");
     const previousFlowStep = useRef(flowStep);
-    const previewScrollY = useRef(0);
+    const previousEditingField = useRef<PreviewField | null>(null);
+    const previewPosition = useRef({ y: 0, atEnd: false });
     const [previewSourceExpanded, setPreviewSourceExpanded] = useState(false);
     const returningFromField = flowStep === "preview" && previousFlowStep.current === "edit";
     const destinationChange = routeDraftChange?.kind === "destinationChanged" ? routeDraftChange : undefined;
@@ -295,12 +303,13 @@ export default function QuickScheduleModal({
     const showNewDestinationNotice = destinationChange !== displayedDestinationChange.current && Boolean(destinationChange);
     useEffect(() => {
         previousFlowStep.current = flowStep;
+        if (flowStep === "edit") previousEditingField.current = editingField;
         if (flowStep === "preview") displayedDestinationChange.current = destinationChange;
         if (!visible || flowStep === "input" || flowStep === "analyzing") {
-            previewScrollY.current = 0;
+            previewPosition.current = { y: 0, atEnd: false };
             setPreviewSourceExpanded(false);
         }
-    }, [destinationChange, flowStep, visible]);
+    }, [destinationChange, editingField, flowStep, visible]);
     useEffect(() => {
         if (flowStep === "input" || flowStep === "analysisError") previousInputStep.current = flowStep;
         if (flowStep !== "input") setInputReturning(false);
@@ -308,7 +317,7 @@ export default function QuickScheduleModal({
             setShowAnalysisWait(false);
             return;
         }
-        const revealTimer = setTimeout(() => setShowAnalysisWait(true), 120);
+        const revealTimer = setTimeout(() => setShowAnalysisWait(true), QUICK_ANALYSIS_MOTION.waitAfterMs);
         return () => clearTimeout(revealTimer);
     }, [flowStep, visible]);
 
@@ -465,11 +474,16 @@ export default function QuickScheduleModal({
         [activatePhotoMode, inputMode, invalidatePhotoSource, stopActiveRecording],
     );
 
+    const returnToEditInput = useCallback(() => {
+        setInputReturning(true);
+        setFlowStep("input");
+    }, [setFlowStep]);
+
     const cancelAnalysisToInput = useCallback(() => {
         invalidatePendingAnalysis();
         setSubmitting(false);
-        setFlowStep("input");
-    }, [invalidatePendingAnalysis, setFlowStep]);
+        returnToEditInput();
+    }, [invalidatePendingAnalysis, returnToEditInput]);
 
     useEffect(() => {
         if (Platform.OS !== "android" || routePlannerHidden || (!visible && !rendered)) {
@@ -481,7 +495,7 @@ export default function QuickScheduleModal({
                 return true;
             }
             if (flowStep === "preview" || flowStep === "analysisError") {
-                setFlowStep("input");
+                returnToEditInput();
                 return true;
             }
             if (flowStep === "analyzing") {
@@ -499,8 +513,8 @@ export default function QuickScheduleModal({
         flowStep,
         rendered,
         requestClose,
+        returnToEditInput,
         routePlannerHidden,
-        setFlowStep,
         visible,
     ]);
 
@@ -513,8 +527,9 @@ export default function QuickScheduleModal({
     }, [inputMode, modeIndicatorWidth, modeIndicatorX, modeLayouts]);
 
     useEffect(() => {
-        expandedCardHeight.value = withSpring(cardHeight, { ...CARD_SIZE_SPRING, reduceMotion: ReduceMotion.System });
-    }, [cardHeight, expandedCardHeight]);
+        expandedCardHeight.value = reduceMotion ? cardHeight
+            : withSpring(cardHeight, { ...CARD_SIZE_SPRING, reduceMotion: ReduceMotion.System });
+    }, [cardHeight, expandedCardHeight, reduceMotion]);
 
     const {
         backdropAnimatedStyle,
@@ -587,6 +602,7 @@ export default function QuickScheduleModal({
         text,
         voiceDurationMillis,
         voiceMeterHistory,
+        voicePermissionDenied,
         voiceStatusMessage,
         voiceTranscript,
         voiceUri,
@@ -605,6 +621,7 @@ export default function QuickScheduleModal({
             inputBackground={inputBackground}
             inputMode={inputMode}
             inputRef={inputRef}
+            focusOnReturn={inputReturning}
             isPhotoRecognizing={isPhotoRecognizing}
             isVoiceFinalizing={isVoiceFinalizing}
             keyboardVisible={keyboardTop !== undefined}
@@ -639,6 +656,7 @@ export default function QuickScheduleModal({
             voiceControlTitle={voiceControlTitle}
             voiceDurationMillis={voiceDurationMillis}
             voiceMeterHistory={voiceMeterHistory}
+            voicePermissionDenied={voicePermissionDenied}
             voiceSpectrumEnergy={voiceSpectrumEnergy}
             voiceTranscript={voiceTranscript}
             voiceTranscriptTruncated={voiceTranscriptTruncated}
@@ -656,6 +674,7 @@ export default function QuickScheduleModal({
                 colors={colors}
                 label={isSaving ? flowTitle : analysisLabel}
                 description={isSaving ? previewDraft?.title : analysisLabel}
+                isAnalyzing={!isSaving}
             />
         );
     };
@@ -666,10 +685,7 @@ export default function QuickScheduleModal({
             cardBorderColor={cardBorderColor}
             colors={colors}
             inputBackground={inputBackground}
-            onEdit={() => {
-                setInputReturning(true);
-                setFlowStep("input");
-            }}
+            onEdit={returnToEditInput}
             onRetry={submit}
             retainedInput={previewSourceText}
             submitting={submitting}
@@ -684,12 +700,14 @@ export default function QuickScheduleModal({
             <QuickSchedulePreviewStep
                 colors={colors}
                 getPreviewValue={getPreviewValue}
-                initialScrollY={previewScrollY.current}
+                initialScrollY={previewPosition.current.y}
+                returnFocusField={returningFromField ? previousEditingField.current : null}
                 mode={mode}
+                onEditSource={returnToEditInput}
                 onOpenEditField={openEditField}
                 onOpenRoutePlanner={openRoutePlannerFromPreview}
                 onSave={() => void savePreview()}
-                onScrollPositionChange={y => { previewScrollY.current = y; }}
+                onScrollPositionChange={(y, atEnd) => { previewPosition.current = { y, atEnd }; }}
                 onToggleSource={() => setPreviewSourceExpanded(expanded => !expanded)}
                 previewCategoryChevronRotation={previewCategoryChevronRotation}
                 previewCategoryPickerMarginBottom={previewCategoryPickerMarginBottom}
@@ -704,9 +722,10 @@ export default function QuickScheduleModal({
                 previewLabelColor={previewLabelColor}
                 previewSourceExpanded={previewSourceExpanded}
                 previewSourceText={previewSourceText}
+                restoreEndAfterSaveError={saveFailed && previewPosition.current.atEnd}
+                saveFailed={!largeText && saveFailed}
                 selectedCategory={selectedCategory}
                 selectedCategoryId={selectedCategoryId}
-                setFlowStep={setFlowStep}
                 setPreviewCategoryPickerOpen={setPreviewCategoryPickerOpen}
                 setPreviewDraft={setPreviewDraft}
                 setSelectedCategoryId={setSelectedCategoryId}
@@ -763,7 +782,7 @@ export default function QuickScheduleModal({
     const revealReviewBody = (key: string, body: React.ReactNode, animate = true) => (
         <Reanimated.View
             key={key}
-            entering={animate ? FadeIn.duration(160).reduceMotion(ReduceMotion.System) : undefined}
+            entering={animate && !reduceMotion ? FadeIn.duration(QUICK_ANALYSIS_MOTION.previewFadeMs).reduceMotion(ReduceMotion.System) : undefined}
             style={{ flex: 1 }}
         >
             {body}
@@ -820,6 +839,7 @@ export default function QuickScheduleModal({
             inputModeDescription={inputModeDescription}
             isPrewarmOnly={isPrewarmOnly}
             mode={mode}
+            onCancelAnalysis={cancelAnalysisToInput}
             onCancelEditField={cancelEditField}
             onRequestClose={requestClose}
             onRetryCategories={onRetryCategories}

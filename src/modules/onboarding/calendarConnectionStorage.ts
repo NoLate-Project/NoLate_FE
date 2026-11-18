@@ -14,6 +14,16 @@ import {
 
 const CALENDAR_CONNECTION_KEY = "nolate_calendar_connection_snapshot";
 let calendarConnectionGeneration = 0;
+let snapshotWrite: Promise<void> = Promise.resolve();
+const MAX_IMPORT_HISTORY = 10;
+
+export type CalendarImportReceipt = {
+    imported: number;
+    duplicate: number;
+    failed: number;
+    providerLabels: string[];
+    completedAt: string;
+};
 
 export type CalendarConnectionSnapshot = {
     provider: DeviceCalendarProvider;
@@ -26,7 +36,14 @@ export type CalendarConnectionSnapshot = {
     importedCount: number;
     lastScannedAt: string;
     lastImportedAt?: string;
+    importHistory?: CalendarImportReceipt[];
 };
+
+function queueSnapshotWrite(write: () => Promise<void>): Promise<void> {
+    const result = snapshotWrite.then(write);
+    snapshotWrite = result.catch(() => undefined);
+    return result;
+}
 
 export async function getCalendarConnectionSnapshot(): Promise<CalendarConnectionSnapshot | null> {
     const raw = await SecureStore.getItemAsync(CALENDAR_CONNECTION_KEY);
@@ -49,7 +66,7 @@ export async function clearCalendarConnectionSnapshot(): Promise<void> {
     // while logout clears account-owned storage. Invalidate those refreshes so
     // they cannot write the previous member's calendar metadata back afterwards.
     calendarConnectionGeneration += 1;
-    await SecureStore.deleteItemAsync(CALENDAR_CONNECTION_KEY);
+    await queueSnapshotWrite(() => SecureStore.deleteItemAsync(CALENDAR_CONNECTION_KEY));
 }
 
 export async function recordCalendarScan(snapshot: {
@@ -59,35 +76,44 @@ export async function recordCalendarScan(snapshot: {
     calendarCount: number;
     calendarNames: string[];
     eventCandidateCount: number;
-}, expectedGeneration?: number): Promise<void> {
-    if (expectedGeneration !== undefined && expectedGeneration !== calendarConnectionGeneration) return;
-    const current = await getCalendarConnectionSnapshot();
-    if (expectedGeneration !== undefined && expectedGeneration !== calendarConnectionGeneration) return;
+}, expectedGeneration = calendarConnectionGeneration): Promise<void> {
+    await queueSnapshotWrite(async () => {
+        if (expectedGeneration !== calendarConnectionGeneration) return;
+        const current = await getCalendarConnectionSnapshot();
+        if (expectedGeneration !== calendarConnectionGeneration) return;
 
-    // 캘린더 permission과 스캔 성공은 "연동됨"의 최소 단위다.
-    // import를 건너뛰어도 프로필에서 사용자가 연결 상태를 확인할 수 있어야 한다.
-    await saveCalendarConnectionSnapshot({
-        provider: snapshot.provider,
-        providerLabel: snapshot.providerLabel,
-        providerLabels: normalizeCalendarNames(snapshot.providerLabels ?? [snapshot.providerLabel]),
-        status: "CONNECTED",
-        calendarCount: snapshot.calendarCount,
-        calendarNames: normalizeCalendarNames(snapshot.calendarNames),
-        eventCandidateCount: snapshot.eventCandidateCount,
-        importedCount: current?.importedCount ?? 0,
-        lastScannedAt: new Date().toISOString(),
-        lastImportedAt: current?.lastImportedAt,
+        // A successful scan establishes the connection even before importing.
+        await saveCalendarConnectionSnapshot({
+            provider: snapshot.provider,
+            providerLabel: snapshot.providerLabel,
+            providerLabels: normalizeCalendarNames(snapshot.providerLabels ?? [snapshot.providerLabel]),
+            status: "CONNECTED",
+            calendarCount: snapshot.calendarCount,
+            calendarNames: normalizeCalendarNames(snapshot.calendarNames),
+            eventCandidateCount: snapshot.eventCandidateCount,
+            importedCount: current?.importedCount ?? 0,
+            lastScannedAt: new Date().toISOString(),
+            lastImportedAt: current?.lastImportedAt,
+            importHistory: current?.importHistory,
+        });
     });
 }
 
-export async function recordCalendarImportCompleted(importedCount: number): Promise<void> {
-    const current = await getCalendarConnectionSnapshot();
-    if (!current) return;
-
-    await saveCalendarConnectionSnapshot({
-        ...current,
-        importedCount: current.importedCount + importedCount,
-        lastImportedAt: new Date().toISOString(),
+export async function recordCalendarImportCompleted(imported: number, duplicate: number, failed: number, providers?: string[]): Promise<void> {
+    const generation = calendarConnectionGeneration;
+    await queueSnapshotWrite(async () => {
+        if (generation !== calendarConnectionGeneration) return;
+        const current = await getCalendarConnectionSnapshot();
+        if (!current || generation !== calendarConnectionGeneration) return;
+        const completedAt = new Date().toISOString();
+        const providerLabels = providers?.length ? normalizeCalendarNames(providers) : current.providerLabels;
+        const receipt: CalendarImportReceipt = { imported, duplicate, failed, completedAt, providerLabels };
+        await saveCalendarConnectionSnapshot({
+            ...current,
+            importedCount: current.importedCount + imported,
+            lastImportedAt: completedAt,
+            importHistory: [receipt, ...(current.importHistory ?? [])].slice(0, MAX_IMPORT_HISTORY),
+        });
     });
 }
 
@@ -184,6 +210,19 @@ function normalizeCalendarConnectionSnapshot(value: unknown): CalendarConnection
         importedCount: normalizeNumber(record.importedCount),
         lastScannedAt,
         lastImportedAt: normalizeIsoDate(record.lastImportedAt) ?? undefined,
+        importHistory: Array.isArray(record.importHistory)
+            ? record.importHistory.flatMap(receipt => {
+                if (!receipt || typeof receipt !== "object") return [];
+                const completedAt = normalizeIsoDate(receipt.completedAt);
+                return completedAt ? [{
+                    completedAt,
+                    providerLabels: normalizeCalendarNames(receipt.providerLabels),
+                    imported: normalizeNumber(receipt.imported),
+                    duplicate: normalizeNumber(receipt.duplicate),
+                    failed: normalizeNumber(receipt.failed),
+                }] : [];
+            }).slice(0, MAX_IMPORT_HISTORY)
+            : undefined,
     };
 }
 

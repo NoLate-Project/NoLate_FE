@@ -1,10 +1,11 @@
 import React from "react";
 import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import {
-  ActivityIndicator,
   Animated,
+  Keyboard,
   Pressable,
   StatusBar,
+  StyleSheet,
   Text,
   useWindowDimensions,
   View,
@@ -15,16 +16,24 @@ import PlainScheduleDetailView, {
 } from "../../modules/schedule/components/detail/PlainScheduleDetailView";
 import ScheduleArrivalObservationAction from "../../modules/schedule/components/detail/ScheduleArrivalObservationAction";
 import TmapMapView, { type TmapLoadState } from "../../modules/map/TmapMapView";
+import LoadingIndicator from "../../ui/LoadingIndicator";
 import { SavedJourneyRoutePreview } from '../../modules/journey/SavedJourneyRoutePreview';
 import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
 import { travelPlanStatusLabel } from "../../modules/schedule/travelPlanPresentation";
+import { getUserVisibleScheduleNotes } from "../../modules/schedule/calendarImportNotes";
 import {
   APP_ACCENT_BLUE,
   IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT,
+  MAP_ACTION_SHEET_GAP,
   SHEET_HANDLE_HEIGHT,
   Ionicons,
 } from "./ScheduleDetailChrome";
 import { createScheduleDetailStyles } from "./schedule-detail.styles";
+import {
+  SCHEDULE_EDITOR_EXIT_MS,
+  ScheduleDetailEditingContext,
+  ScheduleDetailEditResultContext,
+} from "./ScheduleDetailEditorTransition";
 import type { ScheduleDetailPresentation } from "./scheduleDetailPresentationModel";
 
 type ScheduleDetailBackgroundProps = {
@@ -47,6 +56,10 @@ export function ScheduleDetailBackground({
   onMapLoadStateChange,
 }: ScheduleDetailBackgroundProps) {
   const { fontScale } = useWindowDimensions();
+  const editing = React.useContext(ScheduleDetailEditingContext);
+  const editResult = React.useContext(ScheduleDetailEditResultContext);
+  const handledMemoEdit = React.useRef<typeof editResult>(null);
+  const memoHighlight = React.useRef(new Animated.Value(0)).current;
   const {
     camera,
     colors,
@@ -55,6 +68,7 @@ export function ScheduleDetailBackground({
     displayPathOverlays,
     hasFocusedMapLocation,
     handleMapMarkerPress,
+    handleMapCameraChanged,
     handleMapZoomChanged,
     insets,
     isDark,
@@ -70,6 +84,7 @@ export function ScheduleDetailBackground({
     participantsExpanded,
     plainHeaderHeight,
     primaryText,
+    reduceMotion,
     routeOption,
     routeSavePending,
     routeSaveConfirmed,
@@ -100,6 +115,40 @@ export function ScheduleDetailBackground({
     fontSize: mapActionFontSize,
     lineHeight: Math.ceil(mapActionFontSize * 1.35),
   };
+  const showMemoHighlight = !isPlainSchedule && fontScale <= 1.35 && Boolean(notesText);
+  React.useEffect(() => {
+    if (editing || !showMemoHighlight || !editResult || editResult === handledMemoEdit.current ||
+        editResult.updated.id !== item.id) return;
+    const previousMemo = getUserVisibleScheduleNotes(editResult.previous.notes);
+    const updatedMemo = getUserVisibleScheduleNotes(editResult.updated.notes);
+    if (reduceMotion || !updatedMemo || previousMemo === updatedMemo) {
+      handledMemoEdit.current = editResult;
+      return;
+    }
+    let editorHidden = false;
+    const highlightWhenVisible = () => {
+      if (!editorHidden || Keyboard.isVisible() || handledMemoEdit.current === editResult) return;
+      handledMemoEdit.current = editResult;
+      memoHighlight.setValue(0.18);
+      Animated.timing(memoHighlight, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+        isInteraction: false,
+      }).start();
+    };
+    const keyboard = Keyboard.addListener("keyboardDidHide", highlightWhenVisible);
+    const timer = setTimeout(() => {
+      editorHidden = true;
+      highlightWhenVisible();
+    }, SCHEDULE_EDITOR_EXIT_MS);
+    return () => {
+      keyboard.remove();
+      clearTimeout(timer);
+      memoHighlight.stopAnimation();
+      memoHighlight.setValue(0);
+    };
+  }, [editing, editResult, item.id, memoHighlight, reduceMotion, showMemoHighlight]);
 
   return (
     <>
@@ -127,6 +176,7 @@ export function ScheduleDetailBackground({
             showLocationButton={false}
             showZoomControls={false}
             onMarkerPress={handleMapMarkerPress}
+            onCameraChanged={handleMapCameraChanged}
             onZoomChanged={handleMapZoomChanged}
             fallbackBackgroundColor={colors.surface2}
             fallbackTextColor={colors.textSecondary}
@@ -152,6 +202,7 @@ export function ScheduleDetailBackground({
                     canRetryRouteSave ? '다시 시도'
                       : travelPlanStatus === 'READY' && !needsFirstRoute ? '수정' : '설정',
                   pending: routeSavePending,
+                  confirmed: routeSaveConfirmed && !routeSavePending && !canRetryRouteSave,
                   onPress: canRetryRouteSave ? retryRouteSave : openCurrentRoutePlanner,
                   participantContent:
                     travelPlanParticipants.length > 1 ? (
@@ -292,7 +343,7 @@ export function ScheduleDetailBackground({
       )}
 
       {mapReady ? (
-        <View pointerEvents="box-none" style={[styles.mapActionStack, { bottom: sheetMinHeight + 16 }]}>
+        <View pointerEvents="box-none" style={[styles.mapActionStack, { bottom: sheetMinHeight + MAP_ACTION_SHEET_GAP }]}>
           {sheetMode === 'compact' && hasFocusedMapLocation && (
             <Pressable
               testID="schedule-route-map-overview"
@@ -329,7 +380,7 @@ export function ScheduleDetailBackground({
             ]}
           >
             {currentLocationPending ? (
-              <ActivityIndicator size="small" color={topCardAccentText} />
+              <LoadingIndicator size="inline" delayMs={150} />
             ) : (
               <Ionicons name="locate-outline" size={19} color={topCardAccentText} />
             )}
@@ -355,11 +406,23 @@ export function ScheduleDetailBackground({
             styles.memoButton,
             mapActionSurface,
             {
-              bottom: sheetMinHeight + 16,
+              bottom: sheetMinHeight + MAP_ACTION_SHEET_GAP,
               opacity: pressed ? 0.72 : 1,
             },
           ]}
         >
+          {showMemoHighlight && (
+            <Animated.View
+              testID="schedule-detail-edit-highlight-memo"
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              style={[StyleSheet.absoluteFillObject, styles.memoHighlight, {
+                backgroundColor: topCardAccentText,
+                opacity: memoHighlight,
+              }]}
+            />
+          )}
           <Ionicons
             name="document-text-outline"
             size={18}

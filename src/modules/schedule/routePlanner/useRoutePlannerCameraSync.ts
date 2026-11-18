@@ -5,6 +5,7 @@ import type {
   RoutePathCoord,
 } from '../../map/routingService';
 import type {
+  TmapCameraState,
   TmapLatLng,
   TmapMapViewHandle,
   TmapPathOverlay,
@@ -37,6 +38,8 @@ import { haversineDistanceKm } from './presentation';
 
 const ROUTE_ENDPOINT_PIN_TOP_HEADROOM = 110;
 const ROUTE_PATH_BOTTOM_HEADROOM = 92;
+// The sheet controller publishes offset changes in steps of at least 3 pt.
+const SHEET_SETTLED_TOLERANCE = 3;
 
 type CameraQaState = {
   requestedFocusZoom?: number;
@@ -77,6 +80,7 @@ type Options = {
   isRouteDetailMode: boolean;
   isTransitDetailMode: boolean;
   lastCameraActionKeyRef: MutableRefObject<string>;
+  mapCamera?: TmapCameraState;
   mapRef: MutableRefObject<TmapMapViewHandle | null>;
   originLat?: number;
   originLng?: number;
@@ -131,6 +135,7 @@ export function useRoutePlannerCameraSync({
   isRouteDetailMode,
   isTransitDetailMode,
   lastCameraActionKeyRef,
+  mapCamera,
   mapRef,
   originLat,
   originLng,
@@ -471,6 +476,21 @@ export function useRoutePlannerCameraSync({
     }
 
     if (hasOrigin && hasDest) {
+      const activeSheetOffset =
+        bottomSheetSnap === 'expanded'
+          ? bottomSheetExpandedOffset
+          : bottomSheetSnap === 'middle'
+          ? bottomSheetMiddleOffset
+          : bottomSheetCollapsedOffset;
+      const targetSheetHeight = Math.max(0, bottomPanelHeight - activeSheetOffset);
+      // Keep the existing map tiles while the sheet traverses the viewport.
+      // Fit once the final viewport is exposed, without waiting in Reduce Motion.
+      if (
+        isRouteDetailMode && !isBottomSheetHidden && !reduceMotion &&
+        Math.abs(visibleBottomSheetHeight - targetSheetHeight) > SHEET_SETTLED_TOLERANCE
+      ) {
+        return;
+      }
       cameraQaStateRef.current = {
         cameraMode: 'ROUTE_OVERVIEW',
         autoFitSuppressed: false,
@@ -514,12 +534,6 @@ export function useRoutePlannerCameraSync({
             destinationPoint,
           ]
         : [originPoint, destinationPoint];
-      const activeSheetOffset =
-        bottomSheetSnap === 'expanded'
-          ? bottomSheetExpandedOffset
-          : bottomSheetSnap === 'middle'
-          ? bottomSheetMiddleOffset
-          : bottomSheetCollapsedOffset;
       const rawVisibleSheetTopY =
         isRouteDetailMode && !isBottomSheetHidden && bottomPanelHeight > 0
           ? Math.max(0, windowHeight - bottomPanelHeight + activeSheetOffset)
@@ -528,7 +542,7 @@ export function useRoutePlannerCameraSync({
         isRouteDetailMode && !isBottomSheetHidden
           ? Math.min(
               rawVisibleSheetTopY,
-              windowHeight - transitMapBottomOcclusionHeight,
+              windowHeight - Math.max(targetSheetHeight, transitMapBottomOcclusionHeight),
             )
           : rawVisibleSheetTopY;
       const routeHeaderReserveY = isRouteDetailMode
@@ -538,16 +552,22 @@ export function useRoutePlannerCameraSync({
         180,
         visibleSheetTopY - routeHeaderReserveY,
       );
+      // Keep enough room for the pins without spending most of a short
+      // collapsed map on padding. Full-height maps keep their usual framing.
+      const routeOverviewHeadroomScale =
+        isRouteDetailMode && isBottomSheetCollapsed && !isBottomSheetHidden
+          ? Math.min(1, availableRouteMapHeight / 450)
+          : 1;
       const routeFitPadding = {
         top: isRouteDetailMode
-          ? routeHeaderReserveY + ROUTE_ENDPOINT_PIN_TOP_HEADROOM
+          ? routeHeaderReserveY + Math.round(ROUTE_ENDPOINT_PIN_TOP_HEADROOM * routeOverviewHeadroomScale)
           : routeHeaderReserveY,
         bottom:
           isRouteDetailMode && !isBottomSheetHidden
             ? Math.max(
                 192,
                 Math.round(
-                  windowHeight - visibleSheetTopY + ROUTE_PATH_BOTTOM_HEADROOM,
+                  windowHeight - visibleSheetTopY + ROUTE_PATH_BOTTOM_HEADROOM * routeOverviewHeadroomScale,
                 ),
               )
             : 72,
@@ -583,7 +603,9 @@ export function useRoutePlannerCameraSync({
         animatedSheetOffset: activeSheetOffset,
         visibleSheetTopY,
         padding: routeFitPadding,
-      });
+      }) + (reduceMotion
+        ? (mapCamera?.metersPerPixel ? ':direct-measured' : ':direct')
+        : '');
       if (lastCameraActionKeyRef.current === fitKey) return;
       lastCameraActionKeyRef.current = fitKey;
 
@@ -631,6 +653,7 @@ export function useRoutePlannerCameraSync({
           minimumSpanMeters: minSpanMeters,
           boundsPaddingFactor,
           wholeZoomLevels: reduceMotion,
+          cameraScaleSample: reduceMotion ? mapCamera : undefined,
         },
       );
       if (!overviewCamera) return;
@@ -766,6 +789,7 @@ export function useRoutePlannerCameraSync({
     isRouteDetailMode,
     isTransitDetailMode,
     lastCameraActionKeyRef,
+    mapCamera,
     mapRef,
     bottomSheetSnap,
     bottomPanelHeight,

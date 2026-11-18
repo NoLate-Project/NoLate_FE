@@ -58,6 +58,7 @@ describe("LocationInputRow accessibility", () => {
         });
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onClear).toHaveBeenCalledTimes(1);
+        expect(renderer!.root.findByProps({ name: "pencil-outline" }).props.accessible).toBe(false);
         expect(renderer!.root.findByProps({ name: "close-outline" }).props.size).toBe(14);
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "location-input-clear-surface" }).props.style,
@@ -83,7 +84,8 @@ describe("LocationInputRow accessibility", () => {
             );
         });
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" })).toBeTruthy();
+        const addRoute = renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" });
+        expect(addRoute.findByProps({ name: "navigate-outline" }).props.accessible).toBe(false);
         expect(renderer!.root.findByProps({ children: "출발지·도착지 추가" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "경로와 출발 알림 설정" })).toBeTruthy();
     });
@@ -120,7 +122,6 @@ describe("LocationInputRow accessibility", () => {
         expect(pressedStyle).toMatchObject({ backgroundColor: "#fff" });
         expect(labelStyle).toMatchObject({ marginBottom: 6, fontSize: 12, fontWeight: "600" });
         const chevron = renderer!.root.findByProps({ name: "chevron-forward-outline" });
-        expect(chevron.props).toMatchObject({ size: 16, color: "#6e6e73" });
-        expect(StyleSheet.flatten(chevron.parent?.props.style)).toMatchObject({ opacity: 0.7 });
+        expect(chevron.props).toMatchObject({ size: 16, color: "#246BFE" });
     });
 });

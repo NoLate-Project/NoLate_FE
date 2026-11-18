@@ -6,6 +6,7 @@ import {
     shouldShowRequiredMapAttribution,
 } from "../src/modules/map/routingService";
 import type { Place } from "../src/modules/schedule/types";
+import { OdsayApiError } from "../src/modules/map/odsayApiError";
 
 jest.mock("../src/api/env", () => ({ getEnv: jest.fn() }));
 jest.mock("../src/modules/map/tmapApi", () => ({
@@ -95,6 +96,16 @@ describe("routingService", () => {
         await expect(getRouteAlternativeOptions(origin, destination, "TRANSIT")).rejects.toMatchObject({
             code: "NO_PROVIDER_ROUTE",
         });
+    });
+
+    test.each([
+        ["400", "NO_PROVIDER_ROUTE"],
+        ["500", "PROVIDER_UNAVAILABLE"],
+        ["HTTP_400", "PROVIDER_UNAVAILABLE"],
+    ])("classifies the maasRP response code %s", async (providerCode, code) => {
+        mockedLegacyRouteSearch.mockRejectedValue(new OdsayApiError(providerCode, "Provider response"));
+
+        await expect(getRouteAlternativeOptions(origin, destination, "TRANSIT")).rejects.toMatchObject({ code });
     });
 
     test("accepts a dedicated OpenStreetMap bicycle route", async () => {

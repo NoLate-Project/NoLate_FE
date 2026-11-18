@@ -4,6 +4,11 @@ function padCalendarPart(value: number): string {
 
 export type CalendarFirstDay = 0 | 1;
 
+export function getYearMonthSelection(year: number, month: number, selectedDay: string) {
+    const day = Math.min(Number(selectedDay.slice(8, 10)) || 1, new Date(year, month, 0).getDate());
+    return `${year}-${padCalendarPart(month)}-${padCalendarPart(day)}`;
+}
+
 /** 날짜/월 값을 월 단위 상태에 사용할 수 있는 해당 월 1일로 정규화한다. */
 export function getCalendarMonthAnchor(dayOrMonth: string): string {
     const match = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(dayOrMonth);

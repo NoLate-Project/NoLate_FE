@@ -58,6 +58,7 @@ import {
 import {
     getScheduleAllDayFormEndDay,
     getScheduleCalendarDateKey,
+    getScheduleFormEndWhenMovingStartDate,
     startOfLocalScheduleDay,
 } from "../scheduleFormDate";
 import {
@@ -103,6 +104,7 @@ export function useScheduleEditScreen({
     initialScrollToEnd = false,
     initialCategoryPickerOpen = false,
     onPreviewClose,
+    onSaved,
     previewCurrentMemberId,
 }: ScheduleEditScreenProps) {
     const { id, preview } = useLocalSearchParams<{ id: string; preview?: string }>();
@@ -451,7 +453,7 @@ export function useScheduleEditScreen({
         setEndTime(new Date(startTime));
     }, [endDay, markFormDirty, setPicker, startDay, startTime]);
 
-    const { openRoutePlanner, clearRoute, routeDraftChange } = useScheduleEditRoutePlanner({
+    const { openRoutePlanner, clearRoute, routeDraftChange, routeReturn } = useScheduleEditRoutePlanner({
         pathname,
         router,
         routePlannerSessionId,
@@ -472,6 +474,7 @@ export function useScheduleEditScreen({
         travelMinutes,
         departAt,
         route,
+        routeInfo,
         allDay,
         startDay,
         startTime,
@@ -510,8 +513,16 @@ export function useScheduleEditScreen({
         markFormDirty();
         const selected = new Date(`${day.dateString}T00:00:00`);
         if (picker === "startDate") {
+            const nextEnd = getScheduleFormEndWhenMovingStartDate(
+                { startDay, startTime, endDay, endTime, allDay, hasEndTime }, selected,
+            );
             setStartDay(selected);
-            if (selected.getTime() > endDay.getTime()) setEndDay(selected);
+            if (nextEnd) {
+                setEndDay(startOfLocalScheduleDay(nextEnd));
+                setEndTime(nextEnd);
+            } else if (selected.getTime() > endDay.getTime()) {
+                setEndDay(selected);
+            }
         } else if (picker === "endDate") {
             if (!allDay) setHasEndTime(true);
             setEndDay(selected);
@@ -567,6 +578,7 @@ export function useScheduleEditScreen({
         notes,
         dispatch,
         markFormDirty,
+        onSaved,
         closeEditScreen,
         setMutationPending,
         discardChanges,
@@ -668,6 +680,7 @@ export function useScheduleEditScreen({
         category,
         routeInfo,
         routeReady,
+        routePlannedArrivalAt: routeTimingTargetArrivalRef.current,
         retryCategoryLoad,
         handleEndTimeEnabledChange,
         handleAllDayChange,
@@ -677,6 +690,7 @@ export function useScheduleEditScreen({
         contentFade,
         openRoutePlanner,
         routeDraftChange,
+        routeReturn,
         clearRoute,
         onDayPress,
         onTimeChange,

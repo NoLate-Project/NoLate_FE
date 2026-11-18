@@ -40,6 +40,8 @@ export type QuickSchedulePreviewDraft = {
     travelMinutes?: number;
     route?: unknown;
     departAt?: string;
+    /** Previous appointment time when the chosen route was rebased after a date/time edit. */
+    routeTimingPreviousArrivalAt?: string;
     notificationLeadMinutes?: number;
     alertMode: ScheduleAlertMode;
     memo: string;
@@ -298,10 +300,9 @@ export function buildQuickSchedulePreviewDraft(
         && requiredFields.length === 0;
 
     const draft: QuickSchedulePreviewDraft = {
-        title: parsed.title?.trim()
-            || defaultTitle
-            || fallbackText.split(/\n|,/)[0]?.trim()
-            || "새 일정",
+        title: parsed.titleDerivedFromTimeOrPlace
+            ? "새 일정"
+            : parsed.title?.trim() || defaultTitle || fallbackText.split(/\n|,/)[0]?.trim() || "새 일정",
         date,
         time,
         durationMinutes: explicitDurationMinutes ?? DEFAULT_DURATION_MINUTES,
@@ -472,6 +473,14 @@ export function applyQuickScheduleNotificationSettings(
     };
 }
 
+function normalizeQuickScheduleLocation(location: string): string {
+    return location.trim().replace(/\s+/g, "").normalize("NFC").toLowerCase() || "장소미정";
+}
+
+export function hasQuickScheduleLocationChanged(current: string, next: string): boolean {
+    return normalizeQuickScheduleLocation(current) !== normalizeQuickScheduleLocation(next);
+}
+
 export function updateQuickSchedulePreviewDraft(
     draft: QuickSchedulePreviewDraft,
     field: QuickSchedulePreviewField,
@@ -490,13 +499,12 @@ export function updateQuickSchedulePreviewDraft(
 
     if (field === "location") {
         const normalizedLocation = value.trim() || "장소 미정";
-        const verificationStatus = normalizedLocation === draft.location.trim()
-            ? "USER_CONFIRMED"
-            : "USER_CORRECTED";
+        const locationChanged = hasQuickScheduleLocationChanged(draft.location, normalizedLocation);
+        const verificationStatus = locationChanged ? "USER_CORRECTED" : "USER_CONFIRMED";
         if (normalizedLocation === "장소 미정") {
             nextBadges.location = "장소 확인 필요";
         }
-        if (normalizedLocation === draft.location.trim()) {
+        if (!locationChanged) {
             return {
                 ...draft,
                 badges: nextBadges,
@@ -517,6 +525,7 @@ export function updateQuickSchedulePreviewDraft(
             travelMinutes: undefined,
             route: undefined,
             departAt: undefined,
+            routeTimingPreviousArrivalAt: undefined,
             notificationLeadMinutes: undefined,
             badges: nextBadges,
             verification: markQuickScheduleFieldVerified(
@@ -585,6 +594,7 @@ export function updateQuickSchedulePreviewDraft(
             travelMinutes: canRebaseRoute ? draft.travelMinutes : undefined,
             route: routeUpdate.route,
             departAt: routeUpdate.departAt,
+            routeTimingPreviousArrivalAt: canRebaseRoute ? previousStartAt : undefined,
             notificationLeadMinutes: nextNotificationLeadMinutes,
             badges: nextBadges,
             verification: markQuickScheduleFieldVerified(
@@ -621,12 +631,17 @@ export function updateQuickSchedulePreviewDraft(
 }
 
 export function applyQuickScheduleRouteResult(
-    draft: QuickSchedulePreviewDraft,
-    result: RoutePlannerPayload
+    currentDraft: QuickSchedulePreviewDraft,
+    result: RoutePlannerPayload,
+    options?: { editedLocation: string }
 ): QuickSchedulePreviewDraft {
     const destinationName = displayQuickSchedulePlaceName(result.destination)
         || result.locationName?.split("→").pop()?.trim()
-        || draft.location;
+        || options?.editedLocation.trim()
+        || currentDraft.location;
+    const draft = options
+        ? updateQuickSchedulePreviewDraft(currentDraft, "location", destinationName)
+        : currentDraft;
     const nextBadges = { ...draft.badges };
     const candidate: QuickSchedulePreviewDraft = {
         ...draft,
@@ -637,6 +652,7 @@ export function applyQuickScheduleRouteResult(
         travelMinutes: result.travelMinutes,
         route: result.route,
         departAt: result.departureAt,
+        routeTimingPreviousArrivalAt: undefined,
     };
     const hasRoute = isQuickScheduleRouteReady(candidate);
     const routeInfo = hasRoute ? getQuickSchedulePreviewRouteInfo(candidate) : undefined;

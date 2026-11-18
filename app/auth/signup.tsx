@@ -5,7 +5,6 @@ import {
     BackHandler,
     Keyboard,
     Platform,
-    Pressable,
     StyleSheet,
     TextInput,
     Text,
@@ -23,11 +22,13 @@ import { useAuth } from "../../src/modules/auth/AuthContext";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import { getAuthErrorPresentation } from "../../src/modules/auth/authErrorMessage";
 import {
-    isValidSignupEmail,
-    isValidSignupName,
+    getSignupFieldErrors,
     MAX_EMAIL_LENGTH,
     MAX_SIGNUP_NAME_LENGTH,
     normalizeSignupEmail,
+    SIGNUP_FIELDS,
+    type SignupField,
+    type SignupFieldErrors,
 } from "../../src/modules/auth/signupValidation";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
@@ -36,8 +37,6 @@ import {
     shouldHandleSignupAgreementHardwareBack,
 } from "../../src/modules/auth/signupNavigation";
 
-const PASSWORD_PATTERN = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[a-zA-Z\d!@#$%^&*]{8,16}$/;
-type SignupField = "name" | "email" | "password" | "confirmation";
 type SignUpStep = "details" | "agreements";
 
 export default function SignUp() {
@@ -51,17 +50,19 @@ export default function SignUp() {
     const { signup: { name, email, password: pwd, confirmation: confirmPwd }, setSignup, clear: clearDrafts } = useAuthFormDrafts();
     const [step, setStep] = useState<SignUpStep>("details");
     const [submitting, setSubmitting] = useState(false);
-    const [fieldError, setFieldError] = useState<{ field: SignupField; message: string }>();
+    const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
+    const [focusRequest, setFocusRequest] = useState<{ field: SignupField }>();
     const nameInput = useRef<TextInput>(null);
     const emailInput = useRef<TextInput>(null);
     const passwordInput = useRef<TextInput>(null);
     const confirmationInput = useRef<TextInput>(null);
 
     useEffect(() => {
-        if (!fieldError || step !== "details") return;
+        if (!focusRequest || step !== "details" || !isFocused) return;
         const fields = { name: nameInput, email: emailInput, password: passwordInput, confirmation: confirmationInput };
-        fields[fieldError.field].current?.focus();
-    }, [fieldError, step]);
+        fields[focusRequest.field].current?.focus();
+        setFocusRequest(undefined);
+    }, [focusRequest, isFocused, step]);
     const pendingShareToken = normalizeShareToken(shareToken);
     const loginRoute = pendingShareToken
         ? { pathname: "/auth/login" as const, params: { shareToken: pendingShareToken } }
@@ -87,28 +88,24 @@ export default function SignUp() {
     }, [isFocused, step, submitting]);
 
     const validateDetails = () => {
-        const normalizedName = name.trim();
-        const normalizedEmail = normalizeSignupEmail(email);
+        const errors = getSignupFieldErrors({ name, email, password: pwd, confirmation: confirmPwd });
+        const first = SIGNUP_FIELDS.find(field => Boolean(errors[field]));
+        setFieldErrors(errors);
+        if (!first) return true;
+        setStep("details");
+        setFocusRequest({ field: first });
+        return false;
+    };
 
-        const invalid = (field: SignupField, message: string) => {
-            setFieldError({ field, message });
-            return false;
-        };
-
-        if (!normalizedName) return invalid("name", "이름을 입력해 주세요.");
-        if (!isValidSignupName(normalizedName)) {
-            return invalid("name", `이름은 ${MAX_SIGNUP_NAME_LENGTH}자 이하로 입력해 주세요.`);
-        }
-        if (!isValidSignupEmail(normalizedEmail)) {
-            return invalid("email", "올바른 이메일 주소를 입력해 주세요.");
-        }
-        if (!PASSWORD_PATTERN.test(pwd)) {
-            return invalid("password", "영문, 숫자, !@#$%^&* 조합으로 8~16자를 입력해 주세요.");
-        }
-        if (pwd !== confirmPwd) return invalid("confirmation", "비밀번호가 일치하지 않아요.");
-
-        setFieldError(undefined);
-        return true;
+    const updateField = (field: SignupField, value: string) => {
+        setSignup(current => ({ ...current, [field]: value }));
+        setFieldErrors(current => {
+            if (!current[field] && !(field === "password" && current.confirmation)) return current;
+            const next = { ...current };
+            delete next[field];
+            if (field === "password") delete next.confirmation;
+            return next;
+        });
     };
 
     const onContinue = () => {
@@ -227,49 +224,49 @@ export default function SignUp() {
                 icon="person-outline"
                 value={name}
                 inputRef={nameInput}
-                errorMessage={fieldError?.field === "name" ? fieldError.message : undefined}
-                onChangeText={value => {
-                    setSignup(current => ({ ...current, name: value }));
-                    if (fieldError?.field === "name") setFieldError(undefined);
-                }}
+                errorMessage={fieldErrors.name}
+                onChangeText={value => updateField("name", value)}
                 maxLength={MAX_SIGNUP_NAME_LENGTH}
                 placeholder="홍길동"
                 autoComplete="name"
                 textContentType="name"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => emailInput.current?.focus()}
             />
             <AuthInput
                 label="이메일"
                 icon="mail-outline"
                 value={email}
                 inputRef={emailInput}
-                errorMessage={fieldError?.field === "email" ? fieldError.message : undefined}
-                onChangeText={value => {
-                    setSignup(current => ({ ...current, email: value }));
-                    if (fieldError?.field === "email") setFieldError(undefined);
-                }}
+                errorMessage={fieldErrors.email}
+                onChangeText={value => updateField("email", value)}
                 maxLength={MAX_EMAIL_LENGTH}
                 placeholder="you@example.com"
                 autoCapitalize="none"
                 keyboardType="email-address"
                 autoComplete="email"
                 textContentType="emailAddress"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => passwordInput.current?.focus()}
             />
             <AuthInput
                 label="비밀번호"
                 icon="lock-closed-outline"
                 value={pwd}
                 inputRef={passwordInput}
-                errorMessage={fieldError?.field === "password" ? fieldError.message : undefined}
-                onChangeText={value => {
-                    setSignup(current => ({ ...current, password: value }));
-                    if (fieldError?.field === "password") setFieldError(undefined);
-                }}
+                errorMessage={fieldErrors.password}
+                onChangeText={value => updateField("password", value)}
                 placeholder="8~16자"
                 secureTextEntry
                 autoComplete="new-password"
                 textContentType="newPassword"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => confirmationInput.current?.focus()}
             />
-            {fieldError?.field !== "password" ? (
+            {!fieldErrors.password ? (
                 <View style={styles.passwordRule}>
                     <View
                         accessibilityElementsHidden
@@ -287,15 +284,15 @@ export default function SignUp() {
                 icon="checkmark-circle-outline"
                 value={confirmPwd}
                 inputRef={confirmationInput}
-                errorMessage={fieldError?.field === "confirmation" ? fieldError.message : undefined}
-                onChangeText={value => {
-                    setSignup(current => ({ ...current, confirmation: value }));
-                    if (fieldError?.field === "confirmation") setFieldError(undefined);
-                }}
+                errorMessage={fieldErrors.confirmation}
+                onChangeText={value => updateField("confirmation", value)}
                 placeholder="한 번 더 입력"
                 secureTextEntry
                 autoComplete="new-password"
                 textContentType="newPassword"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={onContinue}
             />
 
             <AuthPrimaryButton
@@ -304,24 +301,6 @@ export default function SignUp() {
                 label="다음"
             />
 
-            <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                    Keyboard.dismiss();
-                    router.dismissTo(loginRoute);
-                }}
-                style={({ pressed }) => [
-                    styles.loginLink,
-                    {
-                        backgroundColor: colors.surface2,
-                        borderColor: colors.border,
-                        opacity: pressed ? 0.62 : 1,
-                    },
-                ]}
-            >
-                <Text style={styles.loginHint}>이미 계정이 있나요?</Text>
-                <Text style={styles.loginText}>로그인</Text>
-            </Pressable>
         </AuthScreen>
     );
 }
@@ -349,26 +328,6 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontSize: 12,
             lineHeight: 18,
             fontWeight: "400",
-        },
-        loginLink: {
-            minHeight: 50,
-            borderRadius: 16,
-            borderWidth: 1,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 7,
-            marginTop: 2,
-        },
-        loginHint: {
-            color: colors.textSecondary,
-            fontSize: 13,
-            fontWeight: "800",
-        },
-        loginText: {
-            color: colors.textPrimary,
-            fontSize: 13,
-            fontWeight: "900",
         },
     });
 }

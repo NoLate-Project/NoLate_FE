@@ -188,7 +188,7 @@ export default function ScheduleMemoSheet({
                                             },
                                         ]}
                                     >
-                                        <Ionicons name="create-outline" size={16} color={accent} />
+                                        <Ionicons name="pencil-outline" size={16} color={accent} />
                                         <Text style={[styles.editButtonText, { color: accent }]}>수정</Text>
                                     </Pressable>
                                 ) : null}

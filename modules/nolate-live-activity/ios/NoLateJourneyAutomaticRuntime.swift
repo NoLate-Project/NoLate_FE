@@ -40,10 +40,13 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   private var deadline: ContinuousClock.Instant?
   private var lastPersistedAt: TimeInterval = 0
   private var lastError: String?
+  private var arrivalHandoffUntil: Date?
   // Local diagnostics only: last received accuracy is not engine acceptance or vehicle evidence.
   // Never persisted in the envelope or included in the departure outbox.
   private var lastAccuracyMeters: Double?
   private var guidanceSample: Sample?
+  private var lastRideDiagnostic: String?
+  private var lastHandoffDiagnostic: String?
   private let guidanceNotices = NoLateJourneyNoticeDelivery()
   private var locationState = "IDLE"
   private var locationAuthorization: CLAuthorizationStatus?
@@ -161,6 +164,7 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       restored = false
       lastError = nil
       guard commit(candidate) else { return viewState() }
+      arrivalHandoffUntil = nil
       beginInputs()
     } catch {
       lastError = "AUTOMATIC_ARM_REJECTED"
@@ -169,8 +173,15 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     return snapshot()
   }
 
+  func clearArrivalHandoff() {
+    guard arrivalHandoffUntil != nil else { return }
+    arrivalHandoffUntil = nil
+    publish()
+  }
+
   func stop() -> [String: Any?] {
     guard enabled else { return snapshot() }
+    NSLog("NOLATE_GUIDANCE_RUNTIME explicit_stop")
     session?.stop(now: Date().timeIntervalSince1970)
     lastError = NoLateJourneyAutomaticLocationErrorPolicy.afterExplicitStop(lastError)
     guidancePushPilot.reset()
@@ -194,6 +205,21 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       _ = stop()
       return ["accepted": !revocationFailed && self.store?.canRestore == false]
     } catch { return ["accepted": false] }
+  }
+
+  func readSavedCheckpointRoute(bindingJSON: String) -> [String: Any] {
+    let now = Date().timeIntervalSince1970
+    guard productBuild, enabled, UIApplication.shared.applicationState == .active,
+      !hasLiveSession, !revocationFailed,
+      let expected = try? Session.decodeBinding(bindingJSON, now: now),
+      expected.execution == expectedExecution, expected.syncScope == "AUTHENTICATED",
+      expected.savedRouteValidated == true, now < expected.expiresAtEpochSeconds,
+      authentication?.coversNavigation(expected, now: now) == true,
+      let envelope = try? store?.load(), envelope.schemaVersion == 1,
+      envelope.binding == expected, envelope.routeJSON.utf8.count <= 1_048_576,
+      Session.digest(envelope.routeJSON) == expected.routeInputDigest
+    else { return ["accepted": false] }
+    return ["accepted": true, "routeJSON": envelope.routeJSON]
   }
 
   func restore(routeJSON: String, bindingJSON: String) -> [String: Any?] {
@@ -294,7 +320,9 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   }
 
   private func failClosed(_ reason: String) {
+    NSLog("NOLATE_GUIDANCE_RUNTIME fail_closed %@", reason)
     lastError = reason
+    arrivalHandoffUntil = nil
     guidancePushPilot.reset()
     authentication = nil
     session?.stop(now: Date().timeIntervalSince1970)
@@ -392,6 +420,9 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     // leave CLLocationManager alive just because the core became terminal inside this sample.
     if candidate.core.snapshot.status.isTerminal {
       session = candidate
+      if candidate.core.snapshot.reason == .destinationArrived, candidate.binding.authMemberId != nil {
+        arrivalHandoffUntil = Date(timeIntervalSince1970: now + 90)
+      }
       authentication = nil
       guidancePushPilot.reset()
       releaseInputs()
@@ -428,15 +459,53 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     guidanceArrivals.update(session: session, now: now)
     guidanceVehicles.update(session: session, now: now)
     guidanceSubway.update(session: session, now: now)
+    if session?.ride != nil {
+      let ride = session?.ride?.snapshot
+      let diagnostic = "phase=\(ride?.phase ?? "UNAVAILABLE") reason=\(ride?.reason ?? "UNAVAILABLE") transport=\(guidanceVehicles.status)"
+      if diagnostic != lastRideDiagnostic {
+        NSLog("NOLATE_GUIDANCE_RIDE %@", diagnostic)
+        lastRideDiagnostic = diagnostic
+      }
+    } else {
+      lastRideDiagnostic = nil
+    }
+    #if targetEnvironment(simulator)
+    if let session, session.separation != nil {
+      let separation = session.separation!.snapshot
+      let walk = session.finalWalk?.snapshot
+      let diagnostic = "separation=\(separation.status) reason=\(separation.reason) count=\(separation.evidenceCount) walk=\(walk?.phase ?? "UNAVAILABLE") walkReason=\(walk?.reason ?? "UNAVAILABLE") window=\(session.ride?.route.departureWindowMeters ?? 0) transport=\(guidanceVehicles.status)"
+      if diagnostic != lastHandoffDiagnostic {
+        NSLog("NOLATE_GUIDANCE_HANDOFF %@", diagnostic)
+        lastHandoffDiagnostic = diagnostic
+      }
+    } else { lastHandoffDiagnostic = nil }
+    #endif
     let enabled = session?.binding.savedRouteValidated == true && session?.binding.guidanceEnabled == true
     guidanceNotices.accept(session.map { NoLateAutomaticGuidanceProjection.content($0, now: now,
-      arrival: guidanceArrivals.result(session: $0, now: now)) }, legs: session?.routeLegs ?? [],
-      enabled: enabled && session?.departureAcknowledged == true)
+      arrival: arrivalResult(session: $0, now: now)) }, legs: session?.routeLegs ?? [],
+      // The server departure record can remain pending while the screen is locked.
+      // Notices use the same fresh, validated native position as the Activity and
+      // must not wait for foreground JS to acknowledge that record.
+      enabled: enabled)
+    let arrivalHandoffUntil = session.flatMap { value -> Date? in
+      let state = value.core.snapshot
+      guard state.status == .stopped, state.reason == .destinationArrived, value.binding.authMemberId != nil else { return nil }
+      return self.arrivalHandoffUntil
+    }
     guidanceActivity.accept(session.map { NoLateAutomaticGuidanceProjection.content($0, now: now,
-      arrival: guidanceArrivals.result(session: $0, now: now)) }, enabled: enabled, routeLegs: session?.routeLegs ?? [])
+      arrival: arrivalResult(session: $0, now: now)) }, enabled: enabled,
+      routeLegs: session?.routeLegs ?? [], arrivalHandoffUntil: arrivalHandoffUntil)
     if let session, session.departureAcknowledged { guidancePushPilot.publish(NoLateAutomaticGuidanceProjection.content(session, now: now,
-      arrival: guidanceArrivals.result(session: session, now: now)), binding: session.binding, auth: authentication) }
+      arrival: arrivalResult(session: session, now: now)), binding: session.binding, auth: authentication) }
     eventSink?(viewState().compactMapValues { $0 })
+  }
+  private func arrivalResult(session: NoLateJourneyAutomaticSession, now: Double) -> NoLateSavedGuidanceArrivalPolicy.Result {
+    let bus = guidanceArrivals.result(session: session, now: now)
+    guard let subway = guidanceSubway.arrival(session: session, now: now), subway.arrival != nil else { return bus }
+    let current = NoLateAutomaticGuidanceProjection.content(session, now: now)
+    let target = current.phase == "WAITING" ? current.activeLegIndex : current.activeLegIndex + 1
+    return subway.busLegIndex == target && session.routeLegs.indices.contains(target)
+      && session.routeLegs[target].kind == "SUBWAY" ? subway : bus
   }
   private func viewState() -> [String: Any?] {
     let state = session?.core.snapshot
@@ -445,7 +514,7 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     let content = session.flatMap { value -> [String: Any]? in
       guard value.binding.savedRouteValidated == true, value.binding.guidanceEnabled == true else { return nil }
       let now = Date().timeIntervalSince1970
-      let projected = NoLateAutomaticGuidanceProjection.content(value, now: now, arrival: guidanceArrivals.result(session: value, now: now))
+      let projected = NoLateAutomaticGuidanceProjection.content(value, now: now, arrival: arrivalResult(session: value, now: now))
       guard let data = try? JSONEncoder().encode(projected) else { return nil }
       return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
@@ -463,6 +532,7 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       "guidancePushState": guidancePushPilot.state, "guidancePushTokenAvailable": guidancePushPilot.tokenAvailable,
       "guidancePushProviderAcceptedCount": guidancePushPilot.providerAcceptedCount,
       "status": state?.status.rawValue ?? "IDLE", "sessionId": session?.binding.sessionId,
+      "guidanceMemberId": content == nil ? nil : session?.binding.authMemberId,
       "routeRevision": session?.binding.routeRevision, "alongRouteMeters": state?.alongRouteMeters,
       "crossTrackMeters": state?.crossTrackMeters, "departureCount": state?.departureEventKey == nil ? 0 : 1,
       "quality": state?.quality.rawValue ?? "UNAVAILABLE", "qualityReason": state?.reason.rawValue ?? "NOT_ARMED",
@@ -481,9 +551,9 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       "ridePhase": ride?.phase ?? "UNAVAILABLE", "rideQuality": ride?.quality ?? "UNAVAILABLE",
       "rideReason": ride?.reason ?? "VERIFIED_RIDE_BINDING_UNAVAILABLE",
       "rideEvidenceCount": ride?.evidenceCount ?? 0,
-      "separationStatus": session?.separation?.snapshot.status ?? "UNAVAILABLE",
-      "separationReason": session?.separation?.snapshot.reason ?? "DEPARTURE_WINDOW_UNAVAILABLE",
-      "separationEvidenceCount": session?.separation?.snapshot.evidenceCount ?? 0,
+      "separationStatus": session?.separation?.snapshot.status ?? session?.subwaySeparation?.snapshot.status ?? "UNAVAILABLE",
+      "separationReason": session?.separation?.snapshot.reason ?? session?.subwaySeparation?.snapshot.reason ?? "DEPARTURE_WINDOW_UNAVAILABLE",
+      "separationEvidenceCount": session?.separation?.snapshot.evidenceCount ?? session?.subwaySeparation?.snapshot.evidenceCount ?? 0,
       "finalWalkPhase": session?.finalWalk?.snapshot.phase ?? "UNAVAILABLE",
       "finalWalkReason": session?.finalWalk?.snapshot.reason ?? "FINAL_WALK_GEOMETRY_UNAVAILABLE",
       "finalWalkEvidenceCount": session?.finalWalk?.snapshot.evidenceCount ?? 0,
@@ -541,6 +611,7 @@ private final class NoLateJourneyNoticeDelivery {
   private var identifiers = Set<String>()
   private var lastUsable = false
   private var phase: String?
+  private var lastDiagnostic: String?
   private var expiryTask: Task<Void, Never>?
   func configure(_ value: String) {
     clear(); mode = value; state = value == "OFF" ? "OFF" : "READY"; scheduledCount = 0; voiceQueuedCount = 0
@@ -571,6 +642,7 @@ private final class NoLateJourneyNoticeDelivery {
   }
   func clear() {
     epoch = UUID(); binding = nil; phase = nil; lastUsable = false; policy.reset()
+    lastDiagnostic = nil
     clearDelivered()
     speech.cancel()
     state = mode == "OFF" ? "OFF" : "IDLE"
@@ -586,6 +658,11 @@ private final class NoLateJourneyNoticeDelivery {
     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
   }
   func accept(_ content: NoLateGuidanceContent?, legs: [NoLateGuidanceRouteLeg], enabled: Bool) {
+    let diagnostic = "mode=\(mode) enabled=\(enabled) status=\(content?.status ?? "NIL") phase=\(content?.phase ?? "NIL") quality=\(content?.quality ?? "NIL")"
+    if diagnostic != lastDiagnostic {
+      NSLog("NOLATE_GUIDANCE_NOTICE input %@", diagnostic)
+      lastDiagnostic = diagnostic
+    }
     guard mode != "OFF", enabled, let content, content.status == "ACTIVE" else {
       if binding != nil { clear() }; return
     }
@@ -599,12 +676,17 @@ private final class NoLateJourneyNoticeDelivery {
     }
     let now = Date().timeIntervalSince1970
     let usable = NoLateGuidanceRoutePositionPolicy.position(content, legs: legs, now: now) != nil
+    if usable && !lastUsable { NSLog("NOLATE_GUIDANCE_NOTICE evidence_available") }
     if !usable {
-      if lastUsable { epoch = UUID(); clearDelivered(); speech.cancel() }
+      if lastUsable {
+        NSLog("NOLATE_GUIDANCE_NOTICE evidence_unavailable")
+        epoch = UUID(); clearDelivered(); speech.cancel()
+      }
       lastUsable = false; state = "EVIDENCE_UNAVAILABLE"; return
     }
     lastUsable = true
     guard let notice = policy.next(content, legs: legs, now: now) else { return }
+    NSLog("NOLATE_GUIDANCE_NOTICE selected kind=%@", notice.kind)
     epoch = UUID(); clearDelivered(); speech.cancel()
     let fence = epoch
     let remaining = max(0, notice.expiresAt - now)
@@ -614,6 +696,7 @@ private final class NoLateJourneyNoticeDelivery {
       self.epoch = UUID(); self.clearDelivered()
       self.speech.cancel()
       self.state = "NOTICE_EXPIRED"
+      NSLog("NOLATE_GUIDANCE_NOTICE expired")
     }
     let identifier = "nolate.guidance.notice." + SHA256.hash(data: Data((identity + notice.kind).utf8)).map { String(format: "%02x", $0) }.joined()
     UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
@@ -632,6 +715,7 @@ private final class NoLateJourneyNoticeDelivery {
         }
         guard authorized else {
           self.state = voiceQueued ? (undetermined ? "VOICE_QUEUED_PERMISSION_REQUIRED" : "VOICE_QUEUED_NOTIFICATION_DENIED") : "NOTIFICATION_PERMISSION_REQUIRED"
+          NSLog("NOLATE_GUIDANCE_NOTICE permission_required")
           return
         }
         let body = UNMutableNotificationContent()
@@ -650,6 +734,7 @@ private final class NoLateJourneyNoticeDelivery {
             }
             if accepted { self.scheduledCount += 1; self.state = "NOTIFICATION_ACCEPTED" }
             else { self.state = "NOTIFICATION_REJECTED" }
+            NSLog("NOLATE_GUIDANCE_NOTICE submit_%@", accepted ? "accepted" : "rejected")
           }
         }
       }

@@ -6,9 +6,7 @@ import type {
   TmapLatLng,
   TmapPathOverlay,
 } from '../../map/TmapMapView';
-import { TRANSIT_ROUTE_ZOOM_STYLE } from '../../map/transitRoutePresentation';
 import {
-  ENABLE_NATIVE_ROUTE_DIRECTION,
   getNativeDirectionCarrierWidth,
   getNativeDirectionOpacity,
   getRenderableStopCoordinate,
@@ -32,9 +30,6 @@ import {
   getTransitPathOrderScores,
   validateSegmentPathOrder,
 } from './routeMapCoordinate';
-
-const TRANSIT_NATIVE_DIRECTION_MIN_ZOOM =
-  TRANSIT_ROUTE_ZOOM_STYLE.directionMinZoom;
 
 type Options = {
   mapCamera: TmapCameraState;
@@ -405,9 +400,11 @@ export function useRoutePlannerRouteDiagnostics({
   useEffect(() => {
     if (typeof __DEV__ === 'boolean' && !__DEV__) return;
     if (routeAlternatives.length > 0 && !selectedNormalizedRoute) return;
+    const nativeDirectionOverlayCount = mapPathOverlays.filter(overlay => overlay.nativeDirection).length;
     const arrowLogSignature = JSON.stringify({
       zoom: Math.round(mapZoom * 10) / 10,
       selectedRouteId: selectedNormalizedRoute?.id,
+      nativeDirectionOverlayCount,
       rows: selectedRouteArrowStats,
     });
     if (lastRouteArrowLogSignatureRef.current === arrowLogSignature) return;
@@ -440,26 +437,17 @@ export function useRoutePlannerRouteDiagnostics({
       walkCasingWidth: getWalkCasingWidth(mapZoom),
       walkCasingOpacity: ROUTE_WALK_CASING_OPACITY,
       walkDashPattern: ROUTE_LINE_STYLE.walk.dashPattern,
-      nativeDirectionEnabled:
-        ENABLE_NATIVE_ROUTE_DIRECTION &&
-        mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
-      nativeDirectionMinZoom: TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
+      nativeDirectionEnabled: nativeDirectionOverlayCount > 0,
       screenOverlayArrowFallbackEnabled: false,
-      directionRenderer:
-        ENABLE_NATIVE_ROUTE_DIRECTION &&
-        mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM
-          ? 'tmap-native-polyline-direction'
-          : 'none',
+      directionRenderer: nativeDirectionOverlayCount > 0 ? 'tmap-native-polyline-direction' : 'none',
       nativeDirectionPolylineWidth: getNativeDirectionCarrierWidth(mapZoom),
       nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
       nativeDirectionViewportCenter: mapCamera,
-      nativeDirectionOverlayCount: selectedRouteArrowStats.reduce(
-        (total, row) => total + row.nativeDirectionPolylineCount,
-        0,
-      ),
+      nativeDirectionOverlayCount,
     });
   }, [
     mapCamera,
+    mapPathOverlays,
     mapZoom,
     routeAlternatives.length,
     selectedNormalizedRoute,

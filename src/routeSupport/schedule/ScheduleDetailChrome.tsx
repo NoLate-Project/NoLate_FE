@@ -34,6 +34,8 @@ export const MINUTE_MS = 60 * 1000;
 export const SECOND_MS = 1000;
 export const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
 export const APP_ACCENT_BLUE = '#2979FF';
+export const MAP_ACTION_BUTTON_HEIGHT = 44;
+export const MAP_ACTION_SHEET_GAP = 16;
 export const SHEET_HANDLE_HEIGHT = 44;
 export const IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT = 196;
 

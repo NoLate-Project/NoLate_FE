@@ -37,6 +37,22 @@ const styles = StyleSheet.create({
         paddingTop: 12,
         gap: 22,
     },
+    compactContent: {
+        paddingTop: 4,
+        gap: 18,
+    },
+    compactIdentity: {
+        minHeight: 72,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    nameEditButton: {
+        width: 44,
+        height: 44,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     profileCard: {
         minHeight: 118,
         borderWidth: 1,
@@ -54,6 +70,7 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         overflow: "visible",
     },
+    compactAvatar: { width: 54, height: 54, borderRadius: 27 },
     avatarDark: {
         backgroundColor: "rgba(255,255,255,0.90)",
     },
@@ -64,6 +81,7 @@ const styles = StyleSheet.create({
         fontSize: 28,
         fontWeight: "900",
     },
+    compactAvatarText: { fontSize: 22 },
     avatarTextDark: {
         color: "#000000",
     },
@@ -105,6 +123,7 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
         backgroundColor: "rgba(0,0,0,0.48)",
     },
+    modalBackdropPosition: StyleSheet.absoluteFillObject,
     editSheetScroll: {
         maxHeight: "92%",
         borderTopWidth: 1,
@@ -116,6 +135,9 @@ const styles = StyleSheet.create({
         paddingTop: 22,
         paddingBottom: 34,
     },
+    compactNameSheet: { flexGrow: 0, flexShrink: 1 },
+    compactNameSheetContent: { paddingHorizontal: 20, paddingTop: 8 },
+    nameSheetHandle: { width: 34, height: 4, borderRadius: 2, alignSelf: "center", marginBottom: 6 },
     editSheetHeader: {
         flexDirection: "row",
         alignItems: "flex-start",
@@ -138,12 +160,14 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+    compactNameCloseButton: { width: 44, height: 44, borderRadius: 22 },
     inputLabel: {
         marginTop: 22,
         marginBottom: 8,
         fontSize: 12,
         fontWeight: "900",
     },
+    compactNameLabel: { marginTop: 4 },
     nameInput: {
         height: 52,
         borderWidth: 1,
@@ -231,6 +255,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "800",
     },
+    accountActionTitle: { fontSize: 15, fontWeight: "800" },
     usageCard: {
         borderWidth: 1,
         borderRadius: 18,
@@ -330,6 +355,10 @@ const styles = StyleSheet.create({
         padding: 16,
         gap: 13,
     },
+    compactCalendarConnection: {
+        padding: 14,
+        gap: 8,
+    },
     calendarConnectionHeader: {
         minHeight: 46,
         flexDirection: "row",
@@ -410,10 +439,13 @@ const styles = StyleSheet.create({
         fontWeight: "800",
     },
     calendarConnectionFooter: {
-        fontSize: 11,
-        lineHeight: 16,
+        fontSize: 12,
+        lineHeight: 18,
         fontWeight: "700",
     },
+    importHistory: { gap: 8 },
+    importReceipt: { gap: 3, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth },
+    importReceiptTitle: { fontSize: 14, fontWeight: "700" },
     calendarManageButton: {
         minHeight: 46,
         borderWidth: StyleSheet.hairlineWidth,
@@ -422,6 +454,13 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
+    },
+    compactCalendarAction: { borderWidth: 0, borderRadius: 12 },
+    compactCalendarHistory: {
+        borderWidth: 0,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderRadius: 0,
+        paddingHorizontal: 0,
     },
     calendarManageButtonText: {
         flex: 1,

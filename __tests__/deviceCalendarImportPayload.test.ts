@@ -50,6 +50,15 @@ describe("calendar import schedule payload", () => {
         });
     });
 
+    test("다시 찾은 일정은 이전 선택만 유지하고 사라진 일정은 제외한다", () => {
+        const unselected = { ...CANDIDATE, id: "unselected" };
+        const newEvent = { ...CANDIDATE, id: "new" };
+        const found = [CANDIDATE, unselected, newEvent];
+        expect(getDefaultSelectedCandidateIds(found, new Set([CANDIDATE.id, "removed"])))
+            .toEqual(new Set([CANDIDATE.id]));
+        expect(getDefaultSelectedCandidateIds(found, new Set())).toEqual(new Set());
+    });
+
     test("원본 event id가 없으면 중복 방지가 불가능하므로 가져오기를 중단한다", () => {
         expect(() => buildCalendarImportSource({ ...CANDIDATE, eventId: "  " }))
             .toThrow("이 일정을 가져올 수 없어요. 캘린더에서 일정을 다시 확인해 주세요.");

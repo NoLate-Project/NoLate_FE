@@ -10,7 +10,9 @@ export type RouteEndpointMarkerPresentation = {
 };
 
 const EARTH_RADIUS_METERS = 6_371_000;
-const MIN_ENDPOINT_LABEL_DISTANCE_PX = 84;
+// A full-height pin is about 50 px from cap to tip. The remaining space keeps
+// both captions clear when the pins are vertically aligned.
+const ENDPOINT_PIN_LABEL_CLEARANCE_PX = 60;
 const OVERVIEW_MARKER_SCALE = 0.84;
 const OVERVIEW_MARKER_MAX_ZOOM = 12;
 const STANDARD_MARKER_SCALE = 0.92;
@@ -53,7 +55,7 @@ export function getRouteEndpointMarkerPresentation(
     ) / (2 ** mapZoom);
     const projectedDistancePx = distanceMeters(origin, destination) / Math.max(0.01, metersPerPixel);
     return {
-        showLabels: projectedDistancePx >= MIN_ENDPOINT_LABEL_DISTANCE_PX,
+        showLabels: projectedDistancePx >= ENDPOINT_PIN_LABEL_CLEARANCE_PX * markerScale,
         markerScale,
         projectedDistancePx: Math.round(projectedDistancePx),
     };

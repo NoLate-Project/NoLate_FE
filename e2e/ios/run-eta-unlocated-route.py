@@ -17,7 +17,7 @@ import time
 import urllib.request
 from urllib.parse import urlencode
 
-from eta_fixture_scope import require_memory_fixture_api
+from eta_fixture_scope import INCIDENT_API_BASE, PRIVATE_API_BASE, require_memory_fixture_api
 from eta_fixture_snapshot import wait_for_phase_snapshot
 from eta_pinned_app import DEVICE, open_private_client_with_xcuitest, restore_private_endpoint, verify_lifecycle_summary
 from eta_unlocated_route import verify_saved_route
@@ -25,17 +25,16 @@ from eta_metro_preparation import prepare_private_metro_bundle
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
-BASE = 'http://127.0.0.1:5523'
 
 
-def audit_incident_reservation(root, day, phase):
-    require_memory_fixture_api(BASE)
+def audit_incident_reservation(root, day, phase, base, odsay_only):
+    require_memory_fixture_api(base)
 
     def request(method, path, body=None, token=None):
         headers = {'Content-Type': 'application/json'}
         if token is not None:
             headers['Authorization'] = 'Bearer ' + token
-        conn = http.client.HTTPConnection('127.0.0.1', 5523, timeout=12)
+        conn = http.client.HTTPConnection('127.0.0.1', int(base.rsplit(':', 1)[1]), timeout=12)
         try:
             conn.request(method, path, json.dumps(body) if body is not None else None, headers)
             reply = conn.getresponse()
@@ -57,15 +56,18 @@ def audit_incident_reservation(root, day, phase):
         stamp = lambda clock: dt.datetime.fromisoformat(f'{day}T{clock}:00+09:00')
         assert saved['id'] == schedule_id and saved['ownerMemberId'] == 296
         assert dt.datetime.fromisoformat(saved['startAt']) == stamp(start)
-        assert dt.datetime.fromisoformat(saved['departAt']) == stamp(invalid)
         assert saved['travelMinutes'] == minutes and saved['notificationEnabled'] is False
         departure = stamp(start) - dt.timedelta(minutes=minutes)
+        assert dt.datetime.fromisoformat(saved['departAt']) == departure
+        assert dt.datetime.fromisoformat(saved['myTravelPlan']['departAt']) == departure
         saved_status = request('GET', path + '/departure-status', token=token)
         assert dt.datetime.fromisoformat(saved_status['recommendedDepartureAt']) == departure
         assert saved_status['travelMinutes'] == minutes and saved_status['stale'] is True
         assert not saved_status.get('predictedArrivalAt')
         payload = {key: saved[key] for key in ('title', 'startAt', 'endAt', 'category', 'travelMinutes',
                                                'departAt', 'origin', 'destination', 'travelMode', 'scheduleType')}
+        invalid_day_offset = 2 if schedule_id == 364 else 0
+        payload['departAt'] = (stamp(invalid) + dt.timedelta(days=invalid_day_offset)).isoformat()
         # The previous fixture had no selected route and could only test job registration.
         # Include a synthetic selected itinerary so the Worker must reach its provider.
         rides = [dict(mode='SUBWAY', routeId='11004', lineName='수도권 4호선', serviceClass='LOCAL',
@@ -79,17 +81,25 @@ def audit_incident_reservation(root, day, phase):
             steps=[
                 dict(id='origin', type='ORIGIN', title='출발지'),
                 dict(id='incident-first-train', type='SUBWAY', title='노원역', lineName='4호선',
-                     directionCode='DOWN', durationMinutes=45),
+                     directionCode='DOWN', durationMinutes=45,
+                     coordinates=[dict(latitude=37.6551, longitude=127.0610), dict(latitude=37.4766, longitude=126.9816)]),
                 dict(id='incident-second-train', type='SUBWAY', title='사당', lineName='2호선',
-                     durationMinutes=minutes - 45),
+                     durationMinutes=minutes - 45,
+                     coordinates=[dict(latitude=37.4766, longitude=126.9816), dict(latitude=37.4842, longitude=126.9297)]),
                 dict(id='destination', type='DESTINATION', title='도착지'),
             ],
         )
         payload.update(notificationEnabled=True, notificationLeadMinutes=60, alertMode='STANDARD',
-                       route=dict(provider='tmap', mode='TRANSIT', minutes=minutes, steps=rides, routeInfo=route_info,
+                       route=dict(id=f'incident-transit-{schedule_id}', provider='tmap', mode='TRANSIT', minutes=minutes,
+                                  pathCoords=[dict(lat=37.6551, lng=127.0610), dict(lat=37.4766, lng=126.9816),
+                                              dict(lat=37.4842, lng=126.9297)],
+                                  steps=rides, routeInfo=route_info,
                                   selectedRouteOption=dict(provider='tmap', minutes=minutes, transferCount=1, steps=rides)))
         updated = request('PUT', path, payload, token)
         assert dt.datetime.fromisoformat(updated['departAt']) == departure
+        persisted = request('GET', path, token=token)
+        assert persisted['route']['routeInfo']['steps'][1]['id'] == 'incident-first-train'
+        assert len(persisted['route']['pathCoords']) == 3
         expected[schedule_id] = (stamp(start), departure)
 
     rows = phase('inspect-incident-reservation', 'incident-reservation.json')['cases']
@@ -111,10 +121,19 @@ def audit_incident_reservation(root, day, phase):
         assert dt.datetime.fromisoformat(row['target']) == target
         assert dt.datetime.fromisoformat(row['protectedDeparture']) == departure
         assert row['stale'] is True and row['source'] in ('SELECTED_ROUTE', 'SAVED_FALLBACK')
-        assert row['failureCode'] == 'TRANSIT_JOURNEY_PROVIDER_UNAVAILABLE'
-        assert len(row['routeRequests']) == 1
-        assert row['routeRequests'][0]['searchDttm'] == departure.strftime('%Y%m%d%H%M')
+        if odsay_only:
+            assert row['failureCode'] == 'TRANSIT_ITINERARY_REFRESH_UNSUPPORTED'
+            assert not row['routeRequests']
+        else:
+            assert row['failureCode'] == 'TRANSIT_JOURNEY_PROVIDER_UNAVAILABLE'
+            assert len(row['routeRequests']) == 1
+            assert row['routeRequests'][0]['searchDttm'] == departure.strftime('%Y%m%d%H%M')
     assert phase('prepare-incident-station-board', 'incident-station-board.json')['ready']
+    if odsay_only:
+        status = request('GET', '/api/schedules/363/departure-status', token=token)
+        assert status['failureReason'].startswith('TRANSIT_ITINERARY_REFRESH_UNSUPPORTED:')
+        assert dt.datetime.fromisoformat(status['recommendedDepartureAt']) == expected[363][1]
+        assert status['stale'] is True and not status.get('predictedArrivalAt')
     route = '/api/transit-arrivals/subway?'
     down = request('GET', route + urlencode(dict(stationName='노원', lineName='4호선',
                                                  directionCode='DOWN', limit=2)), token=token)
@@ -134,7 +153,12 @@ def main():
     parser.add_argument('--java', required=True)
     parser.add_argument('--initial-destination', choices=('name-only', 'located'), default='name-only')
     parser.add_argument('--incident-calendar', action='store_true', help='Verify agenda and isolated API/job reservation for inconsistent legacy departures')
+    parser.add_argument('--odsay-only', action='store_true', help='Reproduce a saved Tmap route with only ODsay journey refresh configured')
     args = parser.parse_args()
+    if args.odsay_only and not args.incident_calendar:
+        parser.error('--odsay-only requires --incident-calendar')
+    base = INCIDENT_API_BASE if args.incident_calendar else PRIVATE_API_BASE
+    api_port = int(base.rsplit(':', 1)[1])
     root = Path(tempfile.mkdtemp(prefix='nolate-eta-mock-e2e.', dir='/private/tmp')).resolve()
     server = metro = None
     prepared = False
@@ -184,11 +208,13 @@ def main():
     def ui(method, name, target, extra=(), travel_minutes=None):
         title = 'ETA E2E calendar 1' if args.incident_calendar else 'ETA E2E unlocated'
         command = ['python3', 'e2e/ios/run-eta.py', '--device', DEVICE, '--output', str(root / name),
-                   '--only', method, '--title', title, '--target-arrival', target, '--api-base', BASE]
+                   '--only', method, '--title', title, '--target-arrival', target, '--api-base', base]
         command += list(extra)
         env = dict(os.environ)
         if travel_minutes is not None:
             env['TEST_RUNNER_E2E_UNLOCATED_TRAVEL_MINUTES'] = str(travel_minutes)
+        if args.odsay_only:
+            env['TEST_RUNNER_E2E_EXPECT_TMAP_UNSUPPORTED'] = '1'
         emit(state='ui_start', case=name)
         with log(name + '-launcher.log') as output:
             child = subprocess.Popen(command, cwd=FE, env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -205,7 +231,7 @@ def main():
 
     try:
         emit(state='starting', evidenceRoot=str(root))
-        for port in (5523, 8086):
+        for port in (api_port, 8086):
             check = subprocess.run(['/usr/sbin/lsof', '-nP', f'-iTCP:{port}', '-sTCP:LISTEN', '-t'], capture_output=True)
             if check.returncode not in (0, 1) or check.stdout.strip():
                 raise RuntimeError('occupied_port_existing_process_preserved')
@@ -217,10 +243,12 @@ def main():
                 stdout=output, stderr=subprocess.STDOUT, check=True, timeout=300)
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.simulator-fixture=true',
+                f'-Dnolate.eta.simulator-fixture.port={api_port}',
+                f'-Dnolate.eta.simulator-fixture.incident-odsay-only={str(args.odsay_only).lower()}',
                 '-classpath', (root / 'classpath.txt').read_text(),
                 'com.noLate.eta.simulator.EtaSimulatorFixtureServer', str(root)], cwd=BE,
                 stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        wait(lambda: require_memory_fixture_api(BASE), server)
+        wait(lambda: require_memory_fixture_api(base), server)
         if args.incident_calendar:
             report['classification'] = 'SYNTHETIC_INCIDENT_CALENDAR_INSTALLED_APP_E2E'
             before = phase('prepare-incident-calendar', 'incident-calendar.json')
@@ -235,7 +263,7 @@ def main():
         # Normal mobile transit routing is ODsay-only. A Tmap env variable does
         # not switch it. Blank real keys and opt into the marked local protocol
         # fixture; a missing/invalid opt-in must make zero public provider calls.
-        env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=BASE,
+        env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=base,
                    EXPO_PUBLIC_ODSAY_ISOLATED_SIMULATOR_FIXTURE='1',
                    EXPO_PUBLIC_ODSAY_IOS_API_KEY='', EXPO_PUBLIC_ODSAY_ANDROID_API_KEY='',
                    EXPO_NO_DOTENV='1', REACT_NATIVE_PACKAGER_HOSTNAME='127.0.0.1', CI='1')
@@ -252,10 +280,15 @@ def main():
         emit(state='preparing_owned_metro_entry_before_app_launch')
         report['metroPreparation'] = prepare_private_metro_bundle()
         report['startupTransport'] = open_private_client_with_xcuitest(DEVICE, root / 'ui-private-lifecycle')
+        if args.incident_calendar:
+            ui('testLoginDedicatedEtaAccount', 'ui-legacy-login', target, ('--credentials', str(root / 'credentials.json')))
+            ui('testVerifyIncidentCalendarDeparture', 'ui-legacy-calendar', target)
+            report['reservationAudit'] = audit_incident_reservation(root, before['date'], phase, base, args.odsay_only)
+            report['odsayOnlyJourneyRefresh'] = args.odsay_only
+        # Login to the app after the last API login, which rotates the member session.
         ui('testLoginDedicatedEtaAccount', 'ui-login', target, ('--credentials', str(root / 'credentials.json')))
         if args.incident_calendar:
-            ui('testVerifyIncidentCalendarDeparture', 'ui-incident-calendar', target)
-            report['reservationAudit'] = audit_incident_reservation(root, before['date'], phase)
+            # Agenda display was verified before saving. Open the scoped detail without its calendar overlays.
             subprocess.run(['xcrun', 'simctl', 'openurl', DEVICE, 'nolate://schedule/363'], check=True, timeout=30)
             ui('testVerifyIncidentStationBoard', 'ui-incident-station-board', target)
         else:

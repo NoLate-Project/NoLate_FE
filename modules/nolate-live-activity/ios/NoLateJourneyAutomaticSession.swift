@@ -69,6 +69,7 @@ struct NoLateJourneyAutomaticSession: Sendable {
   private(set) var ride: NoLateJourneyBusRideCore?
   // Subway references and passenger correlation are native-only and never restored as fact.
   private(set) var subway: NoLateJourneySubwayRideCore?
+  private(set) var subwaySeparation: NoLateJourneySubwaySeparationCore?
   var requestedSubwayLegIndex: Int? {
     guard !core.snapshot.status.isTerminal, !walkingHandoffCommitted,
       routeLegs.count > 1, routeLegs[1].kind == "SUBWAY" else { return nil }
@@ -127,8 +128,12 @@ struct NoLateJourneyAutomaticSession: Sendable {
     ride = try Self.prepareRide(rideRoute, binding: binding, approach: prepared.busRoute, armedAt: now)
     alightingRoute = Self.prepareAlighting(rideRoute, binding: binding, json: routeJSON)
     separation = alightingRoute == nil ? nil : rideRoute.map { NoLateJourneyBusSeparationCore(route:$0) }
-    finalWalk = alightingRoute == nil ? nil : rideRoute.flatMap { NoLateJourneyFinalWalkCore.prepare(json:routeJSON,ride:$0) }.map { NoLateJourneyFinalWalkCore(route:$0) }
-    transferWalk = alightingRoute == nil ? nil : rideRoute.flatMap { NoLateJourneyTransferWalkCore.prepare(json:routeJSON,ride:$0) }.map { NoLateJourneyTransferWalkCore(route:$0) }
+    finalWalk = alightingRoute == nil ? nil : rideRoute.flatMap {
+      NoLateJourneyFinalWalkCore.prepare(json:routeJSON,ride:$0,officialBusAdmission:binding.officialBusAdmission)
+    }.map { NoLateJourneyFinalWalkCore(route:$0) }
+    transferWalk = alightingRoute == nil ? nil : rideRoute.flatMap {
+      NoLateJourneyTransferWalkCore.prepare(json:routeJSON,ride:$0,officialBusAdmission:binding.officialBusAdmission)
+    }.map { NoLateJourneyTransferWalkCore(route:$0) }
   }
 
   init(restoring envelope: Envelope, routeJSON: String, bindingJSON: String, now: TimeInterval,
@@ -183,9 +188,13 @@ struct NoLateJourneyAutomaticSession: Sendable {
     ride = try Self.prepareRide(rideRoute, binding: binding, approach: restoredApproach, armedAt: envelope.engine.armedAt)
     alightingRoute = Self.prepareAlighting(rideRoute, binding: binding, json: routeJSON)
     separation = alightingRoute == nil ? nil : rideRoute.map { NoLateJourneyBusSeparationCore(route:$0) }
-    finalWalk = alightingRoute == nil ? nil : rideRoute.flatMap { NoLateJourneyFinalWalkCore.prepare(json:routeJSON,ride:$0) }.map { NoLateJourneyFinalWalkCore(route:$0) }
-    transferWalk = alightingRoute == nil ? nil : rideRoute.flatMap { NoLateJourneyTransferWalkCore.prepare(json:routeJSON,ride:$0) }.map { NoLateJourneyTransferWalkCore(route:$0) }
-    if core.snapshot.status.isTerminal { bus?.stop(now: now); ride?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
+    finalWalk = alightingRoute == nil ? nil : rideRoute.flatMap {
+      NoLateJourneyFinalWalkCore.prepare(json:routeJSON,ride:$0,officialBusAdmission:binding.officialBusAdmission)
+    }.map { NoLateJourneyFinalWalkCore(route:$0) }
+    transferWalk = alightingRoute == nil ? nil : rideRoute.flatMap {
+      NoLateJourneyTransferWalkCore.prepare(json:routeJSON,ride:$0,officialBusAdmission:binding.officialBusAdmission)
+    }.map { NoLateJourneyTransferWalkCore(route:$0) }
+    if core.snapshot.status.isTerminal { bus?.stop(now: now); ride?.stop(); subway?.stop(); subwaySeparation?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
   }
 
   /// True only when a new, valid, fresh location reaches the core's accepted-observation state.
@@ -213,13 +222,21 @@ struct NoLateJourneyAutomaticSession: Sendable {
           if subway == nil { subway = try? NoLateJourneySubwayRideCore(route:input.route,
             armedAt:core.snapshot.armedAt,expiresAt:binding.expiresAtEpochSeconds) }
         }
-        if subway?.route == input.route { subway?.ingest(observation,trains:input.trains,now:now) }
+        if subway?.route == input.route {
+          if finalWalk == nil && subwaySeparation == nil,
+            let walk = NoLateJourneyFinalWalkCore.prepare(json:routeJSON,subway:input.route) {
+            finalWalk = NoLateJourneyFinalWalkCore(route:walk)
+            subwaySeparation = NoLateJourneySubwaySeparationCore(route:input.route,walk:walk)
+          }
+          subway?.ingest(observation,trains:input.trains,now:now)
+        }
       } else {
         // A train feed gap removes train evidence, not passenger GPS continuity.
         // Empty train input can only keep the movement chain and fail closed;
         // it cannot confirm boarding or advance a station marker.
         subway?.ingest(observation,trains:[],now:now)
       }
+      subwaySeparation?.ingest(observation,subway:subway?.snapshot,now:now)
       if !walkingHandoffCommitted { busAccepted = bus?.ingest(observation, now: now) ?? false }
       if !walkingHandoffCommitted, let approach = bus?.snapshot {
         // Same original passenger fix, original vehicle source clocks, same immutable binding.
@@ -235,14 +252,14 @@ struct NoLateJourneyAutomaticSession: Sendable {
           transferWalk = NoLateJourneyTransferWalkCore(route:route)
         }
       }
-      finalWalk?.ingest(observation,separation:separation?.snapshot,now:now)
+      finalWalk?.ingest(observation,separation:separation?.snapshot ?? subwaySeparation?.snapshot,now:now)
       transferWalk?.ingest(observation,separation:separation?.snapshot,now:now)
       if walkingHandoffCommitted { ride?.stop() }
       if finalWalk?.arrived == true {
         core.finishNavigation(now:now)
-        bus?.stop(now:now); ride?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop()
+        bus?.stop(now:now); ride?.stop(); subway?.stop(); subwaySeparation?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop()
       }
-    } else if core.snapshot.status.isTerminal { bus?.stop(now: now); ride?.stop(); subway?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
+    } else if core.snapshot.status.isTerminal { bus?.stop(now: now); ride?.stop(); subway?.stop(); subwaySeparation?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
     let rideAccepted = ride?.snapshot.phase == "RIDING" && ride?.snapshot.quality == "GOOD"
       && ride?.snapshot.observedAt == observedAt && ride?.snapshot.boardingConfirmed == true
     let walkAccepted = finalWalk?.snapshot.phase == "FINAL_WALK" && finalWalk?.snapshot.observedAt == observedAt
@@ -254,11 +271,10 @@ struct NoLateJourneyAutomaticSession: Sendable {
 
   mutating func tick(now: TimeInterval) {
     _ = core.tick(now: now)
-    if core.snapshot.status.isTerminal { subway?.stop() } else { subway?.tick(now:now) }
-    if core.snapshot.status.isTerminal { bus?.stop(now: now); ride?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
-    else { bus?.tick(now: now); ride?.tick(now: now); separation?.tick(now:now); finalWalk?.tick(now:now); transferWalk?.tick(now:now) }
+    if core.snapshot.status.isTerminal { bus?.stop(now: now); ride?.stop(); subway?.stop(); subwaySeparation?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
+    else { bus?.tick(now: now); ride?.tick(now: now); subway?.tick(now:now); subwaySeparation?.tick(now:now); separation?.tick(now:now); finalWalk?.tick(now:now); transferWalk?.tick(now:now) }
   }
-  mutating func stop(now: TimeInterval) { _ = core.stop(now: now); bus?.stop(now: now); ride?.stop(); subway?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
+  mutating func stop(now: TimeInterval) { _ = core.stop(now: now); bus?.stop(now: now); ride?.stop(); subway?.stop(); subwaySeparation?.stop(); separation?.stop(); finalWalk?.stop(); transferWalk?.stop() }
 
   /// Called only with a freshly fenced authenticated transport admission. Repeated equal
   /// leases do not reset history; a changed binding can never replace a live ride.
@@ -279,14 +295,18 @@ struct NoLateJourneyAutomaticSession: Sendable {
     }
     alightingRoute = Self.prepareAlighting(route, binding: binding, json: routeJSON)
     separation = alightingRoute == nil ? nil : NoLateJourneyBusSeparationCore(route:route)
-    finalWalk = alightingRoute == nil ? nil : NoLateJourneyFinalWalkCore.prepare(json:routeJSON,ride:route).map { NoLateJourneyFinalWalkCore(route:$0) }
-    transferWalk = alightingRoute == nil ? nil : NoLateJourneyTransferWalkCore.prepare(json:routeJSON,ride:route).map { NoLateJourneyTransferWalkCore(route:$0) }
+    finalWalk = alightingRoute == nil ? nil : NoLateJourneyFinalWalkCore.prepare(json:routeJSON,ride:route,
+      officialBusAdmission:binding.officialBusAdmission).map { NoLateJourneyFinalWalkCore(route:$0) }
+    transferWalk = alightingRoute == nil ? nil : NoLateJourneyTransferWalkCore.prepare(json:routeJSON,ride:route,
+      officialBusAdmission:binding.officialBusAdmission).map { NoLateJourneyTransferWalkCore(route:$0) }
   }
   /// Missing/expired vehicle admission is distinct from explicit session revocation.
   mutating func expireRideAdmission() {
     // Vehicle polling intentionally stops once a validated handoff commits. Keep only
     // that in-memory walking state; tick/authentication/stop still fence its lifetime.
-    guard !walkingHandoffCommitted else { return }
+    // A subway route has no bus admission. Expiring that absent bus must never
+    // discard its independently prepared station-exit and final-walk reducers.
+    guard bus != nil, !walkingHandoffCommitted else { return }
     disconnectRide()
   }
   mutating func disconnectRide() { retireEvidence(includingBus:false); ride?.stop(); ride = nil; alightingRoute = nil; separation?.stop(); separation = nil; finalWalk?.stop(); finalWalk = nil; transferWalk?.stop(); transferWalk = nil }
@@ -301,7 +321,8 @@ struct NoLateJourneyAutomaticSession: Sendable {
   }
   private static func prepareAlighting(_ route: NoLateJourneyBusRideCore.Route?, binding: Binding, json: String) -> NoLateJourneyBusAlightingPolicy.Route? {
     guard let route, binding.savedRouteValidated == true, binding.guidanceEnabled == true else { return nil }
-    return NoLateJourneyBusAlightingPolicy.prepare(json:json, ride:route)
+    return NoLateJourneyBusAlightingPolicy.prepare(json:json, ride:route,
+      officialBusAdmission:binding.officialBusAdmission)
   }
 
   /// Native-only admission port. Caller must establish provider route/direction/shape mapping
@@ -350,7 +371,12 @@ struct NoLateJourneyAutomaticSession: Sendable {
     }
     if let official = binding.officialBusAdmission {
       let span = official.lastStopSequence.subtractingReportingOverflow(official.firstStopSequence)
-      guard binding.syncScope == "AUTHENTICATED", binding.execution == "DEVICE",
+      #if targetEnvironment(simulator)
+      let isolatedSimulatorBusProof = binding.execution == "SIMULATOR"
+      #else
+      let isolatedSimulatorBusProof = false
+      #endif
+      guard binding.syncScope == "AUTHENTICATED", (binding.execution == "DEVICE" || isolatedSimulatorBusProof),
         official.schemaVersion == 1, official.identityEvidence == "OFFICIAL_STOP_SHAPE_CROSSWALK",
         official.busLegIndex == 1, official.routeId.range(of: "^[1-9][0-9]{8}$", options: .regularExpression) != nil,
         !official.direction.isEmpty, official.direction.utf8.count <= 128,

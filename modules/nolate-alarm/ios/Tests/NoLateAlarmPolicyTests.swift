@@ -143,6 +143,45 @@ final class NoLateAlarmPolicyTests: XCTestCase {
     XCTAssertNotEqual(first, other)
   }
 
+  func testElapsedSlotReconciliationPreservesOnlyTheMatchingScheduledOccurrence() throws {
+    let alarm = timeSensitiveResponseAlarm(generation: 9)
+    let matching = try NoLateAlarmInput.cancel(
+      alarmId: alarm.alarmId,
+      logicalAlarmId: alarm.logicalAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: 9,
+      preserveTriggerAt: "1970-01-01T00:00:02Z"
+    )
+    let superseding = try NoLateAlarmInput.cancel(
+      alarmId: alarm.alarmId,
+      logicalAlarmId: alarm.logicalAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: 10,
+      preserveTriggerAt: "1970-01-01T00:00:02Z"
+    )
+    let explicitCancel = try NoLateAlarmInput.cancel(
+      alarmId: alarm.alarmId,
+      logicalAlarmId: alarm.logicalAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: 9
+    )
+    XCTAssertTrue(NoLateAlarmRecoveryPolicy.preservesScheduledOccurrence(
+      alarm, for: matching, nowMilliseconds: 1_850
+    ))
+    XCTAssertTrue(NoLateAlarmRecoveryPolicy.preservesScheduledOccurrence(
+      alarm, for: matching, nowMilliseconds: 2_001
+    ))
+    XCTAssertFalse(NoLateAlarmRecoveryPolicy.preservesScheduledOccurrence(
+      alarm, for: matching, nowMilliseconds: 2_001 + noLateMissedAlarmGraceMilliseconds
+    ))
+    XCTAssertFalse(NoLateAlarmRecoveryPolicy.preservesScheduledOccurrence(
+      alarm, for: superseding, nowMilliseconds: 1_850
+    ))
+    XCTAssertFalse(NoLateAlarmRecoveryPolicy.preservesScheduledOccurrence(
+      alarm, for: explicitCancel, nowMilliseconds: 1_850
+    ))
+  }
+
   func testRecoveryExpiresOnlyBeyondGraceWindow() {
     let now: Int64 = 1_000_000
 

@@ -1,10 +1,11 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { Alert } from "react-native";
+import { Alert, Text } from "react-native";
 
 const mockGetScheduleCalendars = jest.fn();
 const mockGetScheduleCalendarMembers = jest.fn();
 const mockUpdateScheduleCalendar = jest.fn();
+const mockUpdateMyScheduleCalendarPreferences = jest.fn();
 const mockArchiveScheduleCalendar = jest.fn();
 const mockLeaveScheduleCalendar = jest.fn();
 const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
@@ -19,14 +20,10 @@ jest.mock("../src/modules/performance/ImmediateNavigationTransition", () => ({
         runWithTransitionShell: mockRunWithTransitionShell,
     }),
 }));
-const mockParams: { id?: string } = {};
+const mockParams: { id?: string; view?: string } = {};
 let calendarResponse: ScheduleCalendar[];
 let mockCachedCalendarResponse: ScheduleCalendar[] | null;
 let mockScreenFocused = true;
-let mockSceneActivity: boolean | undefined;
-jest.mock("../src/modules/performance/preMountedSceneActivity", () => ({
-    usePreMountedSceneActivity: () => mockSceneActivity,
-}));
 
 // Preserve alarm-recovery assertions without importing the native ESM navigator.
 jest.mock('@react-navigation/native', () => ({ useIsFocused: () => mockScreenFocused }));
@@ -54,7 +51,8 @@ jest.mock("../src/api/scheduleCalendars", () => ({
         mockLeaveScheduleCalendar(...args),
     removeScheduleCalendarMember: jest.fn(),
     transferScheduleCalendarOwnership: jest.fn(),
-    updateMyScheduleCalendarPreferences: jest.fn(),
+    updateMyScheduleCalendarPreferences: (...args: unknown[]) =>
+        mockUpdateMyScheduleCalendarPreferences(...args),
     updateScheduleCalendar: (...args: unknown[]) =>
         mockUpdateScheduleCalendar(...args),
     updateScheduleCalendarMember: jest.fn(),
@@ -143,10 +141,10 @@ describe("schedule calendar departure-alarm recovery", () => {
         jest.clearAllMocks();
         mockCloseActiveScene.mockReturnValue(false);
         delete mockParams.id;
+        delete mockParams.view;
         calendarResponse = [ownerCalendar];
         mockCachedCalendarResponse = null;
         mockScreenFocused = true;
-        mockSceneActivity = undefined;
         mockGetScheduleCalendarMembers.mockResolvedValue([]);
         mockRecoverDepartureAlarmsAfterMutation.mockResolvedValue(undefined);
         jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
@@ -175,6 +173,61 @@ describe("schedule calendar departure-alarm recovery", () => {
         }
     }
 
+    it.each([false, true])("shows list recovery after a failed load (focused=%s)", async (focused) => {
+        if (focused) Object.assign(mockParams, { id: "7", view: "calendar" });
+        mockGetScheduleCalendars
+            .mockRejectedValueOnce(new Error("503"))
+            .mockResolvedValueOnce([ownerCalendar]);
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleCalendarsScreen />);
+        });
+        const root = renderer!.root;
+        const readText = () => root.findAllByType(Text)
+            .map(node => React.Children.toArray(node.props.children).join("")).join("\n");
+        expect(readText()).toContain("공유 캘린더를 불러오지 못했어요.");
+        expect(readText()).not.toContain("공유 캘린더가 없어요");
+        expect(readText()).not.toContain("이 공유 캘린더를 열 수 없어요.");
+        expect(Alert.alert).not.toHaveBeenCalled();
+        expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await root.findByProps({ accessibilityLabel: "공유 캘린더 목록 다시 불러오기" }).props.onPress();
+        });
+        await flushMicrotasks();
+        expect(readText()).not.toContain("공유 캘린더를 불러오지 못했어요.");
+        expect(readText()).toContain(ownerCalendar.title);
+        expect(mockGetScheduleCalendarMembers).toHaveBeenCalledWith(ownerCalendar.id);
+    });
+
+    it("keeps the last verified calendar rows visible when refresh fails", async () => {
+        await renderScreen();
+        mockGetScheduleCalendars.mockRejectedValueOnce(new Error("503"));
+        const root = renderer!.root;
+        await act(async () => {
+            await root.findByProps({ accessibilityLabel: "공유 캘린더 새로고침" }).props.onPress();
+        });
+        expect(findPressableByText(root, ownerCalendar.title)).toBeDefined();
+        expect(root.findByProps({ accessibilityLabel: "공유 캘린더 목록 다시 불러오기" })).toBeDefined();
+        expect(root.findAllByProps({ accessibilityLabel: "캘린더 설정 불러오는 중" })).toHaveLength(0);
+    });
+
+    it("shows loading for a requested calendar absent from the cached list", async () => {
+        Object.assign(mockParams, { id: "7", view: "calendar" });
+        mockCachedCalendarResponse = [secondOwnerCalendar];
+        const load = deferred<ScheduleCalendar[]>();
+        mockGetScheduleCalendars.mockReturnValueOnce(load.promise);
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleCalendarsScreen />);
+        });
+        const root = renderer!.root;
+        expect(root.findByProps({ accessibilityLabel: "캘린더 불러오는 중" })).toBeDefined();
+        expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalled();
+        await act(async () => load.resolve([ownerCalendar, secondOwnerCalendar]));
+        await flushMicrotasks();
+        expect(root.findAllByProps({ accessibilityLabel: "캘린더 불러오는 중" })).toHaveLength(0);
+        expect(mockGetScheduleCalendarMembers).toHaveBeenCalledWith(ownerCalendar.id);
+    });
+
     it("returns to the previous mounted scene without resetting to the root calendar", async () => {
         mockCloseActiveScene.mockReturnValue(true);
         await renderScreen();
@@ -196,14 +249,16 @@ describe("schedule calendar departure-alarm recovery", () => {
     });
 
     it("keeps the selected calendar as the category screen's return destination", async () => {
-        mockSceneActivity = true;
+        calendarResponse = [ownerCalendar, secondOwnerCalendar];
         await renderScreen();
+        const root = renderer!.root;
+        await act(async () => findPressableByText(root, "업무").props.onPress());
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "가족 카테고리 관리" }).props.onPress();
+            root.findByProps({ accessibilityLabel: "업무 카테고리 관리" }).props.onPress();
         });
         expect(mockRouterPush).toHaveBeenCalledWith({
             pathname: "/schedule/categories",
-            params: { calendarId: "7", calendarTitle: "가족", returnTo: "calendars" },
+            params: { calendarId: "8", calendarTitle: "업무", returnTo: "calendar-stack" },
         });
     });
 
@@ -241,15 +296,22 @@ describe("schedule calendar departure-alarm recovery", () => {
         expect(root.findAllByProps({ accessibilityLabel: "캘린더 이름" })).toHaveLength(0);
     });
 
-    it("does not load a hidden pre-mounted calendar while the underlying navigator is focused", async () => {
-        mockSceneActivity = false;
-        mockScreenFocused = true;
+    it("waits for the calendar manager route to focus before loading its list and members", async () => {
+        mockScreenFocused = false;
+        mockGetScheduleCalendars.mockResolvedValue([ownerCalendar]);
         await act(async () => {
             renderer = TestRenderer.create(<ScheduleCalendarsScreen />);
         });
         await flushMicrotasks();
         expect(mockGetScheduleCalendars).not.toHaveBeenCalled();
         expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalled();
+        await act(async () => {
+            mockScreenFocused = true;
+            renderer!.update(<ScheduleCalendarsScreen />);
+        });
+        await flushMicrotasks();
+        expect(mockGetScheduleCalendars).toHaveBeenCalledTimes(1);
+        expect(mockGetScheduleCalendarMembers).toHaveBeenCalledWith(ownerCalendar.id);
     });
 
     it("does not issue background calendar or member requests", async () => {
@@ -375,6 +437,57 @@ describe("schedule calendar departure-alarm recovery", () => {
         });
 
         expect(mockRecoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
+    });
+
+    it("keeps a saved sharing scope after switching calendars and sends only one pending request", async () => {
+        calendarResponse = [ownerCalendar, secondOwnerCalendar];
+        const update = deferred<ScheduleCalendar>();
+        mockUpdateScheduleCalendar.mockReturnValue(update.promise);
+        await renderScreen();
+
+        const chooseScope = () => renderer!.root.findAllByProps({
+            accessibilityLabel: "일정만",
+        }).find(node => typeof node.props.onPress === "function")!;
+        const action = chooseScope().props.onPress;
+        await act(async () => { action(); action(); });
+        expect(chooseScope().props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+
+        await act(async () => findPressableByText(renderer!.root, secondOwnerCalendar.title).props.onPress());
+        await flushMicrotasks();
+        await act(async () => {
+            update.resolve({ ...ownerCalendar, defaultContentMode: "SCHEDULE_ONLY" });
+            await update.promise;
+        });
+        await flushMicrotasks();
+        expect(chooseScope().props.accessibilityState.selected).toBe(false);
+
+        await act(async () => findPressableByText(renderer!.root, ownerCalendar.title).props.onPress());
+        await flushMicrotasks();
+        expect(chooseScope().props.accessibilityState).toMatchObject({ selected: true, disabled: false });
+        expect(mockUpdateScheduleCalendar).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the saved reminder for its calendar after switching during a request", async () => {
+        calendarResponse = [{ ...ownerCalendar, myRole: "VIEWER" }, secondOwnerCalendar];
+        const update = deferred<ScheduleCalendarMember>();
+        mockUpdateMyScheduleCalendarPreferences.mockReturnValue(update.promise);
+        await renderScreen();
+        const reminder = () => renderer!.root.findAllByProps({ accessibilityLabel: "경로 미설정 알림" })
+            .find(node => typeof node.props.onValueChange === "function")!;
+        await act(async () => { void reminder().props.onValueChange(false); });
+        expect(reminder().props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+        await act(async () => findPressableByText(renderer!.root, secondOwnerCalendar.title).props.onPress());
+        await flushMicrotasks();
+        await act(async () => {
+            update.resolve({ ...familyMember, routeReminderEnabled: false });
+            await update.promise;
+        });
+        expect(reminder().props.value).toBe(true);
+
+        await act(async () => findPressableByText(renderer!.root, ownerCalendar.title).props.onPress());
+        await flushMicrotasks();
+        expect(reminder().props.value).toBe(false);
+        expect(mockUpdateMyScheduleCalendarPreferences).toHaveBeenCalledWith(ownerCalendar.id, false);
     });
 
     it("does not recover when travel sharing is upgraded", async () => {

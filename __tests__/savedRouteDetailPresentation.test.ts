@@ -12,6 +12,27 @@ const origin = { name: "서울시청", lat: 37.5666, lng: 126.9784 };
 const destination = { name: "강남역", lat: 37.4979, lng: 127.0276 };
 
 describe("saved route detail presentation", () => {
+    test("uses saved places for legacy endpoint placeholders and retains specific endpoint titles", () => {
+        const option: RouteAlternativeOption = {
+            id: "legacy-endpoints", mode: "TRANSIT", source: "api", minutes: 17,
+            transitLegs: [{ kind: "SUBWAY", label: "2호선", durationMinutes: 17 }],
+        };
+        const routeInfo = buildRouteInfoFromAlternative(option);
+        const endpointTitles = (steps: typeof routeInfo.steps) =>
+            steps.filter(step => step.type === "ORIGIN" || step.type === "DESTINATION").map(step => step.title);
+
+        for (const routeAlternative of [undefined, option]) {
+            const result = buildSavedRouteDetailInfo({ route: { routeInfo }, routeAlternative, origin, destination });
+            expect(endpointTitles(result!.steps)).toEqual(["서울시청", "강남역"]);
+        }
+        const boardingEntrance = {
+            ...routeInfo,
+            steps: routeInfo.steps.map(step => step.type === "ORIGIN" ? { ...step, title: "시청역 5번 출구" } : step),
+        };
+        const result = buildSavedRouteDetailInfo({ route: { routeInfo: boardingEntrance }, routeAlternative: option, origin, destination });
+        expect(endpointTitles(result!.steps)).toEqual(["시청역 5번 출구", "강남역"]);
+    });
+
     test("uses source seconds when rebasing a saved display and no longer labels shifted clocks as timetable", () => {
         const option: RouteAlternativeOption = {
             id: "seconds", mode: "TRANSIT", source: "api", minutes: 3, totalDurationSeconds: 141,
@@ -38,9 +59,10 @@ describe("saved route detail presentation", () => {
         };
         const routeInfo = buildRouteInfoFromAlternative(routeAlternative, origin, destination);
         routeInfo.steps[2] = { ...routeInfo.steps[2], type: "TRANSFER", title: "환승", durationMinutes: undefined };
+        delete routeInfo.steps[3].journeyPhase;
         const restored = buildSavedRouteDetailInfo({ route: { routeInfo }, routeAlternative, origin, destination });
         expect(restored?.steps[2]).toMatchObject({ type: "WALK", title: "도보", durationMinutes: 3, distanceMeters: 120 });
-        expect(restored?.steps[3]).toMatchObject({ type: "TRANSFER", title: "환승 대기", durationMinutes: 2 });
+        expect(restored?.steps[3]).toMatchObject({ type: "TRANSFER", title: "환승 대기", durationMinutes: 2, journeyPhase: "BUFFER" });
     });
     test("불완전 경로를 병합하거나 출발 시각을 적용해도 누락된 시간 정보를 생성하지 않는다", () => {
         const route = { id: 'public-preview', mode: 'TRANSIT', transitLegs: [

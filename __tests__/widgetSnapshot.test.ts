@@ -128,4 +128,26 @@ describe("NoLate widget snapshot", () => {
             NO_LATE_WIDGET_MAX_SCHEDULES,
         );
     });
+
+    it("keeps upcoming appointments when today's finished events would fill the widget payload", () => {
+        const reference = new Date(2026, 7, 24, 9);
+        const relativeTime = (minutes: number) => new Date(reference.getTime() + minutes * 60_000).toISOString();
+        const past = Array.from({ length: NO_LATE_WIDGET_MAX_SCHEDULES }, (_, index) =>
+            schedule({
+                id: `finished-${index}`,
+                startAt: relativeTime(-index - 2),
+                endAt: relativeTime(-index - 1),
+            }),
+        );
+        const snapshot = buildNoLateWidgetSnapshot([
+            ...past,
+            schedule({ id: "all-day-ended", allDay: true, startAt: relativeTime(-1440), endAt: relativeTime(0) }),
+            schedule({ id: "all-day-today", allDay: true, startAt: relativeTime(-540), endAt: relativeTime(-60) }),
+            schedule({ id: "timed-ending-now", startAt: relativeTime(-60), endAt: relativeTime(0) }),
+            schedule({ id: "next", startAt: relativeTime(60), endAt: relativeTime(90) }),
+            schedule({ id: "next-tomorrow", startAt: relativeTime(1500), endAt: relativeTime(1530) }),
+        ], reference);
+
+        expect(snapshot.schedules.map((item) => item.id)).toEqual(["all-day-today", "timed-ending-now", "next", "next-tomorrow"]);
+    });
 });

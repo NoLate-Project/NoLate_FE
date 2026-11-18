@@ -45,6 +45,7 @@ export type DetailMonthPageModel = {
 
 export type DetailMonthPagerGridProps = {
     day: string;
+    selectedDay?: string;
     firstDay: 0 | 1;
     markedDates: React.ComponentProps<typeof Calendar>["markedDates"];
     calendarDaysByDate: Readonly<Record<string, CalendarDayMetadata>>;
@@ -411,30 +412,11 @@ export function useDetailMonthPagerSelectionGlyph({
         const text = isInWindow && selectedDate > 0
             ? String(selectedDate)
             : "";
-        const isAccessibleSelection = position === 0
-            && isInWindow
-            && selectedKey > 0;
-        const selectedYear = Math.floor(selectedKey / 10_000);
-        const selectedMonth = Math.floor((selectedKey % 10_000) / 100);
-        const lunarText = isInWindow
-            ? animatedLunarTextByDayKey.value[selectedKey] ?? ""
-            : "";
-        const accessibilityLabel = isAccessibleSelection
-            ? `${selectedYear}년 ${selectedMonth}월 ${selectedDate}일, 선택됨${
-                selectedKey === todayKey ? ", 오늘" : ""
-            }${lunarText ? `, ${lunarText}` : ""}`
-            : "";
         return {
             text,
             defaultValue: text,
-            accessibilityLabel,
-            accessible: isAccessibleSelection,
-            accessibilityElementsHidden: !isAccessibleSelection,
-            importantForAccessibility: isAccessibleSelection
-                ? "yes"
-                : "no-hide-descendants",
         };
-    }, [position, todayKey]);
+    }, [position]);
     const animatedLunarProps = useAnimatedProps(() => {
         const targetOrdinal = visualMonthOrdinal.value + position;
         const slotId = targetOrdinal - windowStartOrdinal.value;
@@ -463,7 +445,7 @@ export function useDetailMonthPagerSelectionGlyph({
     };
 }
 
-/** 세 페이저 위치의 선택 표시를 격자 위에 합성하고 현재 선택만 접근성 대상으로 노출한다. */
+/** 세 페이저 위치의 시각적 선택 표시를 격자 위에 합성한다. */
 export function DetailMonthPagerSelectionLayer({
     children,
     pageWidth,
@@ -530,7 +512,8 @@ export function DetailMonthPagerSelectionLayer({
                         testID={`detail-month-selection-${glyph.key}`}
                         pointerEvents="none"
                         accessible={false}
-                        importantForAccessibility="no"
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
                         style={[
                             styles.detailMonthSelectionGlyph,
                             { backgroundColor: selectedDayBackground },
@@ -543,9 +526,7 @@ export function DetailMonthPagerSelectionLayer({
                             editable={false}
                             caretHidden
                             pointerEvents="none"
-                            accessibilityState={glyph.position === 0
-                                ? { selected: true }
-                                : undefined}
+                            accessible={false}
                             defaultValue={String(initialKey % 100)}
                             animatedProps={glyph.animatedDayProps as never}
                             underlineColorAndroid="transparent"

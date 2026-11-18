@@ -1,9 +1,11 @@
 import type { Place } from '../schedule/types';
-import { getRouteInfoFromRoute } from '../schedule/routeInfo';
+import { getRouteInfoFromRoute, type RouteInfo } from '../schedule/routeInfo';
 
 import type { TmapLatLng, TmapPathOverlay } from './TmapMapView';
 
 import { applyTransitRouteThemeToOverlay } from './transitRoutePresentation';
+import { requiresSegmentedTransitPath } from './transitRouteGeometry';
+import type { RouteAlternativeOption, TransitLegDetail } from './routingService';
 
 import {
   compactConsecutiveMapCoords,
@@ -13,6 +15,7 @@ import {
   distinctMapCoords,
   toMapCoord,
   getSavedTransitLegCoords,
+  getSavedTransitLegStationCoords,
   type SavedRouteMapPresentation,
   type SavedRouteMapPresentationInput,
 } from './savedRouteMapGeometry';
@@ -47,6 +50,21 @@ export {
 } from './savedRouteMapGeometry';
 export { getSavedTransitLegBoardCoord } from './savedRouteMapMarkers';
 
+function canUseAggregatePath(
+  legs: TransitLegDetail[],
+  guidanceWalkingPaths: SavedRouteMapPresentationInput['guidanceWalkingPaths'],
+): boolean {
+  // A flattened path can reconnect rail or intercity bus segments without line geometry.
+  return !legs.some(leg => requiresSegmentedTransitPath(leg.kind)) && legs.some(
+    (leg, index) => !(leg.kind === 'WALK' && guidanceWalkingPaths?.has(index)) &&
+      getSavedTransitLegCoords(leg).length < 2,
+  );
+}
+
+function hasSegmentedTransitSteps(routeInfo: RouteInfo | undefined, option?: RouteAlternativeOption): routeInfo is RouteInfo {
+  return (!option || option.mode === 'TRANSIT') && routeInfo?.steps.some(step => requiresSegmentedTransitPath(step.type)) === true;
+}
+
 /** 저장 presentation 중 실제로 채택될 geometry만 사용해 고정 bounds를 만든다. */
 export function getSavedRouteFitCoords(
   route: unknown,
@@ -65,6 +83,7 @@ export function getSavedRouteFitCoords(
     placeCoord(destination),
   );
   const storedOverlays = parseStoredPathOverlays(route);
+  const legacyRouteInfo = legs.length === 0 ? getRouteInfoFromRoute(route) : undefined;
   let activeGeometry: TmapLatLng[];
 
   if (routeOption?.mode === 'TRANSIT' && legs.length > 0) {
@@ -87,20 +106,20 @@ export function getSavedRouteFitCoords(
         leg !== storedLegs[legIndex]
           ? undefined
           : storedOverlayIndexByLeg.get(legIndex);
-      return typeof overlayIndex === 'number'
+      const coords = typeof overlayIndex === 'number'
         ? storedOverlays[overlayIndex]?.coords ?? getSavedTransitLegCoords(leg)
         : getSavedTransitLegCoords(leg);
+      return coords.length < 2 && requiresSegmentedTransitPath(leg.kind) ? getSavedTransitLegStationCoords(leg) : coords;
     });
-    const hasMissingLegGeometry = legs.some(
-      (leg, index) => !(leg.kind === 'WALK' && guidanceWalkingPaths?.has(index)) && getSavedTransitLegCoords(leg).length < 2,
-    );
-    const routeFallback = hasMissingLegGeometry
+    const routeFallback = canUseAggregatePath(legs, guidanceWalkingPaths)
       ? getExplicitSavedRouteRootPathCoords(route)
       : [];
     activeGeometry =
       routeFallback.length >= 2
         ? [...routeFallback, ...legGeometry]
         : legGeometry;
+  } else if (hasSegmentedTransitSteps(legacyRouteInfo, routeOption)) {
+    activeGeometry = buildRouteInfoPathOverlays(legacyRouteInfo, 13, false).flatMap(overlay => overlay.coords);
   } else if (storedOverlays.length > 0) {
     activeGeometry = storedOverlays.flatMap(overlay => overlay.coords);
   } else {
@@ -148,11 +167,15 @@ export function buildSavedRouteMapPresentation({
           pathCoords: normalizedTransitPath ?? storedRouteOption.pathCoords,
         }
       : storedRouteOption;
+  // Some older schedules retain a timeline and a flattened map line, but no provider legs.
+  const legacyTransitOverlays = routeLegs.length === 0 && hasSegmentedTransitSteps(routeInfo, routeOption)
+    ? buildRouteInfoPathOverlays(routeInfo, mapZoom, isDark)
+    : undefined;
   const pathCoords =
     routeOption?.mode === 'TRANSIT' && routeLegs.length > 0
       ? compactConsecutiveMapCoords(routeLegs.flatMap((leg, index) =>
           leg.kind === 'WALK' && guidanceWalkingPaths?.has(index) ? guidanceWalkingPaths.get(index)! : getSavedTransitLegCoords(leg)))
-      : getSavedRoutePathCoords(route, routeLegs);
+      : legacyTransitOverlays?.flatMap(overlay => overlay.coords) ?? getSavedRoutePathCoords(route, routeLegs);
   const storedOverlays = parseStoredPathOverlays(route);
   let pathOverlays: TmapPathOverlay[];
 
@@ -208,10 +231,7 @@ export function buildSavedRouteMapPresentation({
             return styled ? [styled] : [];
           })
         : [];
-    const hasMissingLegGeometry = routeLegs.some(
-      (leg, index) => !(leg.kind === 'WALK' && guidanceWalkingPaths?.has(index)) && getSavedTransitLegCoords(leg).length < 2,
-    );
-    const explicitRootPath = hasMissingLegGeometry
+    const explicitRootPath = canUseAggregatePath(routeLegs, guidanceWalkingPaths)
       ? getExplicitSavedRouteRootPathCoords(route)
       : [];
     const fallbackOverlay =
@@ -252,6 +272,8 @@ export function buildSavedRouteMapPresentation({
         applyTransitRouteThemeToOverlay(overlay, mapZoom, 'dark'),
       );
     }
+  } else if (legacyTransitOverlays) {
+    pathOverlays = legacyTransitOverlays;
   } else if (storedOverlays.length && routeOption) {
     // 저장본에서는 경로 geometry와 안정적인 id만 복원한다. 선 색상·폭·점선·casing·
     // 방향 표시는 현재 줌/모드/테마 정책으로 다시 계산해 구형 presentation이 살아나지 않게 한다.

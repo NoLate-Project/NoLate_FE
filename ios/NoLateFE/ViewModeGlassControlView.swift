@@ -58,6 +58,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
   @Published var colorScheme: String
   @Published var viewModeVariant: String
   @Published var showsViewModeButton: Bool
+  @Published var showsViewModeIcon = false
   @Published var prototypeTapRequest = 0
   @Published var prototypeCloseRequest = 0
   @Published var prototypeAddMenuRequest = 0
@@ -193,6 +194,10 @@ final class LiquidCalendarMenuPrototypeView: UIView {
     didSet {
       model.showsViewModeButton = showsViewModeButton
     }
+  }
+
+  @objc var showsViewModeIcon: Bool = false {
+    didSet { model.showsViewModeIcon = showsViewModeIcon }
   }
 
   @objc var tapRequest: NSNumber = 0 {
@@ -991,15 +996,20 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private let collapsedHeight: CGFloat = 44
   private let searchExpandedHeight: CGFloat = 52
   private let collapsedSlotWidth: CGFloat = 50
+  private let wideViewModeSlotWidth: CGFloat = 62
+  private var secondarySlotWidth: CGFloat {
+    model.showsViewModeButton && model.showsViewModeIcon
+      ? (collapsedWidth - wideViewModeSlotWidth) / 2 : collapsedSlotWidth
+  }
   private let viewExpandedWidth: CGFloat = 251
   private let addExpandedWidth: CGFloat = 238
   private let addExpandedHeight: CGFloat = 212
   private let collapsedRadius: CGFloat = 22
   private let expandedRadius: CGFloat = 26
   private let calendarOptions: [ViewModeGlassOption] = [
-    ViewModeGlassOption(id: "stack", label: "스택형"),
-    ViewModeGlassOption(id: "detail", label: "상세형"),
-    ViewModeGlassOption(id: "list", label: "목록형"),
+    ViewModeGlassOption(id: "stack", label: "스택형", subtitle: "날짜 칸 안에 일정"),
+    ViewModeGlassOption(id: "detail", label: "상세형", subtitle: "월 달력과 선택한 날의 일정"),
+    ViewModeGlassOption(id: "list", label: "목록형", subtitle: "날짜순 일정 목록"),
   ]
   private let timelineOptions: [ViewModeGlassOption] = [
     ViewModeGlassOption(id: "day", label: "일간"),
@@ -1102,32 +1112,23 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         .opacity(refractionOpacity)
         .allowsHitTesting(false)
 
-      expandedContent
-        // Lay rows out once at their final size. Binding their layout height to
-        // `surfaceHeight` compressed three 43pt add rows into the intermediate
-        // 44–164pt pill and made labels/icons visibly stack over each other.
-        // The morphing liquid shape is the mask; it reveals this stable layout.
-        .frame(
-          width: targetExpandedWidth,
-          height: targetExpandedHeight,
-          // Search content already tracks `surfaceWidth`. Pinning that child to
-          // the same trailing edge as the morph mask keeps its icons visible
-          // during the first narrow frames instead of revealing an empty pill.
-          alignment: activeAction == .search ? .topTrailing : .top
-        )
-        .opacity(expandedContentOpacity)
-        .offset(y: expandedContentOffsetY)
-        .scaleEffect(expandedContentScale, anchor: .topTrailing)
-        // Search becomes visible before the width morph completes. Give that
-        // visible field ownership immediately so a rapid second tap cannot
-        // fall through to the dismiss backdrop and reverse the transition.
-        .allowsHitTesting(
-          (
-            phase == .expanded
-              || (activeAction == .search && phase == .expanding)
+      if phase != .collapsed {
+        let expandingSearch = activeAction == .search && phase == .expanding
+        let acceptsInput = (phase == .expanded || expandingSearch) && !addHandoffSelectionPending
+        expandedContent
+          // Lay rows out at their final size while the morphing shape reveals them.
+          .frame(
+            width: targetExpandedWidth,
+            height: targetExpandedHeight,
+            alignment: activeAction == .search ? .topTrailing : .top
           )
-            && !addHandoffSelectionPending
-        )
+          .opacity(expandedContentOpacity)
+          .offset(y: expandedContentOffsetY)
+          .scaleEffect(expandedContentScale, anchor: .topTrailing)
+          // Search takes touch input before its width animation finishes.
+          .allowsHitTesting(acceptsInput)
+          .accessibilityHidden(!acceptsInput || !contentVisible)
+      }
 
       if phase != .expanded {
         collapsedContent
@@ -1135,6 +1136,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           .opacity(collapsedContentOpacity)
           .offset(y: collapsedContentOffsetY)
           .allowsHitTesting(phase == .collapsed)
+          .accessibilityHidden(phase != .collapsed)
           .frame(width: surfaceWidth, height: surfaceHeight, alignment: .topTrailing)
       }
     }
@@ -1374,13 +1376,26 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         Button {
           openMenu(.view)
         } label: {
-          CalendarOutlineIcon(symbol: "toolbar.view", fallback: "rectangle.stack")
-          .frame(width: collapsedSlotWidth, height: collapsedHeight)
+          HStack(spacing: 2) {
+            if model.showsViewModeIcon {
+              ViewModeGlyphMark(mode: model.selectedMode, color: collapsedGlyphColor, size: 12)
+            }
+            Text(selectedViewModeLabel)
+              .font(.system(size: 11, weight: .semibold))
+              .lineLimit(1)
+              .minimumScaleFactor(0.8)
+            CalendarOutlineIcon(symbol: "chevron.down", size: 9)
+              .accessibilityHidden(true)
+          }
+          .padding(.horizontal, 2)
+          .frame(width: model.showsViewModeIcon ? wideViewModeSlotWidth : collapsedSlotWidth, height: collapsedHeight)
+          .contentShape(Rectangle())
         }
         .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
         .disabled(model.disabled)
         .accessibilityLabel("보기 방식, 현재 \(selectedViewModeLabel)")
         .accessibilityHint("보기 방식 메뉴 열기")
+        .accessibilityIdentifier("calendar-toolbar-view-mode")
         .transition(pillButtonTransition)
       }
 
@@ -1389,7 +1404,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         openMenu(.search)
       } label: {
         CalendarOutlineIcon(symbol: "magnifyingglass", size: 22)
-          .frame(width: collapsedSlotWidth, height: collapsedHeight)
+          .frame(width: secondarySlotWidth, height: collapsedHeight)
+          .contentShape(Rectangle())
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
       .disabled(model.disabled)
@@ -1401,7 +1417,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         openMenu(.add)
       } label: {
         CalendarOutlineIcon(symbol: "plus", size: 22)
-          .frame(width: collapsedSlotWidth, height: collapsedHeight)
+          .frame(width: secondarySlotWidth, height: collapsedHeight)
+          .contentShape(Rectangle())
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
       .disabled(model.disabled || compactAddInteractionLocked)
@@ -1460,10 +1477,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var viewExpandedHeight: CGFloat {
-    // Three rows, the list divider, spacing, and padding resolve to roughly
-    // 169pt. Keep the same ~10pt layout headroom as the former four-row 220pt
-    // menu; shrinking to the exact 170pt sum can strand collapsed controls over
-    // the morphing menu, while 220pt leaves a visibly empty fourth-row space.
+    // Leave room around the rows as the glass surface morphs.
     isTimelineVariant ? 106 : 180
   }
 
@@ -1564,29 +1578,24 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       ForEach(options) { option in
         let selected = option.id == model.selectedMode
 
-        if option.id == "list" {
-          Divider()
-            .overlay(expandedRowStroke)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 9.5)
-        }
-
         Button {
           selectMode(option.id)
         } label: {
           ViewModeGlassRow(
             mode: option.id,
             label: option.label,
+            subtitle: option.subtitle,
             selected: selected,
-            foregroundColor: selected ? expandedPrimaryColor : expandedSecondaryColor,
+            foregroundColor: selected || option.subtitle != nil ? expandedPrimaryColor : expandedSecondaryColor,
+            secondaryColor: expandedSecondaryColor,
             selectedFill: expandedRowFill,
             selectedTint: expandedRowTint,
-            selectedStroke: expandedRowStroke,
-            showsSelectionIndicator: false
+            selectedStroke: expandedRowStroke
           )
         }
         .buttonStyle(.plain)
         .accessibilityLabel(option.label)
+        .accessibilityHint(option.subtitle ?? "")
         .accessibilityAddTraits(selected ? .isSelected : [])
       }
     }
@@ -1721,7 +1730,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var selectedViewModeLabel: String {
-    options.first(where: { $0.id == model.selectedMode })?.label ?? "미지정"
+    if !isTimelineVariant && model.selectedMode == "week" { return "주간" }
+    return options.first(where: { $0.id == model.selectedMode })?.label ?? "보기"
   }
 
   private var surfaceWidth: CGFloat {
@@ -1943,7 +1953,12 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     guard expansionPending, phase == .collapsed, hostReady else { return }
 
     let action = activeAction
-    let morphDuration = action == .search ? SearchOpenMotion.morphDuration : 0.20
+    let morphDuration: Double
+    switch action {
+    case .search: morphDuration = SearchOpenMotion.morphDuration
+    case .view: morphDuration = isTimelineVariant ? 0.20 : 0.17
+    case .add: morphDuration = 0.20
+    }
     let completionDelay = morphDuration
     transitionGeneration += 1
     let generation = transitionGeneration
@@ -2070,6 +2085,11 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         collapsedContentVisible = true
         phase = .collapsed
       }
+      // Clear the field only after the closing surface no longer shows it.
+      if !model.searchQuery.isEmpty {
+        model.searchQuery = ""
+        model.handleSearchTextChange("")
+      }
       model.handleOpenChange(false)
     }
   }
@@ -2141,12 +2161,6 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private func closeSearchActionIfNeeded() {
     guard activeAction == .search, phase == .expanded || phase == .expanding else { return }
-
-    if !model.searchQuery.isEmpty {
-      model.searchQuery = ""
-      model.handleSearchTextChange("")
-    }
-
     model.handleSearchClose()
   }
 
@@ -2248,15 +2262,17 @@ private struct LiquidToolbarIconButtonStyle: ButtonStyle {
 private struct ViewModeGlyphMark: View {
   let mode: String
   let color: Color
+  var size: CGFloat = 20
 
   var body: some View {
-    CalendarOutlineIcon(symbol: "view.\(normalizedMode)", fallback: fallbackSymbol, size: 20)
+    CalendarOutlineIcon(symbol: "view.\(normalizedMode)", fallback: fallbackSymbol, size: size)
       .foregroundStyle(color)
   }
 
   private var normalizedMode: String {
     switch mode {
     case "day", "multi", "stack", "detail", "list": return mode
+    case "week": return "day"
     case "compact": return "detail"
     default: return "stack"
     }
@@ -2276,64 +2292,55 @@ private struct ViewModeGlyphMark: View {
 private struct ViewModeGlassRow: View {
   let mode: String?
   let label: String
+  let subtitle: String?
   let selected: Bool
   let foregroundColor: Color
+  let secondaryColor: Color
   let selectedFill: Color
   let selectedTint: Color
   let selectedStroke: Color
-  let showsSelectionIndicator: Bool
-
-  init(
-    mode: String? = nil,
-    label: String,
-    selected: Bool,
-    foregroundColor: Color = Color.white,
-    selectedFill: Color = Color.white.opacity(0.08),
-    selectedTint: Color = Color.white.opacity(0.14),
-    selectedStroke: Color = Color.white.opacity(0.16),
-    showsSelectionIndicator: Bool = true
-  ) {
-    self.mode = mode
-    self.label = label
-    self.selected = selected
-    self.foregroundColor = foregroundColor
-    self.selectedFill = selectedFill
-    self.selectedTint = selectedTint
-    self.selectedStroke = selectedStroke
-    self.showsSelectionIndicator = showsSelectionIndicator
-  }
 
   var body: some View {
     ZStack(alignment: .leading) {
       selectedBackground
 
-      HStack(spacing: showsSelectionIndicator ? 3 : 12) {
+      HStack(spacing: 12) {
         if let mode {
           ViewModeGlyphMark(mode: mode, color: foregroundColor)
             .frame(width: 26, height: 26)
             .frame(width: 32)
         }
 
-        Text(label)
-          .font(.system(size: 16, weight: selected ? .bold : .semibold))
-          .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(label)
+            .font(.system(size: 16, weight: selected ? .bold : .semibold))
+          if let subtitle {
+            Text(subtitle)
+              .font(.system(size: 11, weight: .medium))
+              .foregroundStyle(secondaryColor)
+          }
+        }
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        if subtitle != nil {
+          CalendarOutlineIcon(symbol: "checkmark", size: 15)
+            .foregroundStyle(Color.accentColor)
+            .opacity(selected ? 1 : 0)
+            .accessibilityHidden(true)
+        }
       }
       .foregroundStyle(foregroundColor)
-      .padding(.horizontal, showsSelectionIndicator ? 9 : 12)
-
-      if showsSelectionIndicator && selected {
-        CalendarOutlineIcon(symbol: "checkmark", size: 20)
-          .foregroundStyle(foregroundColor)
-          .frame(width: 22, height: 40)
-        .offset(x: -9)
-      }
+      .padding(.horizontal, 12)
     }
-    .frame(height: 40)
+    .frame(height: subtitle == nil ? 40 : 48)
+    // Keep the transparent part of an unselected row inside the button label's hit area.
+    .contentShape(Rectangle())
   }
 
   @ViewBuilder
   private var selectedBackground: some View {
-    if selected && !showsSelectionIndicator {
+    if selected {
       if #available(iOS 26.0, *) {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
           .fill(selectedFill)
@@ -2360,4 +2367,5 @@ private struct ViewModeGlassRow: View {
 private struct ViewModeGlassOption: Identifiable {
   let id: String
   let label: String
+  var subtitle: String? = nil
 }

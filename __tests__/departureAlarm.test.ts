@@ -160,7 +160,8 @@ describe("departure alarm native facade", () => {
         expect(upsertAlarm).not.toHaveBeenCalled();
     });
 
-    it("tombstones elapsed/missing v2 slots and schedules only future occurrences", async () => {
+    it.each(["ios", "android"] as const)("reconciles elapsed v2 slots on %s and only upserts future occurrences", async platform => {
+        Object.defineProperty(Platform, "OS", { configurable: true, value: platform });
         const upsertAlarm = jest.fn().mockResolvedValue({ applied: true, scheduled: true });
         const cancelAlarm = jest.fn().mockResolvedValue({ applied: true, scheduled: false });
         mockOptionalNativeModule.mockReturnValue({ upsertAlarm, cancelAlarm });
@@ -221,12 +222,19 @@ describe("departure alarm native facade", () => {
             logicalAlarmId: "schedule:41:member:7",
             generation: 8,
         }));
-        expect(cancelAlarm).toHaveBeenCalledWith(expect.objectContaining({
+        expect(cancelAlarm).toHaveBeenCalledWith({
             alarmId: "schedule:41:member:7:occurrence:M15",
-        }));
-        expect(cancelAlarm).toHaveBeenCalledWith(expect.objectContaining({
+            logicalAlarmId: "schedule:41:member:7",
+            scheduleId: "41",
+            generation: 8,
+            ...(platform === "ios" ? { preserveTriggerAt: "2026-08-04T00:59:00Z" } : {}),
+        });
+        expect(cancelAlarm).toHaveBeenCalledWith({
             alarmId: "schedule:41:member:7:occurrence:M5",
-        }));
+            logicalAlarmId: "schedule:41:member:7",
+            scheduleId: "41",
+            generation: 8,
+        });
         expect(upsertAlarm).toHaveBeenCalledTimes(2);
         expect(upsertAlarm).toHaveBeenNthCalledWith(1, expect.objectContaining({
             alarmId: "schedule:41:member:7:occurrence:M10",

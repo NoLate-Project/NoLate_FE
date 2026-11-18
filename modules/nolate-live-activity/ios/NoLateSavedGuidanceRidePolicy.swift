@@ -62,22 +62,27 @@ enum NoLateSavedGuidanceRidePolicy {
         source >= session.binding.preparedAtEpochSeconds - 15, source <= received, received <= now,
         source <= now, until > now, until <= source + 15, until > source else { return [] }
       var past: Double?
+      var ambiguous = false
       if (integer(body["schemaVersion"]) ?? 0) >= 2 {
         switch row["positionScope"] as? String {
-        case "SELECTED_SEGMENT": guard row["metersPastAlighting"] == nil || row["metersPastAlighting"] is NSNull else { return [] }
-        case "AFTER_ALIGHTING":
+        case "SELECTED_SEGMENT", "AMBIGUOUS_SELECTED_SEGMENT":
+          guard row["metersPastAlighting"] == nil || row["metersPastAlighting"] is NSNull else { return [] }
+          ambiguous = row["positionScope"] as? String == "AMBIGUOUS_SELECTED_SEGMENT"
+        case "AFTER_ALIGHTING", "AMBIGUOUS_AFTER_ALIGHTING":
           guard admission.route.departureWindowMeters > 0, let meters = number(row["metersPastAlighting"]),
             meters > 25, meters <= admission.route.departureWindowMeters,
             let end = admission.route.approach.coordinates.last else { return [] }
           let distance = NoLateJourneyBusSeparationCore.distance(end, .init(latitude:latitude,longitude:longitude))
           guard distance > 25, distance <= meters + 25 else { return [] }
           past = meters
+          ambiguous = row["positionScope"] as? String == "AMBIGUOUS_AFTER_ALIGHTING"
         default: return []
         }
       } else if row["positionScope"] != nil || row["metersPastAlighting"] != nil { return [] }
       result.append(.init(id: id, routeId: admission.route.providerRouteId, direction: admission.route.direction,
         coordinate: .init(latitude: latitude, longitude: longitude), sourceAt: source, receivedAt: received,
-        validUntil: until, source: .verifiedWGS84, metersPastAlighting:past))
+        validUntil: until, source: .verifiedWGS84, metersPastAlighting:past,
+        shapeOccurrenceAmbiguous: ambiguous))
     }
     return result
   }

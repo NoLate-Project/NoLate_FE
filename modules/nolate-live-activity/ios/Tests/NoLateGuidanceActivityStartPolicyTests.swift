@@ -24,12 +24,23 @@ final class NoLateGuidanceActivityStartPolicyTests: XCTestCase {
   }
   func testExpiredStaleOrMalformedPreparationDoesNotClaimReady() {
     for bad in [value(until: 1000), value(until: .nan), value(quality: "GOOD"), value(progress: 0),
-      value(status: "STOPPED"), value(phase: "RIDING"), value(observed: 1000)] {
+      value(phase: "RIDING"), value(observed: 1000)] {
       XCTAssertFalse(NoLateGuidanceActivityStartPolicy.allows(bad, legs: legs, now: 1000, foreground: true, remotePilot: false))
       XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(bad, legs: legs, now: 1000).title, "위치 확인 중")
     }
     XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(value(), legs: legs, now: 1000, isStale: true).title, "위치 확인 중")
     XCTAssertFalse(NoLateGuidanceActivityStartPolicy.allows(value(), legs: Array(legs.prefix(2)), now: 1000, foreground: true, remotePilot: false))
+  }
+  func testTerminalContentShowsEndedStateWithoutStartingAnActivity() {
+    for status in ["STOPPED", "EXPIRED"] {
+      let terminal = value(status: status)
+      XCTAssertFalse(NoLateGuidanceActivityStartPolicy.allows(terminal, legs: legs, now: 1000, foreground: true, remotePilot: false))
+      let presentation = NoLateGuidancePresentationPolicy.presentation(terminal, legs: legs, now: 1000, isStale: true)
+      XCTAssertEqual(presentation.title, "위치 안내를 종료했어요")
+      XCTAssertEqual(presentation.action, "저장한 경로는 일정에서 볼 수 있어요")
+      XCTAssertEqual(presentation.compact, "안내 종료")
+      XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(terminal, legs: legs, now: 1000))
+    }
   }
   func testActiveRequiresOriginalFreshGPSDeadlineInBothModes() {
     let content = value(status: "ACTIVE", phase: "WALKING_TO_STOP", quality: "GOOD", progress: 0.2, observed: 1000, until: 1015)

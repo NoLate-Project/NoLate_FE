@@ -54,6 +54,7 @@ type PaddedBoundsCameraOptions = {
     minimumSpanMeters?: number;
     boundsPaddingFactor?: number;
     wholeZoomLevels?: boolean;
+    cameraScaleSample?: { latitude: number; zoom: number; metersPerPixel?: number };
 };
 
 type InitialRouteCameraReadiness = {
@@ -126,6 +127,7 @@ export function getRouteOverviewFitKey(identity: RouteOverviewFitIdentity): stri
 
 const WEB_MERCATOR_MAX_LATITUDE = 85.05112878;
 const WEB_MERCATOR_TILE_SIZE = 256;
+const EQUATOR_METERS_PER_PIXEL_AT_ZOOM_ZERO = 156_543.033928;
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
@@ -148,6 +150,17 @@ function worldXToLongitude(worldX: number): number {
 function worldYToLatitude(worldY: number): number {
     const mercator = Math.PI * (1 - (2 * clamp(worldY, 0, 1)));
     return (Math.atan(Math.sinh(mercator)) * 180) / Math.PI;
+}
+
+function getMeasuredWorldScale(sample: PaddedBoundsCameraOptions["cameraScaleSample"]): number {
+    const measured = sample?.metersPerPixel;
+    if (!sample || typeof measured !== "number" || !Number.isFinite(measured) || measured <= 0 ||
+        !Number.isFinite(sample.zoom) || !Number.isFinite(sample.latitude)) return 1;
+    const latitude = clamp(sample.latitude, -WEB_MERCATOR_MAX_LATITUDE, WEB_MERCATOR_MAX_LATITUDE);
+    const mercatorMetersPerPixel = EQUATOR_METERS_PER_PIXEL_AT_ZOOM_ZERO *
+        Math.cos(latitude * Math.PI / 180) / (2 ** sample.zoom);
+    const scale = mercatorMetersPerPixel / measured;
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
 }
 
 /**
@@ -193,16 +206,19 @@ export function getPaddedBoundsCamera(
     const left = Math.max(0, padding.left);
     const usableWidth = Math.max(1, viewport.width - left - right);
     const usableHeight = Math.max(1, viewport.height - top - bottom);
+    // Native renderers can draw a different number of screen points per zoom
+    // level. Use their measured scale for both zoom selection and inset centering.
+    const tileSize = WEB_MERCATOR_TILE_SIZE * getMeasuredWorldScale(options.cameraScaleSample);
     const zoomX = worldWidth > 0
-        ? Math.log2(usableWidth / (WEB_MERCATOR_TILE_SIZE * worldWidth))
+        ? Math.log2(usableWidth / (tileSize * worldWidth))
         : maxZoom;
     const zoomY = worldHeight > 0
-        ? Math.log2(usableHeight / (WEB_MERCATOR_TILE_SIZE * worldHeight))
+        ? Math.log2(usableHeight / (tileSize * worldHeight))
         : maxZoom;
     // SDK의 정수 확대 단계로 직접 이동할 때는 경로가 잘리지 않도록 내린다.
     const fitZoom = Math.min(zoomX, zoomY);
     const zoom = clamp(options.wholeZoomLevels ? Math.floor(fitZoom) : fitZoom, minZoom, maxZoom);
-    const worldSize = WEB_MERCATOR_TILE_SIZE * (2 ** zoom);
+    const worldSize = tileSize * (2 ** zoom);
     const boundsCenterWorldX = (westWorldX + eastWorldX) / 2;
     const boundsCenterWorldY = (northWorldY + southWorldY) / 2;
     const safeAreaCenterX = left + (usableWidth / 2);

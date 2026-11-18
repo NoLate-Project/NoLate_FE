@@ -110,6 +110,24 @@ describe("quick schedule draft", () => {
         expect(draft.title).toBe("팀 주간회의");
     });
 
+    test("시간과 장소만 조합한 제목은 반복 표시하지 않고 직접 지정한 제목은 유지한다", () => {
+        const parsed = parseResult({
+            title: "15:00 서울역",
+            date: "2026-08-07",
+            time: "15:00",
+            destination,
+        });
+        const source = "금요일 오후 3시 서울역";
+        const draft = buildQuickSchedulePreviewDraft(
+            { ...parsed, titleDerivedFromTimeOrPlace: true }, source, "2026-08-01",
+        );
+
+        expect(draft).toMatchObject({ title: "새 일정", time: "15:00", location: "서울역" });
+        expect(buildQuickSchedulePreviewDraft(
+            { ...parsed, titleDerivedFromTimeOrPlace: false }, source, "2026-08-01",
+        ).title).toBe("15:00 서울역");
+    });
+
     test("완전한 분석 결과는 바로 검토 가능한 초안이 된다", () => {
         const draft = buildQuickSchedulePreviewDraft(parseResult({
             title: "저녁 약속",

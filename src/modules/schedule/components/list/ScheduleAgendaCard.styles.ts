@@ -77,7 +77,6 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   datedTimeColumn: { width: 126 },
-  listTimeColumn: { paddingRight: 0 },
   fullWidthTime: {
     width: '100%',
     flexDirection: 'row',

@@ -21,15 +21,13 @@ import {
 import { ScheduleRouteFacts } from './ScheduleRouteFacts';
 import { createScheduleDetailStyles } from './schedule-detail.styles';
 import type { ScheduleDetailPresentation } from './scheduleDetailPresentationModel';
-import { SavedJourneyGuidanceCard } from '../../modules/journey/SavedJourneyGuidanceCard';
-import type { JourneyRouteInput } from '../../modules/journey/journeyRouteInput';
 import ImportedTicketSummary from '../../modules/schedule/components/detail/ImportedTicketSummary';
 import { getImportedTicket } from '../../modules/schedule/importedTicket';
 
 type ScheduleDetailRouteQuickSummaryProps = {
   presentation: ScheduleDetailPresentation;
   automaticGuidanceActive?: boolean;
-  automaticRouteInput?: JourneyRouteInput | null;
+  automaticRouteSummary?: React.ReactNode;
   departureAction?: React.ReactNode;
 };
 
@@ -37,7 +35,7 @@ type ScheduleDetailRouteQuickSummaryProps = {
 export function ScheduleDetailRouteQuickSummary({
   presentation,
   automaticGuidanceActive = false,
-  automaticRouteInput = null,
+  automaticRouteSummary,
   departureAction,
 }: ScheduleDetailRouteQuickSummaryProps) {
   const {
@@ -46,6 +44,8 @@ export function ScheduleDetailRouteQuickSummary({
     departureTimeLabel,
     effectiveRouteAccessibilityLabel,
     effectiveTransitRoutePresentation,
+    compactSummaryScrollable,
+    handleCompactContentSizeChange,
     isDark,
     largeRouteHeader,
     primaryText,
@@ -114,7 +114,8 @@ export function ScheduleDetailRouteQuickSummary({
         ref={summaryScrollRef}
         style={styles.compactSummaryScroll}
         contentContainerStyle={styles.improvedCompactSummary}
-        showsVerticalScrollIndicator={largeRouteHeader}
+        onContentSizeChange={!largeRouteHeader && !automaticGuidanceActive ? handleCompactContentSizeChange : undefined}
+        showsVerticalScrollIndicator={largeRouteHeader || compactSummaryScrollable}
       >
         {!presentation.internalPreviewItem && getImportedTicket(presentation.item.route) ? (
           <ImportedTicketSummary route={presentation.item.route} showBooking={false} />
@@ -246,17 +247,15 @@ export function ScheduleDetailRouteQuickSummary({
             onPress={largeRouteHeader ? undefined : () => snapSheet('expanded')}
           >
           {!largeRouteHeader && arrivalSummary}
-          {!automaticRouteInput && !effectiveTransitRoutePresentation ? (
+          {!effectiveTransitRoutePresentation ? (
             <>
               <TransitRouteProgressBar
                 segments={routeProgressSegments}
                 isDark={isDark}
                 compact
-                trackOnly={largeRouteHeader}
-                labelledSummary={routeProgressSegments.some(segment => segment.isRide)}
+                labelledSummary
                 alignedSummary
                 focusedSegmentIndex={focusedSegmentIndex}
-                showTrackOnlyFocusLabel={false}
                 reduceFocusMotion={reduceMotion}
               />
             </>
@@ -291,7 +290,7 @@ export function ScheduleDetailRouteQuickSummary({
           {largeRouteHeader && arrivalSummary}
           </SummaryDetails>
         </View>}
-        {automaticRouteInput && <SavedJourneyGuidanceCard input={automaticRouteInput} scheduleId={String(presentation.item.id)} compact isDark={isDark} />}
+        {sheetMode === 'compact' && automaticRouteSummary}
       </ScrollView>
     </Animated.View>
   );

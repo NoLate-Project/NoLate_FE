@@ -1,6 +1,6 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
-import JourneyDiagnosticsRoute from "../app/internal/journey-diagnostics";
+import JourneyDiagnosticsRoute from "./fixtures/journey/journey-diagnostics";
 import { normalizeJourneyDiagnostics } from "../src/modules/journey/journeyDiagnostics";
 
 const mockGet = jest.fn();

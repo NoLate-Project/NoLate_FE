@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   AppState,
@@ -10,6 +10,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { cancelAnimation as cancelReanimatedAnimation } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CalendarViewModePreference } from '../components/calendar/viewMode';
+import { isScheduleInCalendarScope, type CalendarScope } from '../calendarScope';
+import { getScheduleFocusDay } from '../calendarNavigation';
 import { useTheme } from '../../theme/ThemeContext';
 import { toYmd } from '../../../../lib/util/data';
 import { useScheduleIndexCalendarData } from './useScheduleIndexCalendarData';
@@ -44,10 +46,11 @@ export function useScheduleIndexController(
   const params = useLocalSearchParams<{
     focus?: string | string[];
     focusDay?: string | string[];
+    focusSchedule?: string;
     focusRun?: string | string[];
   }>();
   const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
+  const { fontScale, width: screenWidth } = useWindowDimensions();
   const { mode, colors } = useTheme();
   const focusRequest = Array.isArray(params.focus)
     ? params.focus[0]
@@ -140,6 +143,7 @@ export function useScheduleIndexController(
     dayTransitionContext,
     dayTransitionTargetDay,
     dayViewMode,
+    fontScale,
     isDayTransitionActive,
     isYearDepthTransitionActive,
     primaryDatePillNativeRef,
@@ -483,6 +487,19 @@ export function useScheduleIndexController(
     requireActiveCalendarWriteAccess,
     routeSetupItems,
   } = auxiliaryData;
+  const [dismissedGuidanceRun, setDismissedGuidanceRun] = useState<string>();
+  const guidanceReturnItem = focusRequest === 'month' && focusDayRequest && focusRun && focusRun !== dismissedGuidanceRun &&
+    typeof params.focusSchedule === 'string' && isFocused ? state.itemsById[params.focusSchedule] : undefined;
+  const guidanceReturnTarget = useMemo(() => guidanceReturnItem && focusRun && focusDayRequest &&
+    getScheduleFocusDay(guidanceReturnItem.startAt) === focusDayRequest
+    ? { day: focusDayRequest, id: guidanceReturnItem.id, run: focusRun }
+    : undefined, [focusDayRequest, focusRun, guidanceReturnItem]);
+  const openedGuidanceReturn = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!guidanceReturnTarget || !guidanceReturnItem || openedGuidanceReturn.current === guidanceReturnTarget.run) return;
+    openedGuidanceReturn.current = guidanceReturnTarget.run;
+    if (!isScheduleInCalendarScope(guidanceReturnItem, activeCalendarScope)) setActiveCalendarScope('all');
+  }, [activeCalendarScope, guidanceReturnItem, guidanceReturnTarget, setActiveCalendarScope]);
   const toolbarActions = useScheduleIndexToolbarActions({
     activeCalendarScope,
     activeToolbarMenu,
@@ -568,11 +585,21 @@ export function useScheduleIndexController(
   const {
     animateDayModeTransition,
     animateYearDepthTransition,
+    clearSavedAgendaTarget,
     closeDayDisplay,
     handleOpenDay,
     handleOpenScheduleFromDayDisplay,
     selectCalendarDay,
   } = dayNavigation;
+  const changeCalendarScope = useCallback((nextScope: CalendarScope) => {
+    if (nextScope === activeCalendarScope) return;
+    // A manual scope change takes precedence over entry requests from the previous view.
+    clearSavedAgendaTarget();
+    if (focusRequest === 'month' && focusRun && typeof params.focusSchedule === 'string') {
+      setDismissedGuidanceRun(focusRun);
+    }
+    setActiveCalendarScope(nextScope);
+  }, [activeCalendarScope, clearSavedAgendaTarget, focusRequest, focusRun, params.focusSchedule, setActiveCalendarScope]);
   const todayFocus = useScheduleIndexTodayFocus({
     applyScheduleItemsToStore,
     calendarDepth,
@@ -711,8 +738,6 @@ export function useScheduleIndexController(
       yearOverviewVisible,
     });
   const calendarActions = useScheduleIndexCalendarActions({
-    isFocused,
-    calendarScopeSelectorVisible,
     calendarShareTarget,
     closeToolbarMenu,
     firstDayStorageKey: CALENDAR_FIRST_DAY_STORAGE_KEY,
@@ -730,6 +755,8 @@ export function useScheduleIndexController(
   const bottomBar = useScheduleIndexBottomBar({
     agendaReturnHighlight: dayNavigation.agendaReturnHighlight,
     savedAgendaTarget: dayNavigation.savedAgendaTarget,
+    guidanceReturnTarget,
+    isMonthViewTransitionActive,
     saveReturnVisible: !modalVisible && !quickModalVisible,
     reduceMotionEnabled,
     activeCalendarScope,
@@ -756,6 +783,7 @@ export function useScheduleIndexController(
     textSecondaryColor: colors.textSecondary,
   });
   return {
+    changeCalendarScope,
     isFocused,
     insets,
     mode,
@@ -780,6 +808,9 @@ export function useScheduleIndexController(
     ...yearTransition,
     ...calendarActions,
     ...bottomBar,
+    savedAgendaTarget: calendarViewMode === 'stack' && guidanceReturnTarget
+      ? { day: guidanceReturnTarget.day, itemId: guidanceReturnTarget.id, requestKey: guidanceReturnTarget.run, stackPending: false }
+      : dayNavigation.savedAgendaTarget,
   };
 }
 

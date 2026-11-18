@@ -1,7 +1,8 @@
 import { AuthFormDraftsProvider } from "../src/modules/auth/AuthFormDrafts";
-import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useSystemReduceMotion } from "../src/modules/performance/useSystemReduceMotion";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Redirect, Stack, useRouter, useSegments } from "expo-router";
-import { Alert, AppState, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
+import { Alert, AppState, InteractionManager, StatusBar, StyleSheet, useWindowDimensions, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { BrandedLoadingState } from "../src/ui/BrandedLoader";
@@ -21,14 +22,15 @@ import { useTheme } from "../src/modules/theme/ThemeContext";
 import NavigationPerformanceTracker from "../src/modules/performance/NavigationPerformanceTracker";
 import { ImmediateNavigationTransitionProvider } from "../src/modules/performance/ImmediateNavigationTransition";
 import { ProfileScreen } from "./profile";
-import { AppNotificationScreen } from "./notifications";
-import { ShareInboxScreen } from "./share/inbox";
 import { ScheduleDetail } from "./schedule/[id]";
 import { useScheduleStore } from "../src/modules/schedule/store";
 import { getSelectedDayAgendaItems } from "../src/modules/schedule/agendaLayout";
+import {
+    getCachedCalendarViewModePreference,
+    loadCalendarViewModePreference,
+} from "../src/modules/schedule/components/calendar/calendarViewModePreference";
 import PlacesSettingsScreen from "./settings/places";
 import ScheduleCategoriesScreen from "./schedule/categories";
-import ScheduleCalendarsScreen from "./schedule/calendars";
 import RouteSelectScreen from "./schedule/route-select";
 import {
     getLatestRoutePlannerSessionId,
@@ -57,35 +59,64 @@ import {
     type NoLateCustomAlarmNavigationTarget,
 } from "../src/modules/notification/customAlarmNavigation";
 import { getAutomaticJourneySyncState, reconcileAutomaticJourneyCheckpoint, retryAutomaticJourneyStops } from '../src/modules/journey/automaticJourneyTrial';
+import { clearAutomaticJourneyArrivalHandoff, isAutomaticJourneyDevelopment } from '../src/modules/journey/automaticJourney';
+import { subscribeAuthInvalidation } from '../src/modules/auth/authStorage';
 import {internalPreviewRoutes, isPublicInternalPreviewRoute} from '../src/modules/navigation/internalPreviewRoutes';
 
 export default function RootLayout() {
     const router = useRouter();
-    const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
+    const { isAuthenticated, isCurationCompleted, isLoading: authLoading } = useAuth();
+    const [calendarViewPreferenceReady, setCalendarViewPreferenceReady] = useState(
+        () => getCachedCalendarViewModePreference() !== null,
+    );
+    useEffect(() => {
+        if (calendarViewPreferenceReady) return;
+        let active = true;
+        void loadCalendarViewModePreference().finally(() => {
+            if (active) setCalendarViewPreferenceReady(true);
+        });
+        return () => { active = false; };
+    }, [calendarViewPreferenceReady]);
+    const isLoading = authLoading ||
+        (isAuthenticated && isCurationCompleted && !calendarViewPreferenceReady);
     const { state: scheduleState } = useScheduleStore();
     const preMountedDetailItem = useMemo(() => {
         const items = Object.values(scheduleState.itemsById);
-        return getSelectedDayAgendaItems(items, scheduleState.selectedDay)[0]
+        const item = getSelectedDayAgendaItems(items, scheduleState.selectedDay)[0]
             ?? items.sort((left, right) => left.startAt.localeCompare(right.startAt))[0];
+        // A saved route has a stateful sheet. Use the detail route's transition
+        // shell so the editor opens over that same detail instance.
+        return item?.route != null || item?.myTravelPlan?.route != null ? undefined : item;
     }, [scheduleState.itemsById, scheduleState.selectedDay]);
     const routePlannerSceneSessionId = useSyncExternalStore(
         subscribeLatestRoutePlannerSession,
         getLatestRoutePlannerSessionId,
         getLatestRoutePlannerSessionId,
     );
+    useEffect(() => subscribeAuthInvalidation(async () => {
+        await clearAutomaticJourneyArrivalHandoff();
+    }), []);
     useEffect(() => {
-        if (!__DEV__ || isLoading || !isAuthenticated) return;
+        if (!isAutomaticJourneyDevelopment() || isLoading || !isAuthenticated) return;
         let active = true;
+        let checking = false;
+        let pendingRetryTicks = 0;
         const check = async () => {
+            if (checking) return;
+            checking = true;
             try {
                 await retryAutomaticJourneyStops();
                 if (active) await reconcileAutomaticJourneyCheckpoint();
             } catch { /* Preserve pending records; never assume a failed server read means ended. */ }
+            finally { checking = false; }
         };
         check();
         const foreground = AppState.addEventListener('change', state => { if (state === 'active') check(); });
         const retry = setInterval(() => {
-            if (AppState.currentState === 'active' && getAutomaticJourneySyncState().checkpointState === 'WAITING') check();
+            if (AppState.currentState !== 'active') return;
+            const sync = getAutomaticJourneySyncState();
+            if (sync.checkpointState === 'WAITING' ||
+                ((sync.pendingStopCount ?? 0) > 0 && ++pendingRetryTicks % 3 === 0)) check();
         }, 5000);
         return () => { active = false; foreground.remove(); clearInterval(retry); };
     }, [isAuthenticated, isLoading]);
@@ -262,11 +293,8 @@ export default function RootLayout() {
             <ImmediateNavigationTransitionProvider
                 preMountedScenes={!isLoading && isAuthenticated ? [
                     { route: "/profile", content: <ProfileScreen /> },
-                    { route: "/notifications", content: <AppNotificationScreen /> },
-                    { route: "/share/inbox", content: <ShareInboxScreen /> },
                     { route: "/settings/places", content: <PlacesSettingsScreen /> },
                     { route: "/schedule/categories", content: <ScheduleCategoriesScreen /> },
-                    { route: "/schedule/calendars", content: <ScheduleCalendarsScreen /> },
                     { route: "/share/blocked", content: <BlockedSharingMembersScreen /> },
                     { route: "/share/reports", content: <SharingReportHistoryScreen /> },
                     { route: "/legal/privacy-policy", content: <PrivacyPolicyScreen /> },
@@ -285,16 +313,18 @@ export default function RootLayout() {
             >
                 {!isLoading && isAuthenticated ? <NavigationPerformanceTracker /> : null}
                 <AuthFormDraftsProvider>
-                    <RootNavigator />
+                    <RootNavigator isLoading={isLoading} />
                 </AuthFormDraftsProvider>
             </ImmediateNavigationTransitionProvider>
         </GestureHandlerRootView>
     );
 }
 
-function RootNavigator() {
-    const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
+function RootNavigator({ isLoading }: { isLoading: boolean }) {
+    const { isAuthenticated, isCurationCompleted } = useAuth();
     const { colors, mode } = useTheme();
+    const reduceMotion = useSystemReduceMotion();
+    const { fontScale } = useWindowDimensions();
     const segments = useSegments();
     const routeSegments = segments as string[];
     const quickScheduleBenchmarkEnabled =
@@ -306,8 +336,8 @@ function RootNavigator() {
                 <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
                 <BrandedLoadingState
                     fill
-                    settleOnly
-                    settleDelayMs={150}
+                    size="full"
+                    startup
                     accessibilityLabel="NoLate를 준비하고 있어요"
                     title="NoLate를 준비하고 있어요"
                 />
@@ -322,6 +352,7 @@ function RootNavigator() {
         (routeSegments[0] === "share" &&
             routeSegments[1] !== "inbox" &&
             routeSegments[1] !== "blocked" &&
+            routeSegments[1] !== "safety" &&
             routeSegments[1] !== "reports");
 
     if (!isAuthenticated && !isPublicRoute) {
@@ -403,7 +434,14 @@ function RootNavigator() {
                 />
                 <Stack.Screen
                     name="share/inbox"
-                    options={{ animation: "none" }}
+                    options={({ route }) => (
+                        (route.params as { from?: string } | undefined)?.from === "notifications" && fontScale <= 1.35
+                            ? { presentation: "transparentModal", animation: "none" }
+                            : { animation: "none" }
+                    )}
+                />
+                <Stack.Screen
+                    name="share/safety"
                 />
                 <Stack.Screen
                     name="share/blocked"
@@ -421,7 +459,18 @@ function RootNavigator() {
                 />
                 <Stack.Screen
                     name="schedule/[id]"
-                    options={{ animation: "none" }}
+                    options={({ route }) => {
+                        const params = route.params as { entrySource?: string } | undefined;
+                        if (
+                            fontScale <= 1.35 &&
+                            (params?.entrySource === "share-inbox" || params?.entrySource === "notification-inbox")
+                        ) {
+                            return { presentation: "transparentModal", animation: "none" };
+                        }
+                        return params?.entrySource === "share-inbox" && !reduceMotion
+                            ? { animation: "fade", animationDuration: 180 }
+                            : { animation: "none" };
+                    }}
                 />
             </Stack.Protected>
         </Stack>

@@ -38,7 +38,6 @@ export function RouteSelectFavoriteSaveSheet({
 }: RouteSelectFavoriteSaveSheetProps) {
     const {
         favoriteSheetSaving,
-        activeTarget,
         hasConfiguredDefaultOrigin,
         favoriteSaveError,
         announceFavoriteSave,
@@ -77,7 +76,10 @@ export function RouteSelectFavoriteSaveSheet({
     const saveLabel = saveFavoriteAsDefaultOrigin ? "기본 주소로 저장" : "장소 저장";
     const disabled = !favoriteSheetLabel.trim() || busy;
     useEffect(() => {
-        if (!visible || reduceFavoriteMotionEnabled) entrance.setValue(visible ? 1 : 0);
+        if (!visible || reduceFavoriteMotionEnabled) {
+            entrance.stopAnimation();
+            entrance.setValue(visible ? 1 : 0);
+        }
         if (Platform.OS !== "ios" && !visible) announceFavoriteSave();
     }, [announceFavoriteSave, entrance, reduceFavoriteMotionEnabled, visible]);
 
@@ -210,7 +212,7 @@ export function RouteSelectFavoriteSaveSheet({
                             ]}
                         >
                             <Ionicons
-                                name={saveFavoriteAsDefaultOrigin ? "home" : "home-outline"}
+                                name="home-outline"
                                 size={15}
                                 color={saveFavoriteAsDefaultOrigin ? modeSelectedText : routeUi.accentBlue}
                             />
@@ -316,7 +318,7 @@ export function RouteSelectFavoriteSaveSheet({
                                 { backgroundColor: routeUi.surface2, borderColor: routeUi.border },
                             ]}
                         >
-                            <Ionicons name={showNewCategoryForm ? "remove" : "add"} size={16} color={routeUi.textPrimary} />
+                            <Ionicons name={showNewCategoryForm ? "remove-outline" : "add-outline"} size={16} color={routeUi.textPrimary} />
                             <Text style={[styles.favoriteCategoryChipText, { color: routeUi.textPrimary }]}>
                                 새 카테고리
                             </Text>
@@ -326,10 +328,7 @@ export function RouteSelectFavoriteSaveSheet({
                         <Animated.View entering={defaultAddressNoticeEntry} style={[styles.favoriteDefaultAddressNotice, { backgroundColor: routeUi.surface2 }]}>
                             <Ionicons name="home-outline" size={18} color={routeUi.accentBlue} />
                             <Text accessibilityLiveRegion="polite" maxFontSizeMultiplier={2} style={[styles.favoriteDefaultAddressNoticeText, { color: routeUi.textPrimary }]}>
-                                {hasConfiguredDefaultOrigin ? "기존 기본 주소를 이 장소로 바꿔요. " : ""}
-                                {activeTarget === "origin"
-                                    ? "이번 경로와 다음 경로의 출발지에 이 장소를 사용해요."
-                                    : "다음에 경로를 검색할 때 이 장소를 출발지로 사용해요."}
+                                {hasConfiguredDefaultOrigin ? "기존 기본 주소를 이 장소로 바꿔요. 다음 경로부터 적용돼요." : "다음 경로를 검색할 때 이 장소가 기본 출발지로 표시돼요."}
                             </Text>
                         </Animated.View>
                     )}

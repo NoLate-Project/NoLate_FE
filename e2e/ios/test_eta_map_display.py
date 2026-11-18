@@ -106,11 +106,11 @@ class MapDisplayTest(unittest.TestCase):
 
     def test_future_preview_rejects_expiry_stale_errors_and_changed_api_prediction(self):
         worker, public = self.preview()
-        for mutation in ('expired', 'stale_error', 'changed_route', 'normal', 'mixed_ride'):
+        for mutation in ('expired', 'api_error', 'changed_route', 'normal', 'mixed_ride'):
             w, p = copy.deepcopy(worker), copy.deepcopy(public)
             if mutation == 'expired':
                 p['_isolationReadWindow']['finishedAt'] = w['effectiveSnapshot']['effectiveTransitRoute']['departureAt']
-            elif mutation == 'stale_error': w['failureReason'] = p['failureReason'] = 'TRANSIT_ARRIVAL_SOURCE_STALE: safe'
+            elif mutation == 'api_error': w['failureReason'] = p['failureReason'] = 'TRANSIT_ARRIVAL_API_ERROR: safe'
             elif mutation == 'changed_route': p['futureTimetablePrediction']['arrivalAt'] = '2026-10-12T23:00:00Z'
             elif mutation == 'normal': w['source'] = 'LIVE_PROVIDER'
             else: w['effectiveSnapshot']['effectiveTransitRoute']['segments'][1]['rideTiming']['basis'] = 'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE'

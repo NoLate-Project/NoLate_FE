@@ -36,7 +36,7 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
 type StackMonthTestItem = {
     key: string;
     dateString: string;
-    dayHeight: number;
+    weeks: Array<{ height: number; offset: number }>;
     headerHeight: number;
     height: number;
 };
@@ -175,9 +175,9 @@ describe("ScheduleCalendar stack month navigation", () => {
         expect(julyIndex).toBeGreaterThan(0);
         expect(data[julyIndex - 1].key).toBe("2026-06");
         expect(data[julyIndex + 1].key).toBe("2026-08");
-        expect(data[julyIndex].dayHeight).toBe(104);
-        expect(data[julyIndex].height).toBeGreaterThan(520);
-        expect(data[julyIndex].height).toBeLessThan(540);
+        expect(data[julyIndex].weeks.map(week => week.height)).toEqual([72, 72, 72, 72, 72]);
+        expect(data[julyIndex].height).toBeGreaterThanOrEqual(360);
+        expect(data[julyIndex].height).toBeLessThan(362);
     });
 
     test("상세형과 목록형은 연속 월 목록을 사용하지 않는다", async () => {

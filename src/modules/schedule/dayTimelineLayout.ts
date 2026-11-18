@@ -42,6 +42,34 @@ export type PositionedEvent = {
     laneCount: number;
 };
 
+export type TimelineOverlap = {
+    events: PositionedEvent[];
+    startMinute: number;
+    height: number;
+};
+
+export function getTimelineDisplayEntries(events: PositionedEvent[], availableWidth: number) {
+    const laneLimit = Math.max(1, Math.min(3, Math.floor(availableWidth / 88)));
+    const entries: (PositionedEvent | TimelineOverlap)[] = [];
+    let index = 0;
+    while (index < events.length) {
+        const first = events[index++];
+        if (first.laneCount <= laneLimit) {
+            entries.push(first);
+            continue;
+        }
+        const group = [first];
+        let end = first.visualEndMinute;
+        while (index < events.length && events[index].startMinute < end) {
+            const next = events[index++];
+            group.push(next);
+            end = Math.max(end, next.visualEndMinute);
+        }
+        entries.push({ events: group, startMinute: first.startMinute, height: Math.min(48, first.height) });
+    }
+    return entries;
+}
+
 export type DayTimelineEventMetadata = {
     location?: string;
     travelMinutes?: number;
@@ -98,7 +126,7 @@ export function getDayTimelineEventMetadata(item: ScheduleItem): DayTimelineEven
         ?? validPositiveMinutes(routeInfo?.totalDurationMinutes);
     const travelMode = item.travelMode ?? inferTravelMode(routeInfo);
     const fixedService = Boolean(routeInfo?.intercityJourney);
-    let departureAt = resolveSavedDepartureAt({ ...item, travelMinutes, travelMode, fixedService })?.toISOString();
+    let departureAt = resolveSavedDepartureAt({ ...item, travelMinutes, travelMode, fixedService, routeInfo })?.toISOString();
 
     // 이전 버전이 현재 시각으로 저장한 nested routeInfo보다 일정 시각 기반 계산을 우선한다.
     if (!departureAt && (travelMode !== "TRANSIT" || fixedService)) {

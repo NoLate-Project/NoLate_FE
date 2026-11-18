@@ -847,6 +847,10 @@ final class NoLateJourneyAutomaticSessionTests: XCTestCase {
     XCTAssertNil(stale.ride?.snapshot.alongRouteMeters)
     XCTAssertFalse(NoLateAutomaticGuidanceProjection.content(stale, now: 1_099).boardingConfirmed)
     XCTAssertNil(NoLateAutomaticGuidanceProjection.content(stale, now: 1_099).rideProgress)
+    let lastBus = NoLateAutomaticGuidanceProjection.content(stale, now: 1_099)
+    XCTAssertEqual(lastBus.phase, "UNAVAILABLE")
+    XCTAssertEqual(lastBus.lastConfirmedBus?.legIndex, 1)
+    XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(lastBus, legs: stale.routeLegs, now: 1_099))
     var stopped = try makeRideSession(); rideSteps(&stopped); stopped.stop(now: 1_085)
     XCTAssertEqual(stopped.ride?.snapshot.phase, "STOPPED")
     let sequence = stopped.ride?.snapshot.sequence

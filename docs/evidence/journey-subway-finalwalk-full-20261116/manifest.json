@@ -1,0 +1,71 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "36AF60B1-217F-45FB-A8DD-3AA0F94FFB74.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-final-walk_0_FD74C9A4-D96B-4887-AC05-C37C3A708070.png",
+        "timestamp" : 1794758510.479
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "750C9B83-892D-41C4-8317-D4ACCFF173D8.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-destination-station_0_15D581A6-01A9-41FE-B10B-E7C3A1C4C382.png",
+        "timestamp" : 1794758467.258
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "BA85D21E-2288-45A4-BE3B-BE967C0F0A4B.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-intermediate-station_0_46C1C208-7508-453A-AD81-CADDBFDD619C.png",
+        "timestamp" : 1794758407.746
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "B72E1146-F5BC-4B41-A53E-9EF7E1B4A822.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-map-before-movement_0_EECBB6F9-0590-4786-B5B4-7BBDFD6920B7.png",
+        "timestamp" : 1794758298.341
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "0FA299B1-D7B5-4FA9-A891-296DFB785B3F.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-gps-session-armed_0_0842E2E2-6262-4252-9DD7-907F01770D80.png",
+        "timestamp" : 1794758296.695
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "8E76CC6D-2114-4EAA-A65B-6A5135DEB17C.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-preparation-in-route-sheet_0_9F9D87B1-3E87-41CD-896B-BE66CFFC1C47.png",
+        "timestamp" : 1794758290.03
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "DCAB64F2-F6BB-4FBF-9643-DB3BE3BD07CC.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-ready-on-route-map_0_1D679143-4A4F-4FBA-A339-14C0C117B343.png",
+        "timestamp" : 1794758287.181
+      }
+    ],
+    "testIdentifier" : "NoLateE2ETests/testIsolatedSavedRouteNavigationEntry()",
+    "testIdentifierURL" : "test://com.apple.xcode/NoLateE2E/NoLateE2ETests/NoLateE2ETests/testIsolatedSavedRouteNavigationEntry"
+  }
+]

@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 
+import { MAP_ACTION_BUTTON_HEIGHT } from "../ScheduleDetailChrome";
 import type { ScheduleDetailStylesOptions } from "../schedule-detail.styles";
 
 /** fallback 영역의 정적 스타일을 생성합니다. */
@@ -113,7 +114,7 @@ export function createFallbackStyles(options: ScheduleDetailStylesOptions) {
         gap: 8,
     },
         mapActionButton: {
-        minHeight: 44,
+        minHeight: MAP_ACTION_BUTTON_HEIGHT,
         borderRadius: 22,
         borderWidth: StyleSheet.hairlineWidth,
         paddingHorizontal: 14,
@@ -137,5 +138,6 @@ export function createFallbackStyles(options: ScheduleDetailStylesOptions) {
         zIndex: 20,
         elevation: 18,
     },
+        memoHighlight: { borderRadius: 22 },
     });
 }

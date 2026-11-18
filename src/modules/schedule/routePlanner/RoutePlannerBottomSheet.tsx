@@ -7,8 +7,10 @@ import TransitRouteProgressBar from '../components/route/TransitRouteProgressBar
 import BrandedLoader from '../../../ui/BrandedLoader';
 import type { RoutePlannerController } from './useRoutePlannerController';
 import { RoutePlannerAlternativeSection } from './RoutePlannerAlternativeSection';
-import { LARGE_TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT } from './bottomSheetLayout';
-import { getRouteOverviewAccessWalk, getRoutePlannerQualityNotice } from './presentation';
+import { LARGE_TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT, TRANSIT_OVERVIEW_HANDLE_TOUCH_HEIGHT } from './bottomSheetLayout';
+import { getRouteOverviewAccessWalk, getRoutePlannerQualityNotice, shouldShowTransitDurationOnly } from './presentation';
+import { formatArrivalClock } from '../components/route/RouteStepTimeline.helpers';
+import { getTransitRouteSegmentAccessibilityLabel, getTransitRouteSummaryAccessibilityLabel } from '../transitRouteProgress';
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
   return (
@@ -24,7 +26,7 @@ type Props = { controller: RoutePlannerController };
 
 /** 경로 후보와 상세 타임라인을 담은 하단 시트를 렌더링합니다. */
 export function RoutePlannerBottomSheet({ controller }: Props) {
-  const { fontScale } = useWindowDimensions();
+  const { fontScale, height: windowHeight } = useWindowDimensions();
   const largeRouteText = fontScale > 1.35;
   const {
     colors,
@@ -44,6 +46,7 @@ export function RoutePlannerBottomSheet({ controller }: Props) {
     toggleBottomSheetFromHandle,
     isBottomSheetHidden,
     setSelectedTransitMapStop,
+    focusedTransitLegIndex,
     setFocusedTransitLegIndex,
     setFocusedRouteStepId,
     bottomSheetTranslateY,
@@ -62,6 +65,8 @@ export function RoutePlannerBottomSheet({ controller }: Props) {
     bottomPanelScrollViewportHeight,
     bottomPanelScrollBottomPadding,
     selectedAlternative,
+    selectedRouteInfo,
+    selectedTransitMeta,
     canSubmitRoute,
     openSelectedRouteAttribution,
     selectedAlternativeQualityNotice,
@@ -132,11 +137,40 @@ export function RoutePlannerBottomSheet({ controller }: Props) {
     return () => animation.stop();
   }, [overviewRouteId, reduceMotion, summaryProgress]);
   const isNotOperating = selectedAlternative?.transitServiceState === 'not_operating';
-  const accessWalk = isMapOverview ? getRouteOverviewAccessWalk(selectedAlternative) : undefined;
+  const accessWalk = isMapOverview
+    ? getRouteOverviewAccessWalk(selectedAlternative, selectedRouteInfo?.originName)
+    : undefined;
+  const accessOrigin = accessWalk?.origin;
+  const departureClock = selectedRouteInfo && !isNotOperating && !selectedRouteInfo.intercityJourney
+    ? formatArrivalClock(selectedRouteInfo.departureTime, 0)
+    : undefined;
+  const compactDeparture = selectedAlternative?.mode === 'TRANSIT' && departureClock && (shouldShowTransitDurationOnly(selectedAlternative)
+    ? `${departureClock} 예상 출발`
+    : `${departureClock} 출발 기준`);
   const collapsedDuration = isNotOperating ? selectedRouteDuration : `예상 ${selectedRouteDuration}`;
   const collapsedMeta = [
+    isMapOverview && compactDeparture,
     !isNotOperating && selectedCollapsedRouteSummary?.arrivalText,
     selectedCollapsedRouteSummary?.metricsText,
+  ].filter(Boolean).join(' · ');
+  const focusedOverviewSegment = focusedTransitLegIndex === undefined
+    ? undefined
+    : selectedTransitProgressSegments[focusedTransitLegIndex];
+  const overviewAccessibilityValue = [
+    collapsedDuration,
+    collapsedMeta,
+    selectedTransitProgressSegments.length > 0 && getTransitRouteSummaryAccessibilityLabel(selectedTransitProgressSegments),
+    focusedOverviewSegment && focusedTransitLegIndex !== undefined
+      ? `지도 선택: ${getTransitRouteSegmentAccessibilityLabel(selectedTransitProgressSegments, focusedTransitLegIndex)}`
+      : undefined,
+  ].filter(Boolean).join(', ');
+  const showExpandedTransitSummary = !isMapOverview && !etaLoading &&
+    selectedAlternative?.mode === 'TRANSIT' && selectedRouteInfo &&
+    !selectedRouteInfo.intercityJourney && !isNotOperating &&
+    Boolean(departureClock);
+  const expandedTransitMetrics = [
+    shouldShowTransitDurationOnly(selectedAlternative) ? collapsedDuration : `총 ${selectedRouteDuration}`,
+    selectedTransitMeta?.fareText,
   ].filter(Boolean).join(' · ');
   const qualityNotice = getRoutePlannerQualityNotice(
     selectedAlternative, selectedAlternativeQualityNotice, isRouteDetailMode,
@@ -177,7 +211,7 @@ export function RoutePlannerBottomSheet({ controller }: Props) {
             },
           ]}
         >
-          <View {...bottomHandlePanResponder.panHandlers}>
+          <View pointerEvents={handleIsAvailable ? 'auto' : 'none'} {...bottomHandlePanResponder.panHandlers}>
             <Pressable
               testID="route-planner-sheet-handle"
               accessibilityRole="button"
@@ -209,6 +243,7 @@ export function RoutePlannerBottomSheet({ controller }: Props) {
           </View>
           <ScrollView
             ref={scrollRef}
+            testID="route-planner-detail-scroll"
             onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
             onScrollBeginDrag={cancelStopReveal}
             scrollEventThrottle={16}
@@ -342,96 +377,144 @@ export function RoutePlannerBottomSheet({ controller }: Props) {
                 borderTopColor: detailBorderColor,
                 paddingBottom: transitDetailActionBarPaddingBottom,
               },
+              isMapOverview && selectedAlternative && styles.transitOverviewActionBar,
             ]}
           >
             {isMapOverview && selectedAlternative && (
-              <Animated.View
-                style={{
-                  opacity: summaryProgress.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }),
-                  transform: [{ translateY: summaryProgress.interpolate({ inputRange: [0, 1], outputRange: [3, 0] }) }],
-                }}
-                testID="route-planner-overview-summary"
-              >
+              <View {...bottomHandlePanResponder.panHandlers}>
                 <Pressable
+                  testID="route-planner-overview-handle"
                   accessibilityRole="button"
-                  accessibilityLabel="경로 상세 펼치기"
-                  accessibilityValue={{ text: [collapsedDuration, collapsedMeta].filter(Boolean).join(', ') }}
+                  accessibilityLabel="경로 시트 펼치기"
                   accessibilityState={{ expanded: false }}
                   onPress={openRouteDetail}
-                  style={[
-                    styles.transitCollapsedSummaryRow,
-                    accessWalk && styles.transitCollapsedSummaryWithWalk,
-                    largeRouteText && styles.transitCollapsedSummaryExpanded,
-                    { borderBottomColor: detailBorderColor },
-                  ]}
+                  style={[styles.bottomHandleTouchArea, styles.bottomHandleTouchAreaDetail,
+                    { height: TRANSIT_OVERVIEW_HANDLE_TOUCH_HEIGHT }]}
                 >
-                  <Text
-                    numberOfLines={largeRouteText ? undefined : 1}
-                    adjustsFontSizeToFit={!largeRouteText}
-                    minimumFontScale={0.82}
-                    lineBreakStrategyIOS="hangul-word"
+                  <View style={[styles.bottomHandle, styles.bottomHandleDetail,
+                    { backgroundColor: detailSecondaryText, opacity: 0.65 }]} />
+                </Pressable>
+              </View>
+            )}
+            {isMapOverview && selectedAlternative && (
+              <ScrollView
+                testID="route-planner-overview-scroll"
+                style={{ maxHeight: Math.round(windowHeight * 0.43) }}
+                nestedScrollEnabled
+                bounces={false}
+              >
+                <Animated.View
+                  style={{
+                    opacity: summaryProgress.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }),
+                    transform: [{ translateY: summaryProgress.interpolate({ inputRange: [0, 1], outputRange: [3, 0] }) }],
+                  }}
+                  testID="route-planner-overview-summary"
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="경로 상세 펼치기"
+                    accessibilityValue={{ text: overviewAccessibilityValue }}
+                    accessibilityState={{ expanded: false }}
+                    onPress={openRouteDetail}
                     style={[
-                      styles.transitCollapsedArrivalText,
-                      accessWalk && styles.transitCollapsedDurationWithWalk,
-                      largeRouteText && styles.transitCollapsedArrivalExpanded,
-                      { color: transitDetailControlText },
+                      styles.transitCollapsedSummaryRow,
+                      largeRouteText && styles.transitCollapsedSummaryExpanded,
+                      { borderBottomColor: detailBorderColor },
                     ]}
                   >
-                    {collapsedDuration}
-                  </Text>
-                  {!!collapsedMeta && (
                     <Text
-                      numberOfLines={largeRouteText ? undefined : 2}
+                      numberOfLines={largeRouteText ? undefined : 1}
+                      adjustsFontSizeToFit={!largeRouteText}
+                      minimumFontScale={0.82}
                       lineBreakStrategyIOS="hangul-word"
                       style={[
-                        styles.transitCollapsedMetricsText,
-                        accessWalk && styles.transitCollapsedMetricsWithWalk,
-                        largeRouteText && styles.transitCollapsedMetricsExpanded,
-                        { color: detailSecondaryText },
+                        styles.transitCollapsedArrivalText,
+                        largeRouteText && styles.transitCollapsedArrivalExpanded,
+                        { color: transitDetailControlText },
                       ]}
                     >
-                      {collapsedMeta}
+                      {collapsedDuration}
                     </Text>
-                  )}
-                  <Ionicons
-                    name="chevron-up-outline"
-                    size={18}
-                    color={transitDetailControlText}
-                    style={styles.transitCollapsedSummaryChevron}
-                  />
-                </Pressable>
-                {selectedTransitProgressSegments.length > 0 && (
-                  <View style={styles.transitCollapsedRouteBar}>
-                    <TransitRouteProgressBar
-                      segments={selectedTransitProgressSegments}
-                      isDark={isDark}
-                      compact
-                      trackOnly={largeRouteText}
-                      labelledSummary={selectedTransitProgressSegments.some(segment => segment.isRide)}
-                      alignedSummary
-                      reduceFocusMotion={reduceMotion}
+                    {!!collapsedMeta && (
+                      <Text
+                        numberOfLines={largeRouteText ? undefined : 2}
+                        lineBreakStrategyIOS="hangul-word"
+                        style={[
+                          styles.transitCollapsedMetricsText,
+                          largeRouteText && styles.transitCollapsedMetricsExpanded,
+                          { color: detailSecondaryText },
+                        ]}
+                      >
+                        {collapsedMeta}
+                      </Text>
+                    )}
+                    <Ionicons
+                      name="chevron-up-outline"
+                      size={18}
+                      color={transitDetailControlText}
+                      style={styles.transitCollapsedSummaryChevron}
                     />
-                  </View>
-                )}
-                {accessWalk && (
-                  <View
-                    testID="route-planner-overview-access-walk"
-                    accessible
-                    accessibilityLabel={[accessWalk.destination, accessWalk.walking].filter(Boolean).join(', ')}
-                    style={[styles.transitOverviewWalk, { borderTopColor: detailBorderColor }]}
-                  >
-                    <Ionicons name="walk-outline" size={17} color={detailSecondaryText} />
-                    <View style={styles.transitOverviewWalkText}>
-                      {accessWalk.destination && (
-                        <Text lineBreakStrategyIOS="hangul-word" style={[styles.transitOverviewWalkDestination, { color: transitDetailControlText }]}>
-                          {accessWalk.destination}
-                        </Text>
-                      )}
-                      <Text style={[styles.transitOverviewWalkMetric, { color: detailSecondaryText }]}>{accessWalk.walking}</Text>
+                  </Pressable>
+                  {selectedTransitProgressSegments.length > 0 && (
+                    <Pressable
+                      testID="route-planner-overview-segments"
+                      accessible={false}
+                      onPress={openRouteDetail}
+                      style={styles.transitCollapsedRouteBar}
+                    >
+                      <TransitRouteProgressBar
+                        segments={selectedTransitProgressSegments}
+                        isDark={isDark}
+                        compact
+                        labelledSummary
+                        alignedSummary
+                        focusedSegmentIndex={focusedTransitLegIndex}
+                        reduceFocusMotion={reduceMotion}
+                      />
+                    </Pressable>
+                  )}
+                  {accessWalk && (
+                    <View
+                      testID="route-planner-overview-access-walk"
+                      accessible
+                      accessibilityLabel={[
+                        accessOrigin && `${accessOrigin} 출발`,
+                        accessWalk.destination,
+                        accessWalk.walking,
+                      ].filter(Boolean).join(', ')}
+                      style={[styles.transitOverviewWalk, { borderTopColor: detailBorderColor }]}
+                    >
+                      <Ionicons name={accessOrigin ? 'radio-button-on-outline' : 'walk-outline'} size={19}
+                        color={accessOrigin ? (isDark ? '#52D895' : '#168052') : detailSecondaryText} />
+                      <View style={styles.transitOverviewWalkText}>
+                        {accessOrigin && (
+                          <Text lineBreakStrategyIOS="hangul-word" style={[styles.transitOverviewWalkDestination, { color: transitDetailControlText }]}>
+                            {accessOrigin} 출발
+                          </Text>
+                        )}
+                        {accessWalk.destination && (
+                          <Text lineBreakStrategyIOS="hangul-word" style={[styles.transitOverviewWalkMetric, { color: detailSecondaryText }]}>
+                            {accessWalk.destination}까지
+                          </Text>
+                        )}
+                        <Text style={[styles.transitOverviewWalkMetric, { color: detailSecondaryText }]}>{accessWalk.walking}</Text>
+                      </View>
                     </View>
-                  </View>
+                  )}
+                </Animated.View>
+              </ScrollView>
+            )}
+            {showExpandedTransitSummary && (
+              <View testID="route-planner-footer-summary" style={styles.transitDetailFooterSummary}>
+                {!!selectedCollapsedRouteSummary?.arrivalText && (
+                  <Text style={[styles.transitDetailFooterArrival, { color: transitDetailControlText }]}>
+                    {selectedCollapsedRouteSummary.arrivalText}
+                  </Text>
                 )}
-              </Animated.View>
+                <Text testID="route-planner-footer-metrics" style={[styles.transitDetailFooterMetrics, { color: detailSecondaryText }]}>
+                  {expandedTransitMetrics}
+                </Text>
+              </View>
             )}
             <View style={[styles.transitDetailActionButtonRow, largeRouteText && styles.transitDetailActionButtonStack]}>
               {(!isMapOverview || !selectedAlternative) && <Pressable
@@ -497,21 +580,19 @@ export function RoutePlannerBottomSheet({ controller }: Props) {
                   styles.transitDetailSaveButton,
                   largeRouteText && styles.transitDetailActionButtonExpanded,
                   { backgroundColor: transitDetailPrimaryActionBg },
-                  !canSubmitRoute && styles.transitDetailSaveButtonDisabled,
+                  !canSubmitRoute && !routeSubmitPending && styles.transitDetailSaveButtonDisabled,
                 ]}
               >
-                {routeActionStatus ? (
-                  <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
-                    style={styles.transitDetailActionIcon}>
-                    <BrandedLoader variant="route" size="button" accessibilityLabel={routeActionStatus} />
-                  </View>
-                ) : (
-                  <Ionicons
+                <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                  style={styles.transitDetailActionIcon}>
+                  {routeActionStatus ? (
+                    <BrandedLoader size="button" tone="inverse" accessibilityLabel={routeActionStatus} />
+                  ) : <Ionicons
                     name="checkmark-outline"
                     size={18}
                     color={transitDetailPrimaryActionText}
-                  />
-                )}
+                  />}
+                </View>
                 <Text
                   numberOfLines={largeRouteText ? undefined : 1}
                   adjustsFontSizeToFit={!largeRouteText}

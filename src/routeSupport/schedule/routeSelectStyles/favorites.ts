@@ -210,12 +210,6 @@ const favoritesStyles = {
         alignItems: "center",
         justifyContent: "center",
     },
-    searchModeRemoveText: {
-        marginTop: -1,
-        fontSize: 24,
-        fontWeight: "300",
-        lineHeight: 26,
-    },
     searchModeEmptyRow: {
         minHeight: 48,
         justifyContent: "center",
@@ -223,6 +217,8 @@ const favoritesStyles = {
         paddingHorizontal: 20,
         paddingVertical: 10,
     },
+    placeSearchStatusTitle: { fontSize: 16, lineHeight: 22, fontWeight: "700" },
+    placeSearchRetry: { minHeight: 44, alignSelf: "flex-start", borderRadius: 12 },
     recentPlaceTitle: {
         fontSize: 13,
         fontWeight: "900",

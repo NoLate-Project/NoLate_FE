@@ -197,7 +197,7 @@ export function parseTmapRoadRouteResponse(data: any): ParsedRoadRoute {
 }
 
 /** 공급자 원본 값을 `parseLineString` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
-export function parseLineString(lineString?: string): RoutePathCoord[] {
+export function parseLineString(lineString?: string, requireComplete = false): RoutePathCoord[] {
     if (typeof lineString !== "string") return [];
 
     const tokens = lineString
@@ -208,7 +208,8 @@ export function parseLineString(lineString?: string): RoutePathCoord[] {
         .filter(Boolean);
 
     const coords: RoutePathCoord[] = [];
-    tokens.forEach((token) => {
+    for (const token of tokens) {
+        if (requireComplete && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+),[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(token)) return [];
         const [lonRaw, latRaw] = token.split(",");
         const longitude = safeNumber(lonRaw);
         const latitude = safeNumber(latRaw);
@@ -218,18 +219,19 @@ export function parseLineString(lineString?: string): RoutePathCoord[] {
             typeof longitude !== "number" ||
             !isWgs84Coordinate(latitude, longitude)
         ) {
+            if (requireComplete) return [];
             warnMapDebug("[geometry] invalid linestring token", token);
-            return;
+            continue;
         }
 
         coords.push({ lat: latitude, lng: longitude });
-    });
+    }
 
     return coords;
 }
 
 /** 공급자 원본 값을 `parseTransitPathCoords` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
-export function parseTransitPathCoords(raw: unknown): RoutePathCoord[] | undefined {
+export function parseTransitPathCoords(raw: unknown, requireComplete = false): RoutePathCoord[] | undefined {
     if (!raw) return undefined;
 
     if (Array.isArray(raw)) {
@@ -260,12 +262,14 @@ export function parseTransitPathCoords(raw: unknown): RoutePathCoord[] | undefin
                 return null;
             })
             .filter((value: RoutePathCoord | null): value is RoutePathCoord => value !== null);
+        if (requireComplete && parsed.length !== raw.length) return undefined;
         if (parsed.length >= 2) return clampPathCoords(dedupePathCoords(parsed));
     }
 
     if (typeof raw === "string") {
-        const lineStringPairs = parseLineString(raw);
+        const lineStringPairs = parseLineString(raw, requireComplete);
         if (lineStringPairs.length >= 2) return clampPathCoords(dedupePathCoords(lineStringPairs));
+        if (requireComplete) return undefined;
 
         const matchPairs: RoutePathCoord[] = [];
         const pairRegex = /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/g;

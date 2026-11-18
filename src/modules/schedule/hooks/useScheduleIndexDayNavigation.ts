@@ -136,6 +136,7 @@ export function useScheduleIndexDayNavigation({
     categoryId?: string;
     stackPending?: boolean;
   }>();
+  const clearSavedAgendaTarget = useCallback(() => setSavedAgendaTarget(undefined), []);
   const pendingStackSaveRef = useRef<{ itemId: string; finish: (apply?: boolean) => void } | null>(null);
   const stackSaveCloseRef = useRef<{ itemId: string; resolve: () => void } | null>(null);
   useEffect(() => () => {
@@ -338,7 +339,7 @@ export function useScheduleIndexDayNavigation({
 
   /** 연간·월간 깊이 이동을 실행하고 완료 상태 변경을 한 React 배치로 반영한다. */
   const animateYearDepthTransition = useCallback(
-    (toValue: number, afterAnimation?: () => void) => {
+    (toValue: number, afterAnimation?: () => void, durationMs: number = CALENDAR_DEPTH_MOTION.depthSlideDurationMs) => {
       let didFinish = false;
       /** 연간 전환의 중복 완료를 차단하고 필요하면 애니메이션 값을 목표 깊이로 강제 보정한다. */
       const finishTransition = (finished: boolean, forceValue = false) => {
@@ -369,12 +370,12 @@ export function useScheduleIndexDayNavigation({
       }
       dayTransitionCleanupTimerRef.current = setTimeout(() => {
         finishTransition(true, true);
-      }, CALENDAR_INTERACTION_BUDGET_MS);
+      }, Math.max(CALENDAR_INTERACTION_BUDGET_MS, durationMs + 32));
 
       yearOverviewProgress.stopAnimation();
       Animated.timing(yearOverviewProgress, {
         toValue,
-        duration: CALENDAR_DEPTH_MOTION.depthSlideDurationMs,
+        duration: durationMs,
         easing: CALENDAR_DEPTH_EASING,
         useNativeDriver: true,
         isInteraction: false,
@@ -637,6 +638,7 @@ export function useScheduleIndexDayNavigation({
   return {
     addAndRevealItem,
     savedAgendaTarget,
+    clearSavedAgendaTarget,
     animateDayModeTransition,
     animateDayTransition,
     animateYearDepthTransition,

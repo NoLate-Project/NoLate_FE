@@ -1,0 +1,62 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "B290999E-F646-4C67-8931-63DE6BC99136.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-after-simulated-movement_0_2DFE0FD4-DDDA-412B-88E7-7F82144FD4BD.png",
+        "timestamp" : 1794753694.768
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "DC362574-5DAF-41ED-8DD7-608182610AF1.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-map-before-movement_0_1471523A-85F3-4E24-AC3F-4BB5895EC27B.png",
+        "timestamp" : 1794753651.557
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "8740DD46-5BFF-4FDB-B3D2-74153384212C.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-official-train-response_0_00DB0DE2-135B-4605-96DE-46A98CC105A0.png",
+        "timestamp" : 1794753649.897
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "7E4CE74A-4BDB-4B59-AA3A-0C6A43E9F7AD.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-gps-session-armed_0_421F34CD-2AD6-4257-BFA4-FD51DE5AB965.png",
+        "timestamp" : 1794753649.553
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "A80AA75D-C3CC-4996-A62C-E55BA8ED48A9.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-preparation-in-route-sheet_0_62D8825E-3089-4CCD-89C6-574E409CE29B.png",
+        "timestamp" : 1794753642.794
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "EAF2849C-2D28-432F-AC6A-6ACFEB9EADC5.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-ready-on-route-map_0_725E3D97-092C-4D41-BC2A-8215824DA390.png",
+        "timestamp" : 1794753639.926
+      }
+    ],
+    "testIdentifier" : "NoLateE2ETests/testIsolatedSavedRouteNavigationEntry()",
+    "testIdentifierURL" : "test://com.apple.xcode/NoLateE2E/NoLateE2ETests/NoLateE2ETests/testIsolatedSavedRouteNavigationEntry"
+  }
+]

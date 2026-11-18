@@ -24,6 +24,7 @@ export type LiquidCalendarMenuPrototypeProps = ViewProps & {
     selectedMode?: LiquidCalendarMenuSelectionMode;
     viewModeVariant?: LiquidCalendarMenuVariant;
     showsViewModeButton?: boolean;
+    showsViewModeIcon?: boolean;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
     tapRequest?: number;
@@ -54,6 +55,7 @@ type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
     selectedMode?: string;
     viewModeVariant?: LiquidCalendarMenuVariant;
     showsViewModeButton?: boolean;
+    showsViewModeIcon?: boolean;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
     tapRequest?: number;
@@ -116,6 +118,7 @@ export default function LiquidCalendarMenuPrototype({
     selectedMode,
     viewModeVariant = "calendar",
     showsViewModeButton = true,
+    showsViewModeIcon = false,
     disabled = false,
     colorScheme = "dark",
     tapRequest,
@@ -227,6 +230,7 @@ export default function LiquidCalendarMenuPrototype({
                 selectedMode={selectedMode}
                 viewModeVariant={viewModeVariant}
                 showsViewModeButton={showsViewModeButton}
+                showsViewModeIcon={showsViewModeIcon}
                 disabled={disabled}
                 colorScheme={colorScheme}
                 tapRequest={tapRequest}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import TestRenderer,{act,type ReactTestRenderer} from 'react-test-renderer';
 import {SavedJourneyTrialControls} from '../src/modules/journey/SavedJourneyTrialControls';
 import {savedJourneyProviderFixture} from '../test-support/savedJourneyProviderFixture';
@@ -22,16 +23,52 @@ function setup(){
 beforeEach(()=>{jest.clearAllMocks();mockBinding.mockReturnValue(null);mockContext.mockResolvedValue(context);mockTrial.mockReturnValue({snapshot:{status:'IDLE'},sync:{errorCode:null},
     running:false,pending:false,canAssess:true,canPrepare:false,consented:false,eligible:false,assess:jest.fn(),prepare:jest.fn()});});
 const schedule={scheduleId:'9001',memberId:7};
+test('an existing checkpoint protects the owned walking route and requires explicit consent to resume',async()=>{
+    const f=setup();let view!:ReactTestRenderer;
+    const restoreSaved=jest.fn(),setConsented=jest.fn();
+    const state={running:false,pending:false,consented:false,snapshot:{status:'IDLE',checkpointAvailable:true},
+        sync:{errorCode:null,checkpointState:'CURRENT'},savedCheckpoint:{...schedule,sessionId:'retained'},
+        canConsentToSavedRestore:true,canRestoreSaved:false,restoreSaved,setConsented};
+    const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route}
+        authenticatedSchedule={schedule} autoPrepareRoute/>;
+    mockTrial.mockReturnValue(state);
+    await act(async()=>{view=TestRenderer.create(render());});
+    expect(mockContext).not.toHaveBeenCalled();expect(mockIssue).not.toHaveBeenCalled();
+    expect(view.root.findAllByProps({testID:'saved-detail-prepare'})).toHaveLength(0);
+    await act(async()=>view.root.findByProps({testID:'saved-detail-restore'}).props.onPress());
+    expect(restoreSaved).not.toHaveBeenCalled();
+    await act(async()=>view.root.findByProps({testID:'saved-detail-restore-consent'}).props.onPress());
+    expect(setConsented).toHaveBeenCalledWith(true);
+    mockTrial.mockReturnValue({...state,consented:true,canRestoreSaved:true});
+    await act(async()=>view.update(render()));
+    await act(async()=>view.root.findByProps({testID:'saved-detail-restore'}).props.onPress());
+    expect(restoreSaved).toHaveBeenCalledTimes(1);
+    expect(mockIssue).not.toHaveBeenCalled();act(()=>view.unmount());
+});
 test('running detail distinguishes selected voice channel from unavailable lock-screen permission',async()=>{
     const f=setup();let view!:ReactTestRenderer;
     mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
     mockTrial.mockReturnValue({running:true,pending:false,sync:{errorCode:null},snapshot:{status:'ACTIVE',sessionId:'synthetic',
         guidanceNoticeMode:'VOICE_AND_NOTIFICATIONS',guidanceNoticePermission:'NOT_DETERMINED_LOCK_UNSUPPORTED_ALERT_UNSUPPORTED'}});
-    await act(async()=>{view=TestRenderer.create(<SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule}/>);});
+    await act(async()=>{view=TestRenderer.create(<SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule} isDark/>);});
     const text=JSON.stringify(view.toJSON());expect(text).toContain('전경 음성 + 알림');expect(text).toContain('잠금 화면 안내를 받을 수 없어요');
+    for (const id of ['saved-detail-notice-channel', 'saved-detail-notice-availability']) {
+        expect(StyleSheet.flatten(view.root.findByProps({ testID: id }).props.style).color).toBe('#BCC8D7');
+    }
     expect(text).not.toContain('잠금·무음에서는 알림');expect(text).not.toContain('준비는 출발이 아닙니다');
     expect(view.root.findAllByProps({testID:'saved-guidance-notice-expand'})).toHaveLength(0);
     expect(mockPermission).not.toHaveBeenCalled();act(()=>view.unmount());
+});
+test.each(['ARMED','ACTIVE'])('route header owns the running %s status without hiding the stop control',async status=>{
+    const f=setup();let view!:ReactTestRenderer;
+    mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
+    mockTrial.mockReturnValue({running:true,pending:false,sync:{errorCode:null},snapshot:{status,sessionId:'synthetic',guidanceNoticeMode:'OFF'}});
+    await act(async()=>{view=TestRenderer.create(<SavedJourneyTrialControls input={f.input} savedRoute={f.route}
+        authenticatedSchedule={schedule} statusShownInRouteHeader/>);});
+    expect(view.root.findAllByProps({testID:'saved-detail-guidance-heading'})).toHaveLength(0);
+    expect(view.root.findAllByProps({testID:'saved-detail-stop'}).length).toBeGreaterThan(0);
+    expect(view.root.findAllByProps({testID:'saved-detail-notice-channel'}).length).toBeGreaterThan(0);
+    act(()=>view.unmount());
 });
 test('insufficient navigation credential lifetime is explained without claiming GPS has started',async()=>{
     const f=setup();let view!:ReactTestRenderer;
@@ -184,4 +221,28 @@ test.each(['DESTINATION_ARRIVED','STOPPED','EXPIRED'])('normal terminal %s clear
     expect(view.root.findAllByProps({testID:'saved-detail-walking-connected'})).toHaveLength(0);
     expect(JSON.stringify(view.toJSON())).not.toContain('도보 경로를 연결하지 못했어요');
     act(()=>view.unmount());
+});
+test('arrival keeps the saved route action without showing a new preparation flow', async () => {
+    const f = setup(); let view!: ReactTestRenderer;
+    mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',
+        savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
+    const onViewSavedRoute = jest.fn();
+    const render = () => <SavedJourneyTrialControls input={f.input} savedRoute={f.route}
+        authenticatedSchedule={schedule} statusShownInRouteHeader onViewSavedRoute={onViewSavedRoute} />;
+    mockTrial.mockReturnValue({running:true,pending:false,sync:{errorCode:null},
+        snapshot:{status:'ACTIVE',sessionId:'synthetic'}});
+    await act(async () => { view=TestRenderer.create(render()); });
+    mockTrial.mockReturnValue({...mockTrial.mock.results.at(-1)!.value,running:false,
+        snapshot:{status:'STOPPED',sessionId:'synthetic',qualityReason:'DESTINATION_ARRIVED'}});
+    await act(async () => view.update(render()));
+    const output=JSON.stringify(view.toJSON());
+    expect(view.root.findAllByProps({testID:'saved-detail-guidance-heading'})).toHaveLength(0);
+    expect(view.root.findAllByProps({testID:'saved-detail-connect-walking'})).toHaveLength(0);
+    expect(view.root.findAllByProps({testID:'saved-detail-unsupported'})).toHaveLength(0);
+    expect(view.root.findAllByProps({testID:'saved-detail-provider-preflight'})).toHaveLength(0);
+    expect(output).not.toContain('위치 안내 준비');
+    expect(output).not.toContain('저장한 경로는 계속 볼 수 있어요.');
+    await act(async () => view.root.findByProps({testID:'saved-detail-view-saved-route'}).props.onPress());
+    expect(onViewSavedRoute).toHaveBeenCalledTimes(1);
+    act(() => view.unmount());
 });

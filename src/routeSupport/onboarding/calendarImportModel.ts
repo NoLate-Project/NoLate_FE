@@ -17,6 +17,7 @@ import {
   buildCalendarImportSource,
   type DeviceCalendarCandidate,
 } from '../../modules/onboarding/deviceCalendarImport';
+import { SCHEDULE_ICONS } from '../../modules/schedule/components/shared/ScheduleIcon';
 import type { Place, TravelMode } from '../../modules/schedule/types';
 
 export type OnboardingStep =
@@ -67,9 +68,9 @@ export const TRAVEL_MODES: Array<{
   label: string;
   icon: ComponentProps<typeof Ionicons>['name'];
 }> = [
-  { value: 'TRANSIT', label: '대중교통', icon: 'train-outline' },
-  { value: 'CAR', label: '자동차', icon: 'car-outline' },
-  { value: 'WALK', label: '도보', icon: 'walk-outline' },
+  { value: 'TRANSIT', label: '대중교통', icon: SCHEDULE_ICONS.transit },
+  { value: 'CAR', label: '자동차', icon: SCHEDULE_ICONS.car },
+  { value: 'WALK', label: '도보', icon: SCHEDULE_ICONS.walk },
 ];
 
 export const TRAVEL_MINUTES = [15, 30, 45, 60];

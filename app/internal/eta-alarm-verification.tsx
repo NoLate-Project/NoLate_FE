@@ -11,7 +11,10 @@ import {
     getPendingNativeAlarmFireEvents,
 } from "../../src/modules/notification/departureAlarm";
 import { reconcileDepartureAlarmSnapshot } from "../../src/modules/notification/departureAlarmSync";
-import { isIsolatedAlarmVerificationEnvironment } from "../../src/modules/notification/isolatedAlarmVerification";
+import {
+    isIsolatedAlarmVerificationApiBase,
+    isIsolatedAlarmVerificationEnvironment,
+} from "../../src/modules/notification/isolatedAlarmVerification";
 
 /** Development-only observation UI. Real native scheduling uses the normal authenticated snapshot path. */
 export default function EtaAlarmVerification() {
@@ -28,7 +31,7 @@ export default function EtaAlarmVerification() {
         try {
             // Check the environment before any network/native operation. No direct native alarm injection.
             if (!__DEV__ || Platform.OS !== "ios" || Device.isDevice ||
-                API_BASE_URL !== "http://127.0.0.1:5523") throw new Error("ISOLATED_ONLY");
+                !isIsolatedAlarmVerificationApiBase(API_BASE_URL)) throw new Error("ISOLATED_ONLY");
             setStatus("INSPECTING_FIXTURE");
             const response = await fetch(`${API_BASE_URL}/health/readiness`);
             const marker = response.headers.get("X-NoLate-Eta-Fixture");

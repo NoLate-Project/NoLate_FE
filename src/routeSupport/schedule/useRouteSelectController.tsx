@@ -93,6 +93,7 @@ export function useRouteSelectController({
         entrySource?: string;
     }>();
     const sessionId = sessionIdOverride ?? readParam(params.sessionId) ?? "";
+    const enteredFromQuickLocation = readParam(params.entrySource) === "quick-schedule-location";
     const editTargetParam = placeEditor?.target ?? readParam(params.editTarget);
     const forcedEditTarget: RoutePointTarget | undefined = editTargetParam === "origin" || editTargetParam === "destination"
         ? editTargetParam
@@ -158,6 +159,7 @@ export function useRouteSelectController({
     const [destinationAddress, setDestinationAddress] = useState(initial?.destination?.address);
     const [destinationLat, setDestinationLat] = useState<number | undefined>(initial?.destination?.lat);
     const [destinationLng, setDestinationLng] = useState<number | undefined>(initial?.destination?.lng);
+    const [searchQueries, setSearchQueries] = useState<Partial<Record<RoutePointTarget, string>>>({});
     const [activeTarget, setActiveTarget] = useState<RoutePointTarget>(initialRoutePointTarget);
     const [isEditingRoutePoint, setIsEditingRoutePoint] = useState(Boolean(forcedEditTarget) || !initialHasRouteCoords);
     const [originUsesDefault, setOriginUsesDefault] = useState(false);
@@ -194,7 +196,8 @@ export function useRouteSelectController({
         [destinationAddress, destinationLat, destinationLng, destinationText]
     );
     const activeTargetLabel = activeTarget === "origin" ? "출발지" : "도착지";
-    const activeSearchText = activeTarget === "origin" ? originText : destinationText;
+    const activeSearchQuery = searchQueries[activeTarget];
+    const activeSearchText = activeSearchQuery ?? (activeTarget === "origin" ? originText : destinationText);
     const hasRouteCoords =
         typeof originLat === "number" &&
         typeof originLng === "number" &&
@@ -212,6 +215,7 @@ export function useRouteSelectController({
         close,
         goToScheduleList,
         hasTransitFilters,
+        failedMapRouteId,
         openMapForOption,
         routeMapPending,
         openPlaceSettings,
@@ -227,11 +231,13 @@ export function useRouteSelectController({
         routeDepartureAt,
         hasExplicitDeparture,
         routeError,
+        routeErrorCode,
         showTransitRecovery,
         routeListBottomPadding,
         routeLoading,
         routeScheduleBased,
         routeSubmitPending,
+        waitingForPreview,
         routeTargetArrivalAt,
         saveRouteOption,
         applyIntercityService,
@@ -298,6 +304,7 @@ export function useRouteSelectController({
         setDestinationAddress(initial?.destination?.address);
         setDestinationLat(initial?.destination?.lat);
         setDestinationLng(initial?.destination?.lng);
+        setSearchQueries({});
         setTravelMode(initialTravelMode);
         setActiveTarget(initialRoutePointTarget);
         setIsEditingRoutePoint(Boolean(forcedEditTarget) || !initialHasRouteCoords);
@@ -397,6 +404,7 @@ export function useRouteSelectController({
         );
         const nextOrigin = target === "origin" ? place : origin;
         const nextDestination = target === "destination" ? place : destination;
+        setSearchQueries(queries => nextTarget ? { [nextTarget]: queries[nextTarget] } : {});
         if (placeEditor && placeHasCoords(nextOrigin) && placeHasCoords(nextDestination)) {
             Keyboard.dismiss();
             clearSearch();
@@ -454,56 +462,53 @@ export function useRouteSelectController({
         };
     }, []);
 
+    const searchRoutePoint = useCallback(async (target: RoutePointTarget, query: string, requestId: number) => {
+        const oppositeLat = target === "origin" ? destinationLat : originLat;
+        const oppositeLng = target === "origin" ? destinationLng : originLng;
+        const center = typeof oppositeLat === "number" && typeof oppositeLng === "number"
+            ? { lat: oppositeLat, lng: oppositeLng }
+            : undefined;
+        try {
+            const items = await searchAddressByKeyword(query, { center, radiusKm: 33 });
+            if (searchRequestIdRef.current === requestId) setSearchResults(items);
+        } catch (error) {
+            if (searchRequestIdRef.current !== requestId) return;
+            setSearchResults([]);
+            setSearchError(error instanceof Error ? error.message : "주소 검색에 실패했습니다.");
+        } finally {
+            if (searchRequestIdRef.current === requestId) setSearching(false);
+        }
+    }, [destinationLat, destinationLng, originLat, originLng]);
+
     useEffect(() => {
         if (!isEditingRoutePoint || hasTypedSearchQuery) return;
 
-        const query = activeTarget === "origin" ? originText.trim() : destinationText.trim();
+        const query = activeSearchText.trim();
         const hasCoordinates = activeTarget === "origin"
             ? typeof originLat === "number" && typeof originLng === "number"
             : typeof destinationLat === "number" && typeof destinationLng === "number";
-        if (!query || hasCoordinates) return;
+        if (!query || (activeSearchQuery === undefined && hasCoordinates)) return;
 
         const searchKey = `${activeTarget}:${query}`;
         if (automaticSearchKeyRef.current === searchKey) return;
         automaticSearchKeyRef.current = searchKey;
 
-        const requestId = searchRequestIdRef.current + 1;
-        searchRequestIdRef.current = requestId;
-        const oppositePoint = activeTarget === "origin"
-            ? (typeof destinationLat === "number" && typeof destinationLng === "number"
-                ? { lat: destinationLat, lng: destinationLng }
-                : undefined)
-            : (typeof originLat === "number" && typeof originLng === "number"
-                ? { lat: originLat, lng: originLng }
-                : undefined);
-
+        const requestId = ++searchRequestIdRef.current;
         setSearching(true);
         setHasSearchAttempt(true);
         setSearchError(undefined);
-        searchAddressByKeyword(query, { center: oppositePoint, radiusKm: 33 })
-            .then((items) => {
-                if (searchRequestIdRef.current !== requestId) return;
-                setSearchResults(items);
-            })
-            .catch((error) => {
-                if (searchRequestIdRef.current !== requestId) return;
-                const message = error instanceof Error ? error.message : "주소 검색에 실패했습니다.";
-                setSearchResults([]);
-                setSearchError(message);
-            })
-            .finally(() => {
-                if (searchRequestIdRef.current === requestId) setSearching(false);
-            });
+        void searchRoutePoint(activeTarget, query, requestId);
     }, [
+        activeSearchQuery,
+        activeSearchText,
         activeTarget,
         destinationLat,
         destinationLng,
-        destinationText,
         hasTypedSearchQuery,
         isEditingRoutePoint,
         originLat,
         originLng,
-        originText,
+        searchRoutePoint,
     ]);
 
     const handleSearchChange = useCallback((target: RoutePointTarget, text: string) => {
@@ -512,7 +517,8 @@ export function useRouteSelectController({
         const requestId = searchRequestIdRef.current + 1;
         searchRequestIdRef.current = requestId;
         routePointUiRevisionRef.current += 1;
-        const hasQuery = text.trim().length > 0;
+        const query = text.trim();
+        const hasQuery = query.length > 0;
         setActiveTarget(target);
         setIsEditingRoutePoint(true);
         setHasTypedSearchQuery(hasQuery);
@@ -520,49 +526,24 @@ export function useRouteSelectController({
         setSearchResults([]);
         setSearchError(undefined);
         setSearching(hasQuery);
-        if (target === "origin") {
-            originTouchedRef.current = true;
-            setOriginUsesDefault(false);
-            setOriginText(text);
-            setOriginAddress(undefined);
-            setOriginLat(undefined);
-            setOriginLng(undefined);
-        } else {
-            setDestinationText(text);
-            setDestinationAddress(undefined);
-            setDestinationLat(undefined);
-            setDestinationLng(undefined);
-        }
-
+        setSearchQueries(queries => ({ ...queries, [target]: text }));
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
         if (!hasQuery) return;
 
-        searchDebounceRef.current = setTimeout(async () => {
-            try {
-                setSearching(true);
-                const oppositePoint = target === "origin"
-                    ? (typeof destinationLat === "number" && typeof destinationLng === "number"
-                        ? { lat: destinationLat, lng: destinationLng }
-                        : undefined)
-                    : (typeof originLat === "number" && typeof originLng === "number"
-                        ? { lat: originLat, lng: originLng }
-                        : undefined);
-                const items = await searchAddressByKeyword(text.trim(), {
-                    center: oppositePoint,
-                    radiusKm: 33,
-                });
-                if (searchRequestIdRef.current !== requestId) return;
-                setSearchResults(items);
-            } catch (error) {
-                if (searchRequestIdRef.current !== requestId) return;
-                const message = error instanceof Error ? error.message : "주소 검색에 실패했습니다.";
-                setSearchResults([]);
-                setSearchError(message);
-            } finally {
-                if (searchRequestIdRef.current === requestId) setSearching(false);
-            }
+        searchDebounceRef.current = setTimeout(() => {
+            searchDebounceRef.current = null;
+            void searchRoutePoint(target, query, requestId);
         }, 450);
-    }, [destinationLat, destinationLng, originLat, originLng]);
+    }, [searchRoutePoint]);
+
+    const retryPlaceSearch = useCallback(() => {
+        const query = activeSearchText.trim();
+        if (!query || searching) return;
+        const requestId = ++searchRequestIdRef.current;
+        setSearching(true);
+        setSearchError(undefined);
+        void searchRoutePoint(activeTarget, query, requestId);
+    }, [activeSearchText, activeTarget, searching, searchRoutePoint]);
 
     const applyPlace = useCallback((target: RoutePointTarget, item: PlaceSearchItem) => {
         const nextPlace = buildPlaceFromSearchItem(item);
@@ -672,7 +653,6 @@ export function useRouteSelectController({
     });
 
     const favoriteController = useRouteSelectFavoriteController({
-        activeTarget,
         applyPlaceToTarget,
         clearSearch,
         destinationHasCoordinatesRef,
@@ -705,6 +685,7 @@ export function useRouteSelectController({
         setDestinationAddress(prevOrigin.address);
         setDestinationLat(prevOrigin.lat);
         setDestinationLng(prevOrigin.lng);
+        setSearchQueries({});
         clearSearch();
     }, [
         clearSearch,
@@ -728,13 +709,18 @@ export function useRouteSelectController({
         setCurrentLocationPending(false);
         routePointUiRevisionRef.current += 1;
         Keyboard.dismiss();
+        setSearchQueries({});
         clearSearch();
         if (placeEditor) {
             placeEditor.onCancel();
             return;
         }
+        if (enteredFromQuickLocation && !hasRouteCoords) {
+            close();
+            return;
+        }
         setIsEditingRoutePoint(false);
-    }, [clearSearch, placeEditor]);
+    }, [clearSearch, close, enteredFromQuickLocation, hasRouteCoords, placeEditor]);
 
     useEffect(() => {
         if (Platform.OS !== "android" || !isEditingRoutePoint || placeEditor?.isFocused === false) return;
@@ -764,6 +750,7 @@ export function useRouteSelectController({
         ? "light-content"
         : "dark-content";
     return {
+        returnsToScheduleDraft: initial?.returnToScheduleDraft === true,
         appliesToSchedule: Boolean(initial?.returnToScheduleDraft || initial?.appliesToExistingSchedule || readParam(params.entrySource) === "schedule-detail"),
         ...favoriteController,
         ...mapPickerController,
@@ -783,6 +770,7 @@ export function useRouteSelectController({
         recentPlaces,
         searchResults,
         searchError,
+        retryPlaceSearch,
         searching,
         currentLocationPending,
         selectedRouteId,
@@ -790,8 +778,10 @@ export function useRouteSelectController({
         transitRouteFilter,
         routeLoading,
         routeError,
+        routeErrorCode,
         showTransitRecovery,
         routeSubmitPending,
+        waitingForPreview,
         routePointUiRevisionRef,
         routeDepartureAt,
         hasExplicitDeparture,
@@ -829,6 +819,7 @@ export function useRouteSelectController({
         swapPlaces,
         retryRouteSearch,
         openRouteAttribution,
+        failedMapRouteId,
         openMapForOption,
         routeMapPending,
         saveRouteOption,

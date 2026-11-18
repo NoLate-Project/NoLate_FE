@@ -46,9 +46,43 @@ test("matches both vehicle clocks without adding transfer wait twice or changing
     const result = applyMatchedTransitTimeline(info, status());
     expect(result).toMatchObject({ matchedTimeline: true, departureTime: at(1), arrivalTime: at(32) });
     expect(result?.steps[1]).toMatchObject({ durationMinutes: 7, matchedTimeline: { startAt: at(3), endAt: at(10) } });
+    expect(result?.steps[1].matchedTimeline?.transferWaitSeconds).toBeUndefined();
     expect(result?.steps[2].matchedTimeline).toMatchObject({ startAt: at(10), endAt: new Date(Date.parse(at(10)) + 152_000).toISOString() });
-    expect(result?.steps[3]).toMatchObject({ durationMinutes: 13, matchedTimeline: { startAt: at(19), endAt: at(32) } });
+    expect(result?.steps[3]).toMatchObject({
+        durationMinutes: 13,
+        matchedTimeline: { startAt: at(19), endAt: at(32), transferWaitSeconds: 388 },
+    });
     expect(info.steps[3].matchedTimeline).toBeUndefined();
+});
+
+test("uses the stored ODsay end station when the old itinerary has no alightingName or stop list", () => {
+    const legacy: RouteInfo = {
+        ...info, provider: "odsay",
+        steps: info.steps.map((step, index) => step.type === "SUBWAY"
+            ? { ...step, passStops: undefined, endName: index === 1 ? "사당" : "신림" }
+            : step),
+    };
+    const current = status();
+    const result = applyMatchedTransitTimeline(legacy, current);
+    expect(result?.steps[1]).toMatchObject({ alightingName: "사당", matchedTimeline: { startAt: at(3), endAt: at(10) } });
+    expect(result?.steps[3]).toMatchObject({ alightingName: "신림", matchedTimeline: { startAt: at(19), endAt: at(32) } });
+
+    current.effectiveTransitRoute!.segments[2].toName = "봉천";
+    expect(applyMatchedTransitTimeline(legacy, current)).toBe(legacy);
+});
+
+test("keeps the predicted station arrival distinct from the timetable boarding clock", () => {
+    const current = status();
+    const [first, , transfer] = current.effectiveTransitRoute!.segments;
+    first.rideTiming!.basis = "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE";
+    first.rideTiming!.timetable.boardingStationArrivalAt = at(3);
+    first.rideTiming!.timetable.boardingAt = new Date(Date.parse(at(3)) + 30_000).toISOString();
+    transfer.rideTiming!.timetable.boardingStationArrivalAt = at(18);
+
+    const result = applyMatchedTransitTimeline(info, current);
+    expect(result?.steps[1].matchedTimeline).toMatchObject({ startAt: at(3), startsWithStationArrivalPrediction: true });
+    expect(result?.steps[3].matchedTimeline?.startsWithStationArrivalPrediction).toBeUndefined();
+    expect(result?.steps[3].matchedTimeline?.transferWaitSeconds).toBe(388);
 });
 
 test.each(["alternative", "stale", "incomplete", "wrong-station", "infeasible", "wrong-arrival"])("does not blend a %s evaluation with the saved map", (condition) => {

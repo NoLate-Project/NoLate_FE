@@ -28,12 +28,9 @@ type Props = {
     onShareCalendar: (calendar: ScheduleCalendar) => void;
     shareContent?: React.ReactNode;
     onCloseShare?: () => void;
-    onManageCalendars?: () => void;
-    preserveSelectionPosition?: boolean;
     firstDay: 0 | 1;
     onChangeFirstDay: (firstDay: 0 | 1) => void;
     onClose: () => void;
-    onDismiss?: () => void;
     reduceMotionEnabled?: boolean;
 };
 
@@ -57,13 +54,13 @@ function buildOptions(calendars: ScheduleCalendar[]): CalendarOption[] {
         {
             key: "all",
             title: "전체 일정",
-            subtitle: "개인 일정과 공유 캘린더",
+            subtitle: "모든 캘린더의 일정을 함께 봅니다",
             icon: "layers-outline",
         },
         {
             key: "personal",
             title: "개인 일정",
-            subtitle: "개인 캘린더의 일정",
+            subtitle: "개인 캘린더의 일정만 봅니다",
             icon: "person-outline",
         },
         ...calendars.map((calendar) => ({
@@ -87,53 +84,51 @@ export default function CalendarScopeSheet({
     onShareCalendar,
     shareContent,
     onCloseShare,
-    onManageCalendars,
-    preserveSelectionPosition = false,
     firstDay,
     onChangeFirstDay,
     onClose,
-    onDismiss,
     reduceMotionEnabled = false,
 }: Props) {
     const insets = useSafeAreaInsets();
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const { fontScale } = useWindowDimensions();
     const largeText = fontScale > 1.35;
+    const selectionAccent = mode === "dark" ? "#8AB8FF" : "#2864D4";
+    const selectionSurface = mode === "dark" ? "rgba(88,151,255,0.14)" : "rgba(41,121,255,0.09)";
+    const selectionBorder = mode === "dark" ? "#638FC8" : "#6C98ED";
     const options = buildOptions(calendars);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const scopeScrollY = useRef(0);
     const scopeOffset = useRef({ x: 0, y: 0 });
     const settingsButton = useRef<View>(null);
-    const manageButton = useRef<View>(null);
     const shareButtons = useRef(new Map<number, View>());
-    const returnFocus = useRef<"settings" | "manage" | number | undefined>(undefined);
+    const returnFocus = useRef<"settings" | number | undefined>(undefined);
     const showingShare = Boolean(shareContent);
     const optionsVisible = visible && !settingsOpen && !showingShare;
 
     useEffect(() => {
-        if (!visible && !preserveSelectionPosition) {
+        if (!visible) {
             setSettingsOpen(false);
             scopeScrollY.current = 0;
             scopeOffset.current = { x: 0, y: 0 };
             returnFocus.current = undefined;
         }
-    }, [preserveSelectionPosition, visible]);
+    }, [visible]);
 
     useEffect(() => {
         if (!optionsVisible || returnFocus.current === undefined) return;
         const task = requestAnimationFrame(() => {
             const id = returnFocus.current;
             const target = id === "settings" ? settingsButton.current
-                : id === "manage" ? manageButton.current
                 : id === undefined ? null : shareButtons.current.get(id);
-            const handle = findNodeHandle(target);
+            const handle = findNodeHandle(target ?? null);
             if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle);
             returnFocus.current = undefined;
         });
         return () => cancelAnimationFrame(task);
     }, [optionsVisible]);
 
-    const rememberPosition = (target: "settings" | "manage" | number) => {
+    const rememberPosition = (target: "settings" | number) => {
         scopeOffset.current = { x: 0, y: Math.max(0, scopeScrollY.current) };
         returnFocus.current = target;
     };
@@ -165,7 +160,6 @@ export default function CalendarScopeSheet({
             transparent
             animationType="none"
             onRequestClose={goBack}
-            onDismiss={onDismiss}
             accessibilityViewIsModal
         >
             <View style={styles.backdrop}>
@@ -174,7 +168,8 @@ export default function CalendarScopeSheet({
                     style={StyleSheet.absoluteFill}
                     onPress={showingShare ? onCloseShare : onClose}
                 />
-                <Animated.View entering={reduceMotionEnabled ? undefined : scopePanelEntry} style={styles.sheetHitArea}>
+                <Animated.View entering={reduceMotionEnabled ? undefined : scopePanelEntry}
+                    style={[styles.sheetHitArea, showingShare && styles.shareHitArea]}>
                     {showingShare ? shareContent : (
                     <CalendarGlassSurface
                         variant="card"
@@ -201,7 +196,9 @@ export default function CalendarScopeSheet({
                                 </Pressable>
                             ) : null}
                             <View style={styles.headingCopy}>
-                                <Text accessibilityRole="header" maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.title, { color: colors.textPrimary }]}>{settingsOpen ? "보기 설정" : "캘린더 선택"}</Text>
+                                <Text accessibilityRole="header" maxFontSizeMultiplier={2} lineBreakStrategyIOS="hangul-word" style={[styles.title, { color: colors.textPrimary }]}>
+                                    {settingsOpen ? "보기 설정" : largeText ? "캘린더 선택" : "표시할 캘린더"}
+                                </Text>
                             </View>
                             <Pressable
                                 accessibilityRole="button"
@@ -219,6 +216,11 @@ export default function CalendarScopeSheet({
                                 onChangeFirstDay={onChangeFirstDay}
                                 largeText={largeText}
                                 reduceMotionEnabled={reduceMotionEnabled}
+                                outlinedSelection={largeText ? undefined : {
+                                    backgroundColor: selectionSurface,
+                                    borderColor: selectionBorder,
+                                    color: selectionAccent,
+                                }}
                             />
                         ) : (
                             <Animated.View entering={reduceMotionEnabled ? undefined : scopeBodyEntry} style={styles.selectionBody}>
@@ -233,7 +235,11 @@ export default function CalendarScopeSheet({
                                         return (
                                             <React.Fragment key={String(option.key)}>
                                             {index === 2 ? (
-                                                <Text accessibilityRole="header" style={[styles.groupTitle, { color: colors.textSecondary }]}>
+                                                <Text accessibilityRole="header" style={[
+                                                    styles.groupTitle,
+                                                    !largeText && styles.groupTitleSeparated,
+                                                    { color: colors.textSecondary, borderTopColor: colors.border },
+                                                ]}>
                                                     공유 캘린더
                                                 </Text>
                                             ) : null}
@@ -241,9 +247,12 @@ export default function CalendarScopeSheet({
                                                 style={[
                                                     styles.option,
                                                     largeText && styles.optionLarge,
+                                                    selected && !largeText && styles.selectedOption,
                                                     {
-                                                        backgroundColor: selected ? colors.surface2 : "transparent",
-                                                        borderColor: selected ? colors.textPrimary : colors.border,
+                                                        backgroundColor: selected ? (largeText ? colors.surface2 : selectionSurface) : "transparent",
+                                                        borderColor: largeText
+                                                            ? (selected ? colors.textPrimary : colors.border)
+                                                            : (selected ? selectionBorder : "transparent"),
                                                     },
                                                 ]}
                                             >
@@ -276,7 +285,7 @@ export default function CalendarScopeSheet({
                                                     </View>
                                                     <View style={styles.optionCopy}>
                                                         <Text
-                                                            numberOfLines={largeText ? undefined : 1}
+                                                            numberOfLines={largeText ? undefined : option.calendar ? 2 : 1}
                                                             maxFontSizeMultiplier={2.5}
                                                             lineBreakStrategyIOS="hangul-word"
                                                             style={[styles.optionTitle, { color: colors.textPrimary }]}
@@ -284,7 +293,7 @@ export default function CalendarScopeSheet({
                                                             {option.title}
                                                         </Text>
                                                         <Text
-                                                            numberOfLines={largeText ? undefined : 1}
+                                                            numberOfLines={largeText ? undefined : 2}
                                                             maxFontSizeMultiplier={2}
                                                             lineBreakStrategyIOS="hangul-word"
                                                             style={[styles.optionSubtitle, { color: colors.textSecondary }]}
@@ -294,7 +303,8 @@ export default function CalendarScopeSheet({
                                                     </View>
                                                     <View style={styles.checkHost}>
                                                         {selected ? (
-                                                            <Ionicons name="checkmark-circle-outline" size={24} color={colors.textPrimary} />
+                                                            <Ionicons name="checkmark-circle-outline" size={largeText ? 24 : 20}
+                                                                color={largeText ? colors.textPrimary : selectionAccent} />
                                                         ) : null}
                                                     </View>
                                                 </Pressable>
@@ -312,14 +322,14 @@ export default function CalendarScopeSheet({
                                                             styles.shareButton,
                                                             largeText && styles.shareButtonLarge,
                                                             {
-                                                                borderLeftColor: colors.border,
+                                                                borderLeftColor: largeText ? colors.border : "transparent",
                                                                 borderTopColor: colors.border,
                                                                 opacity: pressed ? 0.58 : 1,
                                                             },
                                                         ]}
                                                     >
-                                                        <Ionicons name="share-social-outline" size={17} color={colors.textPrimary} />
-                                                        <Text maxFontSizeMultiplier={2} style={[styles.shareButtonText, { color: colors.textPrimary }]}>공유하기</Text>
+                                                        <Ionicons name="share-social-outline" size={17} color={largeText ? colors.textPrimary : selectionAccent} />
+                                                        <Text maxFontSizeMultiplier={2} style={[styles.shareButtonText, { color: largeText ? colors.textPrimary : selectionAccent }]}>공유하기</Text>
                                                     </Pressable>
                                                 ) : null}
                                             </View>
@@ -329,18 +339,6 @@ export default function CalendarScopeSheet({
                                 </ScrollView>
 
                                 <View style={[styles.actions, { borderTopColor: colors.border }]}>
-                                    {onManageCalendars ? (
-                                        <Pressable
-                                            ref={manageButton}
-                                            accessibilityRole="button"
-                                            accessibilityLabel="공유 캘린더 관리"
-                                            onPress={() => { rememberPosition("manage"); onManageCalendars(); }}
-                                            style={({ pressed }) => [styles.action, { backgroundColor: colors.surface2, opacity: pressed ? 0.62 : 1 }]}
-                                        >
-                                            <Ionicons accessible={false} name="calendar-outline" size={19} color={colors.textPrimary} />
-                                            <Text maxFontSizeMultiplier={1.5} style={[styles.actionText, { color: colors.textPrimary }]}>캘린더 관리</Text>
-                                        </Pressable>
-                                    ) : null}
                                     <Pressable
                                         ref={settingsButton}
                                         accessibilityRole="button"
@@ -378,6 +376,7 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 30,
         overflow: "hidden",
     },
+    shareHitArea: { height: "86%" },
     sheet: {
         maxHeight: "100%",
         borderTopLeftRadius: 30,
@@ -423,6 +422,7 @@ const styles = StyleSheet.create({
     },
     selectionBody: { flexShrink: 1 },
     groupTitle: { marginTop: 8, marginBottom: 1, fontSize: 13, fontWeight: "700" },
+    groupTitleSeparated: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 9, paddingHorizontal: 4 },
     options: {
         gap: 7,
         paddingBottom: 12,
@@ -434,6 +434,9 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         overflow: "hidden",
+    },
+    selectedOption: {
+        borderWidth: 1,
     },
     optionSelection: {
         minHeight: 64,
@@ -500,13 +503,10 @@ const styles = StyleSheet.create({
         padding: 8,
     },
     actions: {
-        flexDirection: "row",
-        gap: 8,
         borderTopWidth: StyleSheet.hairlineWidth,
         paddingTop: 12,
     },
     action: {
-        flex: 1,
         minHeight: 48,
         paddingVertical: 6,
         borderRadius: 16,

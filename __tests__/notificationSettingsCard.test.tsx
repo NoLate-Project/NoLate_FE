@@ -3,6 +3,7 @@ import { AppState, Linking, Modal, StyleSheet, Switch } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import NotificationSettingsCard from "../src/modules/schedule/components/form/NotificationSettingsCard";
+import AlarmSoundSettings from "../src/modules/schedule/components/form/AlarmSoundSettings";
 import type { DepartureAlarmCapabilities } from "../src/modules/notification/departureAlarm";
 
 const mockGetCapabilities = jest.fn();
@@ -148,7 +149,8 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         linkingSpy.mockRestore();
     });
 
-    async function renderCard(alertMode: "STANDARD" | "ALARM", variant: "card" | "flat" = "card") {
+    async function renderCard(alertMode: "STANDARD" | "ALARM", variant: "card" | "flat" = "card",
+        overrides: Partial<React.ComponentProps<typeof NotificationSettingsCard>> = {}) {
         await act(async () => {
             renderer = TestRenderer.create(
                 <NotificationSettingsCard
@@ -175,12 +177,32 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
                     onAlertModeChange={onAlertModeChange}
                     onLeadMinutesChange={jest.fn()}
                     onIntervalMinutesChange={jest.fn()}
+                    {...overrides}
                 />,
             );
             await Promise.resolve();
             await Promise.resolve();
         });
     }
+
+    test.each([
+        ["2026-11-22T10:50:00Z", "오후 6:40", "오후 7:47 도착 예정"],
+        ["2026-11-22T11:00:00Z", "오후 6:53", "오후 8:00 도착 예정"],
+    ])("ODsay 알림 시각이 경로와 일정의 도착 기준을 따른다 (%s)", async (start, departure, arrival) => {
+        await renderCard("STANDARD", "flat", {
+            startAt: new Date(start),
+            routePlannedArrivalAt: "2026-11-22T10:50:00Z",
+            routeInfo: {
+                id: "odsay-test", provider: "odsay", originName: "노원역", destinationName: "신림역",
+                timeBasis: "provider_schedule", providerTimeBasis: "timetable",
+                departureTime: "2026-11-22T09:40:00Z", arrivalTime: "2026-11-22T10:46:30Z",
+                totalDurationMinutes: 67, totalDurationSeconds: 3990, steps: [],
+            },
+        });
+        const summary = renderer!.root.findByProps({ testID: "notification-flat-summary" });
+        expect(summary.findByProps({ children: departure })).toBeTruthy();
+        expect(summary.findByProps({ children: arrival })).toBeTruthy();
+    });
 
     test.each(["FREE", "PREMIUM"] as const)(
         "%s도 기존 월 한도를 넘긴 후 출발 알림을 켤 수 있다",
@@ -336,7 +358,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             paddingHorizontal: 0,
         });
         expect(renderer!.root.findByProps({ testID: "notification-flat-summary" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ children: "알림" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "출발 알림" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "푸시 알림" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "출발 알람" })).toBeTruthy();
         expect(StyleSheet.flatten(
@@ -381,7 +403,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             backgroundColor: "#F7F7F8",
         });
         expect(soundRow.findByProps({ name: "musical-notes-outline" }).props.size).toBe(18);
-        expect(soundRow.findByProps({ name: "chevron-forward" }).props.size).toBe(16);
+        expect(soundRow.findByProps({ name: "chevron-forward-outline" }).props.size).toBe(16);
         expect(StyleSheet.flatten(
             soundRow.findByProps({ children: "소리 및 진동" }).props.style,
         )).toMatchObject({
@@ -410,6 +432,25 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         });
     };
 
+    test("저장된 기본음을 읽기 전에는 기본값을 현재 선택으로 표시하지 않는다", async () => {
+        const nativeRead = deferred<"BELL">();
+        mockGetNativeAlarmSound.mockReturnValueOnce(nativeRead.promise);
+        await renderCard("ALARM", "flat");
+
+        const pending = renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 기본 알람음 확인 중" });
+        expect(pending.props.accessibilityState).toEqual({ disabled: true, busy: true });
+        await act(async () => { pending.props.onPress(); });
+        expect(renderer!.root.findByType(Modal).props.visible).toBe(false);
+        expect(mockSetNativeAlarmSound).not.toHaveBeenCalled();
+
+        await act(async () => { nativeRead.resolve("BELL"); });
+        await press("소리 및 진동, 현재 벨");
+        expect(renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.accessibilityState.checked).toBe(true);
+        await press("차임 알람음");
+        await press("알람음 적용");
+        expect(mockSetNativeAlarmSound).toHaveBeenCalledWith("CHIME");
+    });
+
     test("선택, 미리 듣기, 적용을 각각 조작한다", async () => {
         await renderCard("ALARM", "flat");
         await press("소리 및 진동, 현재 차임");
@@ -421,13 +462,18 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(renderer!.root.findByProps({ children: "모든 출발 알람에 적용돼요." })).toBeTruthy();
         expect(StyleSheet.flatten(renderer!.root.findByProps({ testID: "alarm-sound-picker-sheet" }).props.style))
             .toMatchObject({ backgroundColor: "#FFFFFF" });
+        const apply = renderer!.root.findByProps({ accessibilityLabel: "알람음 적용" });
+        expect(StyleSheet.flatten(apply.props.style({ pressed: false }))).toMatchObject({ backgroundColor: "#1E5DC7" });
 
         await press("경적 알람음");
         expect(mockStartAlarmAudio).not.toHaveBeenCalled();
         await press("벨 미리 듣기");
-        expect(mockStartAlarmAudio).toHaveBeenCalledWith("BELL");
+        expect(mockStartAlarmAudio).toHaveBeenCalledWith("BELL", expect.any(Function));
+        expect(renderer!.root.findByProps({ testID: "alarm-sound-playing-indicator" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "벨 미리 듣기 중지" }).props.accessibilityState.selected).toBe(true);
         expect(renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.accessibilityState.checked).toBe(true);
-        await press("벨 미리 듣기 중지");
+        await act(async () => { mockStartAlarmAudio.mock.lastCall![1](false); });
+        expect(renderer!.root.findAllByProps({ testID: "alarm-sound-playing-indicator" })).toHaveLength(0);
         expect(mockStopAlarmAudio).toHaveBeenCalledTimes(1);
         expect(mockSetNativeAlarmSound).not.toHaveBeenCalled();
         expect(mockSetLocalAlarmSound).not.toHaveBeenCalled();
@@ -438,6 +484,27 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(mockStartAlarmAudio).toHaveBeenCalledTimes(1);
         expect(renderer!.root.findByType(Modal).props.visible).toBe(false);
         expect(renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 경적" })).toBeTruthy();
+    });
+
+    test("중지된 재생 요청이 늦게 끝나도 다음 미리 듣기의 로딩을 해제하지 않는다", async () => {
+        const previousPreview = deferred<{ stop: jest.Mock; setMuted: jest.Mock }>();
+        const nextPreview = deferred<{ stop: jest.Mock; setMuted: jest.Mock }>();
+        const stopPrevious = jest.fn().mockResolvedValue(undefined);
+        const stopNext = jest.fn().mockResolvedValue(undefined);
+        mockStartAlarmAudio.mockReturnValueOnce(previousPreview.promise).mockReturnValueOnce(nextPreview.promise);
+        await renderCard("ALARM", "flat");
+        await press("소리 및 진동, 현재 차임");
+        await press("벨 미리 듣기");
+        await act(async () => { appStateHandler?.("background"); });
+        await act(async () => { appStateHandler?.("active"); });
+        await press("비프 미리 듣기");
+        await act(async () => { previousPreview.resolve({ stop: stopPrevious, setMuted: jest.fn() }); });
+        expect(stopPrevious).toHaveBeenCalledTimes(1);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "비프 미리 듣기" }).props.disabled).toBe(true);
+        await act(async () => { nextPreview.resolve({ stop: stopNext, setMuted: jest.fn() }); });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "비프 미리 듣기 중지" }).props.disabled).toBe(false);
+        await press("알람음 선택 닫기");
+        expect(stopNext).toHaveBeenCalledTimes(1);
     });
 
     test("적용하지 않고 닫으면 미리 듣기를 중지하고 선택을 버린다", async () => {
@@ -452,6 +519,35 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(mockSetNativeAlarmSound).not.toHaveBeenCalled();
         await press("소리 및 진동, 현재 차임");
         expect(renderer!.root.findByProps({ accessibilityLabel: "차임 알람음" }).props.accessibilityState.checked).toBe(true);
+    });
+
+    test("빠른 일정에서 적용한 기본음을 이미 열린 일정 폼에서도 표시한다", async () => {
+        const previousRead = deferred<"CHIME">();
+        mockGetNativeAlarmSound.mockReturnValueOnce(previousRead.promise);
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <>
+                    <AlarmSoundSettings available flat={false} />
+                    <AlarmSoundSettings available flat />
+                </>,
+            );
+        });
+        const quick = renderer!.root.findAllByType(AlarmSoundSettings)[1];
+        await act(async () => {
+            quick.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
+        });
+        await act(async () => {
+            quick.findByProps({ accessibilityLabel: "벨 알람음" }).props.onPress();
+        });
+        await act(async () => {
+            quick.findByProps({ accessibilityLabel: "알람음 적용" }).props.onPress();
+        });
+        await act(async () => { previousRead.resolve("CHIME"); });
+
+        expect(mockSetNativeAlarmSound).toHaveBeenCalledTimes(1);
+        expect(quick.findByType(Modal).props.visible).toBe(false);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 벨, 모든 출발 알람에 적용" })).toBeTruthy();
+        expect(quick.findByProps({ accessibilityLabel: "소리 및 진동, 현재 벨" })).toBeTruthy();
     });
 
     test("백그라운드에서 적용이 끝나도 미리 듣기를 시작하지 않는다", async () => {
@@ -620,7 +716,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        expect(mockStartAlarmAudio).toHaveBeenCalledWith("CHIME");
+        expect(mockStartAlarmAudio).toHaveBeenCalledWith("CHIME", expect.any(Function));
 
         await act(async () => {
             appStateHandler?.("active");

@@ -22,7 +22,7 @@ export type SavedJourneyGuidanceView = { phase: string; instruction: string; pro
     subway?: { currentStopIndex: number; totalStops: number; currentStopName: string; nextStopName: string | null; remainingStops: number };
     lastConfirmedSubway?: { stopIndex: number; totalStops: number; stopName: string; confirmedAt: number };
     alighting?: { kind: 'ONE_STOP_BEFORE' | 'NEAR_STOP'; remainingMeters: number; action: string };
-    arrival?: { directionLabel: string; remainingSeconds: number } };
+    arrival?: { kind?: 'BUS' | 'SUBWAY'; directionLabel: string; remainingSeconds: number } };
 export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot | null, binding: AutomaticJourneyBinding | null, now: number): SavedJourneyGuidanceView | null {
     const raw = automaticRecord(snapshot?.guidance);
     const alighting = automaticRecord(raw?.alighting);
@@ -47,7 +47,10 @@ export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot |
     const indexedVersion=raw?.schemaVersion===6||raw?.schemaVersion===7;
     const validIndexed = indexedVersion && typeof index === 'number' && Number.isSafeInteger(index)
         && index >= 2 && index <= 30 && (raw?.schemaVersion===6 ? raw.arrival == null :
-            ['WAITING','APPROACHING_STOP'].includes(String(raw?.phase)) && raw?.arrivalStatus==='WAITING_INFORMATION'
+            (['WAITING','APPROACHING_STOP'].includes(String(raw?.phase))
+                || raw?.phase === 'WALKING_TO_STOP' && indexedArrival?.kind === 'SUBWAY'
+                    && typeof raw.walkProgress === 'number' && raw.walkProgress >= 0.9)
+                && raw?.arrivalStatus==='WAITING_INFORMATION'
             && indexedArrival?.busLegIndex === index+(raw?.phase==='WAITING'?0:1))
         && (raw.phase === 'RIDING' ? index % 2 === 1 && raw.boardingConfirmed === true && raw.walkProgress == null
             && (raw.alighting == null || validAlighting)
@@ -111,8 +114,16 @@ export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot |
         action: alighting.kind === 'NEAR_STOP' ? '정류장 근처 · 하차 준비' : `다음 정류장 · 약 ${alighting.remainingMeters}m 앞 · 하차 준비`,
     };
     const arrival = automaticRecord(raw.arrival);
-    const validArrival = known && ["APPROACHING_STOP", "WAITING"].includes(phase) && raw.arrivalStatus === "WAITING_INFORMATION" && arrival
-        && typeof arrival.providerRouteId === "string" && /^[1-9]\d{0,19}$/.test(arrival.providerRouteId)
+    const subwayArrival = arrival?.kind === 'SUBWAY';
+    const nearSubwayPlatform = phase === 'WALKING_TO_STOP' && subwayArrival && typeof raw.walkProgress === 'number'
+        && raw.walkProgress >= 0.9 && Number.isSafeInteger(raw.activeLegIndex)
+        && (raw.activeLegIndex as number) % 2 === 0;
+    const validArrival = known && (["APPROACHING_STOP", "WAITING"].includes(phase) || nearSubwayPlatform)
+        && raw.arrivalStatus === "WAITING_INFORMATION" && arrival
+        && typeof arrival.providerRouteId === "string" && (subwayArrival
+            ? safeStationName(arrival.providerRouteId) && Number.isSafeInteger(arrival.busLegIndex)
+                && arrival.busLegIndex === (phase === 'WAITING' ? raw.activeLegIndex : Number(raw.activeLegIndex) + 1)
+            : /^[1-9]\d{0,19}$/.test(arrival.providerRouteId))
         && typeof arrival.directionLabel === "string" && arrival.directionLabel.length > 0 && arrival.directionLabel.length <= 128
         && !Array.from(arrival.directionLabel).some(c => c.charCodeAt(0) <= 31 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159)
         && typeof arrival.sourceUpdatedAt === "number" && Number.isFinite(arrival.sourceUpdatedAt)
@@ -122,6 +133,6 @@ export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot |
         && arrival.expectedAt <= arrival.sourceUpdatedAt + 3600
         && Math.abs(arrival.validUntil - Math.min(arrival.sourceUpdatedAt + 120, arrival.expectedAt)) < 0.001
         && now < arrival.validUntil && now < arrival.expectedAt;
-    return validArrival ? { ...result, arrival: { directionLabel: arrival.directionLabel as string,
+    return validArrival ? { ...result, arrival: { kind: subwayArrival ? 'SUBWAY' : 'BUS', directionLabel: arrival.directionLabel as string,
         remainingSeconds: Math.ceil((arrival.expectedAt as number) - now) } } : result;
 }

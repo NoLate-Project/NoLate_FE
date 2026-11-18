@@ -23,6 +23,15 @@ it('uses the final walking bar segment, remaining distance, current row and same
     expect(savedJourneyTimelineHighlight(stage,input,{steps:input.legs.map(leg=>({id:`leg-${leg.index}`,type:leg.kind}))} as RouteInfo)?.stepId).toBe('leg-2');
     expect(presentSavedJourneyPosition(s,binding,1021)).toEqual({latitude:37.5,longitude:127});
 });
+it('shows a verified subway exit on the final walk in the same detail, bar and map position',()=>{
+    const subwayInput={...input,legs:input.legs.map(leg=>leg.index===1?{...leg,kind:'SUBWAY'}:leg)} as JourneyRouteInput;
+    const s=snapshot();
+    (s.guidanceRoute!.legs as any[])[1].kind='SUBWAY';
+    expect(presentSavedJourneyRoutePosition(s,binding,subwayInput,1021)).toMatchObject({legIndex:2,legProgress:0.2,waiting:false});
+    expect(presentSavedJourneyStage(s,binding,subwayInput,1021)).toEqual({title:'목적지까지',action:'도보 약 160m',activeLegIndex:2});
+    expect(presentSavedJourneyPosition(s,binding,1021)).toEqual({latitude:37.5,longitude:127});
+    expect(presentSavedJourneyRoutePosition(s,binding,subwayInput,1035)).toBeNull();
+});
 it.each([{schemaVersion:1},{schemaVersion:3},{activeLegIndex:1},{boardingConfirmed:true},{rideProgress:0.5},
     {alighting:{kind:'NEAR_STOP',remainingMeters:0}},{arrival:{}},{walkProgress:NaN},{walkProgress:1.1},{walkProgress:null},
     {quality:'UNCERTAIN'},{phase:'ARRIVED'}])('rejects contradictory or unsupported final walking content %j',patch=>{

@@ -62,25 +62,29 @@ class EarlyTransferAuditTest(unittest.TestCase):
                 'timetable': {'trainNumber': train, 'boardingAt': at(raw_board), 'arrivalAt': at(raw_arrival)},
                 'predictedBoardingAt': at(board), 'predictedArrivalAt': at(arrival)}}
         # The route's second-precision departure is 26s after the minute-rounded alert decision.
-        route = {'totalMinutes': 41, 'departureAt': at(26), 'arrivalAt': at(2452), 'segments': [
-            {'kind': 'WALK', 'durationSeconds': 111}, ride('4012', 330, 1530, 197, 1397),
-            {'kind': 'WALK', 'durationSeconds': 243}, ride('2012', 1800, 2281, 1800, 2281),
+        route = {'totalMinutes': 28, 'departureAt': at(26), 'arrivalAt': at(1702), 'segments': [
+            {'kind': 'WALK', 'durationSeconds': 111}, ride('4012', 330, 800, 197, 700),
+            {'kind': 'WALK', 'durationSeconds': 243}, ride('2012', 1050, 1531, 1050, 1531),
             {'kind': 'WALK', 'durationSeconds': 171}]}
+        first = route['segments'][1]['rideTiming']
+        first['timetable']['boardingStationArrivalAt'] = at(310)
+        first.update(basis='FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME', observationSourceUpdatedAt=at(-60))
+        route['segments'][3]['transferTiming'] = {'previousArrivalAt': at(700)}
         worker = {'classification': 'SYNTHETIC_PROVIDER_WORKER', 'providersMocked': True,
             'database': 'H2_MEMORY_ONLY', 'physicalTransitHttpCalls': 0, 'productionDatabaseModified': False,
             'phase': 'early-transfer', 'processed': 1, 'historyCount': 1, 'alertMode': 'STANDARD', 'alarmStates': [],
             'retryCount': 0, 'workerFailure': None, 'savedScheduleInput': {}, 'savedScheduleAfterEvaluation': {},
             'effectiveSnapshot': {'accepted': True, 'effectiveTransitRoute': copy.deepcopy(route),
-                'transitTimingBasis': 'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE'},
+                'transitTimingBasis': 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED'},
             'source': 'LIVE_PROVIDER', 'stale': False, 'failureCode': None, 'epoch': at(0), 'evaluatedAt': at(-60),
             'evaluationHistory': {'memberId': 296, 'scheduleId': 363},
             'clockMode': 'FIXED_PRIVATE_BACKEND_SNAPSHOT_CLOCK',
-            'recommendedDepartureAt': at(0), 'predictedArrivalAt': at(2452),
-            'timetableQueries': [{'line': 'LINE_2', 'notBefore': at(1833)}, {'line': 'LINE_2', 'notBefore': at(1700)}]}
+            'recommendedDepartureAt': at(0), 'predictedArrivalAt': at(1702),
+            'timetableQueries': [{'line': 'LINE_2', 'notBefore': at(1103)}, {'line': 'LINE_2', 'notBefore': at(1003)}]}
         public = {'scheduleId': 363, 'source': 'LIVE_PROVIDER', 'stale': False, 'confidence': 'MEDIUM',
-            'transitTimingBasis': 'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE',
-            'failureReason': None, 'recommendedDepartureAt': at(0), 'predictedArrivalAt': at(2452),
-            'travelMinutes': 41, 'effectiveTransitRoute': route, 'routeChanged': False, 'onTimeArrivalPossible': True,
+            'transitTimingBasis': 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED',
+            'failureReason': None, 'recommendedDepartureAt': at(0), 'predictedArrivalAt': at(1702),
+            'travelMinutes': 28, 'effectiveTransitRoute': route, 'routeChanged': False, 'onTimeArrivalPossible': True,
             'firstBoardingObservation': {'trainNumber': '4012', 'expectedBoardingAt': at(197),
                 'readyAt': at(171), 'sourceUpdatedAt': at(-60)}}
         return worker, public
@@ -88,14 +92,14 @@ class EarlyTransferAuditTest(unittest.TestCase):
     def test_earlier_connection_preserves_margin_and_cannot_claim_real_accuracy(self):
         result = verifier.verify_prediction(*self.fixture())
         self.assertEqual(result['result'], 'PASSED')
-        self.assertEqual(result['syntheticImprovementSeconds'], 300)
+        self.assertEqual(result['syntheticImprovementSeconds'], 1050)
         self.assertTrue(result['walkingAndMarginPreserved'])
         self.assertFalse(result['actualTripAccuracyVerified'])
 
     def test_first_live_train_does_not_make_future_timetable_high_confidence(self):
         worker, public = self.fixture()
         public['confidence'] = 'MEDIUM'
-        basis = 'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE'
+        basis = 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED'
         public['transitTimingBasis'] = worker['effectiveSnapshot']['transitTimingBasis'] = basis
         self.assertEqual(verifier.verify_prediction(worker, public)['result'], 'PASSED')
         public['confidence'] = 'HIGH'

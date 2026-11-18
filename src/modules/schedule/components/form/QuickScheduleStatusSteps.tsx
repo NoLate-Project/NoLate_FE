@@ -3,11 +3,14 @@ import React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Reanimated, { ReduceMotion, withTiming } from "react-native-reanimated";
 
+import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotion";
+import LoadingIndicator from "../../../../ui/LoadingIndicator";
 import QuickScheduleLogoLoader from "./QuickScheduleLogoLoader";
 import { createQuickScheduleModalStyles } from "./QuickScheduleModal.styles";
 import {
   BLUE,
   EXPANDED_CARD_RADIUS,
+  QUICK_ANALYSIS_MOTION,
   VOICE_SPECTRUM_INNER_RADIUS,
   VOICE_SPECTRUM_SIZE,
 } from "./quickScheduleModalModel";
@@ -21,6 +24,7 @@ type LoadingStepProps = {
   colors: StatusColors;
   label: string;
   description?: string;
+  isAnalyzing: boolean;
 };
 
 /** 분석과 저장에 같은 로고 모션을 사용하고, 저장할 때는 일정 이름을 표시한다. */
@@ -28,7 +32,10 @@ export function QuickScheduleLoadingStep({
   colors,
   label,
   description,
+  isAnalyzing,
 }: LoadingStepProps) {
+  const { logoDelayMs, logoSettleMs } = QUICK_ANALYSIS_MOTION;
+
   return (
     <View
       accessible
@@ -38,7 +45,14 @@ export function QuickScheduleLoadingStep({
       testID="quick-schedule-loading"
       style={styles.centerFlow}
     >
-      <QuickScheduleLogoLoader accessibilityLabel={label} settleOnly />
+      <QuickScheduleLogoLoader
+        accessibilityLabel={label}
+        settleOnly
+        settleDelayMs={isAnalyzing ? logoDelayMs : undefined}
+        settleDurationMs={logoSettleMs}
+        hideBeforeSettle={isAnalyzing}
+        useAppLogoFace={isAnalyzing}
+      />
       {description ? (
         <Text
           lineBreakStrategyIOS="hangul-word"
@@ -48,6 +62,7 @@ export function QuickScheduleLoadingStep({
           {description}
         </Text>
       ) : null}
+      {isAnalyzing && <LoadingIndicator size="regular" delayMs={logoDelayMs + logoSettleMs} />}
     </View>
   );
 }
@@ -178,10 +193,11 @@ export function QuickScheduleSavedStep({
   title,
 }: SavedStepProps) {
   const largeText = useWindowDimensions().fontScale > 1.35;
+  const reduceMotion = useSystemReduceMotion();
   return (
     <View style={recoveryStyles.container}>
       <ScrollView style={recoveryStyles.body} contentContainerStyle={savedStyles.content}>
-        <Reanimated.View entering={savedCheckEntrance} style={savedStyles.check}>
+        <Reanimated.View entering={reduceMotion ? undefined : savedCheckEntrance} style={savedStyles.check}>
           <Ionicons accessible={false} name="checkmark-outline" size={32} color={successColor} />
         </Reanimated.View>
         {title ? <Text lineBreakStrategyIOS="hangul-word" style={[savedStyles.title, { color: colors.textPrimary }]}>{title}</Text> : null}

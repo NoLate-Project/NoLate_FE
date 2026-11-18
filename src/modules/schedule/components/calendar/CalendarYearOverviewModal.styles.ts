@@ -11,11 +11,17 @@ const styles = StyleSheet.create({
     content: {
         paddingHorizontal: 24,
     },
+    contentThreeColumns: {
+        paddingHorizontal: 16,
+    },
     floatingBarContentEnd: {
         paddingBottom: 24,
     },
     yearSection: {
         marginBottom: 44,
+    },
+    yearSectionThreeColumns: {
+        marginBottom: 24,
     },
     yearHeader: {
         marginBottom: 13,
@@ -31,16 +37,36 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         letterSpacing: 0,
     },
+    yearTitleThreeColumns: {
+        fontSize: 28,
+        lineHeight: 34,
+    },
     monthGrid: {
         flexDirection: "row",
         flexWrap: "wrap",
         justifyContent: "space-between",
         rowGap: 20,
     },
+    monthGridThreeColumns: {
+        rowGap: 6,
+    },
     monthPreview: {
         width: "31%",
         minHeight: 130,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingBottom: 6,
     },
+    monthPreviewThreeColumns: {
+        minHeight: 120,
+        paddingHorizontal: 3,
+        paddingTop: 3,
+    },
+    selectedMonth: { borderRadius: 8 },
+    standardMonth: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "transparent",
+    },
+    standardSelectedMonth: { borderRadius: 12 },
     monthPreviewWide: {
         width: "48%",
     },
@@ -50,13 +76,17 @@ const styles = StyleSheet.create({
         marginBottom: 1,
         letterSpacing: 0,
     },
+    monthTitleThreeColumns: {
+        fontSize: 16,
+        marginBottom: 4,
+    },
     daysGrid: {
         flexDirection: "row",
         flexWrap: "wrap",
     },
     dayCell: {
         width: "14.2857%",
-        height: 17.3333,
+        height: 15,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -77,10 +107,23 @@ const styles = StyleSheet.create({
         height: 21,
         borderRadius: 10.5,
     },
+    selectedMarkerFill: { ...StyleSheet.absoluteFillObject, borderRadius: 99 },
+    standardDayBadge: { borderRadius: 4 },
+    standardTodaySelectedOutline: {
+        ...StyleSheet.absoluteFillObject,
+        margin: -1.5,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 5,
+    },
     dayText: {
         fontSize: 10,
         fontWeight: "600",
     },
+    standardDayText: {
+        fontVariant: ["tabular-nums"],
+        fontWeight: "500",
+    },
+    standardMarkedDayText: { fontWeight: "800" },
     scheduleDensityBadge: {
         borderRadius: 2,
     },

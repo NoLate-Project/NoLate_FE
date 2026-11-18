@@ -1,0 +1,80 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "D5883539-E548-4313-96AB-AE32681B5E88.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-final-walk-lock-screen_0_6C0E6150-1361-4215-9A50-9376FCB24A1C.png",
+        "timestamp" : 1794762064.119
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "6F9A0CFC-7B51-46B8-A6F7-8074D1AEFE7B.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-final-walk_0_F91C3AC2-1215-4A8A-A3E3-4A84E484F0FA.png",
+        "timestamp" : 1794762033.61
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "80B6D133-9A66-4F4A-B6E1-392E30ADFC28.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-destination-station_0_6A632DDB-6EFE-407A-A21F-07055A27AD11.png",
+        "timestamp" : 1794761989.326
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "44D07A11-009F-4CFE-8C35-D28C7499DAFC.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-subway-intermediate-station_0_DCA15A89-57B4-4B2D-B5FB-0B2B8A1C895A.png",
+        "timestamp" : 1794761929.948
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "99E02B77-8B03-40F2-9760-56357D256330.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-map-before-movement_0_61CD3216-C68F-42F3-A933-135439BEB059.png",
+        "timestamp" : 1794761825.677
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "B2FFB653-6D50-4DE2-ACE8-9DC8F25E9305.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-gps-session-armed_0_96A584A7-CC8E-4C54-92F9-8806FC4E8F3C.png",
+        "timestamp" : 1794761824.07
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "EDC6B476-3CEF-451F-8C2C-C9EE0023D7A0.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-preparation-in-route-sheet_0_BADF6361-683A-4FE9-AE00-DF49F22C6875.png",
+        "timestamp" : 1794761817.322
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "8F84E966-0DB3-4C40-ADC4-43F10094F3C6",
+        "deviceName" : "NoLate Journey Candidate E2E 20261104",
+        "exportedFileName" : "D19313E0-C227-4563-8262-1E447E383E57.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "isolated-navigation-ready-on-route-map_0_957C885F-E413-4D68-8D41-FE6BCE95B9C8.png",
+        "timestamp" : 1794761814.555
+      }
+    ],
+    "testIdentifier" : "NoLateE2ETests/testIsolatedSavedRouteNavigationEntry()",
+    "testIdentifierURL" : "test://com.apple.xcode/NoLateE2E/NoLateE2ETests/NoLateE2ETests/testIsolatedSavedRouteNavigationEntry"
+  }
+]

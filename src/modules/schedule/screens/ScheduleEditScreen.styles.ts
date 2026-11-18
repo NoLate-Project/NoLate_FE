@@ -17,6 +17,7 @@ const styles = StyleSheet.create({
     },
     topHeader: {
         paddingHorizontal: 20,
+        borderBottomWidth: StyleSheet.hairlineWidth,
         zIndex: 2,
     },
     scrollContent: {
@@ -58,12 +59,13 @@ const styles = StyleSheet.create({
         fontSize: 18,
         lineHeight: 24,
         fontWeight: "700",
+        textAlign: "center",
     },
     navigationSaveButton: {
-        width: 64,
-        height: 44,
-        marginRight: -8,
-        alignItems: "flex-end",
+        width: 44,
+        minHeight: 44,
+        marginRight: -12,
+        alignItems: "center",
         justifyContent: "center",
     },
     navigationSaveText: {
@@ -82,6 +84,7 @@ const styles = StyleSheet.create({
     },
     navigationTitleLarge: {
         lineHeight: undefined,
+        textAlign: "left",
     },
     navigationSaveTextLarge: {
         lineHeight: undefined,
@@ -116,6 +119,16 @@ const styles = StyleSheet.create({
         gap: 0,
         paddingBottom: 6,
     },
+    dateTimeFieldRow: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        alignItems: "stretch",
+    },
+    dateTimeFieldLabel: { alignSelf: "center", paddingLeft: 4, marginRight: 2 },
+    dateTimeField: { minHeight: 44, borderRadius: 10, paddingHorizontal: 8, columnGap: 4 },
+    dateTimeFieldValue: { flex: 1 },
+    dateTimeClockField: { flex: 0.88, minWidth: 0 },
+    dateTimeClockFieldText: { flex: 1, fontSize: 13 },
     dateTimeDateAction: {
         flex: 1,
         minWidth: 0,
@@ -128,6 +141,14 @@ const styles = StyleSheet.create({
     dateTimeDateActionLarge: {
         flex: 0,
     },
+    dateTimeDateActionInline: {
+        flexDirection: "row",
+        alignItems: "center",
+        alignContent: "center",
+        justifyContent: "flex-start",
+        flexWrap: "wrap",
+        columnGap: 8,
+    },
     dateTimeRowTitle: {
         fontSize: 14,
         lineHeight: 19,
@@ -138,6 +159,12 @@ const styles = StyleSheet.create({
         fontSize: 11.5,
         lineHeight: 16,
         fontWeight: "600",
+    },
+    dateTimeDateTextInline: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "600",
+        fontVariant: ["tabular-nums"],
     },
     dateTimeClockAction: {
         minHeight: 44,
@@ -172,6 +199,10 @@ const styles = StyleSheet.create({
     dateTimeDivider: {
         height: StyleSheet.hairlineWidth,
         marginLeft: 13,
+    },
+    pickerMonthTitle: {
+        fontSize: 16,
+        fontWeight: "700",
     },
     toggleSwitch: {
         alignSelf: "center",

@@ -3,9 +3,15 @@ import { isIsolatedAlarmVerificationEnvironment as eligible } from "../src/modul
 const allowed = { development: true, platform: "ios", physicalDevice: false,
     apiBase: "http://127.0.0.1:5523", memberId: 296, fixtureMarker: "h2-memory-only" };
 test("allows only the marked private simulator backend and synthetic member", () => expect(eligible(allowed)).toBe(true));
+test("allows the alternate loopback fixture only with its isolation marker", () => {
+    const alternate = { ...allowed, apiBase: "http://127.0.0.1:5528" };
+    expect(eligible(alternate)).toBe(true);
+    expect(eligible({ ...alternate, fixtureMarker: null })).toBe(false);
+    expect(eligible({ ...alternate, physicalDevice: true })).toBe(false);
+});
 test.each([
     { development: false }, { platform: "android" }, { physicalDevice: true },
-    { apiBase: "http://127.0.0.1:5522" }, { apiBase: "https://production.example" },
+    { apiBase: "http://127.0.0.1:5522" }, { apiBase: "http://127.0.0.1:5527" }, { apiBase: "https://production.example" },
     { memberId: 1 }, { memberId: undefined }, { fixtureMarker: null }, { fixtureMarker: "wrong" },
 ])("refuses an environment mismatch %j", mutation => expect(eligible({ ...allowed, ...mutation })).toBe(false));
 

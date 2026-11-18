@@ -69,7 +69,7 @@ const styles = createScheduleIndexStyles({
 
 /** 날짜 보기 컨트롤러가 준비한 단일·다중 날짜 타임라인과 페이지 전환 화면을 렌더링합니다. */
 export function DayDisplay(props: ScheduleDayDisplayProps) {
-  const { firstDay, todayKey, topOffset } = props;
+  const { dayViewMode, firstDay, todayKey, topOffset } = props;
   const controller = useScheduleDayDisplayController(props);
   const {
     colors,
@@ -81,6 +81,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
     selectedDay,
     weekDays,
     weekSchedulesByDay,
+    multiDayColumns,
     accentColor,
     isModeTransitionActive,
     stripSelectionOpacity,
@@ -91,7 +92,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
     navigateToDayFromWeekStrip,
     timelineSwipeResponder,
   } = controller;
-  const { nonSingleDayPanelContent, currentDayPanelContent } =
+  const { nonSingleDayPanelContent, currentDayPanelContent, overlapSheet } =
     useScheduleDayTimelineContent(props, controller);
 
   // Keep the last rendered panel as an immutable outgoing snapshot so its
@@ -191,6 +192,8 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
         >
           {weekDays.map(day => {
             const isSelected = day.dateString === selectedDay;
+            const isOtherVisibleDay = dayViewMode === 'multiDay' && !isSelected &&
+              multiDayColumns.some(column => column.day.dateString === day.dateString);
             const isNavigationEndpoint = Boolean(
               navigationSelectionVisible &&
                 dayNavigation &&
@@ -209,6 +212,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
                 onPress={() => navigateToDayFromWeekStrip(day.dateString)}
                 accessibilityRole="button"
                 accessibilityLabel={`${day.month}월 ${day.day}일 ${day.weekday}요일`}
+                accessibilityHint={isOtherVisibleDay ? '시간표에 함께 표시된 날짜' : undefined}
                 hitSlop={{ top: 8, right: 6, bottom: 8, left: 6 }}
                 style={({ pressed }) => [
                   styles.dayWeekCell,
@@ -237,6 +241,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
                       backgroundColor: selectedFill,
                       borderColor: selectedFill,
                     },
+                    isOtherVisibleDay && { backgroundColor: `${accentColor}24` },
                     {
                       opacity: isNavigationEndpoint
                         ? 0
@@ -426,6 +431,7 @@ export function DayDisplay(props: ScheduleDayDisplayProps) {
           nonSingleDayPanelContent
         )}
       </Animated.View>
+      {overlapSheet}
     </View>
   );
 }

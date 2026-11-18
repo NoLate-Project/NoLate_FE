@@ -39,6 +39,17 @@ export function createSheetBaseStyles(options: ScheduleDetailStylesOptions) {
         alignItems: "center",
         justifyContent: "center",
     },
+        guidanceSheetHandle: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        gap: 8,
+    },
+        guidanceSheetLabel: {
+        flexShrink: 1,
+        fontSize: 12,
+        fontWeight: "600",
+    },
         sheetScroll: { flex: 1 },
         sheetScrollContent: { paddingBottom: 0 },
         sheetContent: { flex: 1 },

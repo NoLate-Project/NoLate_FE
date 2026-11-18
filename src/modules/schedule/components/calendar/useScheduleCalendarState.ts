@@ -31,6 +31,7 @@ import {
     getTodayDateString,
     normalizeMonthCandidate,
     resolveDetailMonthAnchor,
+    resolveDetailMonthPagerLayout,
     type DetailMonthAnimationPhase,
     type DetailMonthAnimationOptions,
     type DetailMonthPageLayouts,
@@ -229,11 +230,11 @@ export function useScheduleCalendarState({
             () => DETAIL_MONTH_SWIPE_MOTION.travel
         )
     );
-    const detailMonthPagerSlotDayHeights = useSharedValue<number[]>(
-        DETAIL_MONTH_PAGER_POSITIONS.map(
-            () => CALENDAR_DAY_HEIGHTS.detail
-        )
-    );
+    const [initialSlotDayHeights] = useState(() => detailMonthPagerSlots.map(slot => (
+        resolveDetailMonthPagerLayout(slot.day, detailMonthPageLayouts, initialMonthKey, firstDay)?.dayHeight
+            ?? CALENDAR_DAY_HEIGHTS.detail
+    )));
+    const detailMonthPagerSlotDayHeights = useSharedValue(initialSlotDayHeights);
     const detailMonthVisualSelectedDayKey = useSharedValue(
         getCalendarDaySelectionKey(initialDate)
     );

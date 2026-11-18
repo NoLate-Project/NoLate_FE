@@ -10,6 +10,7 @@ import {
 } from "../../calendarMotion";
 import { shiftCalendarMonth } from "../../calendarNavigation";
 import CustomDay from "./CustomDay";
+import { STACK_CALENDAR_GEOMETRY } from "./stackCalendarAppearance";
 import {
     CALENDAR_DAY_HEIGHTS,
     type CalendarViewMode,
@@ -292,7 +293,7 @@ export type StackMonth = {
     month: number;
     dateString: string;
     days: Array<DateData | null>;
-    dayHeight: number;
+    weeks: Array<{ height: number; offset: number }>;
     headerHeight: number;
     height: number;
 };
@@ -383,7 +384,8 @@ export function createStackMonth(
     date: Date,
     firstDay: 0 | 1,
     dayHeight: number,
-    headerHeight: number
+    headerHeight: number,
+    hasEventOnDay: (day: string) => boolean,
 ): StackMonth {
     const year = date.getFullYear();
     const monthIndex = date.getMonth();
@@ -410,18 +412,24 @@ export function createStackMonth(
             };
         }
     );
+    let weekOffset = 0;
+    const weeks = Array.from({ length: weekCount }, (_, index) => {
+        const weekDays = days.slice(index * 7, index * 7 + 7);
+        const hasEvents = weekDays.some(day => day !== null && hasEventOnDay(day.dateString));
+        const height = hasEvents ? dayHeight : STACK_CALENDAR_GEOMETRY.emptyRowHeight;
+        const week = { height, offset: weekOffset };
+        weekOffset += height;
+        return week;
+    });
     return {
         key: `${year}-${String(month).padStart(2, "0")}`,
         year,
         month,
         dateString: toDateString(year, month),
         days,
-        dayHeight,
+        weeks,
         headerHeight,
-        height:
-            headerHeight
-            + weekCount * dayHeight
-            + STACK_MONTH_DIVIDER_HEIGHT,
+        height: headerHeight + weekOffset + STACK_MONTH_DIVIDER_HEIGHT,
     };
 }
 

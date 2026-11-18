@@ -131,6 +131,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
     visibleYear,
     pillTargetDepth,
     primaryPillContentWidth,
+    primaryPillAccessibilityMonth,
     monthChromeTranslateX,
     dropdownWidth,
     toolbarDropdownTop,
@@ -162,6 +163,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
     stickyWeekendColor,
     stickyWeekdayBorderColor,
     primaryPillInteractionEnabled,
+    isAnyDepthTransitionActive,
     searchKeywordLength,
     openBlankSchedule,
     openQuickSchedule,
@@ -174,6 +176,26 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
   } = controller;
   return (
     <>
+      {calendarDepth === 'year' && !isAnyDepthTransitionActive && !activeToolbarMenu && !liquidPrototypeOpen && !isSearchToolbarOpen && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="연간 캘린더 닫기"
+          onPress={handlePrimaryDateButtonPress}
+          style={({ pressed }) => [
+            styles.yearTapOverlay,
+            styles.yearCloseButton,
+            {
+              top: insets.top + LIQUID_TOOLBAR_TOP_OFFSET,
+              backgroundColor: colors.surface2,
+              borderColor: colors.border,
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+        >
+          <Ionicons accessible={false} importantForAccessibility="no" name="chevron-back-outline" size={17} color={colors.textPrimary} />
+          <Text maxFontSizeMultiplier={1.6} style={[styles.yearCloseText, { color: colors.textPrimary }]}>닫기</Text>
+        </Pressable>
+      )}
       {/* The collapsed native search canvas spans the toolbar so its
                           morph can start on the UI thread. Keep an exact React hit
                           target above only the visible left pill; once native content
@@ -190,6 +212,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                 : `${visibleYear}년 전체 월 보기`
             }
             accessibilityState={{ disabled: false }}
+            accessibilityValue={primaryPillAccessibilityMonth ? { text: primaryPillAccessibilityMonth } : undefined}
             onPress={handlePrimaryDateButtonPress}
             style={[
               styles.yearTapOverlay,
@@ -220,6 +243,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
             searchError={searchError}
             searchKeywordLength={searchKeywordLength}
             searchQuery={searchQuery}
+            countInCalendarContext
             isFocused={isFocused}
             reduceMotionEnabled={reduceMotionEnabled}
             onRetry={() => setSearchRetryKey(value => value + 1)}
@@ -427,7 +451,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                     ))}
                   </View>
                 ) : (
-                  <View style={styles.viewModeIconGrid}>
+                  <View style={styles.dayViewModeMenu}>
                     {CALENDAR_VIEW_OPTIONS.map(option => {
                       const selected = option.value === calendarViewMode;
 
@@ -436,19 +460,20 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                           key={option.value}
                           accessibilityRole="button"
                           accessibilityLabel={`${option.label} 보기`}
+                          accessibilityHint={option.subtitle}
                           accessibilityState={{ selected }}
                           onPress={() =>
                             handleCalendarViewModeChange(option.value)
                           }
                           style={({ pressed }) => [
-                            styles.viewModeIconOption,
+                            styles.viewModeRow,
                             selected &&
                               (mode === 'dark'
                                 ? styles.viewModeSelectedPillDark
                                 : styles.viewModeSelectedPillLight),
                             {
                               opacity: pressed ? 0.62 : 1,
-                              transform: [{ scale: pressed ? 0.92 : 1 }],
+                              transform: [{ scale: pressed ? 0.98 : 1 }],
                             },
                           ]}
                         >
@@ -460,6 +485,16 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                                 : colors.textSecondary
                             }
                           />
+                          <View style={styles.viewModeCopy}>
+                            <Text style={[styles.viewModeTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                              {option.label}
+                            </Text>
+                            <Text style={[styles.viewModeSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+                              {option.subtitle}
+                            </Text>
+                          </View>
+                          <Ionicons accessible={false} name="checkmark-outline" size={16}
+                            color={selected ? colors.textPrimary : 'transparent'} />
                         </Pressable>
                       );
                     })}

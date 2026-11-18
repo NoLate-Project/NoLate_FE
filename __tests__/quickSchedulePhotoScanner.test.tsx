@@ -33,6 +33,10 @@ function createDeferred<T>(): Deferred<T> {
 }
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
+jest.mock("../src/api/api", () => ({
+    __esModule: true,
+    default: { post: jest.fn().mockResolvedValue({ data: { success: true, data: { preview: null } } }) },
+}));
 jest.mock("expo-router", () => ({
     usePathname: () => "/schedule",
     useRouter: () => ({ push: jest.fn() }),
@@ -377,17 +381,17 @@ describe("QuickScheduleModal photo OCR", () => {
             renderer!.root.findByProps({ accessibilityLabel: "사진 내용 다시 읽기" })
         ).toBeDefined();
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
+            renderer!.root.findByProps({ accessibilityLabel: "일정 내용 직접 입력" })
                 .props.placeholder
         ).toBe("읽지 못한 내용을 직접 입력해 주세요.");
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
+            renderer!.root.findByProps({ accessibilityLabel: "일정 내용 직접 입력" })
                 .props.editable
         ).toBe(true);
 
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
+                .findByProps({ accessibilityLabel: "일정 내용 직접 입력" })
                 .props.onChangeText("7월 24일 오후 네 시 서울역 회의");
         });
         const retry = createDeferred<{ text: string; recognitionConfidence: number }>();
@@ -400,13 +404,15 @@ describe("QuickScheduleModal photo OCR", () => {
         });
         expect(mockRecognizeQuickSchedulePhoto).toHaveBeenCalledTimes(2);
         expect(findRetry().props.disabled).toBe(true);
-        const transcript = () => renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" });
+        const transcript = () => renderer!.root.findByProps({ accessibilityLabel: "일정 내용 직접 입력" });
         expect(transcript().props.value).toBe("7월 24일 오후 네 시 서울역 회의");
         await act(async () => {
             retry.resolve({ text: "7월 24일 오후 두 시 서울역 회의", recognitionConfidence: 0.99 });
             await retry.promise;
         });
-        expect(transcript().props.value).toBe("7월 24일 오후 네 시 서울역 회의");
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" }).props.value
+        ).toBe("7월 24일 오후 네 시 서울역 회의");
         await act(async () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
@@ -450,7 +456,7 @@ describe("QuickScheduleModal photo OCR", () => {
             renderer!.root.findByProps({ accessibilityLabel: "사진 내용 다시 읽기" })
         ).toBeDefined();
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
+            renderer!.root.findByProps({ accessibilityLabel: "일정 내용 직접 입력" })
                 .props.editable
         ).toBe(true);
 
@@ -465,7 +471,7 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" }).props.value
+            renderer!.root.findByProps({ accessibilityLabel: "일정 내용 직접 입력" }).props.value
         ).toBe("");
     });
 

@@ -25,7 +25,6 @@ export function useSavedJourneyPosition(input: JourneyRouteInput | null, schedul
 /** One read-only subscription for current position and separately owned walking geometry. */
 export function useSavedJourneyMapView(input: JourneyRouteInput | null, scheduleId: string) {
     const [snapshot, setSnapshot] = useState<AutomaticJourneySnapshot | null>(null);
-    const [now, setNow] = useState(Date.now() / 1000);
     const [, redraw] = useState(0);
     const enabled = !!input && isAutomaticJourneyDevelopment();
     useEffect(() => {
@@ -35,13 +34,16 @@ export function useSavedJourneyMapView(input: JourneyRouteInput | null, schedule
         const unsubscribe = subscribeAutomaticJourney(value => { ++revision; if (active) setSnapshot(value); });
         const sync = subscribeAutomaticJourneySync(() => { if (active) redraw(value => value + 1); });
         getAutomaticJourneySnapshot().then(value => { if (active && revision === 0) setSnapshot(value); }).catch(() => undefined);
-        const timer = setInterval(() => setNow(Date.now() / 1000), 1000);
+        const timer = setInterval(() => redraw(value => value + 1), 1000);
         return () => { active = false; unsubscribe(); sync(); clearInterval(timer); };
     }, [enabled, input, scheduleId]);
     const binding = enabled && input ? getAutomaticJourneyTrialBinding(input) : null;
     const matched = binding?.scheduleId === scheduleId ? binding : null;
     const admitted = enabled && input ? getAutomaticJourneyTrialInput(input) : null;
+    const now = Date.now() / 1000;
     return {
+        guidanceActive: !!matched && (!snapshot || (snapshot.sessionId === matched.sessionId &&
+            (snapshot.status === 'ARMED' || snapshot.status === 'ACTIVE'))),
         position: matched ? presentSavedJourneyPosition(snapshot, matched, now) : null,
         walkingPaths: matched ? presentSavedJourneyWalkingMap(snapshot, matched, admitted, now) : [],
     };

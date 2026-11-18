@@ -48,7 +48,7 @@ export default function ScheduleCalendarSelectBox({
     return (
         <View style={styles.root}>
             <View style={styles.header}>
-                <Text style={[styles.label, { color: colors.textSecondary }]}>캘린더</Text>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>저장할 캘린더</Text>
                 {onManageCalendars ? (
                     <Pressable
                         accessibilityRole="button"
@@ -121,7 +121,7 @@ export default function ScheduleCalendarSelectBox({
             ) : selectedCalendar ? (
                 <Text style={[styles.hint, { color: colors.textSecondary }]}>이 캘린더는 {contentModeLabel(selectedCalendar)}로 공유돼요.</Text>
             ) : (
-                <Text style={[styles.hint, { color: colors.textSecondary }]}>나만 볼 수 있는 일정으로 저장해요.</Text>
+                <Text style={[styles.hint, { color: colors.textSecondary }]}>개인 캘린더에 저장해요.</Text>
             )}
         </View>
     );
@@ -174,7 +174,7 @@ function CalendarOption({
             >
                 {title}
             </Text>
-            {selected ? <Ionicons name="checkmark" size={15} color={accent} /> : null}
+            {selected ? <Ionicons name="checkmark-outline" size={15} color={accent} /> : null}
         </Pressable>
     );
 }
