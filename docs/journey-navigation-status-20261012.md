@@ -1,5 +1,23 @@
 # NoLate 길안내 현재 상태 — 전체 기능 미완료
 
+2026-11-19 안내 방식 재시작 수정: iOS native 길안내의 명시적인
+`OFF`/`NOTIFICATIONS`/`VOICE_AND_NOTIFICATIONS` 선택을 기기 UserDefaults에
+저장하고 다음 프로세스에서 복원한다. 처음 설치했거나 저장값이 손상된 경우에는
+`OFF`로 시작한다. 정책 단위 테스트 3건이 통과했고, 독립 iOS 27.0 Release
+시뮬레이터의 실제 ODsay 1711 저장 경로에서 `음성 + 알림` 선택 후 앱을 종료해
+저장값 `VOICE_AND_NOTIFICATIONS`를 확인했다. `pod install` 후 이전 Release
+마커 때문에 Debug Hermes가 Release 앱에 남아 SIGSEGV가 발생하던 문제도
+`Podfile`에서 마커를 제거해 다음 빌드가 올바른 Hermes를 선택하도록 수정했다.
+별도 콜드 실행의 제품 경로 시트에서 `음성 + 알림`이 복원된 XCUITest가
+**1건 통과·0건 실패**했다. 화면 증거는
+[재시작 후 경로 시트](evidence/journey-notice-persistence-20261119/notice-mode-after-restart.png)에 있다.
+`pod install`을 다시 실행한 뒤 만든 iOS 1.3.0(58) Release 아카이브는
+`verify:ios-artifact --journey-candidate`와 `codesign --verify --deep --strict`를
+통과했다. Hermes UUID도 Release archive와 Pods에서 일치했고 IPA 내보내기가
+성공했다. 내보낸 IPA의 `aps-environment=production`과 build 58도 확인했다.
+이 IPA를 App Store Connect에 업로드하거나 실기기 GPS/실제 APNs를
+검증한 것은 아니다.
+
 2026-11-19 추가: 실제 ODsay `WALK → BUS 1711 → WALK` 저장 경로를 독립 iOS 27.0
 시뮬레이터의 새 Release 앱에서 다시 열었다. 연속 주입 승객 GPS와 별도 시험 차량으로
 `버스 대기 → 버스로 이동 중`을 확인하고 잠금 화면 로컬 Live Activity까지

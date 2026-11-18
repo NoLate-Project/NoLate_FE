@@ -600,8 +600,8 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
 @MainActor
 private final class NoLateJourneyNoticeDelivery {
   private let speech = NoLateJourneySpeechDelivery()
-  private(set) var mode = "OFF"
-  private(set) var state = "OFF"
+  private(set) var mode: String
+  private(set) var state: String
   private(set) var scheduledCount = 0
   private(set) var voiceQueuedCount = 0
   private(set) var permission = "NOT_CHECKED"
@@ -613,8 +613,13 @@ private final class NoLateJourneyNoticeDelivery {
   private var phase: String?
   private var lastDiagnostic: String?
   private var expiryTask: Task<Void, Never>?
+  init() {
+    mode = NoLateGuidanceNoticePreference.load()
+    state = mode == "OFF" ? "OFF" : "READY"
+  }
   func configure(_ value: String) {
     clear(); mode = value; state = value == "OFF" ? "OFF" : "READY"; scheduledCount = 0; voiceQueuedCount = 0
+    NoLateGuidanceNoticePreference.save(value)
     permission = "NOT_CHECKED"
     let fence = epoch
     UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in

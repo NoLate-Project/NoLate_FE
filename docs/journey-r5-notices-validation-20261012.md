@@ -78,8 +78,9 @@ shape 1,693점/선택 44–48번 5개를 받았으나 `STOP_SHAPE_AMBIGUOUS / OC
 - session/generation/revision/digest별 이벤트를 한 번만 안내한다. 시계·sequence·원본 관측
   역행과 단계 퇴행을 거절하며 근접 안내 후 이전 단계 음성을 대기열에서 재생하지 않는다.
   만료는 원래 GPS TTL과 10초 중 이른 시각이다. 서버 소유권 검증/출발 ACK 전에는 안내하지 않는다.
-- 시험 채널은 OFF/NOTIFICATIONS/VOICE_AND_NOTIFICATIONS. 콜드 시작은 항상 OFF이고
-  실행 중 채널 변경은 차단한다. 설정은 메모리 전용이며 제품 기본값을 켜지 않는다.
+- 채널은 OFF/NOTIFICATIONS/VOICE_AND_NOTIFICATIONS. 최초 시작은 OFF이고,
+  명시적으로 선택한 채널은 기기에 저장해 재시작 후 복원한다. 실행 중 채널 변경은
+  차단하며, 저장값이 없거나 알 수 없는 값이면 OFF로 돌아간다. 제품 기본값은 켜지 않는다.
 - 기존 알림 권한을 조회할 뿐 요청하지 않는다. 거부 상태는 명시적인 진단으로 반환한다.
   알림 ID는 binding+kind 해시이며 자체 안내 알림만 취소한다. 다른 일정 알람은 삭제하지 않는다.
 - 전경 음성은 기존 AVSpeechSynthesizer·audio lease를 재사용하며 ambient로 무음을 존중한다.

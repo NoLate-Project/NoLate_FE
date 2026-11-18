@@ -27,7 +27,7 @@ let package = Package(
         "Shared",
         "Tests"
       ],
-      sources: ["NoLateServerWalkingSnapshot.swift", "NoLateLiveActivityModels.swift", "NoLateJourneyDiagnostics.swift", "NoLateJourneyEngineCore.swift", "NoLateJourneyCheckpointStore.swift", "NoLateJourneyRouteNormalizer.swift", "NoLateJourneyAutomaticSession.swift", "NoLateJourneyAutomaticStore.swift", "NoLateJourneyBusApproachCore.swift", "NoLateJourneyBusRideCore.swift", "NoLateJourneySubwayRideCore.swift", "NoLateSavedGuidanceSubwayPolicy.swift", "NoLateSavedGuidanceSubwayArrivalPolicy.swift", "NoLateGuidanceContent.swift", "NoLateGuidancePublicationPolicy.swift", "NoLateAutomaticGuidanceProjection.swift", "NoLateSavedGuidanceArrivalPolicy.swift", "NoLateSavedGuidanceRidePolicy.swift"]
+      sources: ["NoLateServerWalkingSnapshot.swift", "NoLateLiveActivityModels.swift", "NoLateJourneyDiagnostics.swift", "NoLateJourneyEngineCore.swift", "NoLateJourneyCheckpointStore.swift", "NoLateJourneyRouteNormalizer.swift", "NoLateJourneyAutomaticSession.swift", "NoLateJourneyAutomaticStore.swift", "NoLateJourneyBusApproachCore.swift", "NoLateJourneyBusRideCore.swift", "NoLateJourneySubwayRideCore.swift", "NoLateSavedGuidanceSubwayPolicy.swift", "NoLateSavedGuidanceSubwayArrivalPolicy.swift", "NoLateGuidanceContent.swift", "NoLateGuidancePublicationPolicy.swift", "NoLateGuidanceNoticePreference.swift", "NoLateAutomaticGuidanceProjection.swift", "NoLateSavedGuidanceArrivalPolicy.swift", "NoLateSavedGuidanceRidePolicy.swift"]
     ),
     .testTarget(
       name: "NoLateLiveActivityPolicyTests",

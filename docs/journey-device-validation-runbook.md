@@ -4,7 +4,7 @@
 
 ## TestFlight 제품 후보 빌드 스위치
 
-`main`의 일반 빌드는 다른 배포에 영향이 없도록 길안내 기본값을 OFF로 둔다. iOS
+현재 `ios/.xcode.env`는 iOS Release 길안내 제품 플래그를 ON으로 설정한다. iOS
 TestFlight 길안내 후보는 다음 명령으로 아카이브한다. 래퍼가 공개 길안내·제품 진입·
 인증 세션·네이티브 제품 플래그를 `true`/`1`로 강제하고, 진단·pilot 플래그를 OFF로
 고정한 뒤 후보 구성을 검증한다. 로컬 `.env`의 API/지도 키는 별도로 준비해야 하며
@@ -32,7 +32,14 @@ TestFlight 업로드와 서버 배포는 이 명령만으로 수행되지 않는
 `EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED=true`로 빌드한다. QA 진단·APNs pilot·
 device field-test 플래그는 모두 OFF다. `scripts/verify-release-config.mjs --platform ios
 --journey-candidate`를 통과하고 실제 archive의 Info.plist/entitlement/API HTTPS 주소를
-확인한다. 이 opt-in 빌드는 기본 공개 Release 구성이 아니며, 빌드 성공만으로 배포를 승인하지 않는다.
+확인한다. 현재 공개 Release도 길안내를 포함하지만, 빌드 성공만으로 배포를 승인하지 않는다.
+
+`pod install` 직후 Release를 빌드할 때에는 Hermes와 React Native prebuilt
+framework가 Release 변형으로 교체됐는지 확인한다. `ios/Podfile`의 `post_install`은
+이전 빌드의 `.last_build_configuration` 마커를 지워 교체 스크립트가 건너뛰지 않게 한다.
+시뮬레이터 Release에서 설치된 `hermes.framework`의 UUID가 React Native Release
+tarball과 같은지 확인한 뒤 앱을 실제로 실행한다. Debug Hermes가 Release 앱에
+포함되면 JavaScript 시작 중 SIGSEGV가 날 수 있다.
 
 서버의 `DEVICE` 준비는 저장된 ODsay 원본·서버 소유 보행 형상을 재검증한다. 단일 지하철
 `WALK/SUBWAY/WALK`는 공식 역 대응·정차 순서 live catalog의 증명이 있을 때만

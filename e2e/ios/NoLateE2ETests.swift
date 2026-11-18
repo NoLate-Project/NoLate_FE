@@ -417,6 +417,23 @@ final class NoLateE2ETests: XCTestCase {
         XCTAssertTrue(app.staticTexts["saved-detail-walking-connected"].waitForExistence(timeout: 30),
                       "Navigation entry must fetch the owned walking path without another button tap")
         capture("isolated-navigation-preparation-in-route-sheet")
+        if environment["E2E_NOTICE_PERSISTENCE"] == "1" {
+            let settings = app.buttons["saved-guidance-notice-expand"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 10))
+            settings.tap()
+            let voice = app.buttons["saved-guidance-notice-voice"]
+            XCTAssertTrue(voice.waitForExistence(timeout: 5))
+            voice.tap()
+            let selected = expectation(for: NSPredicate(format: "label CONTAINS %@", "음성 + 알림"),
+                                       evaluatedWith: settings)
+            XCTAssertEqual(XCTWaiter().wait(for: [selected], timeout: 10), .completed)
+            app.terminate()
+            // A separate UI test process verifies restore after a real cold launch.
+            // Re-activating the app in this invocation can time out in CoreSimulator
+            // even after the app has reached its calendar screen.
+            return
+            return
+        }
         if environment["E2E_LOCKED_DEPARTURE_NOTICE"] == "1" {
             let noticeSettings = app.buttons["saved-guidance-notice-expand"]
             XCTAssertTrue(noticeSettings.waitForExistence(timeout: 10))
@@ -728,6 +745,36 @@ final class NoLateE2ETests: XCTestCase {
             }
         }
         stopGuidance.tap()
+    }
+
+    /// Run after the notice-selection test has terminated the app. A separate
+    /// test process proves the saved choice appears in the product route sheet.
+    func testIsolatedGuidanceNoticePreferenceRestored() throws {
+        let entry = app.buttons["schedule-route-guidance-entry"]
+        if !entry.waitForExistence(timeout: 5) {
+            let departure = app.buttons["schedule-route-departure-action"]
+            if !departure.exists {
+                let saved = isolatedSavedJourneyCard(expectedTitle: "격리 실제 ODsay 1711 경로")
+                XCTAssertTrue(saved.waitForExistence(timeout: 25))
+                saved.tap()
+            }
+            XCTAssertTrue(departure.waitForExistence(timeout: 25))
+            departure.tap()
+            if !entry.waitForExistence(timeout: 5) {
+                let handle = app.buttons["schedule-route-sheet-handle"]
+                XCTAssertTrue(handle.waitForExistence(timeout: 5))
+                handle.tap()
+            }
+        }
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        entry.tap()
+        let settings = app.buttons["saved-guidance-notice-expand"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 30))
+        let restored = expectation(for: NSPredicate(format: "label CONTAINS %@", "음성 + 알림"),
+                                   evaluatedWith: settings)
+        XCTAssertEqual(XCTWaiter().wait(for: [restored], timeout: 10), .completed,
+                       "The selected voice and notification channel must survive app restart")
+        capture("isolated-navigation-notice-mode-after-restart")
     }
 
     /// The saved ODsay subway route must connect its two walking legs through the

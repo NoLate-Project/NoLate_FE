@@ -59,6 +59,15 @@ target 'NoLateFE' do
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
 
+    # pod install restores Debug prebuilt frameworks, but React Native's Xcode
+    # replacement scripts skip them when a previous Release marker survives.
+    # That can ship Debug Hermes inside a Release app and crash on JS startup.
+    pods_root = installer.sandbox.root.to_s
+    ['.', 'React-Core-prebuilt', 'ReactNativeDependencies'].each do |directory|
+      marker = File.join(pods_root, directory, '.last_build_configuration')
+      File.delete(marker) if File.file?(marker)
+    end
+
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |build_config|
         # Resource/privacy bundles can retain old podspec deployment targets that
