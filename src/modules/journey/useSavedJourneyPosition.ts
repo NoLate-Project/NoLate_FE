@@ -17,6 +17,31 @@ export function presentSavedJourneyPosition(snapshot: AutomaticJourneySnapshot |
     return { latitude: position.latitude, longitude: position.longitude };
 }
 
+/** A separate, short-lived GPS dot on the map while the route projection is rejected. */
+export function presentSavedJourneyOffRouteLocation(snapshot: AutomaticJourneySnapshot | null,
+    binding: AutomaticJourneyBinding | null, now: number) {
+    const fix = automaticRecord(snapshot?.deviceMapLocation);
+    if (!binding || binding.savedRouteValidated !== true || binding.guidanceEnabled !== true
+        || !snapshot?.enabled || snapshot.status !== 'ACTIVE' || snapshot.sessionId !== binding.sessionId
+        || snapshot.routeRevision !== binding.routeRevision
+        || (snapshot.qualityReason !== 'OFF_ROUTE' && snapshot.busReason !== 'BUS_OFF_ROUTE')
+        || snapshot.ridePhase === 'RIDING' || snapshot.subwayPhase === 'RIDING'
+        || !fix || fix.schemaVersion !== 1 || fix.sessionId !== binding.sessionId
+        || fix.generation !== binding.generation || fix.routeRevision !== binding.routeRevision
+        || fix.routeInputDigest !== binding.routeInputDigest
+        || typeof fix.latitude !== 'number' || !Number.isFinite(fix.latitude) || Math.abs(fix.latitude) > 90
+        || typeof fix.longitude !== 'number' || !Number.isFinite(fix.longitude) || Math.abs(fix.longitude) > 180
+        || typeof fix.accuracyMeters !== 'number' || !Number.isFinite(fix.accuracyMeters)
+        || fix.accuracyMeters < 0 || fix.accuracyMeters > 25
+        || typeof fix.observedAt !== 'number' || !Number.isFinite(fix.observedAt)
+        || fix.observedAt < binding.preparedAtEpochSeconds || fix.observedAt >= binding.expiresAtEpochSeconds
+        || typeof fix.validUntil !== 'number' || !Number.isFinite(fix.validUntil)
+        || fix.validUntil > Math.min(fix.observedAt + 15, binding.expiresAtEpochSeconds) + 0.001
+        || !Number.isFinite(now) || fix.observedAt > now + 2 || now - fix.observedAt > 15
+        || now >= fix.validUntil) return null;
+    return { latitude: fix.latitude, longitude: fix.longitude };
+}
+
 /** Reads the engine only; mounting/unmounting never requests location or starts/stops a session. */
 export function useSavedJourneyPosition(input: JourneyRouteInput | null, scheduleId: string) {
     return useSavedJourneyMapView(input, scheduleId).position;
@@ -45,6 +70,7 @@ export function useSavedJourneyMapView(input: JourneyRouteInput | null, schedule
         guidanceActive: !!matched && (!snapshot || (snapshot.sessionId === matched.sessionId &&
             (snapshot.status === 'ARMED' || snapshot.status === 'ACTIVE'))),
         position: matched ? presentSavedJourneyPosition(snapshot, matched, now) : null,
+        offRouteLocation: matched ? presentSavedJourneyOffRouteLocation(snapshot, matched, now) : null,
         walkingPaths: matched ? presentSavedJourneyWalkingMap(snapshot, matched, admitted, now) : [],
     };
 }

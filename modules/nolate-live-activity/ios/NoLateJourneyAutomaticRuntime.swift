@@ -45,6 +45,8 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   // Never persisted in the envelope or included in the departure outbox.
   private var lastAccuracyMeters: Double?
   private var guidanceSample: Sample?
+  private var offRouteCandidate: NoLateJourneyOffRouteMapPolicy.Fix?
+  private var offRouteMapSample: NoLateJourneyOffRouteMapPolicy.Fix?
   private var lastRideDiagnostic: String?
   private var lastHandoffDiagnostic: String?
   private let guidanceNotices = NoLateJourneyNoticeDelivery()
@@ -429,6 +431,22 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       revoke()
     } else if commit(candidate) {
       guidanceSample = acceptedFreshObservation ? sample : nil
+      let offRoute = candidate.core.snapshot.reason == .offRoute
+        || candidate.bus?.snapshot.reason == "BUS_OFF_ROUTE"
+      let riding = candidate.ride?.snapshot.phase == "RIDING"
+        || candidate.subway?.snapshot.phase == "RIDING"
+      let fix = NoLateJourneyOffRouteMapPolicy.Fix(latitude: sample.latitude, longitude: sample.longitude,
+        accuracyMeters: sample.accuracy, observedAt: sample.observedAt)
+      if candidate.core.snapshot.status == .active && offRoute && !riding,
+        NoLateJourneyOffRouteMapPolicy.usable(fix, now: now, armedAt: candidate.core.snapshot.armedAt,
+          expiresAt: candidate.binding.expiresAtEpochSeconds) {
+        offRouteMapSample = NoLateJourneyOffRouteMapPolicy.continuous(fix, after: offRouteCandidate, now: now,
+          armedAt: candidate.core.snapshot.armedAt, expiresAt: candidate.binding.expiresAtEpochSeconds) ? fix : nil
+        offRouteCandidate = fix
+      } else {
+        offRouteCandidate = nil
+        offRouteMapSample = nil
+      }
       lastError = NoLateJourneyAutomaticLocationErrorPolicy.afterCommittedObservation(
         lastError, acceptedFreshObservation: acceptedFreshObservation)
     }
@@ -444,6 +462,8 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     token = nil; deadline = nil
     lastAccuracyMeters = nil
     guidanceSample = nil
+    offRouteCandidate = nil
+    offRouteMapSample = nil
     clockTask?.cancel(); clockTask = nil
     manager?.delegate = nil
     manager?.stopUpdatingLocation()
@@ -527,6 +547,7 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
         NoLateAutomaticGuidanceProjection.position(value, coordinate: .init(latitude: sample.latitude, longitude: sample.longitude),
           accuracy: sample.accuracy, observedAt: sample.observedAt, now: Date().timeIntervalSince1970)
       } },
+      "deviceMapLocation": offRouteMapLocation(),
       "guidance": content, "guidanceRoute": session.flatMap { NoLateAutomaticGuidanceProjection.displayRoute($0) },
       "guidanceActivityState": guidanceActivity.state, "guidanceActivityError": guidanceActivity.error,
       "guidancePushState": guidancePushPilot.state, "guidancePushTokenAvailable": guidancePushPilot.tokenAvailable,
@@ -568,6 +589,20 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       "subwayReason": session?.subway?.snapshot.reason,
       "busLastAccuracyMeters": lastAccuracyMeters
     ]
+  }
+  private func offRouteMapLocation() -> [String: Any]? {
+    guard let value = session, let fix = offRouteMapSample,
+      value.binding.savedRouteValidated == true, value.binding.guidanceEnabled == true,
+      value.core.snapshot.status == .active,
+      value.core.snapshot.reason == .offRoute || value.bus?.snapshot.reason == "BUS_OFF_ROUTE",
+      value.ride?.snapshot.phase != "RIDING", value.subway?.snapshot.phase != "RIDING" else { return nil }
+    let now = Date().timeIntervalSince1970
+    guard NoLateJourneyOffRouteMapPolicy.usable(fix, now: now, armedAt: value.core.snapshot.armedAt,
+      expiresAt: value.binding.expiresAtEpochSeconds) else { return nil }
+    return ["schemaVersion": 1, "sessionId": value.binding.sessionId, "generation": value.binding.generation,
+      "routeRevision": value.binding.routeRevision, "routeInputDigest": value.binding.routeInputDigest,
+      "latitude": fix.latitude, "longitude": fix.longitude, "accuracyMeters": fix.accuracyMeters,
+      "observedAt": fix.observedAt, "validUntil": min(fix.observedAt + 15, value.binding.expiresAtEpochSeconds)]
   }
   private func refreshRideAdmission() {
     guard var candidate = session, !candidate.core.snapshot.status.isTerminal else { return }

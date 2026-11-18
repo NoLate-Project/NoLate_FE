@@ -144,10 +144,11 @@ export function useScheduleDetailMapController({
     && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId
     ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
     [item, currentMemberId, inspectedTravelPlan]);
-  const { guidanceActive, position: guidancePosition, walkingPaths: guidanceWalkingPaths } =
+  const { guidanceActive, position: guidancePosition, offRouteLocation, walkingPaths: guidanceWalkingPaths } =
     useSavedJourneyMapView(guidanceInput, String(item?.id ?? ''));
-  const guidanceLatitude = guidancePosition?.latitude;
-  const guidanceLongitude = guidancePosition?.longitude;
+  const mapFollowPosition = guidancePosition ?? offRouteLocation;
+  const guidanceLatitude = mapFollowPosition?.latitude;
+  const guidanceLongitude = mapFollowPosition?.longitude;
   useEffect(() => {
     if (!navigationMode || !followingGuidance || guidanceLatitude == null || guidanceLongitude == null) return;
     const next = { latitude: guidanceLatitude, longitude: guidanceLongitude };
@@ -204,6 +205,10 @@ export function useScheduleDetailMapController({
       id: 'schedule-detail-guidance-location', ...guidancePosition,
       displayType: 'dot' as const, tintColor: APP_ACCENT_BLUE, badgeBorderColor: '#FFFFFF', dotSize: 14, zIndex: 1001,
     }];
+    if (guidanceActive && offRouteLocation) return [...markers, {
+      id: 'schedule-detail-off-route-device-location', ...offRouteLocation,
+      displayType: 'dot' as const, tintColor: APP_ACCENT_BLUE, badgeBorderColor: '#FFFFFF', dotSize: 14, zIndex: 1001,
+    }];
     if (guidanceActive || !currentLocationCoord) return markers;
     return [
       ...markers,
@@ -217,7 +222,7 @@ export function useScheduleDetailMapController({
         zIndex: 1000,
       },
     ];
-  }, [currentLocationCoord, guidanceActive, guidancePosition, markers]);
+  }, [currentLocationCoord, guidanceActive, guidancePosition, markers, offRouteLocation]);
   const mapCoords = useMemo(
     () =>
       getSavedRouteFitCoords(
@@ -496,19 +501,19 @@ export function useScheduleDetailMapController({
     if (reduceMotion && typeof scale === 'number' && Number.isFinite(scale) && scale > 0) {
       setCameraScaleSample(previous => previous ?? nextCamera);
     }
-    if (!navigationMode || !followingGuidance || !guidancePosition) return;
-    if (shouldPauseFollowingCamera(nextCamera, guidancePosition, Date.now(), followCommandUntilRef.current)) {
+    if (!navigationMode || !followingGuidance || !mapFollowPosition) return;
+    if (shouldPauseFollowingCamera(nextCamera, mapFollowPosition, Date.now(), followCommandUntilRef.current)) {
       setFollowingGuidance(false);
     }
-  }, [followingGuidance, guidancePosition, navigationMode, reduceMotion]);
+  }, [followingGuidance, mapFollowPosition, navigationMode, reduceMotion]);
 
   const moveToCurrentLocation = useCallback(async () => {
     clearRouteFocus();
-    if (navigationMode && guidancePosition) {
-      lastFollowCoordRef.current = guidancePosition;
+    if (navigationMode && mapFollowPosition) {
+      lastFollowCoordRef.current = mapFollowPosition;
       followCommandUntilRef.current = Date.now() + 1600;
       setFollowingGuidance(true);
-      mapRef.current?.animateCameraTo({ ...guidancePosition, zoom: 16, duration: reduceMotion ? 0 : 420 });
+      mapRef.current?.animateCameraTo({ ...mapFollowPosition, zoom: 16, duration: reduceMotion ? 0 : 420 });
       return;
     }
     if (currentLocationPendingRef.current) return;
@@ -584,7 +589,7 @@ export function useScheduleDetailMapController({
         setCurrentLocationPending(false);
       }
     }
-  }, [clearRouteFocus, guidancePosition, navigationMode, reduceMotion]);
+  }, [clearRouteFocus, mapFollowPosition, navigationMode, reduceMotion]);
   const camera = useMemo(() => {
     if (mapCoords.length === 0) return DEFAULT_CAMERA;
     const latitude =
@@ -612,8 +617,8 @@ export function useScheduleDetailMapController({
   }, [clearRouteFocus, fitMap]);
 
   useEffect(() => {
-    if (!hasFocusedMapLocation && !(navigationMode && followingGuidance && guidancePosition)) fitMap();
-  }, [fitMap, followingGuidance, guidancePosition, hasFocusedMapLocation, navigationMode]);
+    if (!hasFocusedMapLocation && !(navigationMode && followingGuidance && mapFollowPosition)) fitMap();
+  }, [fitMap, followingGuidance, mapFollowPosition, hasFocusedMapLocation, navigationMode]);
 
   return {
     camera,

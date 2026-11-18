@@ -69,6 +69,8 @@ export type AutomaticJourneySnapshot = {
     guidance?: Record<string, unknown> | null;
     guidanceRoute?: Record<string, unknown> | null;
     guidancePosition?: Record<string, unknown> | null;
+    /** Local CoreLocation map dot while off route. Never route-bar or Activity progress. */
+    deviceMapLocation?: Record<string, unknown> | null;
     guidanceActivityState?: string;
     guidanceActivityError?: string | null;
     guidancePushState?: string;
@@ -219,6 +221,7 @@ export function normalizeAutomaticJourneySnapshot(value: unknown): AutomaticJour
         ...(automaticRecord(item.guidance) ? { guidance: automaticRecord(item.guidance) } : {}),
         ...(automaticRecord(item.guidanceRoute) ? { guidanceRoute: automaticRecord(item.guidanceRoute) } : {}),
         ...(automaticRecord(item.guidancePosition) ? { guidancePosition: automaticRecord(item.guidancePosition) } : {}),
+        ...(automaticRecord(item.deviceMapLocation) ? { deviceMapLocation: automaticRecord(item.deviceMapLocation) } : {}),
         ...(typeof item.guidanceNoticeMode === 'string' ? {
             guidanceNoticeMode: ['OFF', 'NOTIFICATIONS', 'VOICE_AND_NOTIFICATIONS'].includes(item.guidanceNoticeMode) ? item.guidanceNoticeMode : 'OFF',
             guidanceNoticeState: safeCode(item.guidanceNoticeState) ?? 'UNAVAILABLE',

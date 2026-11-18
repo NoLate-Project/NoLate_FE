@@ -1,4 +1,4 @@
-import { presentSavedJourneyPosition } from '../src/modules/journey/useSavedJourneyPosition';
+import { presentSavedJourneyOffRouteLocation, presentSavedJourneyPosition } from '../src/modules/journey/useSavedJourneyPosition';
 import { buildGuidancePreviewSVG } from '../src/modules/journey/SavedJourneyRoutePreview';
 import type { AutomaticJourneyBinding, AutomaticJourneySnapshot } from '../src/modules/journey/automaticJourney';
 import type { JourneyRouteInput } from '../src/modules/journey/journeyRouteInput';
@@ -25,6 +25,23 @@ it.each(['BOARDING_CANDIDATE', 'UNAVAILABLE', 'READY'])('hides position for %s',
 it('stopped/unvalidated sessions cannot reveal location', () => {
     expect(presentSavedJourneyPosition({ ...snapshot, status: 'STOPPED' }, binding, 1021)).toBeNull();
     expect(presentSavedJourneyPosition(snapshot, { ...binding, savedRouteValidated: undefined }, 1021)).toBeNull();
+});
+const offRoute = { ...snapshot, qualityReason: 'OFF_ROUTE', guidance: { ...snapshot.guidance, phase: 'UNAVAILABLE', quality: 'UNCERTAIN' },
+    deviceMapLocation: { schemaVersion: 1, sessionId: binding.sessionId, generation: binding.generation,
+        routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
+        latitude: 37.565, longitude: 126.99, accuracyMeters: 5, observedAt: 1020, validUntil: 1035 } } as AutomaticJourneySnapshot;
+it('shows a separately fenced device dot off route without promoting route progress', () => {
+    expect(presentSavedJourneyPosition(offRoute, binding, 1021)).toBeNull();
+    expect(presentSavedJourneyOffRouteLocation(offRoute, binding, 1021)).toEqual({ latitude: 37.565, longitude: 126.99 });
+    expect(presentSavedJourneyOffRouteLocation(offRoute, binding, 1035)).toBeNull();
+});
+it('rejects foreign, unreliable, stopped and riding off-route map fixes', () => {
+    expect(presentSavedJourneyOffRouteLocation({ ...offRoute, deviceMapLocation: { ...offRoute.deviceMapLocation, generation: 2 } }, binding, 1021)).toBeNull();
+    expect(presentSavedJourneyOffRouteLocation({ ...offRoute, deviceMapLocation: { ...offRoute.deviceMapLocation, accuracyMeters: 26 } }, binding, 1021)).toBeNull();
+    expect(presentSavedJourneyOffRouteLocation({ ...offRoute, deviceMapLocation: { ...offRoute.deviceMapLocation, validUntil: 1040 } }, binding, 1021)).toBeNull();
+    expect(presentSavedJourneyOffRouteLocation({ ...offRoute, status: 'STOPPED' }, binding, 1021)).toBeNull();
+    expect(presentSavedJourneyOffRouteLocation({ ...offRoute, ridePhase: 'RIDING' }, binding, 1021)).toBeNull();
+    expect(presentSavedJourneyOffRouteLocation({ ...offRoute, qualityReason: 'TRACKING' }, binding, 1021)).toBeNull();
 });
 const input = { legs: [{ kind: 'WALK', coordinates: [{ latitude: 37.5, longitude: 127 }, { latitude: 37.5, longitude: 127.001 }] },
     { kind: 'BUS', coordinates: [{ latitude: 37.5, longitude: 127.001 }, { latitude: 37.51, longitude: 127.01 }] }] } as JourneyRouteInput;
