@@ -293,14 +293,12 @@ final class NoLateE2ETests: XCTestCase {
     /// The saved-route departure action enters guidance on the same map. This
     /// tap must not record a departure or arm the GPS session by itself.
     func testIsolatedSavedRouteNavigationEntry() throws {
-        if ProcessInfo.processInfo.environment["E2E_BUS_GPS_REPLAY"] == "1" {
-            addUIInterruptionMonitor(withDescription: "Allow isolated route GPS") { alert in
-                for label in ["앱을 사용하는 동안 허용", "앱 사용 중에만 허용", "Allow While Using App"] {
-                    let allow = alert.buttons[label]
-                    if allow.exists { allow.tap(); return true }
-                }
-                return false
+        addUIInterruptionMonitor(withDescription: "Allow isolated route GPS") { alert in
+            for label in ["앱을 사용하는 동안 허용", "앱 사용 중에만 허용", "Allow While Using App"] {
+                let allow = alert.buttons[label]
+                if allow.exists { allow.tap(); return true }
             }
+            return false
         }
         app.terminate()
         app.activate()
@@ -466,6 +464,28 @@ final class NoLateE2ETests: XCTestCase {
         }
         XCTAssertTrue(startGuidance.isEnabled, "Consent and automatic assessment should unlock guidance")
         startGuidance.tap()
+        let activeSheetHandle = app.buttons["schedule-route-sheet-handle"]
+        XCTAssertTrue(activeSheetHandle.waitForExistence(timeout: 25))
+        let mapFocused = expectation(for: NSPredicate(format: "label == %@", "저장 경로 보기"),
+                                     evaluatedWith: activeSheetHandle)
+        XCTAssertEqual(XCTWaiter().wait(for: [mapFocused], timeout: 10), .completed,
+                       "A new guidance session must reveal the map and compact current-stage sheet")
+        XCTAssertTrue(app.descendants(matching: .any)["saved-journey-route-bar"].firstMatch.waitForExistence(timeout: 5),
+                      "Map-focused guidance must retain the whole-route progress bar")
+        let guidanceLocationAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.matching(
+            NSPredicate(format: "label CONTAINS %@", "위치를 사용하도록 허용")).firstMatch
+        if guidanceLocationAlert.waitForExistence(timeout: 8) {
+            for label in ["앱을 사용하는 동안 허용", "앱 사용 중에만 허용", "Allow While Using App"] {
+                let allow = guidanceLocationAlert.buttons[label]
+                if allow.exists { allow.tap(); break }
+            }
+        }
+        capture("isolated-navigation-map-focused-on-start")
+        activeSheetHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let expandedAgain = expectation(for: NSPredicate(format: "label == %@", "저장 경로 접기"),
+                                        evaluatedWith: activeSheetHandle)
+        XCTAssertEqual(XCTWaiter().wait(for: [expandedAgain], timeout: 10), .completed,
+                       "The user must be able to reopen route details after map focus")
         let stopGuidance = app.buttons["saved-detail-stop"]
         XCTAssertTrue(stopGuidance.waitForExistence(timeout: 25),
                       "The authenticated saved route must arm a native GPS guidance session")

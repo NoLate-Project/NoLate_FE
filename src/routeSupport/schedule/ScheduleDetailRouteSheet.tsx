@@ -177,6 +177,13 @@ export function ScheduleDetailRouteSheet({
   const automaticGuidanceActive = !!guidanceBinding && (guidance.snapshot == null ||
     (guidance.snapshot.sessionId === guidanceBinding.sessionId &&
       (guidance.snapshot.status === 'ARMED' || guidance.snapshot.status === 'ACTIVE')));
+  const mapFocusedSession = useRef<string | null>(null);
+  useEffect(() => {
+    if (!navigationMode || !automaticGuidanceActive || !guidanceSessionId || liveActivityEntry) return;
+    if (mapFocusedSession.current === guidanceSessionId) return;
+    mapFocusedSession.current = guidanceSessionId;
+    if (sheetMode !== 'compact') snapSheet('compact');
+  }, [automaticGuidanceActive, guidanceSessionId, liveActivityEntry, navigationMode, sheetMode, snapSheet]);
   const [recentGuidanceEnd, setRecentGuidanceEnd] = useState<{ scheduleId: string; reason: string }>();
   const recentEndHere = navigationMode && recentGuidanceEnd?.scheduleId === String(item.id) && !automaticGuidanceActive;
   useEffect(() => {
