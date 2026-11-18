@@ -522,6 +522,16 @@ final class NoLateE2ETests: XCTestCase {
                 XCTAssertEqual(XCTWaiter().wait(for: [riding], timeout: 150), .completed,
                                "Independent bus motion and passenger GPS must confirm a shared ride")
                 capture("isolated-navigation-real-odsay-bus-riding")
+                sheetHandle.tap()
+                XCTAssertTrue(routeBar.waitForExistence(timeout: 5),
+                              "The map-focused ride must keep the whole-route bar visible")
+                XCTAssertTrue(app.descendants(matching: .any)["saved-journey-route-marker"].firstMatch.waitForExistence(timeout: 5),
+                              "Confirmed passenger GPS must place a current-position marker on the route bar")
+                XCTAssertTrue(app.staticTexts["saved-journey-instruction"].label.contains("1711")
+                              || app.staticTexts["saved-journey-instruction"].label.contains("버스로 이동 중"),
+                              "The compact sheet must identify the current bus stage")
+                capture("isolated-navigation-real-odsay-bus-riding-map-focused")
+                sheetHandle.tap()
                 if environment["E2E_BUS_FULL_TRIP"] == "1" {
                     let alighting = expectation(for: NSPredicate(format: "label CONTAINS %@", "하차 준비"),
                                                 evaluatedWith: progress)
