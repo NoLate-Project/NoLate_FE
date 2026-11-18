@@ -62,6 +62,17 @@ it.each([{ phase: 'BOARDING_CANDIDATE', quality: 'UNCERTAIN' }, { quality: 'UNAV
     expect(stage(patch)?.activeLegIndex).toBeNull();
     expect(stage(patch)?.title).toBe('위치 확인 중');
 });
+it('explains a rejected first-walk corridor without claiming a current route position', () => {
+    const unavailable = { phase: 'UNAVAILABLE', quality: 'UNCERTAIN', walkProgress: null };
+    const offRoute = { ...snapshot(unavailable), qualityReason: 'OFF_ROUTE' } as AutomaticJourneySnapshot;
+    expect(presentSavedJourneyStage(offRoute, binding, input, 1021)).toEqual({
+        title: '경로 확인 중', action: '경로를 벗어난 것 같아요 · 위치 확인 중', activeLegIndex: null,
+    });
+    const busOffRoute = { ...snapshot(unavailable), busReason: 'BUS_OFF_ROUTE' } as AutomaticJourneySnapshot;
+    expect(presentSavedJourneyStage(busOffRoute, binding, input, 1021)?.title).toBe('경로 확인 중');
+    expect(presentSavedJourneyStage({ ...offRoute, ridePhase: 'RIDING' }, binding, input, 1021)?.title).toBe('위치 확인 중');
+    expect(presentSavedJourneyStage({ ...offRoute, subwayPhase: 'RIDING' }, binding, input, 1021)?.title).toBe('위치 확인 중');
+});
 it('expiry hides the current step; foreign content or terminal session returns nothing', () => {
     expect(stage({}, 1035)?.activeLegIndex).toBeNull();
     expect(stage({ generation: 2 })).toBeNull();

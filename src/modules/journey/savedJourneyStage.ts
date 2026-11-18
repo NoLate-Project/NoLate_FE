@@ -13,6 +13,13 @@ export function presentSavedJourneyStage(snapshot: AutomaticJourneySnapshot | nu
     const position = presentSavedJourneyRoutePosition(snapshot, binding, input, now);
     if (!position) {
         if (view.phase === 'READY') return { title: '출발 대기', action: '이동하면 출발을 감지합니다', activeLegIndex: null };
+        // The first walking corridor can reject a precise fix outside the saved
+        // route. Do not reuse that walking reason once a transit ride has begun.
+        const riding = snapshot?.ridePhase === 'RIDING' || snapshot?.subwayPhase === 'RIDING';
+        if (view.phase === 'UNAVAILABLE' && snapshot?.status === 'ACTIVE' && !riding
+            && (snapshot.qualityReason === 'OFF_ROUTE' || snapshot.busReason === 'BUS_OFF_ROUTE')) {
+            return { title: '경로 확인 중', action: '경로를 벗어난 것 같아요 · 위치 확인 중', activeLegIndex: null };
+        }
         const last = view.lastConfirmedSubway;
         const leg = input.legs[1];
         if (last && leg?.kind === 'SUBWAY' && leg.stops.length === last.totalStops

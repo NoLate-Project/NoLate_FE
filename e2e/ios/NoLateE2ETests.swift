@@ -535,6 +535,21 @@ final class NoLateE2ETests: XCTestCase {
                                "Owned walking GPS must reach the actual 1711 boarding stop")
                 capture("isolated-navigation-real-odsay-bus-waiting")
                 NSLog("E2E_BUS_WAITING")
+                if environment["E2E_OFF_ROUTE_GPS"] == "1" {
+                    let instruction = app.staticTexts["saved-journey-instruction"]
+                    let recovering = expectation(for: NSPredicate(format: "label == %@", "경로 확인 중"),
+                                                 evaluatedWith: instruction)
+                    XCTAssertEqual(XCTWaiter().wait(for: [recovering], timeout: 90), .completed,
+                                   "A rejected passenger GPS fix must explain the uncertain saved route")
+                    sheetHandle.tap()
+                    XCTAssertTrue(routeBar.waitForExistence(timeout: 5))
+                    XCTAssertFalse(app.descendants(matching: .any)["saved-journey-route-marker"].firstMatch.exists,
+                                   "An off-route fix must not place a current-position marker on the route")
+                    capture("isolated-navigation-real-odsay-bus-off-route")
+                    sheetHandle.tap()
+                    stopGuidance.tap()
+                    return
+                }
                 let riding = expectation(for: NSPredicate(format: "label == %@", "경복궁역3번출구에서 하차"), evaluatedWith: progress)
                 XCTAssertEqual(XCTWaiter().wait(for: [riding], timeout: 150), .completed,
                                "Independent bus motion and passenger GPS must confirm a shared ride with its verified alighting stop")
