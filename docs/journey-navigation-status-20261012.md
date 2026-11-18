@@ -7,6 +7,11 @@
 Release 시뮬레이터 제품 E2E 1건이 통과했다. [이탈 화면과 검증 범위](evidence/journey-off-route-20261119/README.md).
 새 경로 자동 재탐색은 아직 구현되지 않았다. 실기기 GPS와 실제 APNs도 이
 시험으로 확인할 수 없다.
+이 변경을 포함한 iOS 1.3.0(58) Release 아카이브와 IPA를 새로 만들었다.
+제품 후보 구성 검사, 아카이브·IPA 서명 검사, IPA의 길안내 제품 플래그와
+`aps-environment=production`을 확인했다. 산출물은
+`/private/tmp/NoLateFE-1.3.0-58-off-route-map-export-20261119/NoLateFE.ipa`다.
+App Store Connect 업로드나 실기기 설치는 수행하지 않았다.
 
 2026-11-19 안내 방식 재시작 수정: iOS native 길안내의 명시적인
 `OFF`/`NOTIFICATIONS`/`VOICE_AND_NOTIFICATIONS` 선택을 기기 UserDefaults에
