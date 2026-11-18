@@ -8,6 +8,10 @@ export type AutomaticJourneyPrepareRequest = {
     routeInputJSON?: string;
 };
 export type AutomaticJourneyPost = (path: string, body: Record<string, unknown>) => Promise<unknown>;
+export type AutomaticJourneyRerouteFix = {
+    latitude: number; longitude: number; accuracyMeters: number; observedAt: number;
+};
+export type AutomaticJourneyRerouteCandidates = { paths: Record<string, unknown>[] };
 
 const base = (scheduleId: string) => {
     if (!/^[1-9]\d{0,17}$/.test(scheduleId)) throw new Error("INVALID_SCHEDULE_ID");
@@ -25,6 +29,36 @@ export function createAutomaticJourneyTransport(post: AutomaticJourneyPost, auth
     apiOrigin: string; authMemberId: number; loginGeneration: number;
 }) {
     return {
+        async rerouteCandidates(binding: AutomaticJourneyBinding,
+            fix: AutomaticJourneyRerouteFix): Promise<AutomaticJourneyRerouteCandidates> {
+            if (binding.savedRouteValidated !== true || binding.guidanceEnabled !== true
+                || !Number.isFinite(fix.latitude) || Math.abs(fix.latitude) > 90
+                || !Number.isFinite(fix.longitude) || Math.abs(fix.longitude) > 180
+                || !Number.isFinite(fix.accuracyMeters) || fix.accuracyMeters < 0 || fix.accuracyMeters > 25
+                || !Number.isFinite(fix.observedAt) || fix.observedAt <= 0 || fix.observedAt >= 253_402_300_800
+                || fix.observedAt < binding.preparedAtEpochSeconds
+                || fix.observedAt >= binding.expiresAtEpochSeconds) throw new Error('INVALID_REROUTE_FIX');
+            const data = payload(await post(`${base(binding.scheduleId)}/${encodeURIComponent(binding.sessionId)}/reroute-candidates`, {
+                generation: binding.generation, routeRevision: binding.routeRevision,
+                clientOwnerId: binding.clientOwnerId, routeInputDigest: binding.routeInputDigest,
+                latitude: fix.latitude, longitude: fix.longitude, accuracyMeters: fix.accuracyMeters,
+                observedAt: new Date(fix.observedAt * 1000).toISOString(),
+            }));
+            const result = automaticRecord(data.result);
+            const observedAt = typeof data.observedAt === 'string' ? Date.parse(data.observedAt) / 1000 : NaN;
+            const paths = result?.paths;
+            if (data.provider !== 'odsay' || data.sessionId !== binding.sessionId
+                || data.generation !== binding.generation || data.routeRevision !== binding.routeRevision
+                || data.routeInputDigest !== binding.routeInputDigest
+                || !Number.isFinite(observedAt) || Math.abs(observedAt - fix.observedAt) > 0.001
+                || !Array.isArray(paths) || paths.length < 1 || paths.length > 3
+                || paths.some(path => { const item = automaticRecord(path); return !item || item.pathType !== 2
+                    || typeof item.totalTime !== 'number' || !Number.isFinite(item.totalTime) || item.totalTime <= 0
+                    || !Array.isArray(item.rps) || item.rps.length < 2 || item.rps.length > 64; })) {
+                throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
+            }
+            return { paths: paths as Record<string, unknown>[] };
+        },
         async reconcile(binding: AutomaticJourneyBinding): Promise<"CURRENT" | "TERMINAL"> {
             const data = payload(await post(`${base(binding.scheduleId)}/${encodeURIComponent(binding.sessionId)}/reconcile`, {
                 generation: binding.generation, routeRevision: binding.routeRevision,

@@ -357,4 +357,28 @@ describe("automatic server transport", () => {
         await createAutomaticJourneyTransport(post).stop(binding);
         expect(post.mock.calls[0][1]).toEqual({ generation: 1, routeRevision: 1, clientOwnerId: binding.clientOwnerId, routeInputDigest: binding.routeInputDigest });
     });
+    test('reroute candidate transport fences the old session and accepts ODsay geometry only', async () => {
+        const rerouteBinding = { ...binding, savedRouteValidated: true as const, guidanceEnabled: true as const };
+        const fix = { latitude: 37.565, longitude: 126.99, accuracyMeters: 8, observedAt: 1_800_000_010 };
+        const paths = [{ pathType: 2, totalTime: 25, rps: [{}, {}] }];
+        const response = { provider: 'odsay', sessionId: binding.sessionId, generation: binding.generation,
+            routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
+            observedAt: new Date(fix.observedAt * 1000).toISOString(), result: { paths } };
+        const post = jest.fn().mockResolvedValue({ success: true, data: response });
+        await expect(createAutomaticJourneyTransport(post).rerouteCandidates(rerouteBinding, fix)).resolves.toEqual({ paths });
+        expect(post.mock.calls[0][0]).toContain(`/${binding.sessionId}/reroute-candidates`);
+        expect(post.mock.calls[0][1]).toEqual({ generation: binding.generation, routeRevision: binding.routeRevision,
+            clientOwnerId: binding.clientOwnerId, routeInputDigest: binding.routeInputDigest,
+            ...fix, observedAt: response.observedAt });
+        for (const patch of [{ provider: 'tmap' }, { sessionId: 'foreign' }, { routeInputDigest: 'b'.repeat(64) },
+            { result: { paths: [{ pathType: 2, totalTime: 25, rps: [{}] }] } }]) {
+            post.mockResolvedValue({ success: true, data: { ...response, ...patch } });
+            await expect(createAutomaticJourneyTransport(post).rerouteCandidates(rerouteBinding, fix))
+                .rejects.toThrow('INVALID_AUTOMATIC_SERVER_RESPONSE');
+        }
+        post.mockClear();
+        await expect(createAutomaticJourneyTransport(post).rerouteCandidates(rerouteBinding,
+            { ...fix, accuracyMeters: 100 })).rejects.toThrow('INVALID_REROUTE_FIX');
+        expect(post).not.toHaveBeenCalled();
+    });
 });
