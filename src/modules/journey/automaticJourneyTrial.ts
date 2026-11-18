@@ -12,7 +12,9 @@ import {
 import { journeyJSONRequest } from "./journeyJSONRequest";
 import { authenticationMetadata, createAuthenticatedJourneyPost, currentJourneyAuthentication, requireJourneyAuthenticationIdentity, requireJourneyAuthenticationLifetime,
     type JourneyAuthentication, type JourneyAuthenticationSource } from "./automaticJourneyAuthentication";
-import { createAutomaticJourneyTransport } from "./automaticJourneyTransport";
+import { createAutomaticJourneyTransport, type AutomaticJourneyRerouteCandidates,
+    type AutomaticJourneyRerouteFix } from "./automaticJourneyTransport";
+import { trustedOffRouteFix } from './journeyRerouteEligibility';
 import { assessJourneyRouteInput } from "./journeyRouteAssessment";
 import { JOURNEY_ROUTE_INPUT_LIMITS, journeyRouteUTF8Bytes, type JourneyRouteInput } from "./journeyRouteInput";
 import { createJourneyStopOutbox } from './journeyStopOutbox';
@@ -39,6 +41,8 @@ export type AutomaticJourneySyncState = {
     pendingStopCount?: number;
     checkpointState?: "NONE" | "CHECKING" | "CURRENT" | "CLEARED" | "WAITING" | "BLOCKED";
     savedCheckpoint?: SavedJourneyCheckpoint;
+    rerouteState?: 'IDLE' | 'SEARCHING' | 'CANDIDATES' | 'RETRY_WAIT';
+    rerouteCandidateCount?: number;
 };
 export type SavedJourneyCheckpoint = { scheduleId: string; memberId: number; sessionId: string; expiresAt: number };
 let syncState: AutomaticJourneySyncState = { status: "IDLE", paused: false, errorCode: null };
@@ -76,6 +80,17 @@ let inFlight: Promise<void> | null = null;
 let disposeLifetime: (() => void) | null = null;
 let stopping: Promise<AutomaticJourneySnapshot> | null = null;
 let nextAutomaticRetryAt = 0;
+let rerouteLookup: Promise<void> | null = null;
+let nextRerouteLookupAt = 0;
+let rerouteCandidates: { sessionId: string; generation: number; fix: AutomaticJourneyRerouteFix;
+    result: AutomaticJourneyRerouteCandidates; receivedAt: number } | null = null;
+
+/** Ephemeral candidates; only the later server commit may turn one into guidance. */
+export function getAutomaticJourneyRerouteCandidates() {
+    return rerouteCandidates && current?.sessionId === rerouteCandidates.sessionId
+        && current.generation === rerouteCandidates.generation
+        && Date.now() - rerouteCandidates.receivedAt < 120_000 ? { ...rerouteCandidates } : null;
+}
 
 const codeFor = (error: unknown) => error instanceof Error && /^[A-Z][A-Z0-9_]{0,95}$/.test(error.message)
     ? error.message : "AUTOMATIC_SYNC_UNAVAILABLE";
@@ -222,6 +237,7 @@ function observeLifetime() {
             return;
         }
         if (snapshot.pendingDeparture) automaticRetry();
+        searchRerouteAfterConfirmedOffRoute(snapshot);
     });
     const app = AppState.addEventListener("change", state => {
         if (state === "active") automaticRetry();
@@ -231,6 +247,34 @@ function observeLifetime() {
         if (AppState.currentState === "active") automaticRetry();
     }, 5000);
     disposeLifetime = () => { unsub(); app.remove(); auth(); clearInterval(timer); disposeLifetime = null; };
+}
+function searchRerouteAfterConfirmedOffRoute(snapshot: AutomaticJourneySnapshot) {
+    if (getEnv('EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED') !== 'true' || AppState.currentState !== 'active') return;
+    const binding = current;
+    if (!binding || binding.syncScope !== 'AUTHENTICATED' || !binding.savedRouteValidated
+        || snapshot.pendingDeparture || !snapshot.departureAcknowledged) return;
+    const fix = trustedOffRouteFix(snapshot, binding, Date.now() / 1000);
+    if (!fix) {
+        if (rerouteCandidates) { rerouteCandidates = null; publish({ rerouteState: 'IDLE', rerouteCandidateCount: 0 }); }
+        return;
+    }
+    if (rerouteLookup || Date.now() < nextRerouteLookupAt || rerouteCandidates) return;
+    nextRerouteLookupAt = Date.now() + 20_000;
+    const revision = generation;
+    publish({ rerouteState: 'SEARCHING', rerouteCandidateCount: 0 });
+    rerouteLookup = (async () => {
+        try {
+            const result = await transportFor(binding).rerouteCandidates(binding, fix);
+            if (revision !== generation || current !== binding) return;
+            rerouteCandidates = { sessionId: binding.sessionId, generation: binding.generation,
+                fix, result, receivedAt: Date.now() };
+            publish({ rerouteState: 'CANDIDATES', rerouteCandidateCount: result.paths.length });
+        } catch {
+            if (revision !== generation || current !== binding) return;
+            nextRerouteLookupAt = Date.now() + 30_000;
+            publish({ rerouteState: 'RETRY_WAIT', rerouteCandidateCount: 0 });
+        } finally { rerouteLookup = null; }
+    })();
 }
 export function setAutomaticJourneySyncPaused(paused: boolean) {
     publish({ paused });
@@ -397,9 +441,12 @@ export async function prepareAutomaticJourneyTrial(input: JourneyRouteInput, sco
             throw new Error(snapshot.lastErrorCode ?? snapshot.reason ?? "AUTOMATIC_PREPARATION_FAILED");
         }
         current = binding;
+        rerouteCandidates = null;
+        nextRerouteLookupAt = 0;
         currentRouteJSON = selected.routeJSON;
         nextAutomaticRetryAt = 0;
-        publish({ status: "IDLE", errorCode: null, checkpointState: 'NONE' });
+        publish({ status: "IDLE", errorCode: null, checkpointState: 'NONE',
+            rerouteState: 'IDLE', rerouteCandidateCount: 0 });
         observeLifetime();
         return snapshot;
     } catch (error) {
@@ -492,10 +539,13 @@ export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, aut
             throw new Error(snapshot.lastErrorCode ?? "AUTOMATIC_RESTORE_FAILED");
         }
         current = binding;
+        rerouteCandidates = null;
+        nextRerouteLookupAt = 0;
         currentRouteJSON = routeJSON;
         nextAutomaticRetryAt = 0;
         publish({ status: snapshot.departureAcknowledged ? "ACKNOWLEDGED" : snapshot.pendingDeparture ? "PENDING" : "IDLE",
-            errorCode: null, ...(savedCheckpoint && { checkpointState: 'NONE' as const }) });
+            errorCode: null, rerouteState: 'IDLE', rerouteCandidateCount: 0,
+            ...(savedCheckpoint && { checkpointState: 'NONE' as const }) });
         observeLifetime();
         retryAutomaticJourneySync().catch(() => undefined);
         return snapshot;
@@ -514,6 +564,9 @@ export async function stopAutomaticJourneyTrial(): Promise<AutomaticJourneySnaps
     const binding = current;
     const source = authenticationSource;
     current = null;
+    rerouteCandidates = null;
+    nextRerouteLookupAt = 0;
+    publish({ rerouteState: 'IDLE', rerouteCandidateCount: 0 });
     nativeAuthentication = null;
     currentRouteJSON = null;
     disposeLifetime?.();
