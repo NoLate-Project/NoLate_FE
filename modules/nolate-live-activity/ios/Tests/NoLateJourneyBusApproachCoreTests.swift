@@ -310,6 +310,20 @@ final class NoLateJourneyBusApproachCoreTests: XCTestCase {
     assertUnavailable(core, reason: "BUS_OFF_ROUTE")
   }
 
+  func testFreshFixesAtBoardingStopRecoverAfterOffRouteRejection() throws {
+    var core = try makeCore(); waitAtStop(&core)
+    XCTAssertFalse(core.ingest(sample(4, meters: 200, north: 40), now: 1_016))
+    assertUnavailable(core, reason: "BUS_OFF_ROUTE")
+    for index in 5...8 {
+      XCTAssertTrue(core.ingest(sample(index, meters: 200, at: 1_020 + Double(index - 5) * 4),
+                                now: 1_020 + Double(index - 5) * 4))
+    }
+    XCTAssertEqual(core.snapshot.phase, .waiting)
+    XCTAssertEqual(core.snapshot.quality, .good)
+    XCTAssertEqual(core.snapshot.reason, "STOP_DWELL_OBSERVED")
+    XCTAssertFalse(core.snapshot.boardingConfirmed)
+  }
+
   func testLowAccuracyInvalidAndFutureSamplesNeverKeepCandidateNumbers() throws {
     for observation in [sample(7, meters: 360, accuracy: 26), sample(7, meters: 360, accuracy: -1),
                         sample(7, meters: 360, north: 11_000_000), sample(7, meters: 360, at: 1_031)] {

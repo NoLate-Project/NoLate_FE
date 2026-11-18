@@ -546,6 +546,16 @@ final class NoLateE2ETests: XCTestCase {
                     XCTAssertFalse(app.descendants(matching: .any)["saved-journey-route-marker"].firstMatch.exists,
                                    "An off-route fix must not place a current-position marker on the route")
                     capture("isolated-navigation-real-odsay-bus-off-route")
+                    NSLog("E2E_OFF_ROUTE_VISIBLE")
+                    sheetHandle.tap()
+                    let recovered = expectation(for: NSPredicate(format: "label == %@", "서울역버스환승센터.강우규의거터"),
+                                                evaluatedWith: instruction)
+                    XCTAssertEqual(XCTWaiter().wait(for: [recovered], timeout: 90), .completed,
+                                   "Fresh GPS back at the saved boarding stop must restore the route stage")
+                    sheetHandle.tap()
+                    XCTAssertTrue(app.descendants(matching: .any)["saved-journey-route-marker"].firstMatch.waitForExistence(timeout: 5),
+                                  "The route bar must restore the current-position marker only after route recovery")
+                    capture("isolated-navigation-real-odsay-bus-route-recovered")
                     sheetHandle.tap()
                     stopGuidance.tap()
                     return
