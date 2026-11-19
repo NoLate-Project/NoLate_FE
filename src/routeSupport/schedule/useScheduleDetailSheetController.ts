@@ -66,9 +66,16 @@ export function useScheduleDetailSheetController({
       : { height, statusClearance });
   }, []);
   const largeRouteHeader = fontScale > 1.35;
-  const sheetMaxHeight = routeHeaderHeight > 0
-    ? Math.min(baseSheetHeights.maxHeight, Math.max(160, windowHeight - routeHeaderHeight - 32))
+  // During guidance the map is the primary surface, including when the route
+  // details are expanded. The details remain scrollable inside the opaque sheet.
+  const guidanceHeightLimit = guidanceNavigation && !largeRouteHeader
+    ? Math.max(320, Math.round(windowHeight * 0.54))
     : baseSheetHeights.maxHeight;
+  const sheetMaxHeight = Math.min(
+    baseSheetHeights.maxHeight,
+    guidanceHeightLimit,
+    routeHeaderHeight > 0 ? Math.max(160, windowHeight - routeHeaderHeight - 32) : baseSheetHeights.maxHeight,
+  );
   const handleHeight = SHEET_HANDLE_HEIGHT;
   const [sheetHeaderHeight, setSheetHeaderHeight] = useState(handleHeight);
   const handleSheetHeaderLayout = useCallback((event: LayoutChangeEvent) => {
