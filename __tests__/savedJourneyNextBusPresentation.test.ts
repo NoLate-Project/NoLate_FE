@@ -26,7 +26,7 @@ it('v7 shows only the fresh next-occurrence ETA with the matching route marker',
     expect(presentSavedJourneyGuidance(s,binding,1320)?.arrival).toBeUndefined();
 });
 it.each([
-    ['RIDING',3,3,0.7,'버스 3','버스로 이동 중'],
+    ['RIDING',3,3,0.7,'버스 3','하차 3에서 하차'],
     ['WAITING',3,2,0.6,'승차 3','버스 대기 · 도착하면 탑승 준비'],
     ['APPROACHING_STOP',2,2,0.5,'승차 3까지','도보 약 100m'],
     ['WALKING_TO_STOP',2,2,0.5,'승차 3까지','도보 약 100m'],
