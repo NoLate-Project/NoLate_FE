@@ -92,7 +92,7 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
         </View>
         <Ionicons name="navigate-outline" size={20} color={topCardAccentText} accessible={false} />
       </View>
-      {!expanded && (active || armed) && <View testID="schedule-navigation-next-step" style={navigationHeaderStyles.step}
+      {!expanded && (active || armed || ended) && <View testID="schedule-navigation-next-step" style={navigationHeaderStyles.step}
         accessibilityLiveRegion="polite">
         <Text accessibilityRole="header" numberOfLines={2} maxFontSizeMultiplier={2}
           style={[navigationHeaderStyles.title, { color: primaryText }]}>{title}</Text>
