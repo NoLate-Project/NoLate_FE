@@ -292,6 +292,43 @@ final class NoLateE2ETests: XCTestCase {
 
     /// The saved-route departure action enters guidance on the same map. This
     /// tap must not record a departure or arm the GPS session by itself.
+    func testIsolatedNavigationExpandedSheetKeepsMapVisible() throws {
+        let environment = ProcessInfo.processInfo.environment
+        let scheduleId = try XCTUnwrap(environment["E2E_SCHEDULE_ID"])
+        let routeURL = try XCTUnwrap(URL(string: "nolate://schedule/\(scheduleId)"))
+        app.open(routeURL)
+        let email = app.textFields["이메일"]
+        XCTAssertTrue(email.waitForExistence(timeout: 15))
+        let fixtureEmail = try XCTUnwrap(environment["E2E_EMAIL"])
+        replace(email, with: fixtureEmail)
+        XCTAssertEqual(email.value as? String, fixtureEmail)
+        replaceSecure(app.secureTextFields["비밀번호"], with: try XCTUnwrap(environment["E2E_PASSWORD"]))
+        app.staticTexts["NoLate"].firstMatch.tap()
+        app.buttons["로그인"].tap()
+        dismissSyntheticPasswordSavePrompt()
+        let skipImport = app.buttons["일정 없이 시작하기"]
+        if skipImport.waitForExistence(timeout: 5) { skipImport.tap() }
+        let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
+        if skipTour.waitForExistence(timeout: 5) { skipTour.tap() }
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 30))
+        app.open(routeURL)
+        let depart = app.buttons["schedule-route-departure-action"]
+        XCTAssertTrue(depart.waitForExistence(timeout: 20))
+        depart.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["schedule-navigation-header"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.otherElements["saved-journey-route-bar"].waitForExistence(timeout: 5))
+        capture("navigation-map-compact")
+        let handle = app.buttons["schedule-route-sheet-handle"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        handle.tap()
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        XCTAssertTrue(handle.frame.minY >= app.frame.height * 0.44,
+                      "Expanded route details must leave a substantial visible map viewport")
+        XCTAssertFalse(app.descendants(matching: .any)["schedule-navigation-next-step"].firstMatch.exists,
+                       "The expanded route sheet owns the instruction")
+        capture("navigation-map-expanded")
+    }
+
     func testIsolatedSavedRouteNavigationEntry() throws {
         addUIInterruptionMonitor(withDescription: "Allow isolated route GPS") { alert in
             for label in ["앱을 사용하는 동안 허용", "앱 사용 중에만 허용", "Allow While Using App"] {
