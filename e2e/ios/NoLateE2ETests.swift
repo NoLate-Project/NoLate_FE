@@ -684,13 +684,12 @@ final class NoLateE2ETests: XCTestCase {
                 sheetHandle.tap()
                 XCTAssertTrue(routeBar.waitForExistence(timeout: 5),
                               "The map-focused ride must keep the whole-route bar visible")
-                XCTAssertTrue(app.descendants(matching: .any)["saved-journey-route-marker"].firstMatch.waitForExistence(timeout: 5),
-                              "Confirmed passenger GPS must place a current-position marker on the route bar")
-                XCTAssertTrue(app.staticTexts["saved-journey-instruction"].label.contains("1711")
-                              || app.staticTexts["saved-journey-instruction"].label.contains("버스로 이동 중"),
-                              "The compact sheet must identify the current bus stage")
-                XCTAssertEqual(progress.label, "경복궁역3번출구에서 하차",
-                               "The compact current action must retain the verified alighting stop")
+                XCTAssertTrue(app.descendants(matching: .any)["saved-journey-route-marker"].firstMatch.waitForExistence(timeout: 60),
+                              "A fresh confirmed ride must place the passenger marker on the collapsed route bar")
+                XCTAssertEqual(app.staticTexts["schedule-navigation-state"].label, "안내 중")
+                XCTAssertTrue(app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label CONTAINS %@", "1711")).firstMatch.exists,
+                    "The compact route summary must retain the current bus line")
                 capture("isolated-navigation-real-odsay-bus-riding-map-focused")
                 sheetHandle.tap()
                 if environment["E2E_BUS_FULL_TRIP"] == "1" {

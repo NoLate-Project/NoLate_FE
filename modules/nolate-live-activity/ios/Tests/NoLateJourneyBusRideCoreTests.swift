@@ -156,9 +156,36 @@ final class NoLateJourneyBusRideCoreTests: XCTestCase {
   }
   func testStaleSourceCannotBeFreshenedByReceiptTime() throws {
     var (ride, approach) = try make(); candidate(&ride, &approach)
-    step(&ride, &approach, 7, 160, 1028, vehicles: [vehicle(160, 1028, age: 15)])
+    step(&ride, &approach, 7, 160, 1028, vehicles: [vehicle(160, 1028, age: 45)])
     XCTAssertEqual(ride.snapshot.reason, "VEHICLE_ASSOCIATION_UNAVAILABLE")
     XCTAssertNil(ride.snapshot.validUntil)
+  }
+  func testDelayedOfficialCadenceCanConfirmOnlyWithThreeMatchingHistoricalPassengerPositions() throws {
+    var (ride, approach) = try make()
+    for i in 0...6 {
+      let time = 1000 + Double(i) * 4
+      let metres = i <= 3 ? 0 : Double(i - 3) * 40
+      step(&ride, &approach, i, metres, time, vehicles: [])
+    }
+    XCTAssertEqual(approach.snapshot.phase, .boardingCandidate)
+    for i in 7...30 {
+      let time = 1000 + Double(i) * 4
+      let metres = 120 + (time - 1024) * 3
+      let source: Double? = i >= 30 ? 1088 : i >= 23 ? 1060 : i >= 16 ? 1032 : nil
+      let vehicles: [Ride.Vehicle]
+      if let source, time < source + 45 {
+        let historicalMetres = 120 + (source - 1024) * 3
+        vehicles = [.init(id: "100000123", routeId: "100100447", direction: "상명대",
+          coordinate: point(historicalMetres), sourceAt: source, receivedAt: time,
+          validUntil: source + 45, source: .syntheticReplay)]
+      } else { vehicles = [] }
+      step(&ride, &approach, i, metres, time, vehicles: vehicles)
+      if i < 30 { XCTAssertFalse(ride.snapshot.boardingConfirmed) }
+    }
+    XCTAssertEqual(ride.snapshot.phase, "RIDING")
+    XCTAssertTrue(ride.snapshot.boardingConfirmed)
+    XCTAssertEqual(ride.snapshot.evidenceCount, 3)
+    XCTAssertEqual(try XCTUnwrap(ride.snapshot.alongRouteMeters), 408, accuracy: 0.01)
   }
   func testSourceTimeAlignsWithHistoricalPassengerPositionNotCurrentPosition() throws {
     var (ride, approach) = try make(); candidate(&ride, &approach)

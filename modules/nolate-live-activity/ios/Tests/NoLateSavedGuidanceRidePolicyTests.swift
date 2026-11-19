@@ -48,10 +48,21 @@ final class NoLateSavedGuidanceRidePolicyTests: XCTestCase {
     let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(saved.utf8)) as? [String: Any])
     XCTAssertNil(object["ride"])
   }
+  func testDelayedSourceUsesOriginalClockAndExpiresAtFortyFiveSeconds() throws {
+    let s = try session()
+    let a = try XCTUnwrap(Policy.admission(try binding(s),session:s,now:1000))
+    let delayed = Policy.vehicles(try vehicles(s,rowPatch:["sourceAt":1000,"receivedAt":1029,"validUntil":1045]),
+      session:s,admission:a,now:1029)
+    XCTAssertEqual(delayed.count,1)
+    XCTAssertEqual(delayed[0].sourceAt,1000)
+    let later = try XCTUnwrap(Policy.admission(try binding(s,["validUntil":1050]),session:s,now:1029))
+    XCTAssertTrue(Policy.vehicles(try vehicles(s,rowPatch:["sourceAt":1000,"receivedAt":1029,"validUntil":1045]),
+      session:s,admission:later,now:1045).isEmpty)
+  }
   func testDuplicateStaleFutureWrongRouteDirectionSourceAndMalformedVehiclesFailClosed() throws {
     let s = try session(); let a = try XCTUnwrap(Policy.admission(try binding(s),session:s,now:1000))
     for patch: [String: Any] in [["routeId":"999999997"], ["direction":"반대"], ["source":"arrivalEstimate"],
-      ["sourceAt":1006], ["receivedAt":1006], ["validUntil":1005], ["validUntil":1018],
+      ["sourceAt":1006], ["receivedAt":1006], ["validUntil":1005], ["validUntil":1048],
       ["coordinate":["latitude":true,"longitude":126.98]], ["id":"bad"]] {
       XCTAssertTrue(Policy.vehicles(try vehicles(s,rowPatch:patch),session:s,admission:a,now:1005).isEmpty)
     }

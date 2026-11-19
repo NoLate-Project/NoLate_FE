@@ -59,8 +59,10 @@ enum NoLateSavedGuidanceRidePolicy {
         let latitude = number(coordinate["latitude"]), (33...39.5).contains(latitude),
         let longitude = number(coordinate["longitude"]), (124...132).contains(longitude),
         let source = number(row["sourceAt"]), let received = number(row["receivedAt"]), let until = number(row["validUntil"]),
-        source >= session.binding.preparedAtEpochSeconds - 15, source <= received, received <= now,
-        source <= now, until > now, until <= source + 15, until > source else { return [] }
+        source >= session.binding.preparedAtEpochSeconds - NoLateJourneyBusVehicleFreshness.maxSourceAge,
+        source <= received, received <= now,
+        source <= now, until > now,
+        until <= source + NoLateJourneyBusVehicleFreshness.maxSourceAge, until > source else { return [] }
       var past: Double?
       var ambiguous = false
       if (integer(body["schemaVersion"]) ?? 0) >= 2 {

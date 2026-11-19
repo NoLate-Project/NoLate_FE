@@ -1,5 +1,11 @@
 import Foundation
 
+/// Bounded against the official source clock, never the HTTP receipt clock.
+enum NoLateJourneyBusVehicleFreshness {
+  static let maxSourceAge = 45.0
+  static let maxSourceGap = 35.0
+}
+
 /// R2 evidence reducer, not an HTTP adapter. Vehicle coordinates must be independently verified.
 /// No nearest-bus fallback, receipt-time freshening, or speed-only boarding confirmation.
 struct NoLateJourneyBusRideCore: Sendable {
@@ -106,8 +112,8 @@ struct NoLateJourneyBusRideCore: Sendable {
       }
     }
     history.append((location.observedAt, projected.alongRouteMeters, location.horizontalAccuracyMeters))
-    history.removeAll { location.observedAt - $0.time > 30 }
-    if history.count > 64 { history.removeFirst(history.count - 64) }
+    history.removeAll { location.observedAt - $0.time > 60 }
+    if history.count > 180 { history.removeFirst(history.count - 180) }
     let recovering = recentConfirmedId != nil && snapshot.lastConfirmedAt.map { now - $0 < 90 } == true
     guard confirmedId != nil || recovering || (approach.phase == .boardingCandidate && approach.quality == .good
       && approach.lastObservationAt == location.observedAt && approach.boardingEvidenceCount >= 3) else {
@@ -132,7 +138,8 @@ struct NoLateJourneyBusRideCore: Sendable {
         [vehicle.sourceAt, vehicle.receivedAt, vehicle.validUntil].allSatisfy(\.isFinite),
         vehicle.sourceAt <= vehicle.receivedAt, vehicle.receivedAt <= now + 2,
         vehicle.sourceAt <= now, now < vehicle.validUntil,
-        vehicle.validUntil <= vehicle.sourceAt + 15, vehicle.validUntil > vehicle.sourceAt else {
+        vehicle.validUntil <= vehicle.sourceAt + NoLateJourneyBusVehicleFreshness.maxSourceAge,
+        vehicle.validUntil > vehicle.sourceAt else {
         #if targetEnvironment(simulator)
         NSLog("NOLATE_GUIDANCE_RIDE rejected source_clock")
         #endif
@@ -162,7 +169,8 @@ struct NoLateJourneyBusRideCore: Sendable {
     }
     // Two co-moving buses are ambiguous even if one was previously preferred.
     guard candidates.count == 1, let (vehicle, vehicleAlong) = candidates.first else {
-      invalidate(candidates.isEmpty ? "VEHICLE_ASSOCIATION_UNAVAILABLE" : "VEHICLE_ASSOCIATION_AMBIGUOUS", clearHistory: false)
+      invalidate(candidates.isEmpty ? "VEHICLE_ASSOCIATION_UNAVAILABLE" : "VEHICLE_ASSOCIATION_AMBIGUOUS",
+        clearHistory: false, preserveCandidate: vehicles.isEmpty && candidates.isEmpty && confirmedId == nil)
       return
     }
     if let confirmedId, confirmedId != vehicle.id {
@@ -188,7 +196,7 @@ struct NoLateJourneyBusRideCore: Sendable {
         }
         snapshot.reason = "VEHICLE_SOURCE_NOT_ADVANCED"; return
       }
-      guard vehicle.sourceAt - previousSource <= 15,
+      guard vehicle.sourceAt - previousSource <= NoLateJourneyBusVehicleFreshness.maxSourceGap,
         candidateLastVehicleAlong.map({ vehicleAlong >= $0 - 8 }) ?? true else {
         invalidate("VEHICLE_MOVEMENT_UNRELIABLE", clearHistory: false); return
       }
@@ -223,7 +231,8 @@ struct NoLateJourneyBusRideCore: Sendable {
       stop(); snapshot.reason = "RIDING_SESSION_EXPIRED"; return
     }
     if let until = snapshot.validUntil, now >= until {
-      invalidate("RIDING_EVIDENCE_STALE", clearHistory: false)
+      invalidate("RIDING_EVIDENCE_STALE", clearHistory: false,
+        preserveCandidate: confirmedId == nil && candidateId != nil)
     }
   }
 
@@ -246,10 +255,12 @@ struct NoLateJourneyBusRideCore: Sendable {
     candidateId = nil; candidateFirstAt = nil; candidateFirstAlong = nil
     candidateLastSource = nil; candidateLastVehicleAlong = nil; snapshot.evidenceCount = 0
   }
-  private mutating func invalidate(_ reason: String, clearHistory: Bool = true) {
+  private mutating func invalidate(_ reason: String, clearHistory: Bool = true,
+    preserveCandidate: Bool = false) {
     snapshot.sequence = min(Int64.max - 1, snapshot.sequence) + 1
     if confirmedId != nil { recentConfirmedId = confirmedId }
-    clearCandidate(); confirmedId = nil
+    if !preserveCandidate { clearCandidate() }
+    confirmedId = nil
     if reason != "RIDING_EVIDENCE_STALE" && reason != "VEHICLE_ASSOCIATION_UNAVAILABLE" {
       snapshot.lastConfirmedAt = nil; recentConfirmedId = nil
     }
@@ -386,7 +397,8 @@ struct NoLateJourneyBusSeparationCore: Sendable {
       [v.coordinate.latitude,v.coordinate.longitude].allSatisfy(\.isFinite),
       abs(v.coordinate.latitude) <= 90, abs(v.coordinate.longitude) <= 180,
       v.sourceAt <= v.receivedAt, v.receivedAt <= now, v.sourceAt <= location.observedAt,
-      location.observedAt - v.sourceAt < 15, now < v.validUntil, v.validUntil <= v.sourceAt + 15,
+      location.observedAt - v.sourceAt < NoLateJourneyBusVehicleFreshness.maxSourceAge,
+      now < v.validUntil, v.validUntil <= v.sourceAt + NoLateJourneyBusVehicleFreshness.maxSourceAge,
       let past = v.metersPastAlighting, past.isFinite, past >= 75, past <= route.departureWindowMeters,
       Self.distance(target,v.coordinate) > 25, Self.distance(target,v.coordinate) <= past + 25,
       Self.distance(v.coordinate,location.coordinate) - location.horizontalAccuracyMeters >= 60 else {
@@ -394,7 +406,8 @@ struct NoLateJourneyBusSeparationCore: Sendable {
     }
     if let lastSource {
       if v.sourceAt == lastSource { return } // no evidence/TTL renewal on a repeated source fix
-      guard v.sourceAt > lastSource, v.sourceAt - lastSource <= 15,
+      guard v.sourceAt > lastSource,
+        v.sourceAt - lastSource <= NoLateJourneyBusVehicleFreshness.maxSourceGap,
         let lastPast, past >= lastPast - 5 else { resetEvidence("VEHICLE_MOVEMENT_UNRELIABLE"); return }
     }
     if firstSource == nil { firstSource = v.sourceAt; firstPast = past }
