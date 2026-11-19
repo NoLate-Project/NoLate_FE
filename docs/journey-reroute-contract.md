@@ -56,3 +56,14 @@
 다시 시작할 수 없다. 선택 후보에 대해 현재 위치·환승·목적지 사이의 도보 형상을
 새로 확보하고 서버가 소유한 후보와 결합한 다음 공식 승차 증거를 재검증해야 한다.
 기존 저장 경로의 도보 스냅샷은 새 후보의 증거로 재사용하지 않는다.
+
+2026-11-19 도보 검증 추가: BE는 별도 `JOURNEY_AUTOMATIC_REROUTE_WALKING_ENABLED`
+스위치가 켜진 경우에만 서버 소유 `WALK-BUS-WALK` 후보의 첫 도보와 마지막 도보를
+TMAP 보행 경로로 조회한다. 후보 소유권·로그인 세대·활성 세션·기존 경로 fence와
+목적지를 다시 확인하고, 응답의 순서·연속성·끝점·크기를 검증한다. 후보의 출발
+위치가 30초 이상 오래됐거나 조회 도중 세션이 종료되면 결과를 폐기한다. 인증된
+`POST /api/schedules/{scheduleId}/automatic-journey/{sessionId}/reroute-candidates/{candidateId}/walking-proof`
+는 검증된 보행 구간 수와 만료 시각만 반환한다. 개인 일정·활성 경로·native·Live
+Activity를 변경하지 않으며 `navigationReady=false`를 명시한다. 이 단계는 BE의
+단위 및 인증 HTTP 테스트로 검증됐다. 새 API를 호출하는 FE 연결과 독립 시뮬레이터
+E2E, 공식 승차 대응·원자적 세션 교체는 아직 완료 조건에 포함돼 있다.
