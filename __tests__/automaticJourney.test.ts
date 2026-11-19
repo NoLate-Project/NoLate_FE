@@ -384,4 +384,29 @@ describe("automatic server transport", () => {
             { ...fix, accuracyMeters: 100 })).rejects.toThrow('INVALID_REROUTE_FIX');
         expect(post).not.toHaveBeenCalled();
     });
+    test('reroute walking proof is bounded and never grants navigation readiness', async () => {
+        const rerouteBinding = { ...binding, savedRouteValidated: true as const, guidanceEnabled: true as const };
+        const candidateId = '52f9bff5-d7b6-46ed-8540-7094cb03b941';
+        const proof = { candidateId, issuedAt: '2027-01-15T08:00:00Z', validUntil: '2027-01-15T08:00:25Z',
+            walkCount: 2, pointCount: 8, navigationReady: false, reason: 'TRANSIT_ADMISSION_PENDING' };
+        const post = jest.fn().mockResolvedValue({ success: true, data: proof });
+        await expect(createAutomaticJourneyTransport(post).rerouteWalkingProof(rerouteBinding, candidateId))
+            .resolves.toEqual({ candidateId, issuedAtEpochSeconds: Date.parse(proof.issuedAt) / 1000,
+                validUntilEpochSeconds: Date.parse(proof.validUntil) / 1000,
+                walkCount: 2, pointCount: 8, navigationReady: false });
+        expect(post.mock.calls[0][0]).toContain(`/${candidateId}/walking-proof`);
+        expect(post.mock.calls[0][1]).toEqual({ generation: binding.generation,
+            routeRevision: binding.routeRevision, clientOwnerId: binding.clientOwnerId,
+            routeInputDigest: binding.routeInputDigest });
+        for (const patch of [{ candidateId: 'foreign' }, { navigationReady: true }, { walkCount: 1 },
+            { pointCount: 2 }, { validUntil: '2027-01-15T08:01:00Z' }]) {
+            post.mockResolvedValue({ success: true, data: { ...proof, ...patch } });
+            await expect(createAutomaticJourneyTransport(post).rerouteWalkingProof(rerouteBinding, candidateId))
+                .rejects.toThrow('INVALID_AUTOMATIC_SERVER_RESPONSE');
+        }
+        post.mockClear();
+        await expect(createAutomaticJourneyTransport(post).rerouteWalkingProof(rerouteBinding, '../bad'))
+            .rejects.toThrow('INVALID_REROUTE_CANDIDATE');
+        expect(post).not.toHaveBeenCalled();
+    });
 });

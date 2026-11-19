@@ -13,7 +13,7 @@ import { journeyJSONRequest } from "./journeyJSONRequest";
 import { authenticationMetadata, createAuthenticatedJourneyPost, currentJourneyAuthentication, requireJourneyAuthenticationIdentity, requireJourneyAuthenticationLifetime,
     type JourneyAuthentication, type JourneyAuthenticationSource } from "./automaticJourneyAuthentication";
 import { createAutomaticJourneyTransport, type AutomaticJourneyRerouteCandidates,
-    type AutomaticJourneyRerouteFix } from "./automaticJourneyTransport";
+    type AutomaticJourneyRerouteFix, type AutomaticJourneyRerouteWalkingProof } from "./automaticJourneyTransport";
 import { trustedOffRouteFix } from './journeyRerouteEligibility';
 import { assessJourneyRouteInput } from "./journeyRouteAssessment";
 import { JOURNEY_ROUTE_INPUT_LIMITS, journeyRouteUTF8Bytes, type JourneyRouteInput } from "./journeyRouteInput";
@@ -41,7 +41,7 @@ export type AutomaticJourneySyncState = {
     pendingStopCount?: number;
     checkpointState?: "NONE" | "CHECKING" | "CURRENT" | "CLEARED" | "WAITING" | "BLOCKED";
     savedCheckpoint?: SavedJourneyCheckpoint;
-    rerouteState?: 'IDLE' | 'SEARCHING' | 'CANDIDATES' | 'RETRY_WAIT';
+    rerouteState?: 'IDLE' | 'SEARCHING' | 'CANDIDATES' | 'WALK_VERIFIED' | 'WALK_REJECTED' | 'RETRY_WAIT';
     rerouteCandidateCount?: number;
 };
 export type SavedJourneyCheckpoint = { scheduleId: string; memberId: number; sessionId: string; expiresAt: number };
@@ -83,13 +83,18 @@ let nextAutomaticRetryAt = 0;
 let rerouteLookup: Promise<void> | null = null;
 let nextRerouteLookupAt = 0;
 let rerouteCandidates: { sessionId: string; generation: number; fix: AutomaticJourneyRerouteFix;
-    result: AutomaticJourneyRerouteCandidates; receivedAt: number } | null = null;
+    result: AutomaticJourneyRerouteCandidates; receivedAt: number;
+    walkingProof?: AutomaticJourneyRerouteWalkingProof } | null = null;
 
 /** Ephemeral candidates; only the later server commit may turn one into guidance. */
 export function getAutomaticJourneyRerouteCandidates() {
     return rerouteCandidates && current?.sessionId === rerouteCandidates.sessionId
         && current.generation === rerouteCandidates.generation
-        && Date.now() - rerouteCandidates.receivedAt < 120_000 ? { ...rerouteCandidates } : null;
+        && Date.now() - rerouteCandidates.receivedAt < 120_000
+        ? { ...rerouteCandidates,
+            walkingProof: rerouteCandidates.walkingProof
+                && rerouteCandidates.walkingProof.validUntilEpochSeconds > Date.now() / 1000
+                ? rerouteCandidates.walkingProof : undefined } : null;
 }
 
 const codeFor = (error: unknown) => error instanceof Error && /^[A-Z][A-Z0-9_]{0,95}$/.test(error.message)
@@ -266,7 +271,8 @@ function searchRerouteAfterConfirmedOffRoute(snapshot: AutomaticJourneySnapshot)
         const dy = (fix.latitude - previous.latitude) * 111_195;
         const dx = (fix.longitude - previous.longitude) * 111_195
             * Math.cos((fix.latitude + previous.latitude) * Math.PI / 360);
-        if (Date.now() - rerouteCandidates.receivedAt >= 120_000 || Math.hypot(dx, dy) >= 100) {
+        if (Date.now() - rerouteCandidates.receivedAt >= 120_000 || Math.hypot(dx, dy) >= 100
+            || rerouteCandidates.walkingProof && rerouteCandidates.walkingProof.validUntilEpochSeconds <= Date.now() / 1000) {
             rerouteCandidates = null;
             publish({ rerouteState: 'IDLE', rerouteCandidateCount: 0 });
         }
@@ -282,6 +288,26 @@ function searchRerouteAfterConfirmedOffRoute(snapshot: AutomaticJourneySnapshot)
             rerouteCandidates = { sessionId: binding.sessionId, generation: binding.generation,
                 fix, result, receivedAt: Date.now() };
             publish({ rerouteState: 'CANDIDATES', rerouteCandidateCount: result.paths.length });
+            if (getEnv('EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED') === 'true') {
+                const candidate = result.paths.find(path => {
+                    const legs = path.rps;
+                    return Array.isArray(legs) && legs.length === 3
+                        && legs.map(leg => (leg as { trafficType?: unknown })?.trafficType).join(',') === '3,2,3';
+                });
+                if (candidate) {
+                    try {
+                        const proof = await transportFor(binding).rerouteWalkingProof(binding, candidate.candidateId);
+                        if (revision !== generation || current !== binding || !rerouteCandidates
+                            || rerouteCandidates.result !== result) return;
+                        rerouteCandidates.walkingProof = proof;
+                        publish({ rerouteState: 'WALK_VERIFIED', rerouteCandidateCount: result.paths.length });
+                    } catch {
+                        if (revision !== generation || current !== binding || !rerouteCandidates
+                            || rerouteCandidates.result !== result) return;
+                        publish({ rerouteState: 'WALK_REJECTED', rerouteCandidateCount: result.paths.length });
+                    }
+                }
+            }
         } catch {
             if (revision !== generation || current !== binding) return;
             nextRerouteLookupAt = Date.now() + 30_000;

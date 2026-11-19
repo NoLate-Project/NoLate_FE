@@ -65,5 +65,8 @@ TMAP 보행 경로로 조회한다. 후보 소유권·로그인 세대·활성 �
 `POST /api/schedules/{scheduleId}/automatic-journey/{sessionId}/reroute-candidates/{candidateId}/walking-proof`
 는 검증된 보행 구간 수와 만료 시각만 반환한다. 개인 일정·활성 경로·native·Live
 Activity를 변경하지 않으며 `navigationReady=false`를 명시한다. 이 단계는 BE의
-단위 및 인증 HTTP 테스트로 검증됐다. 새 API를 호출하는 FE 연결과 독립 시뮬레이터
-E2E, 공식 승차 대응·원자적 세션 교체는 아직 완료 조건에 포함돼 있다.
+단위 및 인증 HTTP 테스트로 검증됐다. FE는 별도 기본 OFF 스위치
+`EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED`에서 `WALK-BUS-WALK` 후보의
+서버 도보 검증을 호출하고, 만료된 증거를 버린다. FE의 인증 경로·응답·이탈 후
+호출 테스트가 통과했다. 독립 시뮬레이터 E2E와 공식 승차 대응·원자적 세션 교체는
+아직 완료 조건에 포함돼 있다.

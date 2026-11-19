@@ -130,7 +130,11 @@ it('allows only the exact authenticated reroute candidate path', async () => {
     const candidatePath = '/api/schedules/9001/automatic-journey/11111111-1111-4111-8111-111111111111/reroute-candidates';
     await post(candidatePath, {});
     expect(send).toHaveBeenCalledWith(auth, candidatePath, {});
+    const proofPath = `${candidatePath}/52f9bff5-d7b6-46ed-8540-7094cb03b941/walking-proof`;
+    await post(proofPath, {});
+    expect(send).toHaveBeenCalledWith(auth, proofPath, {});
     await expect(post(`${candidatePath}/extra`, {})).rejects.toThrow('INVALID_AUTHENTICATED_JOURNEY_PATH');
+    await expect(post(`${proofPath}/extra`, {})).rejects.toThrow('INVALID_AUTHENTICATED_JOURNEY_PATH');
 });
 it.each([{ ok: true, redirected: true, text: async () => '{}' }, { ok: true, url: "https://evil.invalid", text: async () => '{}' },
     { ok: true, text: async () => 'x'.repeat(65537) }, { ok: true, text: async () => '<private failure>' }])("bounds malformed and redirected JSON response %#", async response => {

@@ -300,10 +300,12 @@ it("authenticated saved preparation validates before native and never persists c
     await stopAutomaticJourneyTrial(); expect(stored).toBeNull();
     expect(calls.map(call => call.path.split('/').pop())).toEqual(['prepare-saved', 'validate', 'departure', 'stop']);
 });
-it('foreground resumes an authenticated off-route candidate lookup without replacing the route', async () => {
+it('foreground verifies an owned off-route walk without replacing the route', async () => {
     const priorFlag = process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED;
+    const priorWalkingFlag = process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED;
     const priorAppState = AppState.currentState;
     process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED = 'true';
+    process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED = 'true';
     (AppState as { currentState: string }).currentState = 'background';
     try {
         const saved = { ...input, context: 'SAVED_ROUTE' } as JourneyRouteInput;
@@ -314,11 +316,16 @@ it('foreground resumes an authenticated off-route candidate lookup without repla
         const auth = journeyAuthentication(token, 'http://127.0.0.1:15544', 7);
         mockAuthenticatedPost.mockImplementation(async (credentials, path, body) => {
             expect(credentials).toEqual(auth);
+            if (path.endsWith('/walking-proof')) return { success: true, data: {
+                candidateId: '52f9bff5-d7b6-46ed-8540-7094cb03b941',
+                issuedAt: new Date().toISOString(), validUntil: new Date(Date.now() + 25_000).toISOString(),
+                walkCount: 2, pointCount: 8, navigationReady: false, reason: 'TRANSIT_ADMISSION_PENDING',
+            } };
             if (path.endsWith('/reroute-candidates')) return { success: true, data: {
                 provider: 'odsay', sessionId: binding.sessionId, generation: binding.generation,
                 routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
                 observedAt: body.observedAt, result: { paths: [{ candidateId: '52f9bff5-d7b6-46ed-8540-7094cb03b941',
-                    pathType: 2, totalTime: 25, rps: [{}, {}] }] },
+                    pathType: 2, totalTime: 25, rps: [{ trafficType: 3 }, { trafficType: 2 }, { trafficType: 3 }] }] },
             } };
             const raw = await server(`http://127.0.0.1:15543${path}`, {
                 credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -344,8 +351,11 @@ it('foreground resumes an authenticated off-route candidate lookup without repla
         expect(onAppChange).toBeDefined();
         onAppChange?.('active'); await flush();
         expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(1);
-        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'CANDIDATES', rerouteCandidateCount: 1 });
+        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'WALK_VERIFIED', rerouteCandidateCount: 1 });
         expect(getAutomaticJourneyRerouteCandidates()?.result.paths).toHaveLength(1);
+        expect(getAutomaticJourneyRerouteCandidates()?.walkingProof).toMatchObject({
+            walkCount: 2, navigationReady: false });
+        expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/walking-proof'))).toHaveLength(1);
         mockNativeEvent(snapshot); await flush();
         expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(1);
         mockNativeEvent({ ...snapshot, qualityReason: 'GOOD', deviceMapLocation: null });
@@ -354,6 +364,8 @@ it('foreground resumes an authenticated off-route candidate lookup without repla
     } finally {
         if (priorFlag === undefined) delete process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED;
         else process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED = priorFlag;
+        if (priorWalkingFlag === undefined) delete process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED;
+        else process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED = priorWalkingFlag;
         (AppState as { currentState: string }).currentState = priorAppState;
     }
 });
