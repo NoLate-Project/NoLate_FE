@@ -11,6 +11,9 @@
 (`/private/tmp/nolate-navigation-terminal-e2e-20261119/result.xcresult`).
 도착 후 상단 문구는 컴포넌트 검사로 확인했다.
 이 화면 변경은 자동 재탐색과 실기기 GPS·실제 APNs 검증 완료를 뜻하지 않는다.
+경로 이탈 후보 조회는 이후 서버 소유 ID와 2분 유효기간을 적용했고,
+독립 Release 제품 E2E에서 후보 HTTP 200·ID 포함을 확인했다.
+[후보 조회와 남은 교체 계약](journey-reroute-contract.md)을 따른다.
 
 2026-11-19 경로 이탈 지도 후속: 경로 밖의 신선하고 연속된 기기 GPS를
 별도의 지도 점과 카메라 추종에만 사용한다. 경로 바·Live Activity의 현재

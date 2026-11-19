@@ -317,7 +317,8 @@ it('foreground resumes an authenticated off-route candidate lookup without repla
             if (path.endsWith('/reroute-candidates')) return { success: true, data: {
                 provider: 'odsay', sessionId: binding.sessionId, generation: binding.generation,
                 routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
-                observedAt: body.observedAt, result: { paths: [{ pathType: 2, totalTime: 25, rps: [{}, {}] }] },
+                observedAt: body.observedAt, result: { paths: [{ candidateId: '52f9bff5-d7b6-46ed-8540-7094cb03b941',
+                    pathType: 2, totalTime: 25, rps: [{}, {}] }] },
             } };
             const raw = await server(`http://127.0.0.1:15543${path}`, {
                 credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),

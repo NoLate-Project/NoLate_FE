@@ -360,7 +360,8 @@ describe("automatic server transport", () => {
     test('reroute candidate transport fences the old session and accepts ODsay geometry only', async () => {
         const rerouteBinding = { ...binding, savedRouteValidated: true as const, guidanceEnabled: true as const };
         const fix = { latitude: 37.565, longitude: 126.99, accuracyMeters: 8, observedAt: 1_800_000_010 };
-        const paths = [{ pathType: 2, totalTime: 25, rps: [{}, {}] }];
+        const paths = [{ candidateId: '52f9bff5-d7b6-46ed-8540-7094cb03b941',
+            pathType: 2, totalTime: 25, rps: [{}, {}] }];
         const response = { provider: 'odsay', sessionId: binding.sessionId, generation: binding.generation,
             routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
             observedAt: new Date(fix.observedAt * 1000).toISOString(), result: { paths } };
@@ -371,7 +372,9 @@ describe("automatic server transport", () => {
             clientOwnerId: binding.clientOwnerId, routeInputDigest: binding.routeInputDigest,
             ...fix, observedAt: response.observedAt });
         for (const patch of [{ provider: 'tmap' }, { sessionId: 'foreign' }, { routeInputDigest: 'b'.repeat(64) },
-            { result: { paths: [{ pathType: 2, totalTime: 25, rps: [{}] }] } }]) {
+            { result: { paths: [{ ...paths[0], rps: [{}] }] } },
+            { result: { paths: [{ ...paths[0], candidateId: undefined }] } },
+            { result: { paths: [paths[0], paths[0]] } }]) {
             post.mockResolvedValue({ success: true, data: { ...response, ...patch } });
             await expect(createAutomaticJourneyTransport(post).rerouteCandidates(rerouteBinding, fix))
                 .rejects.toThrow('INVALID_AUTOMATIC_SERVER_RESPONSE');

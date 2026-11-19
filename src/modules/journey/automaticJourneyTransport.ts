@@ -11,7 +11,7 @@ export type AutomaticJourneyPost = (path: string, body: Record<string, unknown>)
 export type AutomaticJourneyRerouteFix = {
     latitude: number; longitude: number; accuracyMeters: number; observedAt: number;
 };
-export type AutomaticJourneyRerouteCandidates = { paths: Record<string, unknown>[] };
+export type AutomaticJourneyRerouteCandidates = { paths: (Record<string, unknown> & { candidateId: string })[] };
 
 const base = (scheduleId: string) => {
     if (!/^[1-9]\d{0,17}$/.test(scheduleId)) throw new Error("INVALID_SCHEDULE_ID");
@@ -47,17 +47,20 @@ export function createAutomaticJourneyTransport(post: AutomaticJourneyPost, auth
             const result = automaticRecord(data.result);
             const observedAt = typeof data.observedAt === 'string' ? Date.parse(data.observedAt) / 1000 : NaN;
             const paths = result?.paths;
+            const candidateIds = Array.isArray(paths) ? paths.map(path => automaticRecord(path)?.candidateId) : [];
             if (data.provider !== 'odsay' || data.sessionId !== binding.sessionId
                 || data.generation !== binding.generation || data.routeRevision !== binding.routeRevision
                 || data.routeInputDigest !== binding.routeInputDigest
                 || !Number.isFinite(observedAt) || Math.abs(observedAt - fix.observedAt) > 0.001
                 || !Array.isArray(paths) || paths.length < 1 || paths.length > 3
+                || candidateIds.some(id => typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id))
+                || new Set(candidateIds).size !== candidateIds.length
                 || paths.some(path => { const item = automaticRecord(path); return !item || item.pathType !== 2
                     || typeof item.totalTime !== 'number' || !Number.isFinite(item.totalTime) || item.totalTime <= 0
                     || !Array.isArray(item.rps) || item.rps.length < 2 || item.rps.length > 64; })) {
                 throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
             }
-            return { paths: paths as Record<string, unknown>[] };
+            return { paths: paths as AutomaticJourneyRerouteCandidates['paths'] };
         },
         async reconcile(binding: AutomaticJourneyBinding): Promise<"CURRENT" | "TERMINAL"> {
             const data = payload(await post(`${base(binding.scheduleId)}/${encodeURIComponent(binding.sessionId)}/reconcile`, {
