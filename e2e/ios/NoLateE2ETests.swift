@@ -575,6 +575,24 @@ final class NoLateE2ETests: XCTestCase {
                            "A bus route must not show subway live train status")
             capture("isolated-navigation-real-odsay-bus-armed")
             sheetHandle.tap()
+            if environment["E2E_VERIFY_ACTIVE_REENTRY"] == "1" {
+                app.buttons["길안내 화면에서 돌아가기"].tap()
+                XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 15))
+                let savedId = try XCTUnwrap(environment["E2E_SCHEDULE_ID"])
+                let routeURL = try XCTUnwrap(URL(string: "nolate://schedule/\(savedId)"))
+                app.open(routeURL)
+                XCTAssertTrue(app.descendants(matching: .any)["schedule-navigation-header"].firstMatch.waitForExistence(timeout: 20),
+                              "An active saved journey must reopen in its navigation map from the calendar")
+                XCTAssertTrue(app.descendants(matching: .any)["saved-journey-route-bar"].firstMatch.waitForExistence(timeout: 10))
+                capture("isolated-navigation-active-route-reentered")
+                let reopenedHandle = app.buttons["schedule-route-sheet-handle"]
+                XCTAssertTrue(reopenedHandle.waitForExistence(timeout: 5))
+                reopenedHandle.tap()
+                let reopenedStop = app.buttons["saved-detail-stop"]
+                XCTAssertTrue(reopenedStop.waitForExistence(timeout: 10))
+                reopenedStop.tap()
+                return
+            }
             if environment["E2E_BUS_GPS_REPLAY"] == "1" {
                 let progress = app.staticTexts["saved-journey-progress"].firstMatch
                 NSLog("E2E_BUS_GPS_ARMED")

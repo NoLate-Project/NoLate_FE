@@ -43,6 +43,7 @@ import { canOpenParticipantTravelPlan } from '../../modules/schedule/travelPlanP
 import { completeScheduleDeparture } from '../../modules/schedule/scheduleDepartureCompletion';
 import { canOpenJourneyGuidance } from '../../modules/journey/journeyFeature';
 import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
+import { useSavedJourneyBinding } from '../../modules/journey/useSavedJourneyBinding';
 import { useGuidanceActivityHandoff, useGuidanceActivityRepeatTap } from '../../modules/journey/useGuidanceActivityHandoff';
 import { automaticUUID } from '../../modules/journey/automaticJourney';
 import { revalidateAutomaticJourneySavedRoute } from '../../modules/journey/automaticJourneyTrial';
@@ -205,7 +206,15 @@ export function useScheduleDetailController({
   const guidanceResumeHandoff = guidanceActivityHandoff === 'resume';
   const liveActivityEntry = guidanceActivityHandoff === 'live' || guidanceResumeHandoff
     ? `${guidanceSession}:${guidanceRepeatTap}` : undefined;
-  const navigationMode = navigationScheduleId === id || liveActivityEntry !== undefined;
+  const ownedGuidanceInput = useMemo(() => !internalPreviewItem && authoritativeDetailLoaded && !loadError
+    && item?.id === id && currentMemberId != null
+    && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId
+    ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
+  [internalPreviewItem, authoritativeDetailLoaded, loadError, item?.id, id, currentMemberId,
+    item?.myTravelPlan?.memberId, item?.ownerMemberId, item?.route, item?.origin, item?.destination]);
+  const ownedGuidanceBinding = useSavedJourneyBinding(ownedGuidanceInput, String(id ?? ''));
+  const navigationMode = navigationScheduleId === id || liveActivityEntry !== undefined
+    || ownedGuidanceBinding !== null;
   const {
     compactSummaryScrollable,
     handleCompactContentSizeChange,
