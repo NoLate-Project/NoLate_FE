@@ -591,6 +591,17 @@ final class NoLateE2ETests: XCTestCase {
                 let reopenedStop = app.buttons["saved-detail-stop"]
                 XCTAssertTrue(reopenedStop.waitForExistence(timeout: 10))
                 reopenedStop.tap()
+                let endedState = app.staticTexts["schedule-navigation-state"]
+                XCTAssertTrue(endedState.waitForExistence(timeout: 10), "The ended journey remains on its map")
+                XCTAssertEqual(endedState.label, "안내 종료")
+                let endedHandle = app.buttons["schedule-route-sheet-handle"]
+                XCTAssertTrue(endedHandle.waitForExistence(timeout: 5))
+                endedHandle.tap()
+                let endedStep = app.descendants(matching: .any)["schedule-navigation-next-step"].firstMatch
+                XCTAssertTrue(endedStep.waitForExistence(timeout: 10))
+                XCTAssertTrue(app.staticTexts["위치 안내가 끝났어요"].waitForExistence(timeout: 5))
+                XCTAssertFalse(app.descendants(matching: .any)["schedule-route-navigation-ready"].firstMatch.exists)
+                capture("isolated-navigation-ended-on-map")
                 return
             }
             if environment["E2E_BUS_GPS_REPLAY"] == "1" {

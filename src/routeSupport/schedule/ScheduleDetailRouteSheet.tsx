@@ -517,7 +517,7 @@ export function ScheduleDetailRouteSheet({
               </Animated.View>
             </Pressable>
           </View>
-          {navigationReady && (
+          {navigationReady && (!endedGuidance || expanded) && (
             <View testID="schedule-route-navigation-ready" style={navigationStyles.ready}>
               <View style={navigationStyles.readyCopy}>
                 <Text accessibilityRole="header" style={[navigationStyles.readyTitle, { color: primaryText }]}>

@@ -1,5 +1,20 @@
 # NoLate 길안내 현재 상태 — 전체 기능 미완료
 
+2026-11-19 `main` 제품 화면·배포 후속: 저장된 ODsay 1711 경로의 활성
+길안내를 캘린더에서 다시 열면 지도 화면으로 복귀한다. 그 화면에서 안내를
+종료해도 일반 일정 상세로 즉시 바뀌지 않고 종료 결과를 지도 상단에 보여 준다.
+접힌 경로 시트는 종료 문구를 반복하지 않으며 전체 경로 바를 유지한다.
+독립 iOS 27.0 Release 시뮬레이터의 준비→캘린더 재진입→종료 제품 E2E가
+**1건 통과·0건 실패**했다. [종료 화면](evidence/journey-navigation-ended-20261119.png),
+`/private/tmp/nolate-main-navigation-final5-e2e-20261119/result.xcresult`.
+BE `main` `b4d8535`는 Docker 이미지 내부 전체 테스트를 통과했고 운영의
+`nolate-app`에 배포돼 `prod,journey-testflight`, health `healthy`, 재시작 0회로
+확인됐다. FE `main`의 iOS 1.3.0(58) Release 아카이브는 제품 후보 구성과
+코드 서명 검사를 통과했다. 내보낸 IPA는
+`/private/tmp/NoLateFE-1.3.0-58-main-final-20261119/export/NoLateFE.ipa`이다.
+이 IPA의 실제 APNs 수신·실기기 GPS·App Store Connect 업로드는 아직 검증하지 않았다.
+자동 새 경로 확정과 native/Live Activity 경로 교체도 아직 구현되지 않았다.
+
 2026-11-19 저장 경로 재진입 수정: 같은 사용자의 길안내 세션이 진행 중이면
 캘린더에서 해당 일정을 다시 열어도 지도 중심 길안내 화면으로 복귀한다.
 실제 ODsay `WALK → BUS 1711 → WALK` 저장 경로를 격리 H2 서버와 독립

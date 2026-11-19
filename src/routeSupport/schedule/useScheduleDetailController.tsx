@@ -214,7 +214,7 @@ export function useScheduleDetailController({
     item?.myTravelPlan?.memberId, item?.ownerMemberId, item?.route, item?.origin, item?.destination]);
   const ownedGuidanceBinding = useSavedJourneyBinding(ownedGuidanceInput, String(id ?? ''));
   const navigationMode = navigationScheduleId === id || liveActivityEntry !== undefined
-    || ownedGuidanceBinding !== null;
+    || ownedGuidanceBinding !== null || navigationEnd?.scheduleId === id;
   const {
     compactSummaryScrollable,
     handleCompactContentSizeChange,
