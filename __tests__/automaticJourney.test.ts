@@ -409,4 +409,27 @@ describe("automatic server transport", () => {
             .rejects.toThrow('INVALID_REROUTE_CANDIDATE');
         expect(post).not.toHaveBeenCalled();
     });
+    test('official reroute proof stays bound to the walking candidate and is not a route switch', async () => {
+        const rerouteBinding = { ...binding, savedRouteValidated: true as const, guidanceEnabled: true as const };
+        const candidateId = '52f9bff5-d7b6-46ed-8540-7094cb03b941';
+        const walking = { candidateId, issuedAtEpochSeconds: Date.now() / 1000,
+            validUntilEpochSeconds: Date.now() / 1000 + 25, walkCount: 2 as const,
+            pointCount: 8, navigationReady: false as const };
+        const data = { candidateId, routeFingerprint: 'a'.repeat(64),
+            validUntil: new Date((walking.validUntilEpochSeconds - 1) * 1000).toISOString(),
+            routeId: '100100499', stationCount: 4, navigationReady: false,
+            reason: 'ATOMIC_REPLACEMENT_PENDING' };
+        const post = jest.fn().mockResolvedValue({ success: true, data });
+        await expect(createAutomaticJourneyTransport(post).rerouteTransitProof(rerouteBinding, walking))
+            .resolves.toMatchObject({ candidateId, routeFingerprint: data.routeFingerprint,
+                routeId: data.routeId, stationCount: 4, navigationReady: false });
+        expect(post.mock.calls[0][0]).toContain(`/${candidateId}/transit-proof`);
+        for (const patch of [{ candidateId: 'foreign' }, { routeFingerprint: 'not-a-hash' },
+            { routeId: '7016' }, { navigationReady: true }, { stationCount: 64 },
+            { validUntil: new Date((walking.validUntilEpochSeconds + 1) * 1000).toISOString() }]) {
+            post.mockResolvedValue({ success: true, data: { ...data, ...patch } });
+            await expect(createAutomaticJourneyTransport(post).rerouteTransitProof(rerouteBinding, walking))
+                .rejects.toThrow('INVALID_AUTOMATIC_SERVER_RESPONSE');
+        }
+    });
 });

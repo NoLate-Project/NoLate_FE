@@ -16,6 +16,10 @@ export type AutomaticJourneyRerouteWalkingProof = {
     candidateId: string; issuedAtEpochSeconds: number; validUntilEpochSeconds: number;
     walkCount: 2; pointCount: number; navigationReady: false;
 };
+export type AutomaticJourneyRerouteTransitProof = {
+    candidateId: string; routeFingerprint: string; validUntilEpochSeconds: number;
+    routeId: string; stationCount: number; navigationReady: false;
+};
 
 const base = (scheduleId: string) => {
     if (!/^[1-9]\d{0,17}$/.test(scheduleId)) throw new Error("INVALID_SCHEDULE_ID");
@@ -33,6 +37,30 @@ export function createAutomaticJourneyTransport(post: AutomaticJourneyPost, auth
     apiOrigin: string; authMemberId: number; loginGeneration: number;
 }) {
     return {
+        async rerouteTransitProof(binding: AutomaticJourneyBinding, walking: AutomaticJourneyRerouteWalkingProof): Promise<AutomaticJourneyRerouteTransitProof> {
+            if (binding.savedRouteValidated !== true || binding.guidanceEnabled !== true
+                || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(walking.candidateId)
+                || walking.navigationReady !== false || walking.walkCount !== 2
+                || walking.validUntilEpochSeconds <= Date.now() / 1000) throw new Error('INVALID_REROUTE_CANDIDATE');
+            const data = payload(await post(`${base(binding.scheduleId)}/${encodeURIComponent(binding.sessionId)}/reroute-candidates/${walking.candidateId}/transit-proof`, {
+                generation: binding.generation, routeRevision: binding.routeRevision,
+                clientOwnerId: binding.clientOwnerId, routeInputDigest: binding.routeInputDigest,
+            }));
+            const validUntilEpochSeconds = typeof data.validUntil === 'string' ? Date.parse(data.validUntil) / 1000 : NaN;
+            if (data.candidateId !== walking.candidateId || typeof data.routeFingerprint !== 'string'
+                || !/^[a-f0-9]{64}$/.test(data.routeFingerprint)
+                || typeof data.routeId !== 'string' || !/^[1-9][0-9]{8}$/.test(data.routeId)
+                || typeof data.stationCount !== 'number' || !Number.isSafeInteger(data.stationCount)
+                || data.stationCount < 1 || data.stationCount > 63
+                || data.navigationReady !== false || data.reason !== 'ATOMIC_REPLACEMENT_PENDING'
+                || !Number.isFinite(validUntilEpochSeconds) || validUntilEpochSeconds <= Date.now() / 1000
+                || validUntilEpochSeconds > walking.validUntilEpochSeconds) {
+                throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
+            }
+            return { candidateId: walking.candidateId, routeFingerprint: data.routeFingerprint,
+                validUntilEpochSeconds, routeId: data.routeId, stationCount: data.stationCount,
+                navigationReady: false };
+        },
         async rerouteWalkingProof(binding: AutomaticJourneyBinding, candidateId: string): Promise<AutomaticJourneyRerouteWalkingProof> {
             if (binding.savedRouteValidated !== true || binding.guidanceEnabled !== true
                 || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(candidateId)) {

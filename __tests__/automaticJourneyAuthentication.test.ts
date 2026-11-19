@@ -133,6 +133,9 @@ it('allows only the exact authenticated reroute candidate path', async () => {
     const proofPath = `${candidatePath}/52f9bff5-d7b6-46ed-8540-7094cb03b941/walking-proof`;
     await post(proofPath, {});
     expect(send).toHaveBeenCalledWith(auth, proofPath, {});
+    const transitPath = `${candidatePath}/52f9bff5-d7b6-46ed-8540-7094cb03b941/transit-proof`;
+    await post(transitPath, {});
+    expect(send).toHaveBeenCalledWith(auth, transitPath, {});
     await expect(post(`${candidatePath}/extra`, {})).rejects.toThrow('INVALID_AUTHENTICATED_JOURNEY_PATH');
     await expect(post(`${proofPath}/extra`, {})).rejects.toThrow('INVALID_AUTHENTICATED_JOURNEY_PATH');
 });

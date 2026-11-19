@@ -303,9 +303,11 @@ it("authenticated saved preparation validates before native and never persists c
 it('foreground verifies an owned off-route walk without replacing the route', async () => {
     const priorFlag = process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED;
     const priorWalkingFlag = process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED;
+    const priorTransitFlag = process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_TRANSIT_ENABLED;
     const priorAppState = AppState.currentState;
     process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED = 'true';
     process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED = 'true';
+    process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_TRANSIT_ENABLED = 'true';
     (AppState as { currentState: string }).currentState = 'background';
     try {
         const saved = { ...input, context: 'SAVED_ROUTE' } as JourneyRouteInput;
@@ -316,6 +318,12 @@ it('foreground verifies an owned off-route walk without replacing the route', as
         const auth = journeyAuthentication(token, 'http://127.0.0.1:15544', 7);
         mockAuthenticatedPost.mockImplementation(async (credentials, path, body) => {
             expect(credentials).toEqual(auth);
+            if (path.endsWith('/transit-proof')) return { success: true, data: {
+                candidateId: '52f9bff5-d7b6-46ed-8540-7094cb03b941',
+                routeFingerprint: 'b'.repeat(64), validUntil: new Date(Date.now() + 24_000).toISOString(),
+                routeId: '100100499', stationCount: 4, navigationReady: false,
+                reason: 'ATOMIC_REPLACEMENT_PENDING',
+            } };
             if (path.endsWith('/walking-proof')) return { success: true, data: {
                 candidateId: '52f9bff5-d7b6-46ed-8540-7094cb03b941',
                 issuedAt: new Date().toISOString(), validUntil: new Date(Date.now() + 25_000).toISOString(),
@@ -351,11 +359,14 @@ it('foreground verifies an owned off-route walk without replacing the route', as
         expect(onAppChange).toBeDefined();
         onAppChange?.('active'); await flush();
         expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(1);
-        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'WALK_VERIFIED', rerouteCandidateCount: 1 });
+        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'TRANSIT_VERIFIED', rerouteCandidateCount: 1 });
         expect(getAutomaticJourneyRerouteCandidates()?.result.paths).toHaveLength(1);
         expect(getAutomaticJourneyRerouteCandidates()?.walkingProof).toMatchObject({
             walkCount: 2, navigationReady: false });
+        expect(getAutomaticJourneyRerouteCandidates()?.transitProof).toMatchObject({
+            routeId: '100100499', navigationReady: false });
         expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/walking-proof'))).toHaveLength(1);
+        expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/transit-proof'))).toHaveLength(1);
         mockNativeEvent(snapshot); await flush();
         expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(1);
         mockNativeEvent({ ...snapshot, qualityReason: 'GOOD', deviceMapLocation: null });
@@ -366,6 +377,8 @@ it('foreground verifies an owned off-route walk without replacing the route', as
         else process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED = priorFlag;
         if (priorWalkingFlag === undefined) delete process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED;
         else process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED = priorWalkingFlag;
+        if (priorTransitFlag === undefined) delete process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_TRANSIT_ENABLED;
+        else process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_TRANSIT_ENABLED = priorTransitFlag;
         (AppState as { currentState: string }).currentState = priorAppState;
     }
 });
