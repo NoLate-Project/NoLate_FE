@@ -376,6 +376,10 @@ final class NoLateE2ETests: XCTestCase {
         let locationPermission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["앱을 사용하는 동안 허용"]
         if locationPermission.waitForExistence(timeout: 2) { locationPermission.tap() }
         XCTAssertTrue(navigationReady.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["schedule-navigation-header"].firstMatch.waitForExistence(timeout: 5),
+                      "Departure must switch the top chrome to the map guidance screen")
+        XCTAssertTrue(app.staticTexts["schedule-navigation-state"].waitForExistence(timeout: 5),
+                      "The guidance header must expose its live state")
         let prepare = app.buttons["schedule-route-guidance-entry"]
         if openedExpanded {
             let handle = app.buttons["schedule-route-sheet-handle"]
@@ -431,7 +435,6 @@ final class NoLateE2ETests: XCTestCase {
             // A separate UI test process verifies restore after a real cold launch.
             // Re-activating the app in this invocation can time out in CoreSimulator
             // even after the app has reached its calendar screen.
-            return
             return
         }
         if environment["E2E_LOCKED_DEPARTURE_NOTICE"] == "1" {
@@ -489,6 +492,8 @@ final class NoLateE2ETests: XCTestCase {
                        "A new guidance session must reveal the map and compact current-stage sheet")
         XCTAssertTrue(app.descendants(matching: .any)["saved-journey-route-bar"].firstMatch.waitForExistence(timeout: 5),
                       "Map-focused guidance must retain the whole-route progress bar")
+        XCTAssertTrue(app.descendants(matching: .any)["schedule-navigation-next-step"].firstMatch.waitForExistence(timeout: 5),
+                      "The map-focused header must show the current instruction")
         let guidanceLocationAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.matching(
             NSPredicate(format: "label CONTAINS %@", "위치를 사용하도록 허용")).firstMatch
         if guidanceLocationAlert.waitForExistence(timeout: 8) {
@@ -503,6 +508,8 @@ final class NoLateE2ETests: XCTestCase {
                                         evaluatedWith: activeSheetHandle)
         XCTAssertEqual(XCTWaiter().wait(for: [expandedAgain], timeout: 10), .completed,
                        "The user must be able to reopen route details after map focus")
+        XCTAssertFalse(app.descendants(matching: .any)["schedule-navigation-next-step"].firstMatch.exists,
+                       "The expanded route sheet owns the instruction without a duplicate in the header")
         let stopGuidance = app.buttons["saved-detail-stop"]
         XCTAssertTrue(stopGuidance.waitForExistence(timeout: 25),
                       "The authenticated saved route must arm a native GPS guidance session")
@@ -521,8 +528,9 @@ final class NoLateE2ETests: XCTestCase {
             let routeBar = app.descendants(matching: .any)["saved-journey-route-bar"].firstMatch
             XCTAssertTrue(routeBar.waitForExistence(timeout: 10),
                           "The collapsed sheet must show whole-route progress during guidance")
-            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "1711")).firstMatch.exists,
-                          "The collapsed route summary must retain the bus line")
+            XCTAssertTrue(app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@", "1711 예정")).firstMatch.exists,
+                          "The collapsed route bar must retain the bus line in its accessible summary")
             XCTAssertFalse(app.staticTexts["saved-detail-subway-signal"].exists,
                            "A bus route must not show subway live train status")
             capture("isolated-navigation-real-odsay-bus-armed")

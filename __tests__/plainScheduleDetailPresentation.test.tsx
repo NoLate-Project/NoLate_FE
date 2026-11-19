@@ -13,6 +13,9 @@ jest.mock("react-native/Libraries/Utilities/useWindowDimensions", () => ({
 
 jest.mock("../src/modules/map/TmapMapView", () => () => null);
 jest.mock("../src/modules/journey/SavedJourneyRoutePreview", () => ({ SavedJourneyRoutePreview: () => null }));
+jest.mock("../src/modules/journey/useSavedJourneyGuidanceView", () => ({
+    useSavedJourneyGuidanceView: () => ({ snapshot: null, stage: null }),
+}));
 jest.mock("../src/modules/schedule/components/detail/ScheduleArrivalObservationAction", () => () => null);
 jest.mock("../src/api/scheduleSharing", () => ({ getShareInbox: jest.fn() }));
 
@@ -250,6 +253,23 @@ describe("PlainScheduleDetailView", () => {
         expect(retryButton().props.accessibilityState).toEqual({ busy: true, disabled: true });
         await act(async () => renderer!.update(render("ready")));
         expect(indicator()).toHaveLength(0);
+    });
+
+    test("길안내 종료 후 상단 안내도 도착 상태를 표시한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(<ThemeProvider><ScheduleDetailHeader
+                presentation={{
+                    item: makeSchedule({ id: "journey-1" }), navigationMode: true,
+                    navigationEnd: { scheduleId: "journey-1", reason: "DESTINATION_ARRIVED" },
+                    insets: { top: 0 }, colors: { background: "#FFFFFF" },
+                    setRouteHeaderHeight: jest.fn(), sheetMode: "compact", goBack: jest.fn(),
+                } as unknown as ScheduleDetailPresentation}
+                mapState="ready" onRetryMap={jest.fn()} />
+            </ThemeProvider>);
+        });
+        expect(renderer!.root.findByProps({ testID: "schedule-navigation-state" }).props.children).toBe("안내 종료");
+        expect(renderer!.root.findByProps({ testID: "schedule-navigation-next-step" })
+            .findAllByType(Text)[0].props.children).toBe("목적지에 도착했어요");
     });
 
     test.each([

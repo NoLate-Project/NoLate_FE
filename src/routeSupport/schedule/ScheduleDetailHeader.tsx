@@ -19,6 +19,8 @@ import {
   ScheduleDetailEditResultContext,
 } from "./ScheduleDetailEditorTransition";
 import { getRouteInfoFromRoute, isSameScheduleDraftRoute } from "../../modules/schedule/routeInfo";
+import { buildSavedJourneyInput } from "../../modules/journey/savedJourneyGuidance";
+import { useSavedJourneyGuidanceView } from "../../modules/journey/useSavedJourneyGuidanceView";
 
 function hasEditedRoute(previous: ScheduleDetailPresentation["item"], updated: ScheduleDetailPresentation["item"]) {
   if (previous.route === updated.route && previous.travelMinutes === updated.travelMinutes
@@ -50,6 +52,63 @@ type ScheduleDetailHeaderProps = {
   mapState?: TmapLoadState | 'retrying';
   onRetryMap: () => void;
 };
+
+/** The map keeps its own camera and route sheet; this surface only changes the
+ * top-level reading order when the user enters guidance. */
+function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: ScheduleDetailHeaderProps) {
+  const {
+    colors, goBack, guidanceEndedHandoff, insets, isDark, item, navigationEnd, primaryText, secondaryText,
+    setRouteHeaderHeight, sheetBorder, sheetMode, topCardAccentText,
+  } = presentation;
+  const input = React.useMemo(() => buildSavedJourneyInput(item.route, item.origin, item.destination),
+    [item.route, item.origin, item.destination]);
+  const { snapshot, stage } = useSavedJourneyGuidanceView(input, String(item.id));
+  const active = snapshot?.status === 'ACTIVE';
+  const armed = snapshot?.status === 'ARMED';
+  const ended = !active && !armed &&
+    (navigationEnd?.scheduleId === String(item.id) || guidanceEndedHandoff);
+  const arrived = navigationEnd?.scheduleId === String(item.id) && navigationEnd.reason === 'DESTINATION_ARRIVED';
+  const expanded = sheetMode === 'expanded';
+  const title = ended ? arrived ? '목적지에 도착했어요' : '위치 안내가 끝났어요'
+    : stage?.title ?? (active ? '현재 위치를 확인 중이에요' : '출발 전');
+  const action = ended ? '저장한 경로는 계속 볼 수 있어요'
+    : stage?.action ?? (active ? '위치가 확인되면 안내를 이어가요' : '안내를 준비하고 이동하면 출발을 감지해요');
+  const mapProblem = mapState === 'error' || mapState === 'unavailable';
+  return <View style={styles.topOverlay} onLayout={({ nativeEvent }) =>
+    setRouteHeaderHeight(Math.ceil(nativeEvent.layout.height), 0)}>
+    <View testID="schedule-navigation-header" style={[navigationHeaderStyles.surface,
+      { backgroundColor: isDark ? '#20242C' : colors.background, borderBottomColor: sheetBorder,
+        paddingTop: insets.top + 6 }]}>
+      <View style={navigationHeaderStyles.row}>
+        <Pressable onPress={goBack} accessibilityRole="button" accessibilityLabel="길안내 화면에서 돌아가기"
+          style={({ pressed }) => [navigationHeaderStyles.back, { opacity: pressed ? 0.58 : 1 }]}>
+          <Ionicons name="chevron-back-outline" size={22} color={primaryText} />
+        </Pressable>
+        <View style={navigationHeaderStyles.identity}>
+          <Text style={[navigationHeaderStyles.label, { color: topCardAccentText }]}>대중교통 길안내</Text>
+          <Text testID="schedule-navigation-state" style={[navigationHeaderStyles.state, { color: secondaryText }]}>
+            {ended ? '안내 종료' : active ? '안내 중' : armed ? '출발 대기' : '안내 준비'}
+          </Text>
+        </View>
+        <Ionicons name="navigate-outline" size={20} color={topCardAccentText} accessible={false} />
+      </View>
+      {!expanded && <View testID="schedule-navigation-next-step" style={navigationHeaderStyles.step}
+        accessibilityLiveRegion="polite">
+        <Text accessibilityRole="header" numberOfLines={2} maxFontSizeMultiplier={2}
+          style={[navigationHeaderStyles.title, { color: primaryText }]}>{title}</Text>
+        <Text numberOfLines={2} maxFontSizeMultiplier={2}
+          style={[navigationHeaderStyles.action, { color: secondaryText }]}>{action}</Text>
+      </View>}
+      {mapProblem && <View style={navigationHeaderStyles.mapProblem}>
+        <Text style={[navigationHeaderStyles.action, { color: secondaryText }]}>지도를 불러오지 못했어요</Text>
+        {mapState === 'error' && <Pressable accessibilityRole="button" accessibilityLabel="지도 다시 불러오기"
+          onPress={onRetryMap} style={navigationHeaderStyles.retry}>
+          <Text style={[navigationHeaderStyles.action, { color: topCardAccentText }]}>다시 시도</Text>
+        </Pressable>}
+      </View>}
+    </View>
+  </View>;
+}
 
 /** 일정 제목, 공유·수정 동작과 현재 경로 요약을 상단에 표시한다. */
 export function ScheduleDetailHeader({
@@ -85,6 +144,7 @@ export function ScheduleDetailHeader({
     internalPreviewItem,
     isDark,
     isPlainSchedule,
+    navigationMode,
     item,
     largeRouteHeader: usesLargeRouteHeader,
     openScheduleEditor,
@@ -221,6 +281,10 @@ export function ScheduleDetailHeader({
       {!largeRouteHeader && duration}
     </View>
   ) : null;
+
+  if (navigationMode && !isPlainSchedule) {
+    return <JourneyNavigationHeader presentation={presentation} mapState={mapState} onRetryMap={onRetryMap} />;
+  }
 
   return (
       <View
@@ -425,3 +489,16 @@ const styles = createScheduleDetailStyles({
 });
 const titleRowLayout = { flex: 1, minWidth: 0 } as const;
 const titleTextLayout = { flex: 0 } as const;
+const navigationHeaderStyles = StyleSheet.create({
+  surface: { paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  row: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -8 },
+  identity: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  label: { fontSize: 13, fontWeight: '700' },
+  state: { fontSize: 12, fontWeight: '600' },
+  step: { paddingHorizontal: 4, paddingTop: 10, paddingBottom: 2, gap: 3 },
+  title: { fontSize: 21, lineHeight: 28, fontWeight: '700' },
+  action: { fontSize: 14, lineHeight: 20 },
+  mapProblem: { paddingTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  retry: { minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' },
+});

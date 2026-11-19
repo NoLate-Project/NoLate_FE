@@ -85,6 +85,8 @@ export function ScheduleDetailRouteSheet({
     journeyGuidanceAvailable,
     guidanceResumeHandoff,
     navigationMode,
+    navigationEnd,
+    setNavigationEnd,
     isPlainSchedule,
     item,
     liveActivityEntry,
@@ -184,16 +186,15 @@ export function ScheduleDetailRouteSheet({
     mapFocusedSession.current = guidanceSessionId;
     if (sheetMode !== 'compact') snapSheet('compact');
   }, [automaticGuidanceActive, guidanceSessionId, liveActivityEntry, navigationMode, sheetMode, snapSheet]);
-  const [recentGuidanceEnd, setRecentGuidanceEnd] = useState<{ scheduleId: string; reason: string }>();
-  const recentEndHere = navigationMode && recentGuidanceEnd?.scheduleId === String(item.id) && !automaticGuidanceActive;
+  const recentEndHere = navigationMode && navigationEnd?.scheduleId === String(item.id) && !automaticGuidanceActive;
   useEffect(() => {
-    if (automaticGuidanceActive) setRecentGuidanceEnd(undefined);
-  }, [automaticGuidanceActive]);
+    if (automaticGuidanceActive) setNavigationEnd(undefined);
+  }, [automaticGuidanceActive, setNavigationEnd]);
   const endedGuidance = recentEndHere || navigationMode && !!guidanceBinding
     && guidance.snapshot?.sessionId === guidanceBinding.sessionId
     && (guidance.snapshot.status === 'STOPPED' || guidance.snapshot.status === 'EXPIRED');
   const arrivedGuidance = recentEndHere
-    ? recentGuidanceEnd?.reason === 'DESTINATION_ARRIVED'
+    ? navigationEnd?.reason === 'DESTINATION_ARRIVED'
     : endedGuidance && guidance.snapshot?.status === 'STOPPED'
       && guidance.snapshot.qualityReason === 'DESTINATION_ARRIVED';
   const navigationReady = navigationMode && authenticatedGuidanceEntry && !automaticGuidanceActive && !guidanceResumeHandoff;
@@ -462,7 +463,7 @@ export function ScheduleDetailRouteSheet({
     <SavedJourneyTrialControls key={String(item.id)} input={guidanceInput} savedRoute={item.route} isDark={isDark}
       autoPrepareRoute={navigationMode && !guidanceResumeHandoff}
       statusShownInRouteHeader={endedGuidance || automaticGuidanceActive && !!guidanceStage && !!guidanceValue}
-      onTrialEnded={outcome => setRecentGuidanceEnd({ scheduleId: String(item.id), reason: outcome.reason })}
+      onTrialEnded={outcome => setNavigationEnd({ scheduleId: String(item.id), reason: outcome.reason })}
       onViewSavedRoute={hasDetailedRoute ? showSavedRoute : undefined}
       authenticatedSchedule={authenticatedGuidanceEntry || presentation.guidancePreviewAuthenticationSource
         ? { scheduleId: String(item.id), memberId: presentation.currentMemberId! } : undefined}
@@ -531,7 +532,7 @@ export function ScheduleDetailRouteSheet({
               </View>
             </View>
           )}
-          {automaticGuidanceActive && guidanceStage && guidanceValue && (
+          {automaticGuidanceActive && (!navigationMode || expanded) && guidanceStage && guidanceValue && (
             <SavedJourneyInstruction stage={guidanceStage} value={guidanceValue} isDark={isDark} reduceMotion={reduceMotion}
               legKind={guidanceStage.activeLegIndex == null ? undefined : guidanceInput?.legs[guidanceStage.activeLegIndex]?.kind} />
           )}

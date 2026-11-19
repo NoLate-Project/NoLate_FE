@@ -108,6 +108,7 @@ export function useScheduleDetailController({
   const [navigationScheduleId, setNavigationScheduleId] = useState<string | null>(
     () => !internalPreviewItem && navigationModeParam === '1' && id ? id : null,
   );
+  const [navigationEnd, setNavigationEnd] = useState<{ scheduleId: string; reason: string }>();
   useEffect(() => {
     if (!internalPreviewItem && navigationModeParam === '1' && id) setNavigationScheduleId(id);
   }, [id, internalPreviewItem, navigationModeParam]);
@@ -977,6 +978,8 @@ export function useScheduleDetailController({
     completeDeparture,
     journeyGuidanceAvailable,
     navigationMode,
+    navigationEnd,
+    setNavigationEnd,
     confirmDepartureNudge,
     openParticipantTravelPlan,
     openCurrentRoutePlanner,
