@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { automaticRecord, getAutomaticJourneySnapshot, isAutomaticJourneyDevelopment, subscribeAutomaticJourney, type AutomaticJourneyBinding, type AutomaticJourneySnapshot } from "./automaticJourney";
-import { getAutomaticJourneyTrialBinding, getAutomaticJourneyTrialInput, subscribeAutomaticJourneySync } from "./automaticJourneyTrial";
+import { getAutomaticJourneyTrialBinding, getAutomaticJourneyTrialInput, getAutomaticJourneyTrialDisplayRoute, subscribeAutomaticJourneySync } from "./automaticJourneyTrial";
 import type { JourneyRouteInput } from "./journeyRouteInput";
 import { presentSavedJourneyGuidance } from "./savedJourneyGuidance";
 import { presentSavedJourneyWalkingMap } from './savedJourneyWalkingMap';
@@ -49,6 +49,7 @@ export function useSavedJourneyMapView(input: JourneyRouteInput | null, schedule
     const binding = enabled && input ? getAutomaticJourneyTrialBinding(input) : null;
     const matched = binding?.scheduleId === scheduleId ? binding : null;
     const admitted = enabled && input ? getAutomaticJourneyTrialInput(input) : null;
+    const display = enabled && input && matched ? getAutomaticJourneyTrialDisplayRoute(input, scheduleId) : null;
     const now = Date.now() / 1000;
     return {
         guidanceActive: !!matched && (!snapshot || (snapshot.sessionId === matched.sessionId &&
@@ -56,5 +57,6 @@ export function useSavedJourneyMapView(input: JourneyRouteInput | null, schedule
         position: matched ? presentSavedJourneyPosition(snapshot, matched, now) : null,
         offRouteLocation: matched ? presentSavedJourneyOffRouteLocation(snapshot, matched, now) : null,
         walkingPaths: matched ? presentSavedJourneyWalkingMap(snapshot, matched, admitted, now) : [],
+        rerouteDisplay: display,
     };
 }

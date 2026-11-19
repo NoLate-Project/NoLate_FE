@@ -56,6 +56,8 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   private let guidancePushPilot = NoLateGuidancePushPilot()
   private lazy var guidanceActivity = NoLateAutomaticGuidanceActivity(pushPilot: guidancePushPilot)
   private var authentication: NoLateJourneyAuthentication?
+  private var rerouteCommitBinding: Session.Binding?
+  private var rerouteCommitDeadline: ContinuousClock.Instant?
   private lazy var guidanceArrivals = NoLateSavedGuidanceArrivalTransport(authentication: { [weak self] in self?.authentication },
     changed: { [weak self] in self?.publish() })
   private lazy var guidanceVehicles = NoLateSavedGuidanceRideTransport(authentication: { [weak self] in self?.authentication },
@@ -175,6 +177,65 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     return snapshot()
   }
 
+  /// Replace the route only after the authenticated server has committed its next revision.
+  /// A cold process can use the intact prior checkpoint as the replacement source.
+  func replace(routeJSON: String, bindingJSON: String) -> [String: Any?] {
+    guard enabled, UIApplication.shared.applicationState == .active, !revocationFailed else {
+      lastError = "FOREGROUND_REQUIRED"; return snapshot()
+    }
+    let now = Date().timeIntervalSince1970
+    do {
+      let previous: Session
+      if let live = session, live.core.snapshot.status == .active { previous = live }
+      else {
+        guard let envelope = try store?.load(), envelope.engine.status == .active,
+          let bindingData = try? JSONEncoder().encode(envelope.binding),
+          let oldJSON = String(data: bindingData, encoding: .utf8)
+        else { lastError = "REROUTE_CHECKPOINT_UNAVAILABLE"; return viewState() }
+        previous = try Session(restoring: envelope, routeJSON: envelope.routeJSON,
+          bindingJSON: oldJSON, now: now)
+      }
+      let candidate = try Session(replacing: previous, routeJSON: routeJSON,
+        bindingJSON: bindingJSON, now: now)
+      guard candidate.binding.execution == expectedExecution, authenticated(candidate, now: now) else {
+        lastError = "REROUTE_AUTH_REJECTED"; return viewState()
+      }
+      releaseInputs()
+      lastError = nil
+      restored = false
+      guard commit(candidate) else { return viewState() }
+      beginInputs()
+      publish()
+    } catch { lastError = "REROUTE_REPLACEMENT_REJECTED" }
+    return snapshot()
+  }
+
+  /// The server may supersede the old session before its commit response reaches JS.
+  /// Pause old-session observation requests briefly so their expected 409 cannot revoke
+  /// the checkpoint while JS verifies the new revision through /current.
+  func beginRerouteCommit(bindingJSON: String) -> [String: Any] {
+    let now = Date().timeIntervalSince1970
+    guard enabled, UIApplication.shared.applicationState == .active,
+      let active = session, active.core.snapshot.status == .active,
+      active.departureAcknowledged, active.binding.savedRouteValidated == true,
+      let binding = try? Session.decodeBinding(bindingJSON, now: now), binding == active.binding,
+      authenticated(active, now: now) else { return ["accepted": false] }
+    rerouteCommitBinding = binding
+    rerouteCommitDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+    guidanceArrivals.clear(); guidanceVehicles.clear(); guidanceSubway.clear()
+    publish()
+    return ["accepted": true]
+  }
+
+  func endRerouteCommit(bindingJSON: String) -> [String: Any] {
+    let now = Date().timeIntervalSince1970
+    guard let binding = try? Session.decodeBinding(bindingJSON, now: now),
+      rerouteCommitBinding == binding, session?.binding == binding else { return ["accepted": false] }
+    rerouteCommitBinding = nil; rerouteCommitDeadline = nil
+    advanceClock(); publish()
+    return ["accepted": running]
+  }
+
   func clearArrivalHandoff() {
     guard arrivalHandoffUntil != nil else { return }
     arrivalHandoffUntil = nil
@@ -281,7 +342,13 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   private func advanceClock() {
     guard var candidate = session, !candidate.core.snapshot.status.isTerminal else { return }
     let now = Date().timeIntervalSince1970
-    if guidanceVehicles.admission(session: candidate, now: now) == nil { candidate.expireRideAdmission() }
+    let reroutePending = rerouteCommitBinding == candidate.binding
+    if reroutePending {
+      guard let rerouteCommitDeadline, ContinuousClock.now < rerouteCommitDeadline else {
+        failClosed("REROUTE_CONFIRMATION_TIMEOUT"); return
+      }
+    }
+    if !reroutePending && guidanceVehicles.admission(session: candidate, now: now) == nil { candidate.expireRideAdmission() }
     guard authenticated(candidate, now: now) else { failClosed("AUTOMATIC_AUTH_EXPIRED"); return }
     if now < candidate.core.snapshot.lastEvaluationAt {
       failClosed("CLOCK_REGRESSION")
@@ -459,6 +526,7 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     guidanceArrivals.clear()
     guidanceVehicles.clear()
     guidanceSubway.clear()
+    rerouteCommitBinding = nil; rerouteCommitDeadline = nil
     token = nil; deadline = nil
     lastAccuracyMeters = nil
     guidanceSample = nil
@@ -475,10 +543,16 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
 
   private func publish() {
     let now = Date().timeIntervalSince1970
-    guidanceArrivals.validateLifetime(session: session, now: now) { [weak self] reason in self?.failClosed(reason) }
-    guidanceArrivals.update(session: session, now: now)
-    guidanceVehicles.update(session: session, now: now)
-    guidanceSubway.update(session: session, now: now)
+    if let rerouteCommitBinding, session?.binding == rerouteCommitBinding {
+      if rerouteCommitDeadline.map({ ContinuousClock.now >= $0 }) != false {
+        failClosed("REROUTE_CONFIRMATION_TIMEOUT"); return
+      }
+    } else {
+      guidanceArrivals.validateLifetime(session: session, now: now) { [weak self] reason in self?.failClosed(reason) }
+      guidanceArrivals.update(session: session, now: now)
+      guidanceVehicles.update(session: session, now: now)
+      guidanceSubway.update(session: session, now: now)
+    }
     if session?.ride != nil {
       let ride = session?.ride?.snapshot
       let diagnostic = "phase=\(ride?.phase ?? "UNAVAILABLE") reason=\(ride?.reason ?? "UNAVAILABLE") transport=\(guidanceVehicles.status)"

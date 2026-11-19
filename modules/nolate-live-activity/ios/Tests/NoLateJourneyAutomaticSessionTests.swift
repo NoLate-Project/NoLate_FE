@@ -60,6 +60,59 @@ final class NoLateJourneyAutomaticSessionTests: XCTestCase {
       bindingJSON: bindingJSON(route, scope: "SANDBOX", patch: ["execution": "DEVICE"]), now: 1_000))
   }
 
+  func testServerCommittedRerouteReplacesActiveDeviceSessionWithoutSecondDeparture() throws {
+    let oldRoute = try routeJSON(context: "SAVED_ROUTE")
+    let auth: [String: Any] = ["execution": "DEVICE", "apiOrigin": "https://nolate.example.com",
+      "authMemberId": 42, "loginGeneration": 1, "savedRouteValidated": true, "guidanceEnabled": true]
+    var old = try Session(routeJSON: oldRoute,
+      bindingJSON: bindingJSON(oldRoute, scope: "AUTHENTICATED", patch: auth), now: 1_000)
+    depart(&old)
+    let event = try XCTUnwrap(old.pendingDeparture)
+    try old.acknowledge(eventKey: event.eventKey, bindingJSON: String(decoding: JSONEncoder().encode(old.binding), as: UTF8.self), now: 1_020)
+
+    var route = try routeDictionary(context: "SAVED_ROUTE")
+    route["routeRevision"] = 2; route["provider"] = "odsay"
+    route["reliability"] = "provider_estimate"; route["serviceState"] = "UNKNOWN"
+    route["destination"] = coord(1_000)
+    var first = (route["legs"] as! [[String: Any]])[0]
+    first["stopEvidenceProvider"] = "tmap"
+    let bus: [String: Any] = ["index": 1, "kind": "BUS", "geometrySource": "TRANSIT_PASS_SHAPE_LINESTRING",
+      "exact": true, "geometryInputComplete": true, "coordinates": [coord(200), coord(550), coord(900)],
+      "start": coord(200), "end": coord(900), "localRouteId": "100100185", "directionName": "상행",
+      "declaredStationCount": 2, "stopEvidenceProvider": "odsay", "stopEvidenceVersion": 1,
+      "stops": [200.0, 550, 900].enumerated().map { index, meters in
+        ["sourceIndex": index, "providerSequence": 10 + index, "name": "정류장 \(index)",
+         "code": "10000000\(index)", "coordinate": coord(meters)] as [String: Any] }]
+    let last: [String: Any] = ["index": 2, "kind": "WALK", "geometrySource": "WALK_STEPS_LINESTRING",
+      "exact": true, "geometryInputComplete": true, "coordinates": [coord(900), coord(1_000)],
+      "start": coord(900), "end": coord(1_000), "stops": [], "stopEvidenceProvider": "tmap",
+      "stopEvidenceVersion": 1]
+    route["legs"] = [first, bus, last]
+    let newRoute = try encode(route)
+    let proof: [String: Any] = ["schemaVersion": 1, "identityEvidence": "OFFICIAL_STOP_SHAPE_CROSSWALK",
+      "busLegIndex": 1, "routeId": "100100185", "direction": "상행", "stationCount": 2,
+      "firstStopSequence": 10, "lastStopSequence": 12]
+    let newBinding = try bindingJSON(newRoute, scope: "AUTHENTICATED", patch: auth.merging([
+      "sessionId": "00000000-0000-4000-8000-000000000003", "generation": 2,
+      "routeRevision": 2, "preparedAtEpochSeconds": 1_024, "rerouteValidated": true,
+      "officialBusAdmission": proof]) { _, new in new })
+    var replaced = try Session(replacing: old, routeJSON: newRoute, bindingJSON: newBinding, now: 1_024)
+    XCTAssertEqual(replaced.core.snapshot.status, .active)
+    XCTAssertEqual(replaced.core.snapshot.reason, .restoredNeedsFreshLocation)
+    XCTAssertEqual(replaced.binding.routeRevision, 2)
+    XCTAssertTrue(replaced.departureAcknowledged)
+    XCTAssertNil(replaced.pendingDeparture)
+    XCTAssertNil(replaced.core.snapshot.lastObservationAt)
+    XCTAssertTrue(replaced.ingest(coordinate: point(0), accuracy: 5, observedAt: 1_024, now: 1_024))
+    XCTAssertEqual(replaced.core.snapshot.status, .active)
+    XCTAssertNil(replaced.pendingDeparture)
+    XCTAssertThrowsError(try Session(replacing: old, routeJSON: newRoute,
+      bindingJSON: bindingJSON(newRoute, scope: "AUTHENTICATED", patch: auth.merging([
+        "sessionId": old.binding.sessionId, "generation": 2, "routeRevision": 2,
+        "preparedAtEpochSeconds": 1_024, "rerouteValidated": true,
+        "officialBusAdmission": proof]) { _, new in new }), now: 1_024))
+  }
+
   func testOfficialBusAdmissionBindingIsDeviceAuthenticatedAndBounded() throws {
     let route = try routeJSON(context: "SAVED_ROUTE")
     let proof: [String: Any] = ["schemaVersion": 1, "identityEvidence": "OFFICIAL_STOP_SHAPE_CROSSWALK",

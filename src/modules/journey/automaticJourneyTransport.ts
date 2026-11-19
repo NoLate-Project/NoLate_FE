@@ -18,7 +18,7 @@ export type AutomaticJourneyRerouteWalkingProof = {
 };
 export type AutomaticJourneyRerouteTransitProof = {
     candidateId: string; routeFingerprint: string; validUntilEpochSeconds: number;
-    routeId: string; stationCount: number; navigationReady: false;
+    routeId: string; stationCount: number; navigationReady: false; routeSnapshotJSON: string;
 };
 
 const base = (scheduleId: string) => {
@@ -37,6 +37,43 @@ export function createAutomaticJourneyTransport(post: AutomaticJourneyPost, auth
     apiOrigin: string; authMemberId: number; loginGeneration: number;
 }) {
     return {
+        async current(binding: AutomaticJourneyBinding): Promise<Record<string, unknown> | null> {
+            const response = automaticRecord(await post(`${base(binding.scheduleId)}/current`, {
+                clientOwnerId: binding.clientOwnerId,
+            }));
+            if (response?.success !== true) throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
+            const data = automaticRecord(response.data);
+            if (response.data == null) return null;
+            if (!data || data.scheduleId !== binding.scheduleId || data.clientOwnerId !== binding.clientOwnerId
+                || !(data.sessionId === binding.sessionId && data.generation === binding.generation
+                    || typeof data.sessionId === 'string' && /^[a-f0-9-]{36}$/.test(data.sessionId)
+                    && data.generation === binding.generation + 1 && data.routeRevision === binding.routeRevision + 1
+                    && data.rerouteValidated === true))
+                throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
+            return data;
+        },
+        async commitReroute(binding: AutomaticJourneyBinding, proof: AutomaticJourneyRerouteTransitProof,
+            newRouteInputJSON: string): Promise<Record<string, unknown>> {
+            if (proof.navigationReady !== false || proof.validUntilEpochSeconds <= Date.now() / 1000
+                || newRouteInputJSON.length > 1_048_576) throw new Error('INVALID_REROUTE_CANDIDATE');
+            const data = payload(await post(`${base(binding.scheduleId)}/${encodeURIComponent(binding.sessionId)}/reroute-candidates/${proof.candidateId}/commit`, {
+                generation: binding.generation, routeRevision: binding.routeRevision,
+                clientOwnerId: binding.clientOwnerId, routeInputDigest: binding.routeInputDigest,
+                newRouteInputJSON,
+            }));
+            if (typeof data.sessionId !== 'string' || !/^[a-f0-9-]{36}$/.test(data.sessionId)
+                || data.sessionId === binding.sessionId || data.scheduleId !== binding.scheduleId
+                || data.generation !== binding.generation + 1 || data.routeRevision !== binding.routeRevision + 1
+                || data.clientOwnerId !== binding.clientOwnerId || data.state !== 'ACTIVE'
+                || data.rerouteValidated !== true || data.routeFingerprint !== proof.routeFingerprint
+                || data.routeInputJSON !== newRouteInputJSON || typeof data.routeInputDigest !== 'string'
+                || !/^[a-f0-9]{64}$/.test(data.routeInputDigest) || !automaticRecord(data.officialBusAdmission)
+                || typeof data.preparedAt !== 'string' || !Number.isFinite(Date.parse(data.preparedAt))
+                || typeof data.expiresAt !== 'string' || !Number.isFinite(Date.parse(data.expiresAt))) {
+                throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
+            }
+            return data;
+        },
         async rerouteTransitProof(binding: AutomaticJourneyBinding, walking: AutomaticJourneyRerouteWalkingProof): Promise<AutomaticJourneyRerouteTransitProof> {
             if (binding.savedRouteValidated !== true || binding.guidanceEnabled !== true
                 || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(walking.candidateId)
@@ -53,13 +90,14 @@ export function createAutomaticJourneyTransport(post: AutomaticJourneyPost, auth
                 || typeof data.stationCount !== 'number' || !Number.isSafeInteger(data.stationCount)
                 || data.stationCount < 1 || data.stationCount > 63
                 || data.navigationReady !== false || data.reason !== 'ATOMIC_REPLACEMENT_PENDING'
+                || typeof data.routeSnapshotJSON !== 'string' || data.routeSnapshotJSON.length > 1_048_576
                 || !Number.isFinite(validUntilEpochSeconds) || validUntilEpochSeconds <= Date.now() / 1000
                 || validUntilEpochSeconds > walking.validUntilEpochSeconds) {
                 throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
             }
             return { candidateId: walking.candidateId, routeFingerprint: data.routeFingerprint,
                 validUntilEpochSeconds, routeId: data.routeId, stationCount: data.stationCount,
-                navigationReady: false };
+                navigationReady: false, routeSnapshotJSON: data.routeSnapshotJSON };
         },
         async rerouteWalkingProof(binding: AutomaticJourneyBinding, candidateId: string): Promise<AutomaticJourneyRerouteWalkingProof> {
             if (binding.savedRouteValidated !== true || binding.guidanceEnabled !== true

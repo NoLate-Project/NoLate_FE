@@ -164,7 +164,7 @@ final class NoLateJourneyFinalWalkCoreTests: XCTestCase {
     approach:.init(legIndex:1,boardingCoordinate:point(200),walkingCoordinates:[point(0),point(100),point(200)],coordinates:[point(200),point(600),point(1000)],provenance:.providerShape),departureWindowMeters:300)}
   func testPreparationRequiresVerifiedLastWalkTopologyEndpointsAndGeometry() throws {
     XCTAssertNotNil(C.prepare(json:try json(),ride:rideRoute()))
-    for patch:(inout [[String:Any]])->Void in [{$0[2]["exact"]=false},{$0[2]["geometryInputComplete"]=false},{$0[2]["stopEvidenceProvider"]="tmap"},
+    for patch:(inout [[String:Any]])->Void in [{$0[2]["exact"]=false},{$0[2]["geometryInputComplete"]=false},{$0[2]["stopEvidenceProvider"]="unknown"},
       {$0[2]["start"]=["latitude":0,"longitude":self.point(1050).longitude]},{$0[2]["kind"]="BUS"},
       {$0[2]["coordinates"]=[["latitude":0,"longitude":self.point(1000).longitude],["latitude":0,"longitude":self.point(1200).longitude]]}] {
       XCTAssertNil(C.prepare(json:try json(patch),ride:rideRoute()))

@@ -139,13 +139,16 @@ export function useScheduleDetailMapController({
     [],
   );
 
-  const displayRoute = inspectedTravelPlan?.route ?? item?.route;
+  const savedDisplayRoute = inspectedTravelPlan?.route ?? item?.route;
   const guidanceInput = useMemo(() => item && currentMemberId != null && !inspectedTravelPlan
     && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId
     ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
     [item, currentMemberId, inspectedTravelPlan]);
-  const { guidanceActive, position: guidancePosition, offRouteLocation, walkingPaths: guidanceWalkingPaths } =
+  const { guidanceActive, position: guidancePosition, offRouteLocation, walkingPaths: guidanceWalkingPaths,
+    rerouteDisplay } =
     useSavedJourneyMapView(guidanceInput, String(item?.id ?? ''));
+  const displayRoute = guidanceActive && !inspectedTravelPlan && rerouteDisplay
+    ? rerouteDisplay.route : savedDisplayRoute;
   const mapFollowPosition = guidancePosition ?? offRouteLocation;
   const guidanceLatitude = mapFollowPosition?.latitude;
   const guidanceLongitude = mapFollowPosition?.longitude;
@@ -162,7 +165,8 @@ export function useScheduleDetailMapController({
   const guidanceWalkingJSON = JSON.stringify(guidanceWalkingPaths);
   const guidanceWalkingCoordinates = useMemo(() => new Map<number, {latitude: number; longitude: number}[]>(
     (JSON.parse(guidanceWalkingJSON) as typeof guidanceWalkingPaths).map(path => [path.legIndex, path.coordinates])), [guidanceWalkingJSON]);
-  const displayOrigin = inspectedTravelPlan?.origin ?? item?.origin;
+  const displayOrigin = guidanceActive && !inspectedTravelPlan && rerouteDisplay
+    ? rerouteDisplay.origin : inspectedTravelPlan?.origin ?? item?.origin;
   const displayDestination =
     inspectedTravelPlan?.destination ?? item?.destination;
   const savedDisplayTravelMinutes =

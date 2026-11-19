@@ -94,9 +94,12 @@ describe('schedule detail effective transit route integration', () => {
     );
   });
 
-  it('keeps saved map geometry and renders an alternative only as text guidance', () => {
+  it('shows a committed reroute on the map while keeping uncommitted alternatives as text guidance', () => {
     expect(mapControllerSource).toContain(
-      'const displayRoute = inspectedTravelPlan?.route ?? item?.route;',
+      'const savedDisplayRoute = inspectedTravelPlan?.route ?? item?.route;',
+    );
+    expect(mapControllerSource).toContain(
+      'rerouteDisplay.route : savedDisplayRoute;',
     );
     expect(mapControllerSource).toContain('const savedDisplayTravelMinutes =');
     expect(detailControllerSource).toContain(

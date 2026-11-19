@@ -106,7 +106,7 @@ export function requireJourneyAuthenticationIdentity(auth: JourneyAuthentication
 export function createAuthenticatedJourneyPost(source: JourneyAuthenticationSource, identity: Pick<JourneyAuthentication, "apiOrigin" | "authMemberId" | "loginGeneration">,
     send: typeof authenticatedAutomaticJourneyRequest = authenticatedAutomaticJourneyRequest) {
     return async (path: string, body: Record<string, unknown>): Promise<unknown> => {
-        if (!isAutomaticJourneyDevelopment() || !/^\/api\/schedules\/[1-9]\d{0,17}\/automatic-journey\/(?:prepare-saved|[a-f0-9-]{36}\/(?:departure|validate|stop|reconcile|reroute-candidates(?:\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/(?:walking-proof|transit-proof))?))$/.test(path)) {
+        if (!isAutomaticJourneyDevelopment() || !/^\/api\/schedules\/[1-9]\d{0,17}\/automatic-journey\/(?:prepare-saved|current|[a-f0-9-]{36}\/(?:departure|validate|stop|reconcile|reroute-candidates(?:\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/(?:walking-proof|transit-proof|commit))?))$/.test(path)) {
             throw new Error("INVALID_AUTHENTICATED_JOURNEY_PATH");
         }
         const auth = await source(); requireJourneyAuthenticationIdentity(auth, identity);

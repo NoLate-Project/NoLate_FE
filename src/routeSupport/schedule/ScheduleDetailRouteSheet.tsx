@@ -148,6 +148,7 @@ export function ScheduleDetailRouteSheet({
     ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
     [presentation.currentMemberId, inspectedTravelPlan, item.route, item.origin, item.destination, item.myTravelPlan?.memberId, item.ownerMemberId]);
   const guidance = useSavedJourneyGuidanceView(guidanceInput, String(item.id));
+  const displayedGuidanceInput = guidance.input ?? guidanceInput;
   const guidanceBinding = guidance.binding;
   const authenticatedGuidanceEntry = isAutomaticJourneyEntryEnabled()
     && !internalPreviewItem && presentation.authoritativeDetailLoaded && !presentation.loadError
@@ -165,9 +166,9 @@ export function ScheduleDetailRouteSheet({
   const routeSaveSucceeded = routeSaveConfirmed && !routeSavePending && !canRetryRouteSave;
   const expanded = sheetMode === 'expanded';
   const { value: guidanceValue, stage: guidanceStage, position: guidancePosition, layout: guidanceLayout } = guidance;
-  const plannedGuidanceLayout = useMemo(() => guidanceInput && !largeRouteHeader
-    ? presentPlannedJourneyRouteLayout(guidanceInput, presentation.routeProgressSegments) : null,
-  [guidanceInput, largeRouteHeader, presentation.routeProgressSegments]);
+  const plannedGuidanceLayout = useMemo(() => displayedGuidanceInput && !largeRouteHeader
+    ? presentPlannedJourneyRouteLayout(displayedGuidanceInput, presentation.routeProgressSegments) : null,
+  [displayedGuidanceInput, largeRouteHeader, presentation.routeProgressSegments]);
   const previousLocation = useRef<{ sessionId: string | null; unavailable: boolean } | null>(null);
   const guidanceSessionId = guidanceBinding?.scheduleId === String(item.id) ? guidanceBinding.sessionId : null;
   const locationUnavailable = !!guidanceStage && guidanceValue?.phase !== 'READY' && !guidancePosition;
@@ -184,8 +185,11 @@ export function ScheduleDetailRouteSheet({
     if (!navigationMode || !automaticGuidanceActive || !guidanceSessionId || liveActivityEntry) return;
     if (mapFocusedSession.current === guidanceSessionId) return;
     mapFocusedSession.current = guidanceSessionId;
-    if (sheetMode !== 'compact') snapSheet('compact');
-  }, [automaticGuidanceActive, guidanceSessionId, liveActivityEntry, navigationMode, sheetMode, snapSheet]);
+    // An atomic reroute changes the server session ID. Keep the user's open detail
+    // sheet so the newly admitted origin and remaining legs are immediately visible.
+    if (sheetMode !== 'compact' && guidanceBinding?.rerouteValidated !== true) snapSheet('compact');
+  }, [automaticGuidanceActive, guidanceSessionId, guidanceBinding?.rerouteValidated,
+    liveActivityEntry, navigationMode, sheetMode, snapSheet]);
   const recentEndHere = navigationMode && navigationEnd?.scheduleId === String(item.id) && !automaticGuidanceActive;
   useEffect(() => {
     if (automaticGuidanceActive) setNavigationEnd(undefined);
@@ -199,8 +203,8 @@ export function ScheduleDetailRouteSheet({
       && guidance.snapshot.qualityReason === 'DESTINATION_ARRIVED';
   const navigationReady = navigationMode && authenticatedGuidanceEntry && !automaticGuidanceActive && !guidanceResumeHandoff;
   const navigationHeroActive = navigationReady || automaticGuidanceActive;
-  const firstBoardingName = journeyDisplayName(guidanceInput?.legs[1]?.stops?.[0]?.name);
-  const firstWalkMeters = guidanceInput?.legs[0]?.display?.distanceMeters;
+  const firstBoardingName = journeyDisplayName(displayedGuidanceInput?.legs[1]?.stops?.[0]?.name);
+  const firstWalkMeters = displayedGuidanceInput?.legs[0]?.display?.distanceMeters;
   const plannedWalk = typeof firstWalkMeters === 'number' && Number.isFinite(firstWalkMeters)
     && firstWalkMeters > 0 && firstWalkMeters <= 100_000 ? ` · 도보 약 ${Math.ceil(firstWalkMeters / 10) * 10}m` : '';
   const nextPlannedStep = firstBoardingName ? `${firstBoardingName}까지${plannedWalk}` : '첫 승차 지점까지 이동할 경로를 확인해요';
@@ -534,7 +538,7 @@ export function ScheduleDetailRouteSheet({
           )}
           {automaticGuidanceActive && (!navigationMode || expanded) && guidanceStage && guidanceValue && (
             <SavedJourneyInstruction stage={guidanceStage} value={guidanceValue} isDark={isDark} reduceMotion={reduceMotion}
-              legKind={guidanceStage.activeLegIndex == null ? undefined : guidanceInput?.legs[guidanceStage.activeLegIndex]?.kind} />
+              legKind={guidanceStage.activeLegIndex == null ? undefined : displayedGuidanceInput?.legs[guidanceStage.activeLegIndex]?.kind} />
           )}
           {inspectedTravelPlan && (
             <Reanimated.View
@@ -664,8 +668,8 @@ export function ScheduleDetailRouteSheet({
         <ScheduleDetailRouteQuickSummary
           presentation={presentation}
           automaticGuidanceActive={navigationHeroActive}
-          automaticRouteSummary={navigationHeroActive && guidanceInput && (
-            <SavedJourneyRouteBar input={guidanceInput} position={expanded ? null : guidancePosition}
+          automaticRouteSummary={navigationHeroActive && displayedGuidanceInput && (
+            <SavedJourneyRouteBar input={displayedGuidanceInput} position={expanded ? null : guidancePosition}
               layout={guidanceLayout ?? plannedGuidanceLayout} compact isDark={isDark} showCopy={false} recovery={positionRecovered} />
           )}
           departureAction={actionInSummary ? departureAction : null}
@@ -985,7 +989,7 @@ export function ScheduleDetailRouteSheet({
 
               {hasDetailedRoute && routeDetailInfo ? (
                 <SavedJourneyRouteTimeline
-                  input={guidanceInput}
+                  input={displayedGuidanceInput}
                   guidance={guidance}
                   currentGuidanceRowRef={currentGuidanceRow}
                   scheduleId={String(item.id)}

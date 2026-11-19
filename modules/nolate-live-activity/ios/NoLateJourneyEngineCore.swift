@@ -162,6 +162,29 @@ struct NoLateJourneyEngineCore: Sendable {
     )
   }
 
+  /// A server-committed reroute inherits an acknowledged departure without emitting another one.
+  init(replacing previous: NoLateJourneyEngineCore, identity: Identity, route: Route,
+       at now: TimeInterval, expiresAt: TimeInterval) throws {
+    try Self.validate(identity: identity, route: route, policy: previous.state.policy,
+      armedAt: now, expiresAt: expiresAt)
+    guard previous.state.status == .active, previous.state.departureEventKey != nil,
+      previous.state.inputSource != nil, identity.sessionId != previous.state.identity.sessionId,
+      previous.state.identity.generation < 9_007_199_254_740_991,
+      identity.generation == previous.state.identity.generation + 1,
+      previous.state.identity.routeRevision < 9_007_199_254_740_991,
+      identity.routeRevision == previous.state.identity.routeRevision + 1,
+      now >= previous.state.lastEvaluationAt, expiresAt <= previous.state.expiresAt else {
+      throw ValidationError.invalidSnapshot
+    }
+    state = Snapshot(schemaVersion: 1, identity: identity, route: route, policy: previous.state.policy,
+      armedAt: now, expiresAt: expiresAt, status: .active, quality: .unavailable,
+      reason: .restoredNeedsFreshLocation, sequence: 1, lastObservationSequence: nil,
+      lastObservationAt: nil, lastEvaluationAt: now,
+      inputSource: route.provenance == .syntheticReplay ? .replay : .realLocation,
+      alongRouteMeters: nil, crossTrackMeters: nil, evidenceCount: 0,
+      departureEventKey: Self.eventKey(.departed, identity))
+  }
+
   /// Persist only Snapshot. A restore never trusts an old movement chain or emits departure again.
   init(restoring snapshot: Snapshot, now: TimeInterval) throws {
     try Self.validate(identity: snapshot.identity, route: snapshot.route, policy: snapshot.policy,

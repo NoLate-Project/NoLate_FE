@@ -464,7 +464,10 @@ enum NoLateJourneyRouteNormalizer {
       if !trustedSources.contains(leg.geometrySource) { reasons.append("GEOMETRY_PROVENANCE_UNTRUSTED") }
       if !leg.exact { reasons.append("GEOMETRY_NOT_EXACT") }
       if leg.geometryInputComplete != true { reasons.append("GEOMETRY_INPUT_UNVERIFIED") }
-      if leg.stopEvidenceProvider != provider || !["tmap", "odsay"].contains(provider) || leg.stopEvidenceVersion != 1 {
+      let rerouteWalkProvider = leg.kind == "WALK" && provider == "odsay"
+        && leg.geometrySource == "WALK_STEPS_LINESTRING" && leg.stopEvidenceProvider == "tmap"
+      if !(leg.stopEvidenceProvider == provider || rerouteWalkProvider)
+          || !["tmap", "odsay"].contains(provider) || leg.stopEvidenceVersion != 1 {
         reasons.append("GEOMETRY_EVIDENCE_UNVERIFIED")
       }
     }

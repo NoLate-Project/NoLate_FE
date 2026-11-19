@@ -10,6 +10,7 @@ export type AutomaticJourneyBinding = {
     execution: "SIMULATOR" | "DEVICE"; syncScope: "LOCAL_ONLY" | "SANDBOX" | "AUTHENTICATED";
     apiOrigin?: string; authMemberId?: number; loginGeneration?: number;
     savedRouteValidated?: true; guidanceEnabled?: true;
+    rerouteValidated?: true;
     /** Static official stop/shape proof from the authenticated prepare response, not a live bus claim. */
     officialBusAdmission?: OfficialBusAdmission;
     /** Static official subway path crosswalk; never a train or passenger-position claim. */
@@ -137,6 +138,7 @@ export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourn
         || binding.officialSubwayAdmission != null && (binding.execution !== 'DEVICE'
             || binding.syncScope !== 'AUTHENTICATED' || !officialSubwayAdmission(binding.officialSubwayAdmission)
             || binding.officialBusAdmission != null)
+        || binding.rerouteValidated === true && binding.officialBusAdmission == null
         || !["LOCAL_ONLY", "SANDBOX", "AUTHENTICATED"].includes(String(binding.syncScope))) return null;
     if (binding.syncScope === "AUTHENTICATED" && (!journeyAuthenticationOrigin(binding.apiOrigin)
         || !automaticPositiveInteger(binding.authMemberId) || !journeyLoginGeneration(binding.loginGeneration)
@@ -150,6 +152,8 @@ export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourn
             authMemberId: binding.authMemberId as number, loginGeneration: binding.loginGeneration as number } : {}),
         ...(binding.savedRouteValidated === true && binding.guidanceEnabled === true && binding.syncScope !== "LOCAL_ONLY"
             ? { savedRouteValidated: true as const, guidanceEnabled: true as const } : {}),
+        ...(binding.rerouteValidated === true && binding.savedRouteValidated === true && binding.officialBusAdmission != null
+            ? { rerouteValidated: true as const } : {}),
         ...(binding.officialBusAdmission != null ? { officialBusAdmission: officialBusAdmission(binding.officialBusAdmission)! } : {}),
         ...(binding.officialSubwayAdmission != null ? { officialSubwayAdmission: officialSubwayAdmission(binding.officialSubwayAdmission)! } : {}),
     };
@@ -261,6 +265,9 @@ type NativeAutomaticJourney = {
     updateAutomaticJourneyAuthentication(authJSON: string, bindingJSON: string, previousAccessToken: string): Promise<unknown>;
     getAutomaticJourneySnapshot(): Promise<unknown>;
     armAutomaticJourney(routeJSON: string, bindingJSON: string): Promise<unknown>;
+    replaceAutomaticJourney(routeJSON: string, bindingJSON: string): Promise<unknown>;
+    beginAutomaticJourneyRerouteCommit(bindingJSON: string): Promise<unknown>;
+    endAutomaticJourneyRerouteCommit(bindingJSON: string): Promise<unknown>;
     restoreAutomaticJourney(routeJSON: string, bindingJSON: string): Promise<unknown>;
     readSavedAutomaticJourneyCheckpointRoute(bindingJSON: string): Promise<unknown>;
     stopAutomaticJourney(): Promise<unknown>;
@@ -330,7 +337,8 @@ export async function updateAutomaticJourneyAuthentication(auth: JourneyAuthenti
 }
 export async function authenticatedAutomaticJourneyRequest(auth: JourneyAuthentication, path: string, body: Record<string, unknown>): Promise<unknown> {
     const result = automaticRecord(await invoke("postAuthenticatedAutomaticJourney", [JSON.stringify(auth), path, JSON.stringify(body)]));
-    if (result?.accepted !== true || typeof result.responseJSON !== "string" || result.responseJSON.length > 65536) {
+    const responseLimit = path.includes('/reroute-candidates') ? 1_100_000 : 65536;
+    if (result?.accepted !== true || typeof result.responseJSON !== "string" || result.responseJSON.length > responseLimit) {
         throw new Error(result?.errorCode === "AUTOMATIC_SERVER_REJECTED" ? "AUTOMATIC_SERVER_REJECTED" : "AUTOMATIC_SERVER_UNAVAILABLE");
     }
     try { return JSON.parse(result.responseJSON) as unknown; } catch { throw new Error("INVALID_AUTOMATIC_SERVER_RESPONSE"); }
@@ -343,6 +351,16 @@ export async function reconcileAutomaticJourneyTerminal(binding: AutomaticJourne
 }
 export const armAutomaticJourney = async (routeJSON: string, binding: AutomaticJourneyBinding) =>
     normalizeAutomaticJourneySnapshot(await invoke("armAutomaticJourney", [routeJSON, JSON.stringify(binding)]));
+export const replaceAutomaticJourney = async (routeJSON: string, binding: AutomaticJourneyBinding) =>
+    normalizeAutomaticJourneySnapshot(await invoke("replaceAutomaticJourney", [routeJSON, JSON.stringify(binding)]));
+export async function beginAutomaticJourneyRerouteCommit(binding: AutomaticJourneyBinding): Promise<void> {
+    const result = automaticRecord(await invoke('beginAutomaticJourneyRerouteCommit', [JSON.stringify(binding)]));
+    if (result?.accepted !== true) throw new Error('REROUTE_NATIVE_HOLD_REJECTED');
+}
+export async function endAutomaticJourneyRerouteCommit(binding: AutomaticJourneyBinding): Promise<void> {
+    const result = automaticRecord(await invoke('endAutomaticJourneyRerouteCommit', [JSON.stringify(binding)]));
+    if (result?.accepted !== true) throw new Error('REROUTE_NATIVE_HOLD_RELEASE_REJECTED');
+}
 export const restoreAutomaticJourney = async (routeJSON: string, binding: AutomaticJourneyBinding) =>
     normalizeAutomaticJourneySnapshot(await invoke("restoreAutomaticJourney", [routeJSON, JSON.stringify(binding)]));
 export async function readSavedAutomaticJourneyCheckpointRoute(binding: AutomaticJourneyBinding): Promise<string> {

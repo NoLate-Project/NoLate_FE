@@ -143,8 +143,11 @@ function applyAccessToken(config: RetryableRequestConfig, accessToken: string): 
 
 apiClient.interceptors.request.use(
     async (config) => {
+        // Login and refresh must remain reachable even when credential storage
+        // is delayed or recovering after an interrupted account transition.
+        if (isAuthEndpoint(config.url)) return config;
         const accessToken = await getAccessToken();
-        if (accessToken && !isAuthEndpoint(config.url)) {
+        if (accessToken) {
             config.headers.Authorization = `Bearer ${accessToken}`;
         }
         return config;

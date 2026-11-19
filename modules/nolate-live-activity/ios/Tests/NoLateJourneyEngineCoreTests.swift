@@ -80,6 +80,26 @@ final class NoLateJourneyEngineCoreTests: XCTestCase {
     XCTAssertEqual(core.snapshot.status, .active)
   }
 
+  func testCommittedRerouteKeepsDepartureActiveButNeedsFreshPositionAndNeverDepartsAgain() throws {
+    var original = try makeCore()
+    XCTAssertEqual(moveToDeparture(&original).map(\.type), [.departed])
+    let next = Core.Identity(sessionId: "rerouted", generation: 2, routeRevision: 3, epoch: 3)
+    var replaced = try Core(replacing: original, identity: next, route: route(), at: 1024, expiresAt: 2000)
+    XCTAssertEqual(replaced.snapshot.status, .active)
+    XCTAssertEqual(replaced.snapshot.reason, .restoredNeedsFreshLocation)
+    XCTAssertNil(replaced.snapshot.alongRouteMeters)
+    XCTAssertNil(replaced.snapshot.lastObservationAt)
+    XCTAssertEqual(replaced.snapshot.evidenceCount, 0)
+    let before = replaced.snapshot
+    XCTAssertTrue(replaced.ingest(observation(6, meters: 90, at: 1024), now: 1024).isEmpty)
+    XCTAssertEqual(replaced.snapshot, before, "The old session cannot move the new route")
+    XCTAssertTrue(replaced.ingest(observation(0, meters: 90, at: 1024, identity: next), now: 1024).isEmpty)
+    XCTAssertEqual(replaced.snapshot.status, .active)
+    XCTAssertNotNil(replaced.snapshot.lastObservationAt)
+    XCTAssertThrowsError(try Core(replacing: original, identity: identity, route: route(), at: 1024, expiresAt: 2000))
+    XCTAssertThrowsError(try Core(replacing: original, identity: next, route: route(), at: 1024, expiresAt: 2001))
+  }
+
   func testDistanceWithoutEnoughIndependentEvidenceCannotDepart() throws {
     var core = try makeCore()
     _ = core.ingest(observation(0, meters: 0), now: 1000)

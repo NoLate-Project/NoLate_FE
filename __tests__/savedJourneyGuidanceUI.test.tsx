@@ -8,7 +8,7 @@ import { SavedJourneyRouteTimeline } from "../src/modules/journey/SavedJourneyRo
 import { SavedJourneyRouteBar } from "../src/modules/journey/SavedJourneyRouteBar";
 import type { RouteInfo } from "../src/modules/schedule/routeInfo";
 
-const mockRead = jest.fn(); const mockDetach = jest.fn(); const mockBinding = jest.fn();
+const mockRead = jest.fn(); const mockDetach = jest.fn(); const mockBinding = jest.fn(); const mockTrialInput = jest.fn();
 const mockSyncDetach = jest.fn();
 let mockSync: () => void;
 let mockEvent: (snapshot: AutomaticJourneySnapshot) => void;
@@ -18,7 +18,7 @@ jest.mock("../src/modules/journey/automaticJourney", () => ({
     subscribeAutomaticJourney: (callback: typeof mockEvent) => { mockEvent = callback; return mockDetach; },
 }));
 jest.mock("../src/modules/journey/automaticJourneyTrial", () => ({ getAutomaticJourneyTrialBinding: (input: unknown) => mockBinding(input),
-    getAutomaticJourneyTrialInput:()=>null,
+    getAutomaticJourneyTrialInput:(input: unknown, digest: unknown)=>mockTrialInput(input,digest),
     subscribeAutomaticJourneySync: (callback: () => void) => { mockSync = callback; return mockSyncDetach; } }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('../src/modules/theme/ThemeContext', () => ({ useTheme: () => ({ mode: 'light', colors: { textPrimary: '#111', textSecondary: '#666' } }) }));
@@ -39,6 +39,31 @@ const snapshot = { enabled: true, status: "ACTIVE", sessionId: binding.sessionId
 beforeEach(() => {
     jest.useFakeTimers(); jest.setSystemTime(1021_000); jest.clearAllMocks();
     mockBinding.mockReturnValue(binding); mockRead.mockResolvedValue(snapshot);
+    mockTrialInput.mockImplementation(route => route);
+});
+it('adopts the committed route after a native replacement event arrives before JS route publication', async () => {
+    mockTrialInput.mockReturnValue(input);
+    let view!: ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<SavedJourneyGuidanceCard input={input} scheduleId="9001" />); });
+    const replacementBinding = { ...binding, sessionId: '33333333-3333-4333-8333-333333333333',
+        generation: 2, routeRevision: 2, routeInputDigest: 'b'.repeat(64), rerouteValidated: true as const };
+    const replacementRoute = { ...input, routeRevision: 2 };
+    const replacementSnapshot = { ...snapshot, sessionId: replacementBinding.sessionId, routeRevision: 2,
+        guidanceRoute: { ...replacementBinding, legs: input.legs.map(leg => ({ index: leg.index, kind: leg.kind,
+            ...(leg.index === 0 ? { walkingLengthMeters: 200 } : {}) })) },
+        guidance: { ...replacementBinding, schemaVersion: 1, sequence: 21, status: 'ACTIVE', phase: 'WALKING_TO_STOP',
+            quality: 'GOOD', activeLegIndex: 0, walkProgress: 0.3, observedAt: 1020, validUntil: 1035,
+            boardingConfirmed: false } } as unknown as AutomaticJourneySnapshot;
+    mockBinding.mockReturnValue(replacementBinding);
+    mockTrialInput.mockReturnValue(null); // Native event precedes the JS route JSON commit.
+    mockRead.mockResolvedValue(replacementSnapshot);
+    await act(async () => mockSync());
+    expect(view.root.findAllByProps({ testID: 'saved-journey-route-marker' })).toHaveLength(0);
+    mockTrialInput.mockReturnValue(replacementRoute);
+    await act(async () => mockSync());
+    expect(view.root.findByProps({ testID: 'saved-journey-route-marker' })).toBeDefined();
+    expect(view.root.findByProps({ testID: 'saved-journey-instruction' }).props.children).not.toBe('위치 확인 중');
+    act(() => view.unmount());
 });
 afterEach(() => jest.useRealTimers());
 it.each([0,2])('waiting after walk %i highlights its next bus occurrence, not always the first bus',walkIndex=>{
@@ -236,7 +261,8 @@ it('renders native-budgeted time proportions, provider color/name and matching G
     const arrow = view.root.findByProps({ testID: 'saved-journey-route-marker' }).findByProps({ name: 'navigate-outline' });
     expect(arrow.props.accessible).toBe(false);
     const track = view.root.findAll(node => typeof node.props.accessibilityLabel === 'string' && node.props.accessibilityLabel.includes('예정 시간 비례'))[0];
-    expect(track.props.accessibilityLabel).toContain('601 예정 5분'); expect(track.props.accessibilityLabel).toContain('전체 여정 완료율이 아닙니다');
+    expect(track.props.accessibilityLabel).toContain('601 예정 5분'); expect(track.props.accessibilityLabel).toContain('현재 위치는 도보 구간입니다');
+    expect(track.props.accessibilityLabel).toContain('전체 여정 완료율이 아닙니다');
     act(() => view.unmount());
 });
 it('long routes retain every original segment and accessible ordinal without disabling font scaling', () => {

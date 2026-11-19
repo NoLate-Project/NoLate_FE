@@ -23,7 +23,8 @@ let mockEvent: (value: AutomaticJourneySnapshot) => void;
 jest.mock('../src/modules/journey/automaticJourney', () => ({ ...jest.requireActual('../src/modules/journey/automaticJourney'),
     getAutomaticJourneySnapshot: () => mockRead(), subscribeAutomaticJourney: (callback: typeof mockEvent) => { mockEvent = callback; return mockDetach; } }));
 jest.mock('../src/modules/journey/automaticJourneyTrial', () => ({ getAutomaticJourneyTrialBinding: () => mockBinding(),
-    getAutomaticJourneyTrialInput: () => null, subscribeAutomaticJourneySync: () => mockSyncDetach }));
+    getAutomaticJourneyTrialInput: () => null, getAutomaticJourneyTrialDisplayRoute: () => null,
+    subscribeAutomaticJourneySync: () => mockSyncDetach }));
 jest.mock('../src/modules/journey/useAutomaticJourneyTrial', () => ({ useAutomaticJourneyTrial: (...args: unknown[]) => ({sync:{errorCode:null},...mockTrial(...args)}) }));
 const point = { latitude: 37.5, longitude: 127 };
 const input = { schemaVersion: 1, context: 'SAVED_ROUTE', source: 'api', provider: 'tmap', plausibility: 'normal', serviceState: 'operating',

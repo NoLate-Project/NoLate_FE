@@ -13,6 +13,8 @@ import {
     revalidateAutomaticJourneySavedRoute, reconcileAutomaticJourneyCheckpoint,
     journeyTrialExecution,
     getAutomaticJourneyRerouteCandidates,
+    getAutomaticJourneyTrialInput,
+    getAutomaticJourneyTrialDisplayRoute,
 } from "../src/modules/journey/automaticJourneyTrial";
 
 const mockGet = jest.fn();
@@ -21,6 +23,9 @@ const mockConfigureAuth = jest.fn();
 const mockUpdateAuth = jest.fn();
 const mockAuthenticatedPost = jest.fn();
 const mockRestore = jest.fn();
+const mockReplace = jest.fn();
+const mockBeginReroute = jest.fn();
+const mockEndReroute = jest.fn();
 const mockReadCheckpointRoute = jest.fn();
 const mockStop = jest.fn();
 const mockTerminalCleanup = jest.fn();
@@ -40,6 +45,9 @@ jest.mock("../src/modules/journey/automaticJourney", () => ({
     updateAutomaticJourneyAuthentication: (...args: unknown[]) => mockUpdateAuth(...args),
     authenticatedAutomaticJourneyRequest: (...args: unknown[]) => mockAuthenticatedPost(...args),
     restoreAutomaticJourney: (route: string, binding: AutomaticJourneyBinding) => mockRestore(route, binding),
+    replaceAutomaticJourney: (route: string, binding: AutomaticJourneyBinding) => mockReplace(route, binding),
+    beginAutomaticJourneyRerouteCommit: (binding: AutomaticJourneyBinding) => mockBeginReroute(binding),
+    endAutomaticJourneyRerouteCommit: (binding: AutomaticJourneyBinding) => mockEndReroute(binding),
     readSavedAutomaticJourneyCheckpointRoute: (binding: AutomaticJourneyBinding) => mockReadCheckpointRoute(binding),
     stopAutomaticJourney: () => mockStop(),
     reconcileAutomaticJourneyTerminal: (b: AutomaticJourneyBinding) => mockTerminalCleanup(b),
@@ -97,6 +105,7 @@ async function server(url: string, init: RequestInit) {
         ...(url.endsWith("/prepare-saved") ? { savedRouteValidated: true } : {}),
     });
     if (url.endsWith("/stop")) return response({ sessionId: "11111111-1111-4111-8111-111111111111", state: "STOPPED" });
+    if (url.endsWith("/current")) return response(null);
     if (url.endsWith("/validate")) return response({
         ...body, schemaVersion: 1, sessionId: "11111111-1111-4111-8111-111111111111", scheduleId: "9001",
         execution: "SIMULATOR", state: "ARMED", validatedAt: new Date().toISOString(),
@@ -128,6 +137,12 @@ beforeEach(() => {
         binding = next;
         return { ...ready, status: "ACTIVE", sessionId: next.sessionId, pendingDeparture: true };
     });
+    mockReplace.mockImplementation(async (_route, next: AutomaticJourneyBinding) => ({
+        ...ready, status: 'ACTIVE', sessionId: next.sessionId,
+        routeRevision: next.routeRevision, departureAcknowledged: true,
+    }));
+    mockBeginReroute.mockResolvedValue(undefined);
+    mockEndReroute.mockResolvedValue(undefined);
     mockOutbox.mockImplementation(async () => pending);
     mockAck.mockImplementation(async () => {
         pending = null;
@@ -322,6 +337,7 @@ it('foreground verifies an owned off-route walk without replacing the route', as
                 candidateId: '52f9bff5-d7b6-46ed-8540-7094cb03b941',
                 routeFingerprint: 'b'.repeat(64), validUntil: new Date(Date.now() + 24_000).toISOString(),
                 routeId: '100100499', stationCount: 4, navigationReady: false,
+                routeSnapshotJSON: '{}',
                 reason: 'ATOMIC_REPLACEMENT_PENDING',
             } };
             if (path.endsWith('/walking-proof')) return { success: true, data: {
@@ -359,7 +375,7 @@ it('foreground verifies an owned off-route walk without replacing the route', as
         expect(onAppChange).toBeDefined();
         onAppChange?.('active'); await flush();
         expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/reroute-candidates'))).toHaveLength(1);
-        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'TRANSIT_VERIFIED', rerouteCandidateCount: 1 });
+        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'TRANSIT_VERIFIED', rerouteCandidateCount: 1, errorCode: null });
         expect(getAutomaticJourneyRerouteCandidates()?.result.paths).toHaveLength(1);
         expect(getAutomaticJourneyRerouteCandidates()?.walkingProof).toMatchObject({
             walkCount: 2, navigationReady: false });
@@ -381,6 +397,220 @@ it('foreground verifies an owned off-route walk without replacing the route', as
         else process.env.EXPO_PUBLIC_AUTOMATIC_REROUTE_TRANSIT_ENABLED = priorTransitFlag;
         (AppState as { currentState: string }).currentState = priorAppState;
     }
+});
+it.each([0, 1, 2, 3])('handles verified reroute commit replies without another departure (case: %s)', async lostReplies => {
+    const loseCommitReply = lostReplies > 0;
+    const loseCurrentReply = lostReplies === 2;
+    const flags = ['EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED', 'EXPO_PUBLIC_AUTOMATIC_REROUTE_WALKING_ENABLED',
+        'EXPO_PUBLIC_AUTOMATIC_REROUTE_TRANSIT_ENABLED', 'EXPO_PUBLIC_AUTOMATIC_REROUTE_COMMIT_ENABLED'] as const;
+    const previous = flags.map(key => process.env[key]);
+    const priorAppState = AppState.currentState;
+    flags.forEach(key => { process.env[key] = 'true'; });
+    (AppState as { currentState: string }).currentState = 'background';
+    const point = (lat: number, lng: number) => ({ lat, lng });
+    const walk = (a: ReturnType<typeof point>, b: ReturnType<typeof point>) => ({
+        kind: 'WALK', pathCoordsIsExact: true, pathGeometrySource: 'WALK_STEPS_LINESTRING',
+        startCoord: a, endCoord: b, pathCoords: [a, b],
+        navigationEvidence: { version: 1, provider: 'tmap', geometryInputComplete: true, stopOccurrences: [] },
+    });
+    const origin = point(37.565, 126.99), board = point(37.566, 126.991);
+    const alight = point(37.5665, 126.992), destination = point(37.567, 126.993);
+    const routeSnapshotJSON = JSON.stringify({ mode: 'TRANSIT', provider: 'odsay', source: 'api',
+        routeReliability: 'provider_estimate', routePlausibility: 'normal', transitServiceState: 'unknown',
+        transitLegs: [walk(origin, board), {
+            kind: 'BUS', pathCoordsIsExact: true, pathGeometrySource: 'TRANSIT_PASS_SHAPE_LINESTRING',
+            startCoord: board, endCoord: alight, pathCoords: [board, alight], localRouteId: '100100499',
+            navigationEvidence: { version: 1, provider: 'odsay', geometryInputComplete: true,
+                directionName: '서울역', declaredStationCount: 1,
+                stopOccurrences: [
+                    { sourceIndex: 0, providerSequence: 44, name: '승차', code: '100000001', coord: board },
+                    { sourceIndex: 1, providerSequence: 45, name: '하차', code: '100000002', coord: alight },
+                ] },
+        }, walk(alight, destination)] });
+    const candidateId = '52f9bff5-d7b6-46ed-8540-7094cb03b941';
+    const admission = { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK',
+        busLegIndex: 1, routeId: '100100499', direction: '서울역', stationCount: 1,
+        firstStopSequence: 44, lastStopSequence: 45 };
+    let holdOldValidation = false;
+    let rejectOldValidation: ((error: Error) => void) | null = null;
+    let releaseCommit: (() => void) | null = null;
+    let committedRouteJSON: string | null = null;
+    let currentCalls = 0;
+    try {
+        const saved = { ...input, context: 'SAVED_ROUTE', destination: {
+            latitude: destination.lat, longitude: destination.lng },
+            walkingSnapshot: { schemaVersion: 4 },
+        } as JourneyRouteInput;
+        mockAssess.mockResolvedValue({ available: true, summary: { reasonCodes: ['SAVED_ROUTE_REVALIDATION_REQUIRED'],
+            legs: [{ kind: 'WALK', geometryUsable: true }] } });
+        const now = Math.floor(Date.now() / 1000);
+        const token = `e30.${Buffer.from(JSON.stringify({ type: 'ACCESS', sub: '7', sg: 2,
+            iat: now, exp: now + 7200 })).toString('base64url')}.c2ln`;
+        const auth = journeyAuthentication(token, 'http://127.0.0.1:15544', 7);
+        mockAuthenticatedPost.mockImplementation(async (_credentials, path, body) => {
+            if (path.endsWith('/validate') && holdOldValidation) {
+                return new Promise<unknown>((_, reject) => { rejectOldValidation = reject; });
+            }
+            if (path.endsWith('/current') && lostReplies === 3) return { success: true, data: {
+                sessionId: binding.sessionId, scheduleId: binding.scheduleId,
+                generation: binding.generation, routeRevision: binding.routeRevision,
+                clientOwnerId: binding.clientOwnerId, state: 'ACTIVE',
+            } };
+            if (path.endsWith('/current') && committedRouteJSON) {
+                if (loseCurrentReply && currentCalls++ === 0) throw new Error('NETWORK_TIMEOUT');
+                return { success: true, data: {
+                sessionId: '22222222-2222-4222-8222-222222222222', scheduleId: binding.scheduleId,
+                generation: 2, routeRevision: 2, clientOwnerId: binding.clientOwnerId,
+                routeInputDigest: 'a'.repeat(64), routeFingerprint: 'a'.repeat(64),
+                rerouteInputJSON: committedRouteJSON, rerouteSnapshotJSON: routeSnapshotJSON,
+                rerouteBusAdmission: admission, rerouteValidated: true, state: 'ACTIVE',
+                preparedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600_000).toISOString(),
+                } };
+            }
+            if (path.endsWith('/transit-proof')) return { success: true, data: {
+                candidateId, routeFingerprint: 'a'.repeat(64), validUntil: new Date(Date.now() + 24_000).toISOString(),
+                routeId: '100100499', stationCount: 1, navigationReady: false,
+                routeSnapshotJSON, reason: 'ATOMIC_REPLACEMENT_PENDING',
+            } };
+            if (path.endsWith('/walking-proof')) return { success: true, data: {
+                candidateId, issuedAt: new Date().toISOString(), validUntil: new Date(Date.now() + 25_000).toISOString(),
+                walkCount: 2, pointCount: 4, navigationReady: false, reason: 'TRANSIT_ADMISSION_PENDING',
+            } };
+            if (path.endsWith('/reroute-candidates')) return { success: true, data: {
+                provider: 'odsay', sessionId: binding.sessionId, generation: binding.generation,
+                routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
+                observedAt: body.observedAt, result: { paths: [{ candidateId, pathType: 2,
+                    totalTime: 25, rps: [{ trafficType: 3 }, { trafficType: 2 }, { trafficType: 3 }] }] },
+            } };
+            if (path.endsWith('/commit')) {
+                await new Promise<void>(resolve => { releaseCommit = resolve; });
+                if (lostReplies === 3) throw new Error('NETWORK_TIMEOUT');
+                committedRouteJSON = body.newRouteInputJSON;
+                if (loseCommitReply) throw new Error('NETWORK_TIMEOUT');
+                return { success: true, data: {
+                sessionId: '22222222-2222-4222-8222-222222222222', scheduleId: binding.scheduleId,
+                generation: 2, routeRevision: 2, clientOwnerId: binding.clientOwnerId,
+                routeInputDigest: 'a'.repeat(64), routeFingerprint: 'a'.repeat(64),
+                routeInputJSON: body.newRouteInputJSON, state: 'ACTIVE', rerouteValidated: true,
+                officialBusAdmission: admission, preparedAt: new Date().toISOString(),
+                expiresAt: new Date(Date.now() + 600_000).toISOString(),
+                } };
+            }
+            const raw = await server(`http://127.0.0.1:15543${path}`, {
+                credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            });
+            return JSON.parse(await raw.text());
+        });
+        await prepareAutomaticJourneyTrial(saved, 'AUTHENTICATED', '9001', async () => auth);
+        queueDeparture(); await retryAutomaticJourneySync();
+        mockReplace.mockImplementationOnce(async (_route, next: AutomaticJourneyBinding) => {
+            expect(getAutomaticJourneyTrialInput(saved)).toBeNull();
+            return { ...ready, status: 'ACTIVE', sessionId: next.sessionId,
+                routeRevision: next.routeRevision, departureAcknowledged: true };
+        });
+        holdOldValidation = true;
+        const staleValidation = retryAutomaticJourneySync();
+        await flush();
+        expect(rejectOldValidation).not.toBeNull();
+        const oldSessionId = binding.sessionId;
+        const observedAt = Date.now() / 1000;
+        const fix = { schemaVersion: 1, sessionId: binding.sessionId, generation: binding.generation,
+            routeRevision: binding.routeRevision, routeInputDigest: binding.routeInputDigest,
+            latitude: origin.lat, longitude: origin.lng, accuracyMeters: 8, observedAt,
+            validUntil: observedAt + 15 };
+        const snapshot = { ...ready, status: 'ACTIVE', sessionId: binding.sessionId,
+            routeRevision: binding.routeRevision, departureAcknowledged: true, qualityReason: 'OFF_ROUTE',
+            deviceMapLocation: fix } as AutomaticJourneySnapshot;
+        mockGet.mockResolvedValue(snapshot);
+        (AppState as { currentState: string }).currentState = 'active';
+        const onAppChange = (AppState.addEventListener as jest.Mock).mock.calls.find(([event]) => event === 'change')?.[1];
+        onAppChange?.('active'); await flush();
+        expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/commit'))).toHaveLength(1);
+        expect(releaseCommit).not.toBeNull();
+        rejectOldValidation!(new Error('AUTOMATIC_SERVER_REJECTED'));
+        await staleValidation;
+        expect(mockStop).not.toHaveBeenCalled();
+        releaseCommit!(); await flush();
+        expect(mockBeginReroute).toHaveBeenCalledTimes(1);
+        if (lostReplies === 3) {
+            expect(mockEndReroute).toHaveBeenCalledTimes(1);
+            expect(mockReplace).not.toHaveBeenCalled();
+            expect(mockStop).not.toHaveBeenCalled();
+            expect(JSON.parse(stored!)).toMatchObject({ sessionId: oldSessionId, routeRevision: 1 });
+            return;
+        }
+        if (loseCurrentReply) {
+            expect(mockReplace).not.toHaveBeenCalled();
+            expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'RETRY_WAIT',
+                errorCode: 'REROUTE_COMMIT_UNCERTAIN' });
+            expect(mockStop).not.toHaveBeenCalled();
+            await retryAutomaticJourneySync(); await flush();
+        }
+        expect(mockReplace).toHaveBeenCalledTimes(1);
+        expect(mockEndReroute).not.toHaveBeenCalled();
+        expect(mockAuthenticatedPost.mock.calls.filter(call => String(call[1]).endsWith('/current')))
+            .toHaveLength(lostReplies);
+        expect(mockReplace.mock.calls[0][1]).toMatchObject({ sessionId: '22222222-2222-4222-8222-222222222222',
+            generation: 2, routeRevision: 2, rerouteValidated: true });
+        expect(mockReplace.mock.calls[0][0]).toContain('"routeRevision":2');
+        expect(JSON.parse(stored!)).toMatchObject({ sessionId: '22222222-2222-4222-8222-222222222222',
+            generation: 2, routeRevision: 2 });
+        expect(oldSessionId).not.toBe(JSON.parse(stored!).sessionId);
+        expect(serverDepartures).toBe(1);
+        expect(getAutomaticJourneyTrialDisplayRoute(saved, '9001')).toMatchObject({
+            origin: { name: '현재 위치', lat: origin.lat, lng: origin.lng },
+            route: { mode: 'TRANSIT', provider: 'odsay' },
+        });
+        expect(getAutomaticJourneyTrialInput(saved)?.routeRevision).toBe(2);
+        expect(getAutomaticJourneySyncState()).toMatchObject({ rerouteState: 'IDLE', errorCode: null });
+        expect(mockStop).not.toHaveBeenCalled();
+        expect(JSON.parse(stored!)).toMatchObject({ sessionId: '22222222-2222-4222-8222-222222222222' });
+    } finally {
+        flags.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key];
+            else process.env[key] = previous[index]; });
+        (AppState as { currentState: string }).currentState = priorAppState;
+    }
+});
+it('recovers a server-committed reroute from the old checkpoint after process restart', async () => {
+    const saved = { ...input, context: 'SAVED_ROUTE' } as JourneyRouteInput;
+    mockAssess.mockResolvedValue({ available: true, summary: { reasonCodes: ['SAVED_ROUTE_REVALIDATION_REQUIRED'],
+        legs: [{ kind: 'WALK', geometryUsable: true }] } });
+    const now = Math.floor(Date.now() / 1000);
+    const token = `e30.${Buffer.from(JSON.stringify({ type: 'ACCESS', sub: '7', sg: 2,
+        iat: now, exp: now + 7200 })).toString('base64url')}.c2ln`;
+    const auth = journeyAuthentication(token, 'http://127.0.0.1:15544', 7);
+    const newRouteJSON = JSON.stringify({ ...saved, routeRevision: 2 });
+    const admission = { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK',
+        busLegIndex: 1, routeId: '100100499', direction: '서울역', stationCount: 1,
+        firstStopSequence: 44, lastStopSequence: 45 };
+    let committed = false;
+    mockAuthenticatedPost.mockImplementation(async (_credentials, path, body) => {
+        if (path.endsWith('/current') && committed) return { success: true, data: {
+            sessionId: '22222222-2222-4222-8222-222222222222', scheduleId: binding.scheduleId,
+            generation: 2, routeRevision: 2, clientOwnerId: binding.clientOwnerId,
+            routeInputDigest: 'a'.repeat(64), routeFingerprint: 'a'.repeat(64),
+            rerouteValidated: true, rerouteSnapshotJSON: '{}', rerouteInputJSON: newRouteJSON,
+            rerouteBusAdmission: admission, state: 'ACTIVE',
+            preparedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        } };
+        const raw = await server(`http://127.0.0.1:15543${path}`, {
+            credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        return JSON.parse(await raw.text());
+    });
+    await prepareAutomaticJourneyTrial(saved, 'AUTHENTICATED', '9001', async () => auth);
+    const retained = stored;
+    const checkpoint = { scheduleId: binding.scheduleId, memberId: 7,
+        sessionId: binding.sessionId, expiresAt: binding.expiresAtEpochSeconds };
+    await stopAutomaticJourneyTrial(); stored = retained;
+    mockReadCheckpointRoute.mockRejectedValue(new Error('OLD_CHECKPOINT'));
+    committed = true;
+    const restored = await restoreAutomaticJourneyTrial(saved, async () => auth, checkpoint);
+    expect(restored).toMatchObject({ status: 'ACTIVE', sessionId: '22222222-2222-4222-8222-222222222222' });
+    expect(mockReplace).toHaveBeenCalledWith(newRouteJSON, expect.objectContaining({
+        sessionId: '22222222-2222-4222-8222-222222222222', generation: 2, routeRevision: 2 }));
+    expect(JSON.parse(stored!)).toMatchObject({ generation: 2, routeRevision: 2 });
+    expect(serverDepartures).toBe(0);
 });
 it.each([true, false])('extended preparation checks the credential horizon before native arm (covered=%s)', async covered => {
     const saved = { ...input, context: 'SAVED_ROUTE' } as JourneyRouteInput;
@@ -858,8 +1088,9 @@ it('automatically clears an exact server-terminal checkpoint without restore or 
     const { b, source } = coldAuthenticatedCheckpoint();
     await reconcileAutomaticJourneyCheckpoint(source);
     expect(mockTerminalCleanup).toHaveBeenCalledWith(b); expect(stored).toBeNull();
-    expect(mockAuthenticatedPost).toHaveBeenCalledTimes(1);
-    expect(mockAuthenticatedPost.mock.calls[0][1]).toMatch(/\/reconcile$/);
+    expect(mockAuthenticatedPost).toHaveBeenCalledTimes(2);
+    expect(mockAuthenticatedPost.mock.calls[0][1]).toMatch(/\/current$/);
+    expect(mockAuthenticatedPost.mock.calls[1][1]).toMatch(/\/reconcile$/);
     expect(mockStop).not.toHaveBeenCalled(); expect(mockArm).not.toHaveBeenCalled(); expect(mockRestore).not.toHaveBeenCalled();
     expect(getAutomaticJourneySyncState()).toMatchObject({ checkpointState: 'CLEARED', errorCode: null });
     await reconcileAutomaticJourneyCheckpoint(source);
@@ -910,7 +1141,8 @@ it('resumes the retained route only after the server validates the exact saved c
     mockReadCheckpointRoute.mockResolvedValue(routeJSON);
     mockRestore.mockResolvedValue({ ...ready, status: 'ACTIVE', sessionId: b.sessionId });
     await restoreAutomaticJourneyTrial(saved, source, checkpoint);
-    expect(mockAuthenticatedPost.mock.calls[0][1]).toMatch(/\/validate$/);
+    expect(mockAuthenticatedPost.mock.calls[0][1]).toMatch(/\/current$/);
+    expect(mockAuthenticatedPost.mock.calls[1][1]).toMatch(/\/validate$/);
     expect(mockAuthenticatedPost.mock.invocationCallOrder[0]).toBeLessThan(mockReadCheckpointRoute.mock.invocationCallOrder[0]);
     expect(mockRestore).toHaveBeenCalledWith(routeJSON, b);
     expect(mockArm).not.toHaveBeenCalled();
@@ -965,7 +1197,7 @@ it('concurrent reconciliation single-flights and prevents a new prepare while ch
     const one = reconcileAutomaticJourneyCheckpoint(source); const two = reconcileAutomaticJourneyCheckpoint(source); await flush();
     await expect(prepareAutomaticJourneyTrial(input, 'SANDBOX')).rejects.toThrow('AUTOMATIC_OPERATION_PENDING');
     wait.resolve({ success: true, data }); await Promise.all([one, two]);
-    expect(mockAuthenticatedPost).toHaveBeenCalledTimes(1); expect(mockTerminalCleanup).toHaveBeenCalledTimes(1);
+    expect(mockAuthenticatedPost).toHaveBeenCalledTimes(2); expect(mockTerminalCleanup).toHaveBeenCalledTimes(1);
 });
 it('changed JS binding or rejected native binding is never deleted by a late receipt', async () => {
     const { source } = coldAuthenticatedCheckpoint();

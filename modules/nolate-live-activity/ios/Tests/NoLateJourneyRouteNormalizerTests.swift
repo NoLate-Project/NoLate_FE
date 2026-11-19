@@ -531,6 +531,17 @@ final class NoLateJourneyRouteNormalizerTests: XCTestCase {
     XCTAssertFalse(accepted.summary.fieldValidated)
     XCTAssertFalse(accepted.summary.fullAutomaticGuidance)
 
+    var mixed = input
+    var mixedLegs = mixed["legs"] as! [[String: Any]]
+    mixedLegs[0]["stopEvidenceProvider"] = "tmap"
+    mixedLegs[2]["stopEvidenceProvider"] = "tmap"
+    mixed["legs"] = mixedLegs
+    let rerouted = try Normalizer.prepareWalkingRoute(json: json(mixed),
+      allowValidatedSavedRoute: true, officialBusAdmission: proof)
+    XCTAssertTrue(rerouted.summary.legs[0].geometryUsable)
+    XCTAssertTrue(rerouted.summary.legs[2].geometryUsable)
+    XCTAssertTrue(rerouted.summary.legs[1].stopSequenceUsable)
+
     var repeated = input
     var repeatedBus = bus
     repeatedBus["coordinates"] = [point(100), point(300), point(300), point(500)]

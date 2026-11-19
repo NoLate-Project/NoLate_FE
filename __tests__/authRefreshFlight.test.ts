@@ -20,6 +20,7 @@ import { apiClient, refreshCurrentAuthTokens } from "../src/api/api";
 import { refreshAutomaticJourneyCredentials } from "../src/modules/journey/automaticJourney";
 import { getAccessToken, getAuthCredentialRevision, getRefreshToken, saveRefreshedAuthTokens } from "../src/modules/auth/authStorage";
 const recover401 = (apiClient.interceptors.response.use as jest.Mock).mock.calls[0][1];
+const authorizeRequest = (apiClient.interceptors.request.use as jest.Mock).mock.calls[0][0];
 const response = { data: { success: true, data: { accessToken: "new-access", refreshToken: "new-refresh" } } };
 beforeEach(() => {
     jest.clearAllMocks();
@@ -28,6 +29,12 @@ beforeEach(() => {
     jest.mocked(getAccessToken).mockResolvedValue("old-access");
     jest.mocked(saveRefreshedAuthTokens).mockResolvedValue(true);
     jest.mocked(refreshAutomaticJourneyCredentials).mockResolvedValue(null);
+});
+it("sends login without waiting for stored credentials", async () => {
+    jest.mocked(getAccessToken).mockImplementation(() => new Promise(() => undefined));
+    const config = { url: "/api/member/auth/login", headers: {} };
+    await expect(authorizeRequest(config)).resolves.toBe(config);
+    expect(getAccessToken).not.toHaveBeenCalled();
 });
 it("concurrent proactive refreshes share one rotation flight", async () => {
     jest.mocked(axios.post).mockResolvedValue(response);

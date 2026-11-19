@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getAutomaticJourneySnapshot, subscribeAutomaticJourney, type AutomaticJourneySnapshot } from './automaticJourney';
 import { useSavedJourneyBinding } from './useSavedJourneyBinding';
 import type { JourneyRouteInput } from './journeyRouteInput';
@@ -28,10 +28,12 @@ export function useSavedJourneyGuidanceView(input: JourneyRouteInput | null, sch
     }, [eligible, sessionId, generation, digest]);
     const now = Date.now() / 1000;
     const value = eligible ? presentSavedJourneyGuidance(snapshot, binding, now) : null;
-    const resolved = useMemo(() => input && eligible ? getAutomaticJourneyTrialInput(input, digest) ?? input : null,
-        [input, eligible, digest]);
+    // Native replacement events can arrive before JS installs the committed route JSON.
+    // Read the current route on each render so the later sync publication replaces that
+    // transient old input even though the binding digest has already changed.
+    const resolved = input && eligible ? getAutomaticJourneyTrialInput(input, digest) : null;
     const position = eligible && resolved ? presentSavedJourneyRoutePosition(snapshot, binding, resolved, now) : null;
     const stage = eligible && resolved ? presentSavedJourneyStage(snapshot, binding, resolved, now) : null;
     const layout = eligible && resolved ? presentSavedJourneyRouteLayout(snapshot, binding, resolved) : null;
-    return { snapshot, value, position, stage, layout, eligible, binding };
+    return { snapshot, value, position, stage, layout, eligible, binding, input: resolved };
 }

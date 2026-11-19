@@ -418,6 +418,7 @@ describe("automatic server transport", () => {
         const data = { candidateId, routeFingerprint: 'a'.repeat(64),
             validUntil: new Date((walking.validUntilEpochSeconds - 1) * 1000).toISOString(),
             routeId: '100100499', stationCount: 4, navigationReady: false,
+            routeSnapshotJSON: '{}',
             reason: 'ATOMIC_REPLACEMENT_PENDING' };
         const post = jest.fn().mockResolvedValue({ success: true, data });
         await expect(createAutomaticJourneyTransport(post).rerouteTransitProof(rerouteBinding, walking))

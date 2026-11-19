@@ -19,6 +19,7 @@ struct NoLateJourneyAutomaticSession: Sendable {
     let syncScope: String
     let savedRouteValidated: Bool?
     let guidanceEnabled: Bool?
+    var rerouteValidated: Bool? = nil
     let apiOrigin: String?
     let authMemberId: Int64?
     let loginGeneration: Int64?
@@ -134,6 +135,33 @@ struct NoLateJourneyAutomaticSession: Sendable {
     transferWalk = alightingRoute == nil ? nil : rideRoute.flatMap {
       NoLateJourneyTransferWalkCore.prepare(json:routeJSON,ride:$0,officialBusAdmission:binding.officialBusAdmission)
     }.map { NoLateJourneyTransferWalkCore(route:$0) }
+  }
+
+  /// The replacement is active immediately, with fresh location and transit evidence.
+  /// The old departure receipt is not sent again.
+  init(replacing previous: NoLateJourneyAutomaticSession, routeJSON: String, bindingJSON: String,
+       now: TimeInterval) throws {
+    try self.init(routeJSON: routeJSON, bindingJSON: bindingJSON, now: now)
+    guard previous.core.snapshot.status == .active, previous.departureAcknowledged,
+      previous.pendingDeparture == nil, binding.rerouteValidated == true,
+      binding.officialBusAdmission != nil, binding.sessionId != previous.binding.sessionId,
+      binding.scheduleId == previous.binding.scheduleId,
+      previous.binding.generation < 9_007_199_254_740_991,
+      binding.generation == previous.binding.generation + 1,
+      previous.binding.routeRevision < 9_007_199_254_740_991,
+      binding.routeRevision == previous.binding.routeRevision + 1,
+      binding.clientOwnerId == previous.binding.clientOwnerId,
+      binding.execution == previous.binding.execution,
+      binding.syncScope == previous.binding.syncScope,
+      binding.authMemberId == previous.binding.authMemberId,
+      binding.loginGeneration == previous.binding.loginGeneration,
+      binding.expiresAtEpochSeconds <= previous.binding.expiresAtEpochSeconds else {
+      throw Failure.invalidBinding
+    }
+    core = try Core(replacing: previous.core, identity: Self.identity(binding), route: core.snapshot.route,
+      at: now, expiresAt: binding.expiresAtEpochSeconds)
+    departure = Self.makeDeparture(binding, occurredAt: now)
+    departureAcknowledged = true
   }
 
   init(restoring envelope: Envelope, routeJSON: String, bindingJSON: String, now: TimeInterval,
@@ -384,6 +412,9 @@ struct NoLateJourneyAutomaticSession: Sendable {
         (1...63).contains(official.stationCount), official.firstStopSequence >= 0,
         !span.overflow, span.partialValue == official.stationCount else { throw Failure.invalidBinding }
     }
+    if binding.rerouteValidated == true && binding.officialBusAdmission == nil {
+      throw Failure.invalidBinding
+    }
     if let official = binding.officialSubwayAdmission {
       guard binding.syncScope == "AUTHENTICATED", binding.execution == "DEVICE",
         binding.officialBusAdmission == nil, official.schemaVersion == 1,
@@ -414,7 +445,8 @@ struct NoLateJourneyAutomaticSession: Sendable {
     let input = try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:Data(routeJSON.utf8))
     if binding.execution == "DEVICE" && input.legs.count == 3 && input.legs[1].kind == "SUBWAY" &&
         binding.officialSubwayAdmission?.matches(input) != true { throw Failure.invalidRoute }
-    if binding.expiresAtEpochSeconds-binding.preparedAtEpochSeconds > 600 {
+    if binding.expiresAtEpochSeconds-binding.preparedAtEpochSeconds > 600 &&
+        !(binding.rerouteValidated == true && binding.officialBusAdmission != nil) {
       guard input.walkingSnapshot?.schemaVersion == 4 else { throw Failure.invalidRoute }
     }
     if let walking = input.walkingSnapshot { try walking.validate(input:input); try walking.validate(binding:binding,now:now) }

@@ -139,17 +139,16 @@ import Foundation
       let auth = try? JSONDecoder().decode(NoLateJourneyAuthentication.self, from: Data(authJSON.utf8)) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
     guard auth.valid(now: Date().timeIntervalSince1970) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
     guard
-      path.range(of: "^/api/schedules/[1-9][0-9]{0,17}/automatic-journey/(prepare-saved|[a-f0-9-]{36}/(departure|validate|stop|reconcile|reroute-candidates|live-activity))$", options: .regularExpression) != nil,
+      NoLateAuthenticatedJourneyPathPolicy.allows(path),
       let body = (try? JSONSerialization.jsonObject(with: Data(bodyJSON.utf8))) as? [String: Any],
       let url = URL(string: auth.apiOrigin + path) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
     if path.hasSuffix("/live-activity"), Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAPNsPilotEnabled") as? Bool != true {
       return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"]
     }
     do {
-      let candidateSearch = path.hasSuffix("/reroute-candidates")
+      let responseLimit = NoLateAuthenticatedJourneyPathPolicy.responseLimit(for: path)
       let data = try await request(url: url, body: body, accessToken: auth.accessToken,
-        responseLimit: candidateSearch ? 1_048_576 : 262_144, timeout: candidateSearch ? 10 : 4)
-      let responseLimit = path.hasSuffix("/reroute-candidates") ? 1_048_576 : 65_536
+        responseLimit: responseLimit, timeout: path.hasSuffix("/reroute-candidates") ? 10 : 4)
       guard data.count <= responseLimit, auth.valid(now: Date().timeIntervalSince1970) else { throw LifetimeError.rejected }
       return ["accepted": true, "responseJSON": String(decoding: data, as: UTF8.self)]
     } catch LifetimeError.rejected { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }

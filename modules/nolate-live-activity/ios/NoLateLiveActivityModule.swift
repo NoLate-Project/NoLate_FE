@@ -198,6 +198,15 @@ public final class NoLateLiveActivityModule: Module {
     AsyncFunction("armAutomaticJourney") { (routeJSON: String, bindingJSON: String) in
       return await NoLateJourneyAutomaticRuntime.shared.arm(routeJSON: routeJSON, bindingJSON: bindingJSON)
     }
+    AsyncFunction("replaceAutomaticJourney") { (routeJSON: String, bindingJSON: String) in
+      return await NoLateJourneyAutomaticRuntime.shared.replace(routeJSON: routeJSON, bindingJSON: bindingJSON)
+    }
+    AsyncFunction("beginAutomaticJourneyRerouteCommit") { (bindingJSON: String) in
+      return await NoLateJourneyAutomaticRuntime.shared.beginRerouteCommit(bindingJSON: bindingJSON)
+    }
+    AsyncFunction("endAutomaticJourneyRerouteCommit") { (bindingJSON: String) in
+      return await NoLateJourneyAutomaticRuntime.shared.endRerouteCommit(bindingJSON: bindingJSON)
+    }
     AsyncFunction("getAutomaticJourneySnapshot") {
       return await NoLateJourneyAutomaticRuntime.shared.snapshot()
     }

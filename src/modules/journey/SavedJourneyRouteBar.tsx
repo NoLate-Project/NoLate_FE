@@ -25,6 +25,7 @@ export function SavedJourneyRouteBar({ input, position, layout, copy: stageCopy,
         : position.legIndex === 1 ? '버스로 이동 중' : '승차 지점까지 · 도보로 이동 중' : '현재 위치 확인 필요');
     const segments = layout?.legs ?? input.legs.map(leg => ({ ...leg, label: labels[leg.kind], color: colors[leg.kind], fraction: 1 / input.legs.length, durationMinutes: null }));
     const caption = layout?.caption ?? '구간 동일 폭';
+    const currentSegment = position && segments[position.waiting ? position.legIndex + 1 : position.legIndex];
     const showAllCompactLabels = compact && !showCopy && fontScale <= 1.35 && segments.length <= 3;
     const alignCompactLabels = showAllCompactLabels && segments.every(leg => leg.fraction >= 0.15);
     const compactLabels = showAllCompactLabels ? segments : segments.filter(leg => leg.kind === 'SUBWAY' || leg.kind === 'BUS');
@@ -32,7 +33,7 @@ export function SavedJourneyRouteBar({ input, position, layout, copy: stageCopy,
         {!compact && <Text style={[styles.heading, isDark && styles.darkCopy]}>전체 이동 경로 · {caption}</Text>}
         <View style={[styles.track, isDark && styles.darkTrack]} accessible
             onLayout={event => { trackWidth.value = Math.max(0, event.nativeEvent.layout.width - 2); }}
-            accessibilityLabel={`${segments.map(leg => `${leg.index + 1}. ${leg.label}${leg.durationMinutes ? ` 예정 ${Math.ceil(leg.durationMinutes)}분` : ''}`).join(' → ')}${showCopy ? `, ${copy}.` : '.'} ${caption}, 전체 여정 완료율이 아닙니다.`}>
+            accessibilityLabel={`${segments.map(leg => `${leg.index + 1}. ${leg.label}${leg.durationMinutes ? ` 예정 ${Math.ceil(leg.durationMinutes)}분` : ''}`).join(' → ')}${showCopy ? `, ${copy}.` : '.'} ${currentSegment ? `현재 위치는 ${currentSegment.label} 구간입니다.` : '현재 위치를 확인 중입니다.'} ${caption}, 전체 여정 완료율이 아닙니다.`}>
             {segments.map(leg => <View key={leg.index} testID={`saved-journey-route-leg-${leg.index}`}
                 style={[styles.segment, { backgroundColor: leg.color, flex: leg.fraction }, leg.index === 0 && styles.first,
                     leg.index === input.legs.length - 1 && styles.last]} />)}

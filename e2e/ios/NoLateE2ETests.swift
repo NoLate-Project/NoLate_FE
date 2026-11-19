@@ -357,7 +357,12 @@ final class NoLateE2ETests: XCTestCase {
                 replace(email, with: try XCTUnwrap(environment["E2E_EMAIL"]))
                 replaceSecure(app.secureTextFields["비밀번호"], with: try XCTUnwrap(environment["E2E_PASSWORD"]))
                 app.staticTexts["NoLate"].firstMatch.tap()
-                app.buttons["로그인"].tap()
+                let login = app.buttons["로그인"]
+                XCTAssertTrue(login.isEnabled, "The isolated login action must be enabled after exact credential entry")
+                let loginFrame = login.frame
+                app.coordinate(withNormalizedOffset: CGVector(dx: loginFrame.midX / app.frame.width,
+                                                              dy: loginFrame.midY / app.frame.height)).tap()
+                capture("isolated-login-action-tapped")
                 loggedIn = true
             }
             dismissSyntheticPasswordSavePrompt()
@@ -607,6 +612,41 @@ final class NoLateE2ETests: XCTestCase {
             if environment["E2E_BUS_GPS_REPLAY"] == "1" {
                 let progress = app.staticTexts["saved-journey-progress"].firstMatch
                 NSLog("E2E_BUS_GPS_ARMED")
+                if environment["E2E_EXPECT_REROUTE_TIMEOUT"] == "1" {
+                    let endedState = app.staticTexts["schedule-navigation-state"]
+                    let ended = expectation(for: NSPredicate(format: "label == %@", "안내 종료"),
+                                            evaluatedWith: endedState)
+                    XCTAssertEqual(XCTWaiter().wait(for: [ended], timeout: 180), .completed,
+                                   "A reroute whose server confirmation is lost beyond the native deadline must end guidance")
+                    XCTAssertFalse(app.buttons["saved-detail-stop"].exists,
+                                   "Timed-out guidance must not leave an active stop control")
+                    capture("isolated-navigation-reroute-confirmation-timeout")
+                    NSLog("E2E_REROUTE_TIMEOUT_ENDED")
+                    return
+                }
+                if environment["E2E_EXPECT_REROUTE_COMMIT"] == "1" {
+                    let origin = app.descendants(matching: .any)["route-step-row-origin"].firstMatch
+                    if !origin.exists { sheetHandle.tap() }
+                    let replaced = expectation(for: NSPredicate(format: "label CONTAINS %@", "현재 위치"),
+                                               evaluatedWith: origin)
+                    XCTAssertEqual(XCTWaiter().wait(for: [replaced], timeout: 180), .completed,
+                                   "A deliberate off-route GPS fix must commit and display the new origin")
+                    capture("isolated-navigation-reroute-current-origin-detail")
+                    if !routeBar.exists { sheetHandle.tap() }
+                    XCTAssertTrue(routeBar.waitForExistence(timeout: 10),
+                                  "The committed route must show its whole-route summary when collapsed")
+                    let currentSegment = app.descendants(matching: .any)
+                        .matching(NSPredicate(format: "label CONTAINS %@", "현재 위치는")).firstMatch
+                    XCTAssertTrue(currentSegment.waitForExistence(timeout: 90),
+                                  "Fresh GPS on the committed route must restore the current segment marker")
+                    XCTAssertFalse(app.staticTexts["위치 확인 중"].exists,
+                                   "The new GPS evidence must restore the current navigation step")
+                    capture("isolated-navigation-verified-reroute-on-map")
+                    NSLog("E2E_REROUTE_DISPLAY_COMMITTED")
+                    if !stopGuidance.exists { sheetHandle.tap() }
+                    stopGuidance.tap()
+                    return
+                }
                 let waiting = expectation(for: NSPredicate(format: "label CONTAINS %@", "버스 대기"), evaluatedWith: progress)
                 XCTAssertEqual(XCTWaiter().wait(for: [waiting], timeout: 180), .completed,
                                "Owned walking GPS must reach the actual 1711 boarding stop")
