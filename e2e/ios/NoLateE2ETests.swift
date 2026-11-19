@@ -316,6 +316,9 @@ final class NoLateE2ETests: XCTestCase {
         XCTAssertTrue(depart.waitForExistence(timeout: 20))
         depart.tap()
         XCTAssertTrue(app.descendants(matching: .any)["schedule-navigation-header"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.otherElements["schedule-route-navigation-ready"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["schedule-navigation-next-step"].firstMatch.exists,
+                       "Before preparation, the route sheet owns the instruction")
         XCTAssertTrue(app.otherElements["saved-journey-route-bar"].waitForExistence(timeout: 5))
         capture("navigation-map-compact")
         let handle = app.buttons["schedule-route-sheet-handle"]
