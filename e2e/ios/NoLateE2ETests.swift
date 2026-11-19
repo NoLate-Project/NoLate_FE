@@ -114,9 +114,9 @@ final class NoLateE2ETests: XCTestCase {
         let login = app.buttons["로그인"]
         XCTAssertTrue(login.isEnabled)
         login.tap()
-        XCTAssertTrue(app.alerts.staticTexts["올바른 이메일 주소를 입력해 주세요."].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["올바른 이메일 주소를 입력해 주세요."].firstMatch.waitForExistence(timeout: 10),
+                      "Invalid email feedback appears inline on the current login screen")
         capture("login-validation")
-        app.alerts.buttons.firstMatch.tap()
     }
 
     /// Run only on a fresh dedicated simulator with tracking requests enabled.
