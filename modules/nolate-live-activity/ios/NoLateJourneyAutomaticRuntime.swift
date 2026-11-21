@@ -119,10 +119,28 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     return ["accepted": guidancePushPilot.configure(fcmToken: fcmToken)]
     #endif
   }
-  func configureNoticeMode(_ mode: String) -> [String: Any] {
-    guard enabled, !running, UIApplication.shared.applicationState == .active,
+  func configureRemoteUpdates(fcmToken: String) -> [String: Any] {
+    guard enabled, productBuild, !running, UIApplication.shared.applicationState == .active,
+      authentication?.valid(now: Date().timeIntervalSince1970) == true else { return ["accepted": false] }
+    return ["accepted": guidancePushPilot.configureProduct(fcmToken: fcmToken)]
+  }
+  func updateRemoteRegistration(fcmToken: String, bindingJSON: String) -> [String: Any] {
+    let now = Date().timeIntervalSince1970
+    guard enabled, productBuild, running, bindingJSON.utf8.count <= 4096, let session,
+      let expected = try? Session.decodeBinding(bindingJSON, now: now), expected == session.binding,
+      authentication?.matches(expected, now: now) == true else { return ["accepted": false] }
+    let result = guidancePushPilot.updateProductRegistration(fcmToken)
+    if result.changed { publish() }
+    return ["accepted": result.accepted]
+  }
+  func configureNoticeMode(_ mode: String, sessionId: String? = nil) -> [String: Any] {
+    guard enabled, UIApplication.shared.applicationState == .active,
       ["OFF", "NOTIFICATIONS", "VOICE_AND_NOTIFICATIONS"].contains(mode) else { return ["accepted": false] }
-    guidanceNotices.configure(mode)
+    if let sessionId {
+      guard running, session?.binding.sessionId == sessionId else { return ["accepted": false] }
+    } else if running { return ["accepted": false] }
+    guidanceNotices.configure(mode, preservingJourney: running)
+    eventSink?(viewState().compactMapValues { $0 })
     return ["accepted": true]
   }
   func updateAuthentication(_ json: String, bindingJSON: String, previousAccessToken: String) -> [String: Any] {
@@ -373,15 +391,20 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   }
 
   @discardableResult private func commit(_ candidate: Session) -> Bool {
+    var stage = "checkpoint"
     do {
       guard let url = checkpointURL, store != nil else { throw CocoaError(.fileWriteUnknown) }
+      stage = "directory"
       try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       // The event, its acknowledged flag, binding, route and engine state share one atomic commit.
+      stage = "save"
       try store?.save(candidate.envelope)
       session = candidate
       lastPersistedAt = Date().timeIntervalSince1970
       return true
     } catch {
+      let cause = error as NSError
+      NSLog("NOLATE_GUIDANCE_RUNTIME checkpoint_failed stage=%@ domain=%@ code=%ld", stage, cause.domain, cause.code)
       if session == nil { session = candidate }
       failClosed("AUTOMATIC_CHECKPOINT_WRITE_FAILED")
       return false
@@ -500,8 +523,10 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       guidanceSample = acceptedFreshObservation ? sample : nil
       let offRoute = candidate.core.snapshot.reason == .offRoute
         || candidate.bus?.snapshot.reason == "BUS_OFF_ROUTE"
-      let riding = candidate.ride?.snapshot.phase == "RIDING"
-        || candidate.subway?.snapshot.phase == "RIDING"
+      let riding = NoLateJourneyOffRouteMapPolicy.transitStillCorrelated(
+        busPhase: candidate.ride?.snapshot.phase, busConfirmedAt: candidate.ride?.snapshot.lastConfirmedAt,
+        subwayPhase: candidate.subway?.snapshot.phase, subwayConfirmedAt: candidate.subway?.snapshot.lastConfirmedAt,
+        now: now)
       let fix = NoLateJourneyOffRouteMapPolicy.Fix(latitude: sample.latitude, longitude: sample.longitude,
         accuracyMeters: sample.accuracy, observedAt: sample.observedAt)
       if candidate.core.snapshot.status == .active && offRoute && !riding,
@@ -575,8 +600,9 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     } else { lastHandoffDiagnostic = nil }
     #endif
     let enabled = session?.binding.savedRouteValidated == true && session?.binding.guidanceEnabled == true
-    guidanceNotices.accept(session.map { NoLateAutomaticGuidanceProjection.content($0, now: now,
-      arrival: arrivalResult(session: $0, now: now)) }, legs: session?.routeLegs ?? [],
+    let arrival = session.map { arrivalResult(session: $0, now: now) }
+    let content = session.map { NoLateAutomaticGuidanceProjection.content($0, now: now, arrival: arrival) }
+    guidanceNotices.accept(content, legs: session?.routeLegs ?? [], subwayTrainNumber: arrival?.subwayTrainNumber,
       // The server departure record can remain pending while the screen is locked.
       // Notices use the same fresh, validated native position as the Activity and
       // must not wait for foreground JS to acknowledge that record.
@@ -586,11 +612,11 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
       guard state.status == .stopped, state.reason == .destinationArrived, value.binding.authMemberId != nil else { return nil }
       return self.arrivalHandoffUntil
     }
-    guidanceActivity.accept(session.map { NoLateAutomaticGuidanceProjection.content($0, now: now,
-      arrival: arrivalResult(session: $0, now: now)) }, enabled: enabled,
+    guidanceActivity.accept(content, enabled: enabled,
       routeLegs: session?.routeLegs ?? [], arrivalHandoffUntil: arrivalHandoffUntil)
-    if let session, session.departureAcknowledged { guidancePushPilot.publish(NoLateAutomaticGuidanceProjection.content(session, now: now,
-      arrival: arrivalResult(session: session, now: now)), binding: session.binding, auth: authentication) }
+    if let session, session.departureAcknowledged, let content {
+      guidancePushPilot.publish(content, binding: session.binding, auth: authentication)
+    }
     eventSink?(viewState().compactMapValues { $0 })
   }
   private func arrivalResult(session: NoLateJourneyAutomaticSession, now: Double) -> NoLateSavedGuidanceArrivalPolicy.Result {
@@ -665,12 +691,15 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     ]
   }
   private func offRouteMapLocation() -> [String: Any]? {
+    let now = Date().timeIntervalSince1970
     guard let value = session, let fix = offRouteMapSample,
       value.binding.savedRouteValidated == true, value.binding.guidanceEnabled == true,
       value.core.snapshot.status == .active,
       value.core.snapshot.reason == .offRoute || value.bus?.snapshot.reason == "BUS_OFF_ROUTE",
-      value.ride?.snapshot.phase != "RIDING", value.subway?.snapshot.phase != "RIDING" else { return nil }
-    let now = Date().timeIntervalSince1970
+      !NoLateJourneyOffRouteMapPolicy.transitStillCorrelated(
+        busPhase: value.ride?.snapshot.phase, busConfirmedAt: value.ride?.snapshot.lastConfirmedAt,
+        subwayPhase: value.subway?.snapshot.phase, subwayConfirmedAt: value.subway?.snapshot.lastConfirmedAt,
+        now: now) else { return nil }
     guard NoLateJourneyOffRouteMapPolicy.usable(fix, now: now, armedAt: value.core.snapshot.armedAt,
       expiresAt: value.binding.expiresAtEpochSeconds) else { return nil }
     return ["schemaVersion": 1, "sessionId": value.binding.sessionId, "generation": value.binding.generation,
@@ -718,6 +747,7 @@ private final class NoLateJourneyNoticeDelivery {
   private var epoch = UUID()
   private var binding: String?
   private var identifiers = Set<String>()
+  private var pendingArrival: (hint: NoLateGuidanceArrival, train: String?)?
   private var lastUsable = false
   private var phase: String?
   private var lastDiagnostic: String?
@@ -726,8 +756,22 @@ private final class NoLateJourneyNoticeDelivery {
     mode = NoLateGuidanceNoticePreference.load()
     state = mode == "OFF" ? "OFF" : "READY"
   }
-  func configure(_ value: String) {
-    clear(); mode = value; state = value == "OFF" ? "OFF" : "READY"; scheduledCount = 0; voiceQueuedCount = 0
+  func configure(_ value: String, preservingJourney: Bool) {
+    if preservingJourney {
+      if mode != value {
+        // Cancel in-flight delivery. Keep the event history so switching channels
+        // cannot announce the same train or stop twice.
+        epoch = UUID()
+        clearDelivered()
+        speech.cancel()
+      }
+    } else {
+      clear()
+      scheduledCount = 0
+      voiceQueuedCount = 0
+    }
+    mode = value
+    state = value == "OFF" ? "OFF" : "READY"
     NoLateGuidanceNoticePreference.save(value)
     permission = "NOT_CHECKED"
     let fence = epoch
@@ -762,6 +806,7 @@ private final class NoLateJourneyNoticeDelivery {
     state = mode == "OFF" ? "OFF" : "IDLE"
   }
   private func clearDelivered() {
+    pendingArrival = nil
     expiryTask?.cancel(); expiryTask = nil
     let ids = Array(identifiers); identifiers.removeAll()
     // UserNotifications performs synchronous XPC work even for an empty list.
@@ -771,24 +816,32 @@ private final class NoLateJourneyNoticeDelivery {
     UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
   }
-  func accept(_ content: NoLateGuidanceContent?, legs: [NoLateGuidanceRouteLeg], enabled: Bool) {
+  func accept(_ content: NoLateGuidanceContent?, legs: [NoLateGuidanceRouteLeg], subwayTrainNumber: String?, enabled: Bool) {
     let diagnostic = "mode=\(mode) enabled=\(enabled) status=\(content?.status ?? "NIL") phase=\(content?.phase ?? "NIL") quality=\(content?.quality ?? "NIL")"
     if diagnostic != lastDiagnostic {
       NSLog("NOLATE_GUIDANCE_NOTICE input %@", diagnostic)
       lastDiagnostic = diagnostic
     }
-    guard mode != "OFF", enabled, let content, content.status == "ACTIVE" else {
+    guard enabled, let content, content.status == "ACTIVE" else {
       if binding != nil { clear() }; return
     }
     let identity = "\(content.sessionId):\(content.generation):\(content.routeRevision):\(content.routeInputDigest)"
     if binding != identity { clear(); binding = identity }
-    // A phase transition invalidates even a still-pending settings/add callback whose
-    // event has no replacement (for example walking -> approaching the boarding stop).
-    if phase != content.phase {
-      epoch = UUID(); clearDelivered(); speech.cancel()
-      phase = content.phase
-    }
+    guard mode != "OFF" else { return }
     let now = Date().timeIntervalSince1970
+    let arrival = NoLateGuidancePresentationPolicy.freshArrival(content, legs: legs, now: now)
+    // An approach can become a platform wait while iOS is still speaking about the same arrival.
+    let sameArrival = pendingArrival.map { pending in
+      guard let arrival, arrival.expectedAt - now <= 120 else { return false }
+      let old = pending.hint
+      let sameTrip = pending.train == nil ? arrival.expectedAt == old.expectedAt : pending.train == subwayTrainNumber
+      return sameTrip && arrival.providerRouteId == old.providerRouteId && arrival.directionLabel == old.directionLabel
+        && arrival.busLegIndex == old.busLegIndex && arrival.kind == old.kind && old.validUntil > now
+    } ?? false
+    if !sameArrival && (phase != content.phase || pendingArrival != nil) {
+      epoch = UUID(); clearDelivered(); speech.cancel()
+    }
+    phase = content.phase
     let usable = NoLateGuidanceRoutePositionPolicy.position(content, legs: legs, now: now) != nil
     if usable && !lastUsable { NSLog("NOLATE_GUIDANCE_NOTICE evidence_available") }
     if !usable {
@@ -799,10 +852,11 @@ private final class NoLateJourneyNoticeDelivery {
       lastUsable = false; state = "EVIDENCE_UNAVAILABLE"; return
     }
     lastUsable = true
-    guard let notice = policy.next(content, legs: legs, now: now) else { return }
+    guard let notice = policy.next(content, legs: legs, now: now, subwayTrainNumber: subwayTrainNumber) else { return }
     NSLog("NOLATE_GUIDANCE_NOTICE selected kind=%@", notice.kind)
     epoch = UUID(); clearDelivered(); speech.cancel()
     let fence = epoch
+    if notice.kind == "ARRIVAL_SOON", let arrival { pendingArrival = (arrival, subwayTrainNumber) }
     let remaining = max(0, notice.expiresAt - now)
     expiryTask = Task { @MainActor [weak self] in
       try? await Task.sleep(nanoseconds: UInt64(min(10, remaining) * 1_000_000_000))
@@ -812,7 +866,7 @@ private final class NoLateJourneyNoticeDelivery {
       self.state = "NOTICE_EXPIRED"
       NSLog("NOLATE_GUIDANCE_NOTICE expired")
     }
-    let identifier = "nolate.guidance.notice." + SHA256.hash(data: Data((identity + notice.kind).utf8)).map { String(format: "%02x", $0) }.joined()
+    let identifier = "nolate.guidance.notice." + SHA256.hash(data: Data((identity + notice.kind + fence.uuidString).utf8)).map { String(format: "%02x", $0) }.joined()
     UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
       let authorized = [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus)
       let undetermined = settings.authorizationStatus == .notDetermined
@@ -824,7 +878,7 @@ private final class NoLateJourneyNoticeDelivery {
         var voiceQueued = false
         if self.mode == "VOICE_AND_NOTIFICATIONS", UIApplication.shared.applicationState == .active {
           self.speech.cancel()
-          voiceQueued = self.speech.queue(notice.body)
+          voiceQueued = self.speech.queue(notice.body, kind: notice.kind)
           if voiceQueued { self.voiceQueuedCount += 1 }
         }
         guard authorized else {
@@ -836,6 +890,7 @@ private final class NoLateJourneyNoticeDelivery {
         body.title = "NoLate 길안내"; body.body = notice.body
         body.sound = voiceQueued ? nil : .default
         body.threadIdentifier = "nolate.guidance"
+        body.userInfo = ["scheduleId": content.scheduleId, "guidanceSession": content.sessionId]
         self.identifiers.insert(identifier)
         self.state = "NOTIFICATION_SUBMITTING"
         UNUserNotificationCenter.current().add(.init(identifier: identifier, content: body, trigger: nil)) { [weak self] error in
@@ -848,7 +903,7 @@ private final class NoLateJourneyNoticeDelivery {
             }
             if accepted { self.scheduledCount += 1; self.state = "NOTIFICATION_ACCEPTED" }
             else { self.state = "NOTIFICATION_REJECTED" }
-            NSLog("NOLATE_GUIDANCE_NOTICE submit_%@", accepted ? "accepted" : "rejected")
+            NSLog("NOLATE_GUIDANCE_NOTICE submit_%@ kind=%@", accepted ? "accepted" : "rejected", notice.kind)
           }
         }
       }
@@ -857,25 +912,50 @@ private final class NoLateJourneyNoticeDelivery {
 }
 
 @MainActor
-private final class NoLateJourneySpeechDelivery {
+private final class NoLateJourneySpeechDelivery: NSObject, AVSpeechSynthesizerDelegate {
   #if !DEBUG
   private let synthesizer = AVSpeechSynthesizer()
   #endif
 
-  func queue(_ text: String) -> Bool {
+  #if !DEBUG
+  private var spoken: (id: ObjectIdentifier, kind: String)?
+  override init() {
+    super.init()
+    synthesizer.usesApplicationAudioSession = true
+    synthesizer.delegate = self
+  }
+
+  nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+    guard utterance.voice?.language.hasPrefix("ko") == true else { return }
+    record("started", ObjectIdentifier(utterance))
+  }
+  nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    record("finished", ObjectIdentifier(utterance))
+  }
+  nonisolated private func record(_ event: String, _ id: ObjectIdentifier) {
+    Task { @MainActor in
+      guard let spoken, spoken.id == id else { return }
+      NSLog("NOLATE_GUIDANCE_NOTICE speech_%@ kind=%@", event, spoken.kind)
+      if event == "finished" { self.spoken = nil }
+    }
+  }
+  #endif
+
+  func queue(_ text: String, kind: String) -> Bool {
     #if DEBUG
     return NoLateJourneyDiagnostics.shared.queueGuidanceInstruction(text)
     #else
     guard UIApplication.shared.applicationState == .active,
       !text.isEmpty, text.utf8.count <= 512,
       !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
-      !synthesizer.isSpeaking else { return false }
+      !synthesizer.isSpeaking, let voice = AVSpeechSynthesisVoice(language: "ko-KR") else { return false }
     do {
       // Ambient audio obeys the hardware silent switch; navigation never overrides it.
-      try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+      try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
     } catch { return false }
     let utterance = AVSpeechUtterance(string: text)
-    utterance.voice = AVSpeechSynthesisVoice(language: "ko-KR")
+    utterance.voice = voice
+    spoken = (ObjectIdentifier(utterance), kind)
     synthesizer.speak(utterance)
     return true
     #endif

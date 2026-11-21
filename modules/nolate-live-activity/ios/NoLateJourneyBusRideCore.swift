@@ -44,6 +44,12 @@ struct NoLateJourneyBusRideCore: Sendable {
     // A label-only memory of the last confirmed ride. Never a current position.
     var lastConfirmedAt: Double?
   }
+  struct RecentConfirmation: Sendable {
+    let vehicleId: String
+    let observedAt: Double
+    let alongRouteMeters: Double
+    let routeLengthMeters: Double
+  }
   enum Failure: Error { case invalidRoute }
   let route: Route
   let armedAt: Double
@@ -61,8 +67,19 @@ struct NoLateJourneyBusRideCore: Sendable {
   // Only a short-lived identity fence for rechecking the same vehicle after a
   // provider gap. It never carries a position or confirms riding by itself.
   private var recentConfirmedId: String?
+  private var recentConfirmedSource: Double?
+  private var recentConfirmedVehicleAlong: Double?
+  private var recentConfirmedPassengerAlong: Double?
+  private var recentConfirmedRouteLength: Double?
   // Ephemeral native-only correlation port; never part of Snapshot, Envelope or a log.
   var associatedVehicleId: String? { snapshot.boardingConfirmed ? confirmedId : nil }
+  func recentConfirmation(now: Double) -> RecentConfirmation? {
+    guard now.isFinite, let vehicleId = recentConfirmedId,
+      let at = snapshot.lastConfirmedAt, at.isFinite, at <= now, now - at < 90,
+      let along = recentConfirmedPassengerAlong, let length = recentConfirmedRouteLength,
+      [along,length].allSatisfy(\.isFinite), 0 <= along, along <= length else { return nil }
+    return .init(vehicleId: vehicleId, observedAt: at, alongRouteMeters: along, routeLengthMeters: length)
+  }
   private var lastEvaluationAt: Double?
   private var terminated = false
 
@@ -104,10 +121,14 @@ struct NoLateJourneyBusRideCore: Sendable {
     }
     if let previous = history.last {
       let elapsed = location.observedAt - previous.time
-      guard elapsed > 0, elapsed <= 20,
-        projected.alongRouteMeters >= previous.along - 8,
-        abs(projected.alongRouteMeters - previous.along) <= 180,
-        max(0, abs(projected.alongRouteMeters - previous.along) - previous.accuracy - location.horizontalAccuracyMeters) / elapsed <= 25 else {
+      let delta = projected.alongRouteMeters - previous.along
+      let residualSpeed = elapsed > 0
+        ? max(0, abs(delta) - previous.accuracy - location.horizontalAccuracyMeters) / elapsed : .infinity
+      guard elapsed > 0, elapsed <= 20, delta >= -8, abs(delta) <= 180, residualSpeed <= 25 else {
+        #if targetEnvironment(simulator)
+        NSLog("NOLATE_GUIDANCE_RIDE movement_rejected elapsed=%.2f delta=%.1f speed=%.1f cross=%.1f",
+          elapsed,delta,residualSpeed,projected.crossTrackMeters)
+        #endif
         invalidate("PASSENGER_MOVEMENT_UNRELIABLE"); return
       }
     }
@@ -179,10 +200,19 @@ struct NoLateJourneyBusRideCore: Sendable {
     if recovering, let recentConfirmedId, recentConfirmedId != vehicle.id {
       invalidate("ASSOCIATED_VEHICLE_CHANGED", clearHistory: false); return
     }
+    if recovering, confirmedId == nil, let recentConfirmedSource,
+      vehicle.sourceAt <= recentConfirmedSource {
+      snapshot.reason = "VEHICLE_SOURCE_NOT_ADVANCED"; return
+    }
     if candidateId != vehicle.id {
       clearCandidate(); candidateId = vehicle.id; candidateFirstAt = vehicle.sourceAt
       candidateFirstAlong = vehicleAlong
     }
+    let canResume = confirmedId == nil && recovering
+      && recentConfirmedId == vehicle.id
+      && recentConfirmedSource.map { vehicle.sourceAt > $0
+        && vehicle.sourceAt - $0 <= NoLateJourneyBusVehicleFreshness.maxSourceGap } == true
+      && recentConfirmedVehicleAlong.map { vehicleAlong >= $0 - 8 } == true
     // Repeated receipt of the same provider fix cannot accumulate evidence or extend its TTL.
     if let previousSource = candidateLastSource {
       guard vehicle.sourceAt > previousSource else {
@@ -203,13 +233,19 @@ struct NoLateJourneyBusRideCore: Sendable {
     }
     candidateLastSource = vehicle.sourceAt; candidateLastVehicleAlong = vehicleAlong
     snapshot.evidenceCount = min(1000, snapshot.evidenceCount + 1)
-    if confirmedId == nil, let started = candidateFirstAt, let startAlong = candidateFirstAlong,
+    if canResume {
+      confirmedId = vehicle.id
+    } else if confirmedId == nil, let started = candidateFirstAt, let startAlong = candidateFirstAlong,
       snapshot.evidenceCount >= 3, vehicle.sourceAt - started >= 12, vehicleAlong - startAlong >= 70 {
       confirmedId = vehicle.id
     }
     snapshot.boardingConfirmed = confirmedId != nil
     if confirmedId != nil {
       recentConfirmedId = vehicle.id
+      recentConfirmedSource = vehicle.sourceAt
+      recentConfirmedVehicleAlong = vehicleAlong
+      recentConfirmedPassengerAlong = projected.alongRouteMeters
+      recentConfirmedRouteLength = projected.routeLengthMeters
       snapshot.lastConfirmedAt = location.observedAt
     }
     snapshot.phase = confirmedId == nil ? "BOARDING_CANDIDATE" : "RIDING"
@@ -226,6 +262,8 @@ struct NoLateJourneyBusRideCore: Sendable {
     lastEvaluationAt = now
     if let at = snapshot.lastConfirmedAt, now - at >= 90 {
       snapshot.lastConfirmedAt = nil; recentConfirmedId = nil
+      recentConfirmedSource = nil; recentConfirmedVehicleAlong = nil
+      recentConfirmedPassengerAlong = nil; recentConfirmedRouteLength = nil
     }
     if now >= expiresAt {
       stop(); snapshot.reason = "RIDING_SESSION_EXPIRED"; return
@@ -261,8 +299,14 @@ struct NoLateJourneyBusRideCore: Sendable {
     if confirmedId != nil { recentConfirmedId = confirmedId }
     if !preserveCandidate { clearCandidate() }
     confirmedId = nil
-    if reason != "RIDING_EVIDENCE_STALE" && reason != "VEHICLE_ASSOCIATION_UNAVAILABLE" {
+    // One rejected GPS movement must hide the public ride position, but it does
+    // not prove that the already associated vehicle changed. A fresh, distinct
+    // source fix and synchronized passenger history are still required to resume.
+    if reason != "RIDING_EVIDENCE_STALE" && reason != "VEHICLE_ASSOCIATION_UNAVAILABLE"
+      && reason != "PASSENGER_MOVEMENT_UNRELIABLE" {
       snapshot.lastConfirmedAt = nil; recentConfirmedId = nil
+      recentConfirmedSource = nil; recentConfirmedVehicleAlong = nil
+      recentConfirmedPassengerAlong = nil; recentConfirmedRouteLength = nil
     }
     if clearHistory { history.removeAll() }
     snapshot.phase = "UNAVAILABLE"; snapshot.quality = "UNCERTAIN"; snapshot.reason = reason
@@ -302,7 +346,7 @@ enum NoLateJourneyBusAlightingPolicy {
     guard raw.count == input.legs[index].coordinates.count else { return nil }
     // The independently admitted official crosswalk collapses only adjacent
     // zero-length edges. Match the ride against exactly that same canonical shape.
-    let admitted = officialBusAdmission?.matches(input) == true
+    let admitted = officialBusAdmission?.busLegIndex == index && officialBusAdmission?.matches(input) == true
     let canonical = admitted ? raw.reduce(into: [Engine.Coordinate]()) { result, point in
       if result.last != point { result.append(point) }
     } : raw
@@ -327,7 +371,12 @@ enum NoLateJourneyBusAlightingPolicy {
     // lower/upper bound. A borderline GPS fix cannot prematurely cross a stop boundary.
     let remaining = max(0, route.targetAlong - along)
     let metres = ceil(remaining / 10) * 10
-    if remaining + 25 <= 50 { return .init(kind:"NEAR_STOP", remainingMeters:metres) }
+    // The official feed advances by roughly one bus block per source fix. A
+    // 50 m trigger can be skipped entirely; this bounded approach window is
+    // still after the verified previous stop on the admitted route shape.
+    if remaining + 25 <= 260, along - 25 >= route.previousStopAlong {
+      return .init(kind:"NEAR_STOP", remainingMeters:metres)
+    }
     guard along - 25 >= route.previousStopAlong else { return nil }
     return .init(kind:"ONE_STOP_BEFORE", remainingMeters:metres)
   }
@@ -336,6 +385,8 @@ enum NoLateJourneyBusAlightingPolicy {
 /// R3-2 ephemeral diagnostic evidence only. Stationary GPS or disappearance of a bus
 /// is NOT alighting. No phase transition, final-walk permit, persistence or UI action.
 struct NoLateJourneyBusSeparationCore: Sendable {
+  // Shared with the walking consumer so an accepted bus departure can hand off.
+  static let minimumDepartureFixes = 2
   typealias E = NoLateJourneyEngineCore
   typealias Ride = NoLateJourneyBusRideCore
   struct Snapshot: Equatable, Sendable {
@@ -352,6 +403,7 @@ struct NoLateJourneyBusSeparationCore: Sendable {
   private var firstPast: Double?
   private var lastSource: Double?
   private var lastPast: Double?
+  private var acceptedCount = 0
   private var lastLocation: (at:Double, coordinate:E.Coordinate, accuracy:Double)?
   private var lastSequence: Int64 = -1
   private var lastNow = 0.0
@@ -359,7 +411,8 @@ struct NoLateJourneyBusSeparationCore: Sendable {
 
   init(route: Ride.Route) { self.route = route }
 
-  mutating func ingest(_ location:E.Observation, priorRide:Ride.Snapshot?, associatedId:String?, vehicles:[Ride.Vehicle], now:Double) {
+  mutating func ingest(_ location:E.Observation, priorRide:Ride.Snapshot?, associatedId:String?,
+    recentRide:Ride.RecentConfirmation? = nil, vehicles:[Ride.Vehicle], now:Double) {
     guard !stopped, now.isFinite, now >= lastNow, location.identity == route.identity,
       location.sequence > lastSequence, location.sequence < Int64.max else { return }
     tick(now:now); lastSequence = location.sequence
@@ -375,9 +428,20 @@ struct NoLateJourneyBusSeparationCore: Sendable {
       let at = priorRide.observedAt, let until = priorRide.validUntil,
       let along = priorRide.alongRouteMeters, let length = priorRide.routeLengthMeters,
       [at,until,along,length].allSatisfy(\.isFinite), at <= now, now < until, until <= at + 15,
-      length - along <= 50, let associatedId, associatedId.range(of:"^[1-9][0-9]{8}$",options:.regularExpression) != nil {
-      if trackedId != associatedId { resetEvidence("WAITING_FOR_VEHICLE_DEPARTURE") }
-      trackedId = associatedId; trackUntil = now + 90
+      length - along <= min(260,route.departureWindowMeters),
+      let associatedId, associatedId.range(of:"^[1-9][0-9]{8}$",options:.regularExpression) != nil {
+      track(associatedId, confirmedAt:now)
+    } else if let recentRide,
+      recentRide.vehicleId.range(of:"^[1-9][0-9]{8}$",options:.regularExpression) != nil,
+      recentRide.observedAt.isFinite, recentRide.observedAt <= now,
+      now - recentRide.observedAt < 90,
+      [recentRide.alongRouteMeters,recentRide.routeLengthMeters].allSatisfy(\.isFinite),
+      recentRide.routeLengthMeters - recentRide.alongRouteMeters >= 0,
+      recentRide.routeLengthMeters - recentRide.alongRouteMeters <= min(260,route.departureWindowMeters) {
+      // A source gap may hide the ride at the exact stop. This private,
+      // short-lived confirmation only identifies the same vehicle for later
+      // independent departure fixes; it never confirms alighting itself.
+      track(recentRide.vehicleId, confirmedAt:recentRide.observedAt)
     }
     guard let trackedId, now < trackUntil else { clearTrack("CONFIRMED_TARGET_RIDE_REQUIRED"); return }
     // Keep a stationary passenger history across 1 Hz CLLocation fixes. No motion from clocks.
@@ -389,17 +453,30 @@ struct NoLateJourneyBusSeparationCore: Sendable {
       }
     }
     lastLocation = (location.observedAt,location.coordinate,location.horizontalAccuracyMeters)
-    guard vehicles.count <= 100, vehicles.filter({ $0.id == trackedId }).count == 1,
-      let v = vehicles.first(where:{$0.id == trackedId}), v.routeId == route.providerRouteId, v.direction == route.direction,
+    guard vehicles.count <= 100 else { resetEvidence("MATCHED_DEPARTING_VEHICLE_REQUIRED"); return }
+    let matching = vehicles.filter { $0.id == trackedId }
+    // A provider gap hides the current result, but does not turn the next
+    // distinct source fix into a first observation of the same departure.
+    guard !matching.isEmpty else { suspendEvidence("MATCHED_DEPARTING_VEHICLE_REQUIRED"); return }
+    guard matching.count == 1, let v = matching.first,
+      v.routeId == route.providerRouteId, v.direction == route.direction,
       (route.approach.provenance == .syntheticReplay && v.source == .syntheticReplay)
         || (route.approach.provenance == .providerShape && v.source == .verifiedWGS84),
       [v.sourceAt,v.receivedAt,v.validUntil].allSatisfy(\.isFinite),
       [v.coordinate.latitude,v.coordinate.longitude].allSatisfy(\.isFinite),
       abs(v.coordinate.latitude) <= 90, abs(v.coordinate.longitude) <= 180,
-      v.sourceAt <= v.receivedAt, v.receivedAt <= now, v.sourceAt <= location.observedAt,
+      v.sourceAt <= v.receivedAt, v.receivedAt <= now, v.sourceAt <= location.observedAt else {
+      resetEvidence("MATCHED_DEPARTING_VEHICLE_REQUIRED"); return
+    }
+    guard
       location.observedAt - v.sourceAt < NoLateJourneyBusVehicleFreshness.maxSourceAge,
       now < v.validUntil, v.validUntil <= v.sourceAt + NoLateJourneyBusVehicleFreshness.maxSourceAge,
-      let past = v.metersPastAlighting, past.isFinite, past >= 75, past <= route.departureWindowMeters,
+      v.sourceAt >= (lastSource ?? v.sourceAt) else {
+      suspendEvidence("MATCHED_DEPARTING_VEHICLE_REQUIRED"); return
+    }
+    guard
+      let past = v.metersPastAlighting, past.isFinite, past >= 75,
+      past <= route.departureWindowMeters + 25,
       Self.distance(target,v.coordinate) > 25, Self.distance(target,v.coordinate) <= past + 25,
       Self.distance(v.coordinate,location.coordinate) - location.horizontalAccuracyMeters >= 60 else {
       resetEvidence("MATCHED_DEPARTING_VEHICLE_REQUIRED"); return
@@ -412,8 +489,10 @@ struct NoLateJourneyBusSeparationCore: Sendable {
     }
     if firstSource == nil { firstSource = v.sourceAt; firstPast = past }
     lastSource = v.sourceAt; lastPast = past
-    snapshot.evidenceCount = min(1000,snapshot.evidenceCount + 1)
-    let observed = snapshot.evidenceCount >= 3 && v.sourceAt - (firstSource ?? v.sourceAt) >= 12 && past - (firstPast ?? past) >= 40
+    acceptedCount = min(1000,acceptedCount + 1)
+    snapshot.evidenceCount = acceptedCount
+    let observed = acceptedCount >= Self.minimumDepartureFixes
+      && v.sourceAt - (firstSource ?? v.sourceAt) >= 12 && past - (firstPast ?? past) >= 40
     snapshot.status = observed ? "SEPARATION_OBSERVED" : "COLLECTING"
     snapshot.reason = observed ? "SAME_VEHICLE_DEPARTED_PASSENGER_AT_TARGET" : "DISTINCT_DEPARTURE_FIXES_REQUIRED"
     snapshot.validUntil = min(v.validUntil,location.observedAt + 15)
@@ -421,11 +500,23 @@ struct NoLateJourneyBusSeparationCore: Sendable {
   mutating func tick(now:Double) {
     guard !stopped, now.isFinite, now >= lastNow else { return }; lastNow = now
     if trackedId != nil, now >= trackUntil { clearTrack("CORRELATION_WINDOW_EXPIRED") }
-    else if let until = snapshot.validUntil, now >= until { resetEvidence("SEPARATION_EVIDENCE_STALE") }
+    else if let until = snapshot.validUntil, now >= until { suspendEvidence("SEPARATION_EVIDENCE_STALE") }
   }
   mutating func stop() { clearTrack("SESSION_STOPPED"); stopped = true }
+  private mutating func track(_ id:String, confirmedAt:Double) {
+    if trackedId != id { resetEvidence("WAITING_FOR_VEHICLE_DEPARTURE") }
+    trackedId = id
+    trackUntil = max(trackUntil,confirmedAt + 150)
+  }
   private mutating func resetEvidence(_ reason:String) {
     firstSource = nil; firstPast = nil; lastSource = nil; lastPast = nil
+    acceptedCount = 0
+    snapshot = .init(status:"UNAVAILABLE",reason:reason,evidenceCount:0,validUntil:nil)
+  }
+  private mutating func suspendEvidence(_ reason:String) {
+    // No usable alighting signal is exposed during the gap. Internal source
+    // history remains bounded by trackUntil and the max source gap checked on
+    // the next distinct, same-vehicle fix.
     snapshot = .init(status:"UNAVAILABLE",reason:reason,evidenceCount:0,validUntil:nil)
   }
   private mutating func clearTrack(_ reason:String) {
@@ -512,21 +603,24 @@ struct NoLateJourneyFinalWalkCore: Sendable {
       busPath:.init(coordinates:ride.approach.coordinates,provenance:.verifiedWalkingPath),length:length,destination:point(destination),walkingLegIndex:walkIndex)
   }
 
-  /// A subway exit uses the same owned final walking geometry, but its permit
-  /// comes from a separately observed passenger exit rather than a bus vehicle.
-  static func prepare(json: String, subway: NoLateJourneySubwayRideCore.Route) -> Route? {
+  /// The walking target is the next platform on a transfer or the saved destination on the last leg.
+  static func prepare(json: String, subway: NoLateJourneySubwayRideCore.Route,
+    busAdmissions: [NoLateJourneyRouteNormalizer.OfficialBusAdmission] = [],
+    subwayAdmissions: [NoLateJourneyRouteNormalizer.OfficialSubwayAdmission] = []) -> Route? {
     let transitIndex = subway.legIndex, walkIndex = transitIndex + 1
-    guard transitIndex == 1, walkIndex == 2,
-      let summary = try? NoLateJourneyRouteNormalizer.normalize(json: json),
+    guard (1...29).contains(transitIndex), transitIndex % 2 == 1,
+      let summary = try? NoLateJourneyRouteNormalizer.normalize(json:json,busAdmissions:busAdmissions,subwayAdmissions:subwayAdmissions),
       let input = try? JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self, from: Data(json.utf8)),
       input.provider == "odsay", input.source == "api", input.routeRevision == subway.identity.routeRevision,
-      input.legs.count == 3, input.legs[0].kind == "WALK", input.legs[transitIndex].kind == "SUBWAY",
+      (3...31).contains(input.legs.count), input.legs.count % 2 == 1, input.legs.indices.contains(walkIndex),
+      input.legs.enumerated().allSatisfy({ $0.offset % 2 == 0 ? $0.element.kind == "WALK" : ["BUS","SUBWAY"].contains($0.element.kind) }),
+      input.legs[transitIndex].kind == "SUBWAY",
       input.legs[walkIndex].kind == "WALK", input.legs[transitIndex].stops.count == subway.stations.count,
       summary.legs[walkIndex].geometryUsable, let length = summary.legs[walkIndex].geometryLengthMeters,
-      (70...10_000).contains(length), input.legs[walkIndex].serviceAvailable != false,
+      (1...10_000).contains(length), input.legs[walkIndex].serviceAvailable != false,
       let target = input.legs[transitIndex].stops.last?.coordinate,
       let officialTarget = subway.stations.last?.coordinate,
-      let destination = input.destination,
+
       let walking = try? NoLateJourneyRouteNormalizer.routeCoordinates(input,legIndex:walkIndex),
       let transit = try? NoLateJourneyRouteNormalizer.routeCoordinates(input,legIndex:transitIndex),
       let start = walking.first ?? nil, let end = walking.last ?? nil,
@@ -538,6 +632,16 @@ struct NoLateJourneyFinalWalkCore: Sendable {
             subway.stations[offset].coordinate) <= 25
         } == true
       }) else { return nil }
+    let transfer = walkIndex < input.legs.count - 1
+    let destination: NoLateJourneyRouteNormalizer.Coordinate
+    if transfer {
+      let next = input.legs[walkIndex + 1]
+      guard next.serviceAvailable != false, let board = next.stops.first?.coordinate else { return nil }
+      destination = board
+    } else {
+      guard length >= 70, let end = input.destination else { return nil }
+      destination = end
+    }
     func point(_ p: NoLateJourneyRouteNormalizer.Coordinate) -> E.Coordinate {
       .init(latitude:p.latitude, longitude:p.longitude)
     }
@@ -555,7 +659,7 @@ struct NoLateJourneyFinalWalkCore: Sendable {
     return .init(identity:subway.identity,
       path:.init(coordinates:walkCoordinates,provenance:.verifiedWalkingPath),
       busPath:.init(coordinates:transitCoordinates,provenance:.verifiedWalkingPath),
-      length:length,destination:point(destination),walkingLegIndex:walkIndex,isSubwayFinalWalk:true)
+      length:length,destination:point(destination),walkingLegIndex:walkIndex,isTransfer:transfer,isSubwayFinalWalk:true)
   }
   mutating func ingest(_ fix:E.Observation, separation:Separation?, now:Double) {
     guard !stopped, now.isFinite, now >= lastNow, fix.identity == route.identity,
@@ -569,7 +673,10 @@ struct NoLateJourneyFinalWalkCore: Sendable {
       projection.crossTrackMeters + fix.horizontalAccuracyMeters <= 25 else { reject("FINAL_WALK_LOCATION_UNRELIABLE"); return }
     let along = projection.alongRouteMeters
     if !committed, permitUntil == nil {
-      guard let separation, separation.status == "SEPARATION_OBSERVED", separation.evidenceCount >= 3,
+      // Subway separation keeps its own three-fix contract. Bus final and
+      // transfer walks consume the same evidence threshold as the bus reducer.
+      let minimumFixes = route.isSubwayFinalWalk ? 3 : NoLateJourneyBusSeparationCore.minimumDepartureFixes
+      guard let separation, separation.status == "SEPARATION_OBSERVED", separation.evidenceCount >= minimumFixes,
         let until = separation.validUntil, until.isFinite, now < until, until <= fix.observedAt + 15,
         let start = route.path.coordinates.first,
         NoLateJourneyBusSeparationCore.distance(start,fix.coordinate) + fix.horizontalAccuracyMeters <= 50,
@@ -665,10 +772,12 @@ struct NoLateJourneyTransferWalkCore: Sendable {
   init(route: Route) { self.route = route; walk = NoLateJourneyFinalWalkCore(route: route.walk) }
 
   static func prepare(json: String, ride: NoLateJourneyBusRideCore.Route,
-    officialBusAdmission: NoLateJourneyRouteNormalizer.OfficialBusAdmission? = nil) -> Route? {
+    officialBusAdmission: NoLateJourneyRouteNormalizer.OfficialBusAdmission? = nil,
+    busAdmissions: [NoLateJourneyRouteNormalizer.OfficialBusAdmission] = [],
+    subwayAdmissions: [NoLateJourneyRouteNormalizer.OfficialSubwayAdmission] = []) -> Route? {
     let index = ride.approach.legIndex, walkingIndex = index + 1, nextIndex = index + 2
     guard let summary = try? NoLateJourneyRouteNormalizer.normalize(json: json,
-      officialBusAdmission: officialBusAdmission),
+      officialBusAdmission: officialBusAdmission, busAdmissions:busAdmissions, subwayAdmissions:subwayAdmissions),
       let input = try? JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self, from: Data(json.utf8)),
       input.routeRevision == ride.identity.routeRevision,
       summary.reasonCodes == ["SAVED_ROUTE_REVALIDATION_REQUIRED"] || summary.reasonCodes.isEmpty
@@ -679,14 +788,20 @@ struct NoLateJourneyTransferWalkCore: Sendable {
         officialBusAdmission: officialBusAdmission) != nil,
       summary.legs[walkingIndex].geometryUsable, let length = summary.legs[walkingIndex].geometryLengthMeters,
       (1...10_000).contains(length), input.legs[walkingIndex].serviceAvailable != false,
-      summary.legs[nextIndex].geometryUsable, summary.legs[nextIndex].stopSequenceUsable,
-      summary.legs[nextIndex].directionExplicit, input.legs[nextIndex].serviceAvailable != false,
-      let routeId = input.legs[nextIndex].providerRouteId, !routeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      input.legs[nextIndex].serviceAvailable != false,
       let alight = input.legs[index].stops.last?.coordinate,
       let board = input.legs[nextIndex].stops.first?.coordinate,
       let points = try? NoLateJourneyRouteNormalizer.routeCoordinates(input, legIndex: walkingIndex),
       let start = points.first ?? nil, let end = points.last ?? nil,
       let declaredStart = input.legs[walkingIndex].start, let declaredEnd = input.legs[walkingIndex].end else { return nil }
+    // The handoff targets a saved boarding point. An official station-path proof
+    // identifies that occurrence even when ODsay omitted a separate direction label.
+    let nextTrain = subwayAdmissions.first { $0.subwayLegIndex == nextIndex && $0.matches(input) }
+    let nextBus = busAdmissions.first { $0.busLegIndex == nextIndex && $0.matches(input) }
+    let nextQuality = summary.legs[nextIndex]
+    let hasRouteID = input.legs[nextIndex].providerRouteId?.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty == false
+    guard nextTrain != nil || (nextQuality.geometryUsable && nextQuality.stopSequenceUsable &&
+      nextQuality.directionExplicit && (hasRouteID || nextBus != nil)) else { return nil }
     func p(_ c: NoLateJourneyRouteNormalizer.Coordinate) -> E.Coordinate { .init(latitude:c.latitude, longitude:c.longitude) }
     let distance = NoLateJourneyBusSeparationCore.distance
     guard distance(p(alight),p(start)) <= 25, distance(p(start),p(declaredStart)) <= 25,
@@ -697,7 +812,7 @@ struct NoLateJourneyTransferWalkCore: Sendable {
       walk:.init(identity:ride.identity,
         path:.init(coordinates:coordinates, provenance:ride.approach.provenance == .syntheticReplay ? .syntheticReplay : .verifiedWalkingPath),
         busPath:.init(coordinates:ride.approach.coordinates, provenance:.verifiedWalkingPath),
-        length:length, destination:p(board), isTransfer:true))
+        length:length, destination:p(board), walkingLegIndex:walkingIndex, isTransfer:true))
   }
   mutating func ingest(_ fix:E.Observation, separation:NoLateJourneyBusSeparationCore.Snapshot?, now:Double) {
     walk.ingest(fix,separation:separation,now:now)

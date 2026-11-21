@@ -1,0 +1,538 @@
+{
+  "verifiedAt": "2026-11-20T06:04:44.060182+09:00",
+  "scope": "iOS simulator, normal React Native route planner and authenticated isolated H2 + live TMAP place search, ODsay route search and TAGO schedules. The signed simulator app retained its native shell and embedded the updated Release JS bundle.",
+  "placeSearch": [
+    {
+      "query": "동대구역",
+      "oldNearbyPoiCount": 0,
+      "oldFirstResult": [
+        "동대구역 1",
+        13173837
+      ],
+      "fixedFirstResult": [
+        "동대구역[KTX정차역]",
+        237691
+      ]
+    },
+    {
+      "query": "속초시외버스터미널",
+      "oldNearbyPoiCount": 0,
+      "oldFirstResult": [
+        "속초시외버스터미널",
+        151391
+      ],
+      "fixedFirstResult": [
+        "속초시외버스터미널",
+        151397
+      ]
+    },
+    {
+      "query": "약국",
+      "oldNearbyPoiCount": null,
+      "oldFirstResult": [
+        "소아제일약국",
+        237
+      ],
+      "fixedFirstResult": [
+        "소아제일약국",
+        237
+      ]
+    },
+    {
+      "query": "진주시외버스터미널",
+      "oldNearbyPoiCount": 0,
+      "oldFirstResult": [
+        "진주시외버스터미널 1",
+        13449103
+      ],
+      "fixedFirstResult": [
+        "진주시외버스터미널",
+        81333
+      ]
+    }
+  ],
+  "geocoding": "The official address service returned blank new coordinates and a valid old address pair. Numeric conversion previously produced (0,0); the application now chooses an intact valid pair.",
+  "routes": [
+    {
+      "tag": "dongseoul-sokcho",
+      "checked": 4,
+      "shortlist": 1,
+      "expected": "INTERCITY_BUS",
+      "first": [
+        "WALK",
+        "INTERCITY_BUS"
+      ]
+    },
+    {
+      "tag": "seoul-dongdaegu",
+      "checked": 9,
+      "shortlist": 2,
+      "expected": "TRAIN",
+      "first": [
+        "TRAIN",
+        "WALK"
+      ]
+    },
+    {
+      "tag": "seobu-jinju",
+      "checked": 5,
+      "shortlist": 5,
+      "expected": "INTERCITY_BUS",
+      "first": [
+        "WALK",
+        "SUBWAY",
+        "WALK",
+        "INTERCITY_BUS",
+        "WALK",
+        "BUS",
+        "WALK"
+      ]
+    }
+  ],
+  "normalScheduleReadback": [
+    {
+      "provider": "odsay",
+      "kind": "INTERCITY_BUS",
+      "from": "동서울종합터미널",
+      "to": "속초시외버스터미널",
+      "deadline": "2026-11-21T14:00:00+09:00",
+      "normalAPIReopened": true,
+      "timeBasis": "route_estimate",
+      "firstLegs": [
+        "WALK",
+        "INTERCITY_BUS"
+      ]
+    },
+    {
+      "provider": "odsay",
+      "kind": "TRAIN",
+      "from": "서울",
+      "to": "동대구",
+      "deadline": "2026-11-21T14:00:00+09:00",
+      "normalAPIReopened": true,
+      "timeBasis": "route_estimate",
+      "firstLegs": [
+        "TRAIN",
+        "WALK"
+      ]
+    }
+  ],
+  "timetable": {
+    "sameTripBeforeFix": {
+      "date": "2026-11-21",
+      "fromQuery": "AVAILABLE",
+      "toQuery": "AVAILABLE",
+      "status": "AVAILABLE",
+      "source": "TAGO",
+      "firstPageCount": 127,
+      "hasMore": true,
+      "arriveBefore1400OnFirstPage": 45,
+      "tripDateVerified": true,
+      "pageTwoCount": 127,
+      "pageTwoStatus": "AVAILABLE",
+      "duplicateIds": 127,
+      "providerCalls": [
+        {
+          "op": "GetCtyAcctoTrainSttnList",
+          "page": "1",
+          "count": 12,
+          "total": 12,
+          "status": "AVAILABLE"
+        },
+        {
+          "op": "GetCtyAcctoTrainSttnList",
+          "page": "1",
+          "count": 5,
+          "total": 5,
+          "status": "AVAILABLE"
+        },
+        {
+          "op": "GetStrtpntAlocFndTrainInfo",
+          "page": "1",
+          "count": 127,
+          "total": 127,
+          "status": "AVAILABLE"
+        },
+        {
+          "op": "GetStrtpntAlocFndTrainInfo",
+          "page": "2",
+          "count": 127,
+          "total": 127,
+          "status": "AVAILABLE"
+        }
+      ]
+    },
+    "sameTripAfterFix": {
+      "date": "2026-11-21",
+      "fromQuery": "AVAILABLE",
+      "toQuery": "AVAILABLE",
+      "fromId": "NAT010000",
+      "toId": "NAT013271",
+      "status": "AVAILABLE",
+      "source": "TAGO",
+      "firstPageCount": 100,
+      "hasMore": true,
+      "arriveBefore1400OnFirstPage": 45,
+      "tripDateVerified": true,
+      "pageTwoCount": 27,
+      "pageTwoHasMore": false,
+      "pageTwoStatus": "AVAILABLE",
+      "duplicateIds": 0,
+      "providerCalls": [
+        {
+          "page": "1",
+          "op": "GetCtyAcctoTrainSttnList",
+          "status": "AVAILABLE",
+          "total": 12,
+          "count": 12
+        },
+        {
+          "page": "1",
+          "op": "GetCtyAcctoTrainSttnList",
+          "status": "AVAILABLE",
+          "total": 5,
+          "count": 5
+        },
+        {
+          "page": "1",
+          "op": "GetStrtpntAlocFndTrainInfo",
+          "status": "AVAILABLE",
+          "total": 127,
+          "count": 127
+        },
+        {
+          "page": "2",
+          "op": "GetStrtpntAlocFndTrainInfo",
+          "status": "AVAILABLE",
+          "total": 127,
+          "count": 127
+        }
+      ]
+    },
+    "authenticatedHTTP": {
+      "route": [
+        "서울",
+        "동대구"
+      ],
+      "scheduleDate": "2026-11-21",
+      "provider": "TAGO",
+      "pages": [
+        {
+          "page": 1,
+          "items": 100,
+          "hasMore": true
+        },
+        {
+          "page": 2,
+          "items": 27,
+          "hasMore": false
+        }
+      ],
+      "uniqueCount": 127,
+      "arrivingBy1400": 45,
+      "bookingStatus": "UNCONFIRMED"
+    },
+    "finalAppAndCurrentServicePageEquivalence": [
+      {
+        "page": 1,
+        "length": 100,
+        "sameRowsAndOrder": true,
+        "iOSBackend": "f94734ae69e92c794472f9d7c6beb8206775cda54263516ce07de04fca0f81e9",
+        "finalBackend": "f94734ae69e92c794472f9d7c6beb8206775cda54263516ce07de04fca0f81e9",
+        "sameIds": true
+      },
+      {
+        "page": 2,
+        "length": 27,
+        "sameRowsAndOrder": true,
+        "iOSBackend": "e9b5fec2a60ccb4195b3b09ba7b44c32c4d727c260c6ee8b4df0dc8ee1db4e34",
+        "finalBackend": "e9b5fec2a60ccb4195b3b09ba7b44c32c4d727c260c6ee8b4df0dc8ee1db4e34",
+        "sameIds": true
+      }
+    ],
+    "equalDepartureTimeOrder": "Provider rows sharing a departure time use service identity to determine page order. A backend regression repeats two differently ordered complete responses across a page boundary."
+  },
+  "release": {
+    "source": {
+      "src/modules/map/tmapApiCore.ts": "cac39e19bb84ea4085e4c45ea5df411c55648821be1d1fcb3c5f1f8322b8764f",
+      "src/modules/map/tmapPlaceSearch.ts": "0d46fe3d659c75b909fa6759d0e2e253edbaa1e3855890d03afbb8d3ea6fcfa8",
+      "src/modules/schedule/routePlanner/useRoutePlannerPlaceSelection.ts": "26e57f83c8d931a70f35f51fb67cd406b09765168fc29d5b2c331b68ae464125",
+      "src/routeSupport/schedule/useRouteSelectController.tsx": "12060a3c4cf09d59422e06257caf94633bd04b1496fa5f83c98c0f358ebd8499"
+    },
+    "udid": "72E1C182-8FBA-4BAD-BC27-170AE1DF2323",
+    "releaseJavaScriptBundle": "4da9cff5297fdba22d7e82427a2c8dde6a9578403d1d81d75794e4895e8f34ff",
+    "signedRetainedNativeShell": true,
+    "productAPI": "http://127.0.0.1:5528",
+    "installed": true
+  },
+  "backendHashes": {
+    "src/main/kotlin/com/noLate/intercity/IntercityTimetable.kt": "4d074c73f4f0b3d79aec9d5452a9451947139bf7fc623bd100c75c08eb8a9515",
+    "src/main/kotlin/com/noLate/intercity/RestIntercityTagoTransport.kt": "83c14d3b612fb3719198d8b51d3ca8bacd5a148f7967a35f711c976e2550a9eb",
+    "src/test/kotlin/com/noLate/intercity/IntercityTimetableServiceTest.kt": "9915d0d611d351b008284c5b0700efeeed6743145985570e78e313014ce3e3e6"
+  },
+  "simulator": {
+    "routeSearchAndReopen": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "xcresult": "/private/tmp/nolate-sim-transit-preflight-8usw_gj0/fixed-ui-27/result.xcresult"
+    },
+    "normalDateAndPaging27": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "xcresult": "/private/tmp/nolate-sim-transit-preflight-8usw_gj0/final-product/dated-rail-27/result.xcresult"
+    },
+    "normalDateAndPaging26": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "xcresult": "/private/tmp/nolate-sim-transit-preflight-8usw_gj0/final-product/dated-rail-26-menu/result.xcresult"
+    },
+    "prior26SuccessfulFullRun": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "xcresult": "/private/tmp/nolate-sim-transit-preflight-8usw_gj0/live-tago/dated-rail-26/result.xcresult"
+    }
+  },
+  "screenshots": [
+    {
+      "path": "docs/evidence/intercity-search-20261120/01-bus-reopened.png",
+      "sha256": "aefb71ac546a475b245c70123ae0a39fbb9b31eb5c519969e25e09be0f092091"
+    },
+    {
+      "path": "docs/evidence/intercity-search-20261120/02-rail-station-search.png",
+      "sha256": "c46204cd93363aa8655ca320994410ad59fdc4dc02b1d8f837d54aa5bc5ba3b6"
+    },
+    {
+      "path": "docs/evidence/intercity-search-20261120/03-rail-reopened.png",
+      "sha256": "39b1cfeecfe8d8e3d39aab42c26adf13382930fa9d3b1fbc28e06c262334a215"
+    },
+    {
+      "path": "docs/evidence/intercity-search-20261120/04-rail-timetable.png",
+      "sha256": "8a5cbe305f8857250591bceeb65777750d92161f17dd2b81dbe03679188610f2"
+    }
+  ],
+  "regressions": {
+    "frontendFocused": 60,
+    "frontendExtended": 252,
+    "backend": {
+      "tests": 93,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "typescript": "passed",
+    "eslint": {
+      "errors": 0,
+      "existingNoVoidWarnings": 3
+    }
+  },
+  "earlierAttempts": [
+    "The first real bus UI search displayed the correct intercity service. The old XCTest looked for a retired route label. Updated it to assert the displayed terminal pair and the current apply action.",
+    "A local test-server profile had empty TAGO key bindings. The attempted test on that server was interrupted. The verified run used the official HTTPS provider in an isolated test process.",
+    "The first final-stack iOS 26.5 run signed in, opened the calendar's add menu and tapped manual entry. The menu was still visible and no schedule was created. The test now checks for an already open menu and retries the selection only while the menu is still actionable. An intermediate retry was interrupted while its initial readiness check still excluded the open menu. The final test recognizes that observed state and retained the original dated timetable and persistence assertions."
+  ],
+  "limits": [
+    "Real personal ticket, KakaoTalk and physical device operations remain pending. The timetable lists scheduled services. No seat availability, booking or payment was exercised.",
+    "The production ODsay route probe used the iOS request path for three origin/destination pairs. The native UI tests covered the Dongseoul–Sokcho and Seoul–Dongdaegu routes. The Busan–Jinju route was checked through serialization and replay."
+  ],
+  "evidenceRoot": "/private/tmp/nolate-sim-transit-preflight-8usw_gj0",
+  "normalFinalNativeRailReadback": {
+    "successfulScheduleCreates": 2,
+    "schedules": [
+      {
+        "iOS": "26.5",
+        "normalAPIReopened": true,
+        "count": 1,
+        "mode": "TRAIN",
+        "provider": "odsay",
+        "from": "서울",
+        "to": "동대구",
+        "deadline": "2026-11-21T14:00:00+09:00"
+      },
+      {
+        "iOS": "27.0",
+        "normalAPIReopened": true,
+        "count": 1,
+        "mode": "TRAIN",
+        "provider": "odsay",
+        "from": "서울",
+        "to": "동대구",
+        "deadline": "2026-11-21T14:00:00+09:00"
+      }
+    ]
+  },
+  "scheduleArrivalDeadline": {
+    "verifiedAt": "2026-11-20T06:26:11.885758+09:00",
+    "originalBehavior": "The prior 14:00 draft showed an enabled 18:24 to 20:19 KTX selection in the timetable.",
+    "fix": "A schedule-based search initially lists future departures arriving at the selected stop by the actual schedule deadline, including equality and overnight dates in Korea. At the user’s request the sheet shows the full day and identifies out-of-window services. The final connection and alighting buffer are checked when applying a service. A failed later page can be retried from the existing results.",
+    "runtime": {
+      "cases": {
+        "26": {
+          "rail": "Passed",
+          "setup": "Passed",
+          "seconds": 206.73371398448944,
+          "xcresult": "/private/tmp/nolate-intercity-deadline-NV1XddGA/final-product/dated-rail-26/result.xcresult"
+        },
+        "27": {
+          "rail": "Passed",
+          "setup": "Passed",
+          "seconds": 221.30829298496246,
+          "xcresult": "/private/tmp/nolate-intercity-deadline-NV1XddGA/final-product/dated-rail-27-solo/result.xcresult"
+        }
+      },
+      "serviceDate": "2026-11-21",
+      "byTerminalDeadline": 45,
+      "allScheduled": 127
+    },
+    "authenticatedSeparateAccounts": {
+      "successfulScheduleCreates": 3,
+      "schedules": [
+        {
+          "iOS": "26.5",
+          "normalAPIReopened": true,
+          "count": 1,
+          "mode": "TRAIN",
+          "provider": "odsay",
+          "from": "서울",
+          "to": "동대구",
+          "deadline": "2026-11-21T14:00:00+09:00"
+        },
+        {
+          "iOS": "27.0",
+          "normalAPIReopened": true,
+          "count": 1,
+          "mode": "TRAIN",
+          "provider": "odsay",
+          "from": "서울",
+          "to": "동대구",
+          "deadline": "2026-11-21T14:00:00+09:00"
+        },
+        {
+          "iOS": "27.0 early run",
+          "normalAPIReopened": true,
+          "count": 1,
+          "mode": "TRAIN",
+          "provider": "odsay",
+          "from": "서울",
+          "to": "동대구",
+          "deadline": "2026-11-21T14:00:00+09:00"
+        }
+      ]
+    },
+    "regression": {
+      "jestSuites": 5,
+      "jestCases": 46,
+      "typescript": "passed",
+      "eslint": {
+        "errors": 0,
+        "warnings": 8
+      }
+    },
+    "updatedSources": {
+      "src/routeSupport/schedule/RouteSelectResultsScreen.tsx": "6157c52f255fc00fe1315e6b196d9e7251ec7449dafa91ab5373a7751be4c368",
+      "src/modules/schedule/components/route/IntercityTimetableSheet.tsx": "f78ff2c8db4b517d6e486ccb0c4e7c9a44e30b3ef6424dbe9ba245d07278f865"
+    },
+    "signedAppBundle": "17283bb0060a1caa6c5dc9ba467aff11812db128d958ec44cce5eae28e7fdf89",
+    "screenshots": [
+      {
+        "path": "docs/evidence/intercity-search-20261120/05-schedule-deadline-ios26.png",
+        "sha256": "c9d58cfa8662768ab36f4e9b643455758d2676cca9e4841dcccb56a2a033e9a0"
+      },
+      {
+        "path": "docs/evidence/intercity-search-20261120/06-schedule-deadline-ios27.png",
+        "sha256": "6502cfb23385f319f032fd3e51798632fd458f9c7921bffa15255b138cbe1685"
+      }
+    ],
+    "initial27Attempt": "The first 27.0 XCTest saw the 45 / 127 filter and saved the schedule. XCTest reported an accessibility startup timeout during relaunch. The calendar appeared independently with one next-day schedule. A clean boot and separately provisioned synthetic member were used for the passing end-to-end rerun.",
+    "scope": "Local iOS simulator and isolated backend with actual TMAP, ODsay and TAGO. Seat availability, payment, physical device and private Kakao payload are outside this run."
+  },
+  "intercityBusTerminalCoverage": {
+    "serviceDateKST": "2026-11-20",
+    "catalogueTotalReported": 2217,
+    "terminalLookup": {
+      "동서울": "NO_SERVICES",
+      "속초": "NO_SERVICES",
+      "부산서부": "NO_SERVICES",
+      "진주": "AVAILABLE"
+    },
+    "terminalIdsPreviouslyVerified": [
+      "NAI2238202",
+      "NAI2839701"
+    ],
+    "directoryLimitation": "For the two previously identified terminals the timetable can be checked by ID, but this live directory did not expose those exact two terminals in the current user search. No station name or ID substitution.",
+    "issue": "The real provider omitted terminal display names from every row. Previously the mapper rejected the entire same-day service page.",
+    "correctedResponse": {
+      "before": "PROVIDER_UNAVAILABLE",
+      "after": "AVAILABLE",
+      "sourceRowCount": 30,
+      "exactDepartureArrivalGradeFareMatches": 30,
+      "overnight": 2,
+      "lastDeparture": "2026-11-20T23:00+09:00",
+      "lastArrival": "2026-11-21T01:25+09:00",
+      "bookingStatus": "UNCONFIRMED",
+      "tomorrow": "DATE_UNSUPPORTED"
+    },
+    "display": "Names on selected terminals are used only when the timetable placeholder matches the exact selected terminal ID. With zero terminal results the picker offers the two existing official booking actions.",
+    "regression": {
+      "frontendSuites": 21,
+      "frontendTestsPassed": 255,
+      "backendSuites": 10,
+      "backendTestsPassed": 94,
+      "changedFrontendESLintErrors": 0,
+      "changedFrontendESLintWarnings": 8
+    },
+    "backendSources": {
+      "src/main/kotlin/com/noLate/intercity/IntercityTimetable.kt": "e7576a776b7f44622eba9b26486856a8188cf206c40261f855cea99deffd2a39",
+      "src/test/kotlin/com/noLate/intercity/IntercityTimetableServiceTest.kt": "f2abf3f75385c78b98d6890d700388e400d2085b99ace69e87f85a3eb3604c60"
+    },
+    "evidenceRoot": "/private/tmp/nolate-intercity-deadline-NV1XddGA/bus",
+    "ios26Native": {
+      "scheduleKind": "INTERCITY_BUS",
+      "origin": "동서울종합터미널",
+      "destination": "속초시외버스터미널",
+      "provider": "odsay",
+      "normalAPIReopened": true,
+      "sameDayHistoricalIdServiceCount": 30,
+      "simulator": "iOS 26.5",
+      "actionsInPicker": [
+        "티머니GO 공식 예매 열기",
+        "버스타고 공식 예매 열기"
+      ],
+      "screenshot": "docs/evidence/intercity-search-20261120/07-bus-terminal-booking.png",
+      "normalAPIServiceDetailsMatched": 30,
+      "cleanup": {
+        "restored26": true,
+        "serverStopped": true
+      }
+    },
+    "additionalDiscoverableStops": {
+      "dateKST": "2026-11-20",
+      "exactOfficialStopMatches": [
+        "강릉",
+        "양양",
+        "원주",
+        "인천공항1터미널",
+        "천안"
+      ],
+      "sameDayQueries": {
+        "원주→강릉": {
+          "status": "NO_SERVICES",
+          "count": 0
+        },
+        "강릉→양양": {
+          "status": "NO_SERVICES",
+          "count": 0
+        },
+        "인천공항1터미널→천안": {
+          "status": "NO_SERVICES",
+          "count": 0
+        }
+      },
+      "interpretation": "Exact catalogue matches do not guarantee the provider will return departures for that pair. An empty response is not proof the carrier operated no buses.",
+      "source": "https://www.data.go.kr/data/15098541/openapi.do"
+    }
+  }
+}

@@ -14,11 +14,8 @@ import {
 import PlainScheduleDetailView, {
   PLAIN_SCHEDULE_DETAIL_CONTENT_GAP,
 } from "../../modules/schedule/components/detail/PlainScheduleDetailView";
-import ScheduleArrivalObservationAction from "../../modules/schedule/components/detail/ScheduleArrivalObservationAction";
 import TmapMapView, { type TmapLoadState } from "../../modules/map/TmapMapView";
 import LoadingIndicator from "../../ui/LoadingIndicator";
-import { SavedJourneyRoutePreview } from '../../modules/journey/SavedJourneyRoutePreview';
-import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
 import { travelPlanStatusLabel } from "../../modules/schedule/travelPlanPresentation";
 import { getUserVisibleScheduleNotes } from "../../modules/schedule/calendarImportNotes";
 import {
@@ -153,11 +150,7 @@ export function ScheduleDetailBackground({
   return (
     <>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-      {presentation.offlineGuidancePreview && !presentation.inspectedTravelPlan ? (
-        <SavedJourneyRoutePreview input={buildSavedJourneyInput(item.route, item.origin, item.destination)}
-          walkingPaths={presentation.guidanceWalkingPaths}
-          position={displayMarkers.find(marker => marker.id === 'schedule-detail-guidance-location') ?? null} />
-      ) : shouldRenderMap ? (
+      {shouldRenderMap ? (
         <Reanimated.View style={styles.fullMap} entering={routeSaveConfirmed ? savedRouteMapEntrance : undefined}>
           <TmapMapView
             ref={mapRef}
@@ -267,14 +260,6 @@ export function ScheduleDetailBackground({
                 }
               : undefined
           }
-          arrivalObservation={
-            item.myDepartedAt ? (
-              <ScheduleArrivalObservationAction
-                scheduleId={item.id}
-                myDepartedAt={item.myDepartedAt}
-              />
-            ) : undefined
-          }
         />
       ) : (
         <View
@@ -369,6 +354,8 @@ export function ScheduleDetailBackground({
             disabled={currentLocationPending}
             accessibilityRole="button"
             accessibilityLabel="지도에서 내 현재 위치 보기"
+            accessibilityValue={presentation.navigationMode && presentation.mapPitch != null
+              ? { text: presentation.mapPitch > 0 ? `지도 기울기 ${presentation.mapPitch}도` : '평면 지도' } : undefined}
             accessibilityState={{
               busy: currentLocationPending,
               disabled: currentLocationPending,

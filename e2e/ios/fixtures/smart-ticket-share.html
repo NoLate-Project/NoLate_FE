@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>승차권 공유 테스트</title>
+<style>body { font: 20px system-ui; padding: 1rem; } button { display: block; margin: 1rem 0; padding: .75rem; }</style>
+<h1>테스트 승차권</h1>
+<pre id="ticket">코레일 승차권
+2026-11-12
+서울 → 동대구
+KTX 255
+현재 04:07
+도착 시각 8:32
+출발 시각 6:43</pre>
+<button id="details" type="button">승차권 상세 텍스트 공유</button>
+<button id="link" type="button">승차권 링크만 공유</button>
+<button id="tmoney" type="button">티머니 시외버스 링크</button>
+<button id="bustago" type="button">버스타고 링크</button>
+<button id="kobus" type="button">고속버스통합예매 링크</button>
+<button id="bus-details" type="button">승차권 상세와 버스타고 링크</button>
+<output aria-live="polite"></output>
+<script>
+  async function share(button, data) {
+    button.setAttribute('aria-label', button.textContent + ' 요청됨');
+    try { await navigator.share(data); }
+    catch (error) { document.querySelector('output').textContent = error.name; }
+  }
+  document.getElementById('details').onclick = event => share(event.currentTarget, {text: document.getElementById('ticket').innerText});
+  // The public home has no booking identifier or passenger data.
+  document.getElementById('link').onclick = event => share(event.currentTarget, {title: '전달받은 승차권', url: 'https://www.korail.com/'});
+  const busSites = {tmoney: 'https://intercitybus.tmoney.co.kr/', bustago: 'https://www.bustago.or.kr/', kobus: 'https://www.kobus.co.kr/'};
+  for (const [id, url] of Object.entries(busSites)) {
+    document.getElementById(id).onclick = event => share(event.currentTarget, {title: '모바일 승차권', url});
+  }
+  document.getElementById('bus-details').onclick = event => share(event.currentTarget, {
+    text: '모바일 승차권\n2026-11-12\n동서울 → 속초\n우등\n출발 오후 6:43\n도착 오후 8:32',
+    url: busSites.bustago
+  });
+</script>
+</html>

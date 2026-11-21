@@ -1,0 +1,669 @@
+{
+  "date": "2026-11-20",
+  "scope": "iOS simulator PDF import",
+  "wholeGoalComplete": false,
+  "environment": {
+    "device": "iPhone 17 Pro",
+    "runtime": "iOS 27.0",
+    "releaseExtension": true,
+    "account": "isolated synthetic account",
+    "database": "loopback H2"
+  },
+  "before": {
+    "textAndScannedUI": "Both reviews lost their stations/times. The original review screenshot retained KTX 255.",
+    "hybridPrevious": "The previous implementation returned native page text whenever nonempty. A bitmap ticket with only an electronic-copy footer therefore had no itinerary in this branch. The separate mixed-baseline UI launch timed out before exercising the inputs."
+  },
+  "after": {
+    "textPDF": "Use native text when it identifies the journey. Recover the two visual columns from the rendered single-page smart ticket when needed.",
+    "scanAndHybrid": "Use the same geometric Vision recognition as image sharing for image-only pages and incomplete text layers. Preserve refund/cancellation and partial native facts.",
+    "normalOSFlow": "Safari opened a loopback HTML fixture. Share > Options > PDF > Save to Files on My iPhone. Apple Files shared the saved PDF with NoLate; stations, two times and train number were populated; dismissed without writing.",
+    "writeFlow": "Normal share, original-ticket confirmation for tomorrow, saved once, force-quit/relaunch and reread on the calendar. Normal search/detail verified the stored fields."
+  },
+  "finalExtension": {
+    "sourceSHA256": {
+      "TicketWebPage.js": "d31e594c314862de52ad0e889a4f735974f4fd0c743abace8ae61df133173d7e",
+      "TrainTicketReviewController.swift": "869c51074585efd4f119e46b9769c009dca162182f06af758959760c21effcaf",
+      "ShareViewController.swift": "a6d87fa06f40766c4c51a82a19f0718e1b01454d2dcaebeeea7813b705c72ab9",
+      "TrainTicketImport.swift": "a8b992d0f9ca47b3f24163b38f17d4406ca75a8b9d5577de092898061021914c",
+      "NoLateShareExtension.entitlements": "099171b2c8b07daa9243746c19b099e01d295565fb3ac040bac766a05d1eb7cf",
+      "Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252"
+    },
+    "extensionSHA256": "b4d30347b41adfada10985d2392659d8c488b2dd7f7f618bda620b32f1d657d1",
+    "signed": true,
+    "installed": true,
+    "loopback": true,
+    "retainedMainApp": true
+  },
+  "regressions": {
+    "swiftPolicy": "passed",
+    "nativeInputsCheckedWithPDFKit": [
+      {
+        "file": "14a92d6b6e941402dabfe26d9079e8582b5bf114f7afe601b3fc588b6e660fe1.pdf",
+        "footerOnly": false,
+        "hasBothStations": true,
+        "hasBothTimes": true,
+        "hasMarker": true,
+        "hasStatusClock": true,
+        "hasTrain": true,
+        "historical": true,
+        "nextDay": false,
+        "printChars": 167,
+        "refundOnly": false,
+        "singlePage": true,
+        "size": 780,
+        "textLayer": true
+      },
+      {
+        "file": "59e29abc254ad1f17c6c4f18c85116a1492b86875f870b9b3b77644009d6a2ff.pdf",
+        "footerOnly": false,
+        "hasBothStations": false,
+        "hasBothTimes": false,
+        "hasMarker": false,
+        "hasStatusClock": false,
+        "hasTrain": false,
+        "historical": false,
+        "nextDay": false,
+        "printChars": 13,
+        "refundOnly": true,
+        "singlePage": true,
+        "size": 780,
+        "textLayer": true
+      },
+      {
+        "file": "5d11cdd200c9d0f5df3fb8fce1e655544e4b0f4667e009ddfdb7449d857a630c.pdf",
+        "footerOnly": false,
+        "hasBothStations": false,
+        "hasBothTimes": false,
+        "hasMarker": false,
+        "hasStatusClock": false,
+        "hasTrain": false,
+        "historical": false,
+        "nextDay": false,
+        "printChars": 0,
+        "refundOnly": false,
+        "singlePage": true,
+        "size": 780,
+        "textLayer": false
+      },
+      {
+        "file": "5fcd992e3858df11742fe32a23ed6a41025f8b027d85bd9e876d2aae9af5abe3.pdf",
+        "footerOnly": false,
+        "hasBothStations": false,
+        "hasBothTimes": false,
+        "hasMarker": false,
+        "hasStatusClock": false,
+        "hasTrain": false,
+        "historical": false,
+        "nextDay": false,
+        "printChars": 0,
+        "refundOnly": false,
+        "singlePage": true,
+        "size": 780,
+        "textLayer": false
+      },
+      {
+        "file": "dd5a4775daaee1a2274d4f6f2a894059b5e3d21b7e3b842dc2f27ae174f21d15.pdf",
+        "footerOnly": true,
+        "hasBothStations": false,
+        "hasBothTimes": false,
+        "hasMarker": false,
+        "hasStatusClock": false,
+        "hasTrain": false,
+        "historical": false,
+        "nextDay": false,
+        "printChars": 19,
+        "refundOnly": false,
+        "singlePage": true,
+        "size": 780,
+        "textLayer": true
+      },
+      {
+        "file": "f764663e3d6611260b522c3799f654e7f4119c29d9616ece5de19bc6d143ce74.pdf",
+        "footerOnly": false,
+        "hasBothStations": false,
+        "hasBothTimes": false,
+        "hasMarker": false,
+        "hasStatusClock": false,
+        "hasTrain": false,
+        "historical": false,
+        "nextDay": false,
+        "printChars": 0,
+        "refundOnly": false,
+        "singlePage": true,
+        "size": 780,
+        "textLayer": false
+      }
+    ],
+    "safariExportCheckedWithPDFKit": {
+      "file": "native-safari-export.pdf",
+      "hasBothStations": true,
+      "hasBothTimes": true,
+      "hasMarker": true,
+      "hasStatusClock": false,
+      "hasTrain": true,
+      "historical": true,
+      "nextDay": false,
+      "printChars": 116,
+      "singlePage": true,
+      "size": 595,
+      "textLayer": true,
+      "sha256": "ec6ffe29a04faf8e292975fe170165316ffb6644971e378d1b73f0c5c47b11e6"
+    },
+    "testSourceSHA256": "92aa88a956e28546194ff2ee9e9212f23c0bfceb031c1f660d03b5471dbe1aab",
+    "fixtureSourceSHA256": "360719741f0ee67e8554fd39d1db5ba8445424acc78f6248cfa6979d3ecaf36c",
+    "htmlSHA256": "2302548739d3ed772e5dee9df3b7ecbc72ee824533f6af0852b1d6dd1c461292",
+    "hybridPreviousTextBranch": {
+      "preFixSelectableTextBranch": true,
+      "singlePage": true,
+      "sourceFile": "dd5a4775daaee1a2274d4f6f2a894059b5e3d21b7e3b842dc2f27ae174f21d15.pdf",
+      "stationsEmpty": true,
+      "textLayerFooterOnly": true,
+      "timesEmpty": true
+    },
+    "ordinaryParser": {
+      "unchangedFromRepositoryHead": true,
+      "commit": "edf57d24f92357540941aff0561af912200f23f6",
+      "sha256": "f163de334d25be7713f55f3d0d41a7c82c8f0bff348737a4a3f9c52dc3fc5860"
+    },
+    "webPreprocessing": {
+      "passed": 4,
+      "failed": 0
+    },
+    "iphoneOSReleaseExtensionCompilation": {
+      "passed": true,
+      "signed": false,
+      "deviceInstalled": false
+    },
+    "frontendIntercity": {
+      "suites": 6,
+      "passed": 67,
+      "failed": 0,
+      "skipped": 0
+    },
+    "backendIntercity": {
+      "tests": 91,
+      "clusters": {
+        "OdsayTransitJourneyMapperTest": 14,
+        "TmapTransitJourneyMapperTest": 27,
+        "TransitEtaProviderWiringTest": 4,
+        "IntercityJourneyValidatorTest": 11,
+        "IntercityTimetableServiceTest": 14,
+        "IntercityRouteQualityTest": 2,
+        "TmapTransitQuotaContractTest": 2,
+        "IntercityTravelPlanPersistenceTest": 1,
+        "TmapTransitJourneyProviderTest": 9,
+        "TransitRouteServiceTest": 7
+      },
+      "failed": 0,
+      "skipped": 0,
+      "externalProviders": false
+    },
+    "backendRepeatAfterWorktreeUpdate": {
+      "deltaAtStart": [
+        "main/kotlin/com/noLate/eta/application/transit/PlannedTransitRouteRefresher.kt",
+        "main/kotlin/com/noLate/eta/application/transit/TransitTransferRealtimeGuard.kt",
+        "test/kotlin/com/noLate/eta/application/transit/PlannedTransitRouteRefresherTest.kt",
+        "test/kotlin/com/noLate/schedule/application/service/SchedulePushJobWorkerTest.kt",
+        "test/resources/eta/planned-transfer-recovery-synthetic.json"
+      ],
+      "changedAgainBeforeFinish": [],
+      "sourceSnapshotSha256": "8341453e0d000a5f8408d014440834cb1734dd04f4d701444cd443aba7e5987b",
+      "suites": 10,
+      "tests": 91,
+      "failed": 0,
+      "skipped": 0
+    },
+    "backendSourceAtEndOfFirstRun": false,
+    "backendSourceSHA256": "e31337a96bc9589024ce475a1f1170f5f8a8c777e9ba8fdf6ee89b45f1382867",
+    "finalFilesCase": "Final batch lacked the Files fixture flag and reported one skip. The separate explicit final-files run exercised the same signed Release binary and the real saved Safari PDF.",
+    "finalTrainSuite": "final-regression",
+    "busArrowPolicy": "Swift OCR transcript, two competing routes, non-ticket labels, ordinary text and train controls passed",
+    "originalSyntheticProfileRestored": true
+  },
+  "runs": {
+    "baseline": {
+      "totalTestCount": 3,
+      "passedTests": 1,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "result": "Failed",
+      "cases": [
+        {
+          "case": "testEstablishSyntheticTicketAccount",
+          "status": "passed",
+          "seconds": 51.472
+        },
+        {
+          "case": "testSmartTicketScannedPDFRecognizesBothColumns",
+          "status": "failed",
+          "seconds": 16.149
+        },
+        {
+          "case": "testSmartTicketTextPDFRecognizesBothColumns",
+          "status": "failed",
+          "seconds": 14.811
+        }
+      ],
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/baseline/result.xcresult"
+    },
+    "repaired": {
+      "totalTestCount": 6,
+      "passedTests": 5,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "result": "Failed",
+      "cases": [
+        {
+          "case": "testEstablishSyntheticTicketAccount",
+          "status": "passed",
+          "seconds": 69.878
+        },
+        {
+          "case": "testSmartTicketScannedPDFRecognizesBothColumns",
+          "status": "failed",
+          "seconds": 32.483
+        },
+        {
+          "case": "testSmartTicketScreenshotRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 43.654
+        },
+        {
+          "case": "testSmartTicketTextPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 16.974
+        },
+        {
+          "case": "testSmartTicketUpcomingScannedPDFSaveAndReopen",
+          "status": "passed",
+          "seconds": 57.06
+        },
+        {
+          "case": "testTicketShareCancelAndInvalidInputs",
+          "status": "passed",
+          "seconds": 70.823
+        }
+      ],
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/repaired/result.xcresult"
+    },
+    "native-files": {
+      "totalTestCount": 2,
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "result": "Passed",
+      "cases": [
+        {
+          "case": "testSmartTicketPDFFromFiles",
+          "status": "passed",
+          "seconds": 136.555
+        },
+        {
+          "case": "testSmartTicketScannedPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 21.59
+        }
+      ],
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/native-files/result.xcresult"
+    },
+    "mixed-baseline": {
+      "totalTestCount": 3,
+      "passedTests": 1,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "result": "Failed",
+      "cases": [
+        {
+          "case": "testEstablishSyntheticTicketAccount",
+          "status": "passed",
+          "seconds": 53.858
+        },
+        {
+          "case": "testSmartTicketHybridPDFRecognizesBothColumns",
+          "status": "failed",
+          "seconds": 32.992
+        },
+        {
+          "case": "testSmartTicketHybridPDFRejectsRefundedTicket",
+          "status": "failed",
+          "seconds": 32.843
+        }
+      ],
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/mixed-baseline/result.xcresult"
+    },
+    "verified": {
+      "totalTestCount": 10,
+      "passedTests": 10,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "result": "Passed",
+      "cases": [
+        {
+          "case": "testEstablishSyntheticTicketAccount",
+          "status": "passed",
+          "seconds": 53.238
+        },
+        {
+          "case": "testSmartTicketHybridPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 16.899
+        },
+        {
+          "case": "testSmartTicketHybridPDFRejectsRefundedTicket",
+          "status": "passed",
+          "seconds": 18.526
+        },
+        {
+          "case": "testSmartTicketPDFFromFiles",
+          "status": "passed",
+          "seconds": 139.621
+        },
+        {
+          "case": "testSmartTicketScannedPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 17.6
+        },
+        {
+          "case": "testSmartTicketScreenshotRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 18.372
+        },
+        {
+          "case": "testSmartTicketTextPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 22.821
+        },
+        {
+          "case": "testSmartTicketUpcomingScannedPDFSaveAndReopen",
+          "status": "passed",
+          "seconds": 45.4
+        },
+        {
+          "case": "testTicketShareCancelAndInvalidInputs",
+          "status": "passed",
+          "seconds": 75.089
+        },
+        {
+          "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+          "status": "passed",
+          "seconds": 58.164
+        }
+      ],
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/verified/result.xcresult"
+    },
+    "bus-ocr-fixed": {
+      "result": "Passed",
+      "totalTestCount": 2,
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/bus-ocr-fixed/result.xcresult",
+      "cases": [
+        {
+          "case": "testAAEstablishRegressionAccount",
+          "status": "passed",
+          "seconds": 57.643
+        },
+        {
+          "case": "testBusTicketScannedPDFShareSaveReopen",
+          "status": "passed",
+          "seconds": 92.274
+        }
+      ]
+    },
+    "final-regression": {
+      "result": "Passed",
+      "totalTestCount": 10,
+      "passedTests": 9,
+      "failedTests": 0,
+      "skippedTests": 1,
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/final-regression/result.xcresult",
+      "cases": [
+        {
+          "case": "testAAEstablishRegressionAccount",
+          "status": "passed",
+          "seconds": 67.012
+        },
+        {
+          "case": "testSmartTicketHybridPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 18.176
+        },
+        {
+          "case": "testSmartTicketHybridPDFRejectsRefundedTicket",
+          "status": "passed",
+          "seconds": 18.507
+        },
+        {
+          "case": "testSmartTicketScannedPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 21.367
+        },
+        {
+          "case": "testSmartTicketScreenshotRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 25.797
+        },
+        {
+          "case": "testSmartTicketTextPDFRecognizesBothColumns",
+          "status": "passed",
+          "seconds": 18.285
+        },
+        {
+          "case": "testSmartTicketUpcomingScannedPDFSaveAndReopen",
+          "status": "passed",
+          "seconds": 45.047
+        },
+        {
+          "case": "testTicketShareCancelAndInvalidInputs",
+          "status": "passed",
+          "seconds": 65.725
+        },
+        {
+          "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+          "status": "passed",
+          "seconds": 56.7
+        }
+      ]
+    },
+    "restore-original": {
+      "result": "Passed",
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/restore-original/result.xcresult",
+      "cases": [
+        {
+          "case": "testAAEstablishBusTicketAccount",
+          "status": "passed",
+          "seconds": 59.794
+        }
+      ]
+    },
+    "final-files": {
+      "result": "Passed",
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/final-files/result.xcresult",
+      "cases": [
+        {
+          "case": "testSmartTicketPDFFromFiles",
+          "status": "passed",
+          "seconds": 138.156
+        }
+      ]
+    }
+  },
+  "finalVerifiedDistinctCases": 10,
+  "persisted": {
+    "isolatedAccount": true,
+    "exactlyOneSavedSchedule": true,
+    "retrievedBySearchThenDetail": true,
+    "ticket": {
+      "kind": "TRAIN",
+      "source": "IOS_SHARE_PDF",
+      "verification": "USER_CONFIRMED",
+      "bookingStatus": "UNVERIFIED",
+      "departureName": "서울",
+      "arrivalName": "동대구",
+      "trainNumber": "255",
+      "departureAt": "2026-11-21T06:43:00+09:00",
+      "arrivalAt": "2026-11-21T08:32:00+09:00"
+    },
+    "noOriginalImageOrPrivateURLInTicket": true
+  },
+  "screenshotPaths": [
+    "evidence/smart-ticket-share-20261120/04-files-pdf-share.png",
+    "evidence/smart-ticket-share-20261120/05-files-pdf-review.png",
+    "evidence/smart-ticket-share-20261120/06-pdf-saved-after-relaunch.png",
+    "evidence/smart-ticket-share-20261120/07-hybrid-pdf-review.png",
+    "evidence/smart-ticket-share-20261120/08-bus-pdf-duplicate.png",
+    "evidence/smart-ticket-share-20261120/09-bus-scanned-pdf-reopened.png",
+    "evidence/smart-ticket-share-20261120/10-bus-recognized-route.png"
+  ],
+  "limits": [
+    "Public fixture HTML and PDFs only; issuer-origin Safari preprocessing, the real received ticket and Kakao were not tested in this run.",
+    "Safari PDF export showed an empty apps list on this iOS 27.0 simulator. Save to Files, then share to NoLate, was verified.",
+    "The rebuilt Release share extension was installed in the retained NoLate simulator main app.",
+    "No physical device, production service, booking, commit, push or merge used."
+  ],
+  "privateRoot": "/private/tmp/nolate-smart-pdf-kji0glcs",
+  "appleActivationReference": "https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/ExtensionScenarios.html",
+  "busPDF": {
+    "suites": {
+      "bus-pdf": {
+        "result": "Failed",
+        "totalTestCount": 2,
+        "passedTests": 1,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/bus-pdf/result.xcresult",
+        "cases": [
+          {
+            "case": "testAAEstablishBusTicketAccount",
+            "status": "passed",
+            "seconds": 57.949
+          },
+          {
+            "case": "testBusTicketPDFShareDuplicateSaveReopen",
+            "status": "failed",
+            "seconds": 175.394
+          }
+        ],
+        "reason": "XCTest tapped during the share sheet presentation animation. The computed tap was outside the final NoLate cell, and the host stayed on the share sheet."
+      },
+      "bus-pdf-fixed": {
+        "result": "Passed",
+        "totalTestCount": 1,
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/bus-pdf-fixed/result.xcresult",
+        "cases": [
+          {
+            "case": "testBusTicketPDFShareDuplicateSaveReopen",
+            "status": "passed",
+            "seconds": 115.49
+          }
+        ],
+        "manualStationCorrections": 0,
+        "screenshot": "evidence/smart-ticket-share-20261120/08-bus-pdf-duplicate.png"
+      },
+      "bus-scanned": {
+        "result": "Passed",
+        "totalTestCount": 2,
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "xcresult": "/private/tmp/nolate-smart-pdf-kji0glcs/bus-scanned/result.xcresult",
+        "cases": [
+          {
+            "case": "testAAEstablishBusTicketAccount",
+            "status": "passed",
+            "seconds": 70.436
+          },
+          {
+            "case": "testBusTicketScannedPDFShareSaveReopen",
+            "status": "passed",
+            "seconds": 104.75
+          }
+        ],
+        "manualStationCorrections": 2,
+        "screenshot": "evidence/smart-ticket-share-20261120/09-bus-scanned-pdf-reopened.png"
+      }
+    },
+    "schedules": {
+      "bus-text": {
+        "oneMatchingSchedule": true,
+        "normalSearchThenDetail": true,
+        "ticket": {
+          "kind": "INTERCITY_BUS",
+          "source": "IOS_SHARE_PDF",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "인천공항2터미널",
+          "arrivalName": "청주",
+          "departureAt": "2026-11-21T12:20:00+09:00",
+          "arrivalAt": "2026-11-21T14:45:00+09:00",
+          "grade": "우등"
+        }
+      },
+      "bus-scan": {
+        "oneMatchingSchedule": true,
+        "normalSearchThenDetail": true,
+        "ticket": {
+          "kind": "INTERCITY_BUS",
+          "source": "IOS_SHARE_PDF",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "인천공항2터미널",
+          "arrivalName": "청주",
+          "departureAt": "2026-11-21T12:20:00+09:00",
+          "arrivalAt": "2026-11-21T14:45:00+09:00",
+          "grade": "우등"
+        }
+      }
+    },
+    "testFix": "Wait for the share target frame to settle before tapping its icon. The duplicate and scanned-file flows use the existing product UI tests.",
+    "finalRepoUITestSHA256": "04ac59b3c061713792c620b102c2b8df8a6a8294e9f31b66f226c3d254ae1968",
+    "correctedScan": {
+      "previousManualStationCorrections": 2,
+      "manualStationCorrections": 0,
+      "visionRouteLine": "인천공항2터미널 >> 청주",
+      "twoChevronRule": "Only a standalone terminal/place row on an OCR-read timed bus ticket, checked by the same route parser for ambiguous additional legs.",
+      "stored": {
+        "oneMatchingSchedule": true,
+        "normalSearchThenDetail": true,
+        "ticket": {
+          "kind": "INTERCITY_BUS",
+          "source": "IOS_SHARE_PDF",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "인천공항2터미널",
+          "arrivalName": "청주",
+          "departureAt": "2026-11-21T12:20:00+09:00",
+          "arrivalAt": "2026-11-21T14:45:00+09:00",
+          "grade": "우등"
+        }
+      }
+    }
+  },
+  "priorTrainPDFRelease": {
+    "sourceSHA256": {
+      "TicketWebPage.js": "d31e594c314862de52ad0e889a4f735974f4fd0c743abace8ae61df133173d7e",
+      "TrainTicketReviewController.swift": "869c51074585efd4f119e46b9769c009dca162182f06af758959760c21effcaf",
+      "ShareViewController.swift": "a6d87fa06f40766c4c51a82a19f0718e1b01454d2dcaebeeea7813b705c72ab9",
+      "TrainTicketImport.swift": "02d9e7197b73ad220e6355c1dd4be99aacebd9bf2c360af1f8722ed169bcfacb",
+      "NoLateShareExtension.entitlements": "099171b2c8b07daa9243746c19b099e01d295565fb3ac040bac766a05d1eb7cf",
+      "Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252"
+    },
+    "extensionSHA256": "78e539fc1444d0130400b637b57bbb22117c46e4bb88e882e62bfa7f5d5c194a",
+    "signed": true,
+    "installed": true,
+    "loopback": true,
+    "retainedMainApp": true
+  }
+}

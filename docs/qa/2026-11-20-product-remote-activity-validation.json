@@ -1,0 +1,83 @@
+{
+  "date": "2026-11-20",
+  "scope": "Saved ODsay 1711 product guidance remote Live Activity binding and server END after process exit",
+  "environment": {
+    "platform": "iOS 27.0 Simulator",
+    "udid": "180F9626-79FD-40FA-BE80-F8D13EE4EB8D",
+    "app": "signed Release 1.3.0 (58)",
+    "apiPort": 5535,
+    "database": "isolated memory H2",
+    "productEnabled": true,
+    "apnsPilotEnabled": false,
+    "manualFcmTokenInjection": false,
+    "physicalDeviceUsed": false
+  },
+  "tests": {
+    "frontendPassed": 114,
+    "frontendTypecheckExit": 0,
+    "frontendLintErrors": 0,
+    "frontendLintWarnings": 1,
+    "backendPassed": 40,
+    "backendSkipped": 1,
+    "backendSkip": "MySQL Docker test; skip is not a MySQL pass",
+    "xctestPassed": 1,
+    "xctestFailed": 0,
+    "xctestDurationSeconds": 323.141
+  },
+  "causalProof": {
+    "appAbsentImmediatelyBeforeServerEnd": true,
+    "postEndAppState": 3,
+    "activityEndedDaemonObserved": true,
+    "daemonEventTimes": [
+      "2026-11-20 00:09:04.150"
+    ],
+    "actualProviderUpdates": 31,
+    "actualProviderEnds": 1
+  },
+  "updatesRejected": false,
+  "gps": "Injected CoreSimulator passenger path; cleared before process exit and in driver finally",
+  "vehicle": "Independent test clock, 30 seconds source lag, 28 second refresh; no phase injection",
+  "vehicleClockRemoved": true,
+  "appBinarySha256": "ea52e810b1baf0211ad7f3e45e257123a6060f2a08cd1c600c9f3d29497f2d7d",
+  "jsBundleSha256": "18c59bd67b70ee6cf75187782ca5c14699359db4d2ac7e8ee5babb19cfe3a8ba",
+  "resultBundle": "/private/tmp/nolate-product-remote-activity-causal-e2e-20261120/result.xcresult",
+  "screenshots": [
+    "01-product-riding-map.png",
+    "02-lock-before-process-exit.png",
+    "03-lock-after-process-exit.png",
+    "04-lock-after-server-end.png"
+  ],
+  "notVerified": [
+    "Physical GPS/underground reception/real mute and speech",
+    "Continuous official vehicle API movement",
+    "Mixed subway transfers",
+    "Remote update visual changes isolated from concurrent local publication",
+    "Token rotation atomic rebind",
+    "Production deploy or main merge"
+  ],
+  "earlierFailures": [
+    {
+      "root": "/private/tmp/nolate-product-remote-activity-e2e-20261119",
+      "reason": "arm64e architecture excluded from new simulator push registration condition; fixed and unit-tested"
+    },
+    {
+      "root": "/private/tmp/nolate-product-remote-activity-arm64e-e2e-20261119",
+      "reason": "Disk full interrupted private GPS driver; owned intermediate build cache removed"
+    },
+    {
+      "root": "/private/tmp/nolate-product-remote-activity-final-e2e-20261119",
+      "reason": "Missing independent vehicle replay property in fresh server; corrected by copying known working launch configuration; one UPDATE C002 not classified in that run"
+    },
+    {
+      "root": "/private/tmp/nolate-product-remote-activity-verified-e2e-20261119",
+      "reason": "Invalid post-END assertion requiring app to remain stopped; actual liveactivitiesd Activity ended background wake observed; strengthened immediate pre-request process assertion plus independent daemon proof"
+    }
+  ],
+  "isolatedApnsServerStopped": true,
+  "subwayWaitingContract": {
+    "testedFirstAndTransferLegs": true,
+    "testedArrivalPresentAndAbsent": true,
+    "savedTransitKindChecked": true,
+    "physicalTrainE2E": false
+  }
+}

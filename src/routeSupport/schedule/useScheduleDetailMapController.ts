@@ -6,6 +6,7 @@ import {
   getCurrentLocation,
   getCurrentLocationPermissionState,
 } from '../../modules/map/currentLocation';
+import { useWalkingCompass } from '../../modules/map/useWalkingCompass';
 import { createLatestRequestGuard } from '../../modules/map/routeAsyncGuard';
 import { getPaddedBoundsCamera } from '../../modules/map/routeZoomStyle';
 import {
@@ -51,10 +52,13 @@ type ScheduleDetailMapControllerOptions = {
   topInset: number;
   routeMapHeaderHeight: number;
   sheetMinHeight: number;
+  sheetVisibleHeight?: number;
   openRouteDetail?: string | string[];
   liveActivityEntry?: string;
   reduceMotion: boolean;
   navigationMode: boolean;
+  screenVisible?: boolean;
+  navigationEnd?: { scheduleId: string; reason: string };
   snapSheet: (mode: SheetSnapMode, reason?: 'live-activity') => void;
 };
 
@@ -79,15 +83,19 @@ export function useScheduleDetailMapController({
   topInset,
   routeMapHeaderHeight,
   sheetMinHeight,
+  sheetVisibleHeight = sheetMinHeight,
   openRouteDetail,
   liveActivityEntry,
   reduceMotion,
   navigationMode,
+  screenVisible = true,
+  navigationEnd,
   snapSheet,
 }: ScheduleDetailMapControllerOptions) {
   const { width: mapWidth, height: mapHeight } = useWindowDimensions();
   const mapRef = useRef<TmapMapViewHandle>(null);
   const lastOverviewFitKeyRef = useRef<string | undefined>(undefined);
+  const [mapPitch, setMapPitch] = useState<number>();
   const [mapZoom, setMapZoom] = useState(DEFAULT_CAMERA.zoom);
   const [cameraScaleSample, setCameraScaleSample] = useState<TmapCameraState>();
   const [focusedLegIndex, setFocusedLegIndex] = useState<number | undefined>();
@@ -105,10 +113,20 @@ export function useScheduleDetailMapController({
   const [followingGuidance, setFollowingGuidance] = useState(navigationMode);
   const followCommandUntilRef = useRef(0);
   const lastFollowCoordRef = useRef<{ latitude: number; longitude: number } | undefined>(undefined);
+  const lastFollowCameraRef = useRef<{ latitude: number; longitude: number } | undefined>(undefined);
+  const lastFollowViewportRef = useRef<string | undefined>(undefined);
   const currentLocationPendingRef = useRef(false);
   const currentLocationRequestGuardRef = useRef(createLatestRequestGuard());
   const autoOpenedRouteDetailEntryRef = useRef<string | undefined>(undefined);
-
+  const arrivalFocusedRef = useRef(false);
+  const arrived = navigationMode && !inspectedTravelPlan && navigationEnd?.scheduleId === scheduleId
+    && navigationEnd?.reason === 'DESTINATION_ARRIVED';
+  const mapEdgePadding = useMemo(() => ({
+    top: Math.max(topInset + 124, routeMapHeaderHeight + 52),
+    right: 44,
+    bottom: sheetVisibleHeight + MAP_ACTION_SHEET_GAP + MAP_ACTION_BUTTON_HEIGHT + 12,
+    left: 44,
+  }), [routeMapHeaderHeight, sheetVisibleHeight, topInset]);
   /** 참여자 경로 등 표시 대상이 바뀔 때 이전 구간·정류장 선택을 함께 해제한다. */
   const clearRouteFocus = useCallback(() => {
     setFocusedLegIndex(undefined);
@@ -123,6 +141,8 @@ export function useScheduleDetailMapController({
     setCurrentLocationCoord(undefined);
     setCurrentLocationPending(false);
     lastFollowCoordRef.current = undefined;
+    lastFollowCameraRef.current = undefined;
+    lastFollowViewportRef.current = undefined;
     autoOpenedRouteDetailEntryRef.current = undefined;
   }, [clearRouteFocus, scheduleId]);
 
@@ -130,6 +150,8 @@ export function useScheduleDetailMapController({
     setFollowingGuidance(navigationMode);
     followCommandUntilRef.current = Date.now() + 1600;
     lastFollowCoordRef.current = undefined;
+    lastFollowCameraRef.current = undefined;
+    lastFollowViewportRef.current = undefined;
   }, [navigationMode, scheduleId]);
 
   useEffect(
@@ -144,23 +166,45 @@ export function useScheduleDetailMapController({
     && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId
     ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
     [item, currentMemberId, inspectedTravelPlan]);
-  const { guidanceActive, position: guidancePosition, offRouteLocation, walkingPaths: guidanceWalkingPaths,
+  const { guidanceActive, position: guidancePosition, courseDegrees, walkingScope, offRouteLocation, walkingPaths: guidanceWalkingPaths,
     rerouteDisplay } =
     useSavedJourneyMapView(guidanceInput, String(item?.id ?? ''));
+  useEffect(() => {
+    // A one-off location lookup belongs to the state in which it was requested.
+    // Never resurrect a pre-guidance dot when the live session ends.
+    currentLocationRequestGuardRef.current.invalidate();
+    currentLocationPendingRef.current = false;
+    setCurrentLocationCoord(undefined);
+    setCurrentLocationPending(false);
+  }, [guidanceActive]);
   const displayRoute = guidanceActive && !inspectedTravelPlan && rerouteDisplay
     ? rerouteDisplay.route : savedDisplayRoute;
+  const followPitch = walkingScope ? 28 : 0;
+  const compass = useWalkingCompass(navigationMode && screenVisible && !arrived && courseDegrees == null ? walkingScope : null);
+  const markerDirection = courseDegrees ?? compass;
+  const followViewportKey = JSON.stringify([mapWidth, mapHeight, mapEdgePadding, cameraScaleSample, followPitch]);
+  const followingCamera = useCallback((point: { latitude: number; longitude: number }) => getPaddedBoundsCamera({
+    minLat: point.latitude, maxLat: point.latitude, minLng: point.longitude, maxLng: point.longitude,
+  }, { width: mapWidth, height: mapHeight, padding: mapEdgePadding }, {
+    minZoom: 16, maxZoom: 16, cameraScaleSample,
+  }), [cameraScaleSample, mapEdgePadding, mapHeight, mapWidth]);
+
   const mapFollowPosition = guidancePosition ?? offRouteLocation;
   const guidanceLatitude = mapFollowPosition?.latitude;
   const guidanceLongitude = mapFollowPosition?.longitude;
   useEffect(() => {
-    if (!navigationMode || !followingGuidance || guidanceLatitude == null || guidanceLongitude == null) return;
+    if (arrived || !navigationMode || !followingGuidance || guidanceLatitude == null || guidanceLongitude == null) return;
     const next = { latitude: guidanceLatitude, longitude: guidanceLongitude };
     const previous = lastFollowCoordRef.current;
-    if (!shouldMoveFollowingCamera(previous, next)) return;
+    if (!shouldMoveFollowingCamera(previous, next) && lastFollowViewportRef.current === followViewportKey) return;
+    const target = followingCamera(next);
+    if (!target) return;
     lastFollowCoordRef.current = next;
+    lastFollowCameraRef.current = target;
+    lastFollowViewportRef.current = followViewportKey;
     followCommandUntilRef.current = Date.now() + 1600;
-    mapRef.current?.animateCameraTo({ ...next, zoom: 16, duration: reduceMotion ? 0 : 420 });
-  }, [followingGuidance, guidanceLatitude, guidanceLongitude, navigationMode, reduceMotion]);
+    mapRef.current?.animateCameraTo({ ...target, pitchDegrees: followPitch, bearingDegrees: 0, duration: reduceMotion ? 0 : 420 });
+  }, [arrived, followingCamera, followingGuidance, followViewportKey, followPitch, guidanceLatitude, guidanceLongitude, navigationMode, reduceMotion]);
   // Stabilize immutable geometry across the hook's freshness clock; do not refit every second.
   const guidanceWalkingJSON = JSON.stringify(guidanceWalkingPaths);
   const guidanceWalkingCoordinates = useMemo(() => new Map<number, {latitude: number; longitude: number}[]>(
@@ -207,6 +251,8 @@ export function useScheduleDetailMapController({
   const displayMarkers = useMemo(() => {
     if (guidancePosition) return [...markers, {
       id: 'schedule-detail-guidance-location', ...guidancePosition,
+      ...(navigationMode && markerDirection != null ? { courseDegrees: markerDirection } : {}),
+      ...(navigationMode && compass != null && courseDegrees == null ? { headingSource: 'compass' as const } : {}),
       displayType: 'dot' as const, tintColor: APP_ACCENT_BLUE, badgeBorderColor: '#FFFFFF', dotSize: 14, zIndex: 1001,
     }];
     if (guidanceActive && offRouteLocation) return [...markers, {
@@ -226,7 +272,7 @@ export function useScheduleDetailMapController({
         zIndex: 1000,
       },
     ];
-  }, [currentLocationCoord, guidanceActive, guidancePosition, markers, offRouteLocation]);
+  }, [currentLocationCoord, guidanceActive, guidancePosition, courseDegrees, compass, markerDirection, navigationMode, markers, offRouteLocation]);
   const mapCoords = useMemo(
     () =>
       getSavedRouteFitCoords(
@@ -237,21 +283,16 @@ export function useScheduleDetailMapController({
       ),
     [displayDestination, displayOrigin, displayRoute, guidanceWalkingCoordinates],
   );
-  const mapEdgePadding = useMemo(
-    () => ({
-      // Endpoint pins extend above the coordinates the map fits.
-      top: Math.max(topInset + 124, routeMapHeaderHeight + 52),
-      right: 44,
-      // Fit above the floating map actions as well as the sheet.
-      bottom: sheetMinHeight + MAP_ACTION_SHEET_GAP + MAP_ACTION_BUTTON_HEIGHT + 12,
-      left: 44,
-    }),
-    [routeMapHeaderHeight, sheetMinHeight, topInset],
-  );
+  const arrivalCoord = arrived ? mapCoordFromUnknown(markers.find(marker => marker.id === 'destination'))
+    ?? mapCoordFromUnknown(displayDestination) ?? mapCoords.at(-1) : undefined;
+  const arrivalLatitude = arrivalCoord && Number.isFinite(arrivalCoord.latitude)
+    && Math.abs(arrivalCoord.latitude) <= 90 ? arrivalCoord.latitude : undefined;
+  const arrivalLongitude = arrivalCoord && Number.isFinite(arrivalCoord.longitude)
+    && Math.abs(arrivalCoord.longitude) <= 180 ? arrivalCoord.longitude : undefined;
   const fitRouteCoordinates = useCallback((coords: typeof mapCoords) => {
     const map = mapRef.current;
     if (!map || coords.length < 2) return;
-    if (!reduceMotion) {
+    if (!reduceMotion && !navigationMode) {
       map.fitToCoordinates(coords, { edgePadding: mapEdgePadding });
       return;
     }
@@ -267,8 +308,8 @@ export function useScheduleDetailMapController({
     const target = getPaddedBoundsCamera(bounds, {
       width: mapWidth, height: mapHeight, padding: mapEdgePadding,
     }, { wholeZoomLevels: true, boundsPaddingFactor: 1.08, cameraScaleSample });
-    if (target) map.animateCameraTo({ ...target, duration: 0 });
-  }, [cameraScaleSample, mapEdgePadding, mapHeight, mapWidth, reduceMotion]);
+    if (target) map.animateCameraTo({ ...target, pitchDegrees: 0, bearingDegrees: 0, duration: reduceMotion ? 0 : 420 });
+  }, [cameraScaleSample, mapEdgePadding, mapHeight, mapWidth, navigationMode, reduceMotion]);
   const overviewFitKey = useMemo(() => {
     const key = getSavedRouteOverviewFitKey(mapCoords, mapEdgePadding);
     if (!key || !reduceMotion) return key;
@@ -384,10 +425,11 @@ export function useScheduleDetailMapController({
       mapRef.current?.animateCameraTo({
         ...boardingCoord,
         zoom: 17.2,
+        ...(navigationMode ? { pitchDegrees: 0, bearingDegrees: 0 } : {}),
         duration: reduceMotion ? 0 : 520,
       });
     },
-    [focusRouteLeg, routeLegs, snapSheet, reduceMotion],
+    [focusRouteLeg, routeLegs, snapSheet, reduceMotion, navigationMode],
   );
 
   const focusRouteEndpoint = useCallback(
@@ -411,10 +453,11 @@ export function useScheduleDetailMapController({
       mapRef.current?.animateCameraTo({
         ...endpointCoord,
         zoom: 17.2,
+        ...(navigationMode ? { pitchDegrees: 0, bearingDegrees: 0 } : {}),
         duration: reduceMotion ? 0 : 520,
       });
     },
-    [displayDestination, displayOrigin, mapCoords, snapSheet, reduceMotion],
+    [displayDestination, displayOrigin, mapCoords, snapSheet, reduceMotion, navigationMode],
   );
 
   const focusTransitStop = useCallback(
@@ -436,10 +479,11 @@ export function useScheduleDetailMapController({
       mapRef.current?.animateCameraTo({
         ...coord,
         zoom: 17.2,
+        ...(navigationMode ? { pitchDegrees: 0, bearingDegrees: 0 } : {}),
         duration: reduceMotion ? 0 : 420,
       });
     },
-    [markers, routeLegs, snapSheet, reduceMotion],
+    [markers, routeLegs, snapSheet, reduceMotion, navigationMode],
   );
 
   const timelineStopTargets = useMemo(() => new Map(routeTravelSteps.flatMap((step, legIndex) => {
@@ -501,12 +545,13 @@ export function useScheduleDetailMapController({
   }, []);
 
   const handleMapCameraChanged = useCallback((nextCamera: TmapCameraState) => {
+    if (typeof nextCamera.pitchDegrees === 'number') setMapPitch(Math.round(nextCamera.pitchDegrees));
     const scale = nextCamera.metersPerPixel;
-    if (reduceMotion && typeof scale === 'number' && Number.isFinite(scale) && scale > 0) {
+    if ((reduceMotion || navigationMode && followingGuidance) && typeof scale === 'number' && Number.isFinite(scale) && scale > 0) {
       setCameraScaleSample(previous => previous ?? nextCamera);
     }
     if (!navigationMode || !followingGuidance || !mapFollowPosition) return;
-    if (shouldPauseFollowingCamera(nextCamera, mapFollowPosition, Date.now(), followCommandUntilRef.current)) {
+    if (shouldPauseFollowingCamera(nextCamera, lastFollowCameraRef.current ?? mapFollowPosition, Date.now(), followCommandUntilRef.current)) {
       setFollowingGuidance(false);
     }
   }, [followingGuidance, mapFollowPosition, navigationMode, reduceMotion]);
@@ -514,10 +559,14 @@ export function useScheduleDetailMapController({
   const moveToCurrentLocation = useCallback(async () => {
     clearRouteFocus();
     if (navigationMode && mapFollowPosition) {
+      const target = followingCamera(mapFollowPosition);
+      if (!target) return;
       lastFollowCoordRef.current = mapFollowPosition;
+      lastFollowCameraRef.current = target;
+      lastFollowViewportRef.current = followViewportKey;
       followCommandUntilRef.current = Date.now() + 1600;
       setFollowingGuidance(true);
-      mapRef.current?.animateCameraTo({ ...mapFollowPosition, zoom: 16, duration: reduceMotion ? 0 : 420 });
+      mapRef.current?.animateCameraTo({ ...target, pitchDegrees: followPitch, bearingDegrees: 0, duration: reduceMotion ? 0 : 420 });
       return;
     }
     if (currentLocationPendingRef.current) return;
@@ -593,8 +642,10 @@ export function useScheduleDetailMapController({
         setCurrentLocationPending(false);
       }
     }
-  }, [clearRouteFocus, mapFollowPosition, navigationMode, reduceMotion]);
+  }, [clearRouteFocus, followingCamera, followViewportKey, followPitch, mapFollowPosition, navigationMode, reduceMotion]);
   const camera = useMemo(() => {
+    if (arrivalLatitude != null && arrivalLongitude != null)
+      return { latitude: arrivalLatitude, longitude: arrivalLongitude, zoom: 17.2 };
     if (mapCoords.length === 0) return DEFAULT_CAMERA;
     const latitude =
       mapCoords.reduce((sum, coord) => sum + coord.latitude, 0) /
@@ -603,7 +654,7 @@ export function useScheduleDetailMapController({
       mapCoords.reduce((sum, coord) => sum + coord.longitude, 0) /
       mapCoords.length;
     return { latitude, longitude, zoom: mapCoords.length > 1 ? 11 : 14 };
-  }, [mapCoords]);
+  }, [arrivalLatitude, arrivalLongitude, mapCoords]);
 
   const fitMap = useCallback((force = false) => {
     const map = mapRef.current;
@@ -621,8 +672,21 @@ export function useScheduleDetailMapController({
   }, [clearRouteFocus, fitMap]);
 
   useEffect(() => {
-    if (!hasFocusedMapLocation && !(navigationMode && followingGuidance && mapFollowPosition)) fitMap();
-  }, [fitMap, followingGuidance, mapFollowPosition, hasFocusedMapLocation, navigationMode]);
+    if (!arrived) { arrivalFocusedRef.current = false; return; }
+    if (arrivalFocusedRef.current || arrivalLatitude == null || arrivalLongitude == null || !mapRef.current) return;
+    arrivalFocusedRef.current = true;
+    setFollowingGuidance(false);
+    setFocusedLegIndex(undefined);
+    setFocusedEndpoint('DESTINATION');
+    setSelectedTransitStop(undefined);
+    snapSheet('compact');
+    mapRef.current.animateCameraTo({ latitude: arrivalLatitude, longitude: arrivalLongitude,
+      zoom: 17.2, pitchDegrees: 0, bearingDegrees: 0, duration: reduceMotion ? 0 : 420 });
+  }, [arrived, arrivalLatitude, arrivalLongitude, reduceMotion, snapSheet]);
+
+  useEffect(() => {
+    if (!arrived && !hasFocusedMapLocation && !(navigationMode && followingGuidance && mapFollowPosition)) fitMap();
+  }, [arrived, fitMap, followingGuidance, mapFollowPosition, hasFocusedMapLocation, navigationMode]);
 
   return {
     camera,
@@ -633,7 +697,6 @@ export function useScheduleDetailMapController({
     displayMarkers,
     displayOrigin,
     displayPathOverlays,
-    guidanceWalkingPaths,
     savedDisplayTravelMinutes,
     displayTravelMode,
     handleMapMarkerPress,
@@ -644,6 +707,7 @@ export function useScheduleDetailMapController({
     mapCoords,
     mapRef,
     mapZoom,
+    mapPitch,
     moveToCurrentLocation,
     showWholeRoute,
     routeDetailInfo,

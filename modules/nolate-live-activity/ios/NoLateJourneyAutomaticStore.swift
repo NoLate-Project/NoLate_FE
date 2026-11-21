@@ -57,11 +57,19 @@ struct NoLateJourneyAutomaticStore<Value: Codable> {
 
   mutating func save(_ value: Value) throws {
     guard isAvailable, !revoked else { throw Failure(code: "STORE_UNAVAILABLE", durableRevocationGuaranteed: revoked) }
+    var stage = "encode"
     do {
       let data = try JSONEncoder().encode(Record(schemaVersion: 1, revoked: false, value: value))
+      stage = "payload_limit"
       guard !data.isEmpty, data.count <= 2_097_152 else { throw Failure(code: "STORE_PAYLOAD_INVALID", durableRevocationGuaranteed: false) }
+      stage = "write"
       try io.write(data, url)
     } catch {
+      // Preserve enough failure metadata to distinguish invalid state encoding,
+      // payload limits and filesystem errors. Never log the route, error userInfo,
+      // file path, credentials, or the value that failed to encode.
+      let cause = error as NSError
+      NSLog("NOLATE_JOURNEY_STORE save_failed stage=%@ domain=%@ code=%ld", stage, cause.domain, cause.code)
       blocked = true
       throw Failure(code: "STORE_WRITE_FAILED", durableRevocationGuaranteed: false)
     }

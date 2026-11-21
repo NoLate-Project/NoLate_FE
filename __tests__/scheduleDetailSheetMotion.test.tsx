@@ -10,6 +10,37 @@ jest.mock('../src/modules/performance/useSystemReduceMotion', () => ({
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
+it('keeps the compact guidance content above the safe area and reports the visible sheet after expansion', async () => {
+  jest.mocked(useSystemReduceMotion).mockReturnValue(true);
+  let sheet!: ReturnType<typeof useScheduleDetailSheetController>;
+  function Sheet({ bottomInset }: { bottomInset: number }) {
+    sheet = useScheduleDetailSheetController({
+      windowHeight: 840, bottomInset, previewEnabled: false, guidanceNavigation: true,
+      initialSheetMode: 'compact', initialParticipantsExpanded: false,
+    });
+    return null;
+  }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = TestRenderer.create(<Sheet bottomInset={0} />); });
+    const withoutSafeArea = sheet.sheetMinHeight;
+    await act(async () => { renderer.update(<Sheet bottomInset={34} />); });
+    expect(sheet.sheetMinHeight - withoutSafeArea).toBe(34);
+    expect(sheet.sheetVisibleHeight).toBe(sheet.sheetMinHeight);
+    await act(async () => { sheet.handleCompactContentSizeChange(375, 250); });
+    expect(sheet.sheetMinHeight).toBeGreaterThanOrEqual(250 + 34);
+    const compactHeight = sheet.sheetVisibleHeight;
+    await act(async () => { sheet.setExpandedContentHeight(500); sheet.snapSheet('expanded'); });
+    expect(sheet.sheetVisibleHeight).toBeGreaterThan(compactHeight);
+    expect(sheet.sheetVisibleHeight).toBeLessThan(640);
+    await act(async () => { sheet.snapSheet('compact'); });
+    expect(sheet.sheetVisibleHeight).toBe(compactHeight);
+  } finally {
+    await act(async () => renderer?.unmount());
+    jest.mocked(useSystemReduceMotion).mockReset();
+  }
+});
+
 it('keeps the sheet moving when the departure header changes the snap position', async () => {
   const motion = jest.mocked(useSystemReduceMotion);
   motion.mockReturnValue(false);

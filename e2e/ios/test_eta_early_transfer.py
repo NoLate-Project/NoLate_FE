@@ -11,6 +11,25 @@ spec.loader.exec_module(verifier)
 
 
 class EarlyTransferAuditTest(unittest.TestCase):
+    def test_reported_boarding_chain_cannot_promote_pending_or_conditional_eta(self):
+        import json
+        fixture = json.loads(Path(__file__).with_name('fixtures').joinpath('reported-boarding-worker-chain.json').read_text())
+        self.assertEqual(verifier.verify_reported_boarding(fixture['worker'], fixture['public'])['result'], 'PASSED')
+        mutations = [
+            lambda w, p: p.update(predictedArrivalAt=p['plannedJourneyArrivalPrediction']['predictedArrivalAt']),
+            lambda w, p: p.update(recommendedDepartureAt=w['evaluatedAt']),
+            lambda w, p: w['pendingUpdate'].update(route=w['provisionalPrediction']['effectiveTransitRoute']),
+            lambda w, p: w.update(historyCount=2),
+            lambda w, p: p['plannedJourneyArrivalPrediction']['effectiveTransitRoute']['segments'][3]['rideTiming']['observedService'].update(trainNumber='2012'),
+            lambda w, p: p['plannedJourneyArrivalPrediction']['effectiveTransitRoute']['segments'][2].update(durationSeconds=120),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                worker, public = copy.deepcopy(fixture['worker']), copy.deepcopy(fixture['public'])
+                mutate(worker, public)
+                with self.assertRaises(AssertionError):
+                    verifier.verify_reported_boarding(worker, public)
+
     def test_calendar_title_comes_from_one_actual_ui_save(self):
         marker = 'SYNTHETIC_SCHEDULE_EDITED_TITLE XCUITest 1793728000 edited\n'
         self.assertEqual(verifier.calendar_smoke_title('XCTest output\n' + marker),
@@ -155,6 +174,36 @@ class EarlyTransferAuditTest(unittest.TestCase):
             worker[key] = value
             with self.subTest(key=key), self.assertRaises(AssertionError):
                 verifier.verify_prediction(worker, public)
+
+    def test_middle_ride_delay_requires_new_onward_train_and_preserved_walks(self):
+        worker, public = self.fixture()
+        epoch = dt.datetime.fromisoformat(worker['epoch'])
+        at = lambda s: (epoch + dt.timedelta(seconds=s)).isoformat()
+        worker['phase'] = 'onward-delay'
+        route = public['effectiveTransitRoute']
+        first, second = route['segments'][1], route['segments'][3]
+        first['rideTiming'].update(predictedArrivalAt=at(413))
+        second['rideTiming'].update(basis='TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
+                                   predictedBoardingAt=at(740), predictedArrivalAt=at(860))
+        route['segments'][2]['durationSeconds'] = 60
+        second['transferTiming'] = {'requiredMarginSeconds': 60}
+        third = {'kind': 'SUBWAY', 'rideTiming': {'basis': 'TIMETABLE',
+            'timetable': {'trainNumber': '1014'}, 'predictedBoardingAt': at(1080), 'predictedArrivalAt': at(1200)},
+            'transferTiming': {'requiredMarginSeconds': 60}}
+        route['segments'][4:4] = [{'kind': 'WALK', 'durationSeconds': 60}, third]
+        route['totalMinutes'] = public['travelMinutes'] = 23
+        route['arrivalAt'] = worker['predictedArrivalAt'] = public['predictedArrivalAt'] = at(1371)
+        worker['effectiveSnapshot']['effectiveTransitRoute'] = copy.deepcopy(route)
+        worker['timetableQueries'] = [{'line': 'LINE_1', 'notBefore': at(980)}]
+        self.assertTrue(verifier.verify_prediction(worker, public, 'onward-delay')
+                        ['observedMiddleRideReconnectedOnwardTrain'])
+        for key, value in (('predictedArrivalAt', at(1380)), ('basis', 'TRANSFER_ALIGHTING_REALTIME')):
+            invalid = copy.deepcopy(public)
+            invalid['effectiveTransitRoute']['segments'][5]['rideTiming'][key] = value
+            changed = copy.deepcopy(worker)
+            changed['effectiveSnapshot']['effectiveTransitRoute'] = copy.deepcopy(invalid['effectiveTransitRoute'])
+            with self.subTest(key=key), self.assertRaises(AssertionError):
+                verifier.verify_prediction(changed, invalid, 'onward-delay')
 
     def test_matching_outputs_cannot_hide_shorter_walks_or_old_connection(self):
         for field, value in [('walk', 120), ('train', '2014'), ('arrival', '2026-10-12T14:45:52+00:00')]:

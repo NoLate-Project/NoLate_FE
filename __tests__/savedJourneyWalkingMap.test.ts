@@ -1,7 +1,6 @@
 import { presentSavedJourneyWalkingMap } from '../src/modules/journey/savedJourneyWalkingMap';
 import { composeServerWalkingInput, type WalkingSnapshot } from '../src/modules/journey/serverWalkingSnapshot';
 import { buildSavedRouteMapPresentation, getSavedRouteFitCoords } from '../src/modules/map/savedRouteMapPresentation';
-import { buildGuidancePreviewSVG } from '../src/modules/journey/SavedJourneyRoutePreview';
 import { savedJourneyProviderFixture } from '../test-support/savedJourneyProviderFixture';
 import type { AutomaticJourneyBinding, AutomaticJourneySnapshot } from '../src/modules/journey/automaticJourney';
 
@@ -86,8 +85,30 @@ test('the map replaces walking geometry only, preserves bus overlays, fits and f
     expect(focused.pathOverlays.filter(path => path.id.includes('focus'))).toHaveLength(0); // WALK has one line, camera-only focus.
     expect(after.routeLegs).toEqual(before.routeLegs);
     expect(JSON.stringify(f.route)).toBe(original);
-    const preview = buildGuidancePreviewSVG(f.input, null, paths);
-    expect(preview?.match(/polyline/g)).toHaveLength(3);
-    expect(preview).not.toEqual(buildGuidancePreviewSVG(f.input, null));
-    expect(buildGuidancePreviewSVG(f.input, null, [{ legIndex: 1, coordinates: paths[0].coordinates }])).toBeNull();
+
+});
+
+test('draws the same station transfer selected by native and preserves the independently fetched street walk', () => {
+    const f = fixture(), base = f.input;
+    const [first, transit, last] = base.legs;
+    const start = transit.end!, end = { ...start, longitude: start.longitude + 0.0004 };
+    const indoor = { ...start, latitude: start.latitude + 0.0001 };
+    const street = { ...start, latitude: start.latitude - 0.0001 };
+    const firstTrain = { ...transit, kind: 'SUBWAY' as const };
+    const secondTrain = { ...firstTrain, index: 3, start: end, end: start, coordinates: [end, start],
+        stops: [{ ...transit.stops[0], coordinate: end }, { ...transit.stops[1], coordinate: start }] };
+    const legs = [first, firstTrain, { ...last, index: 2, start, end, coordinates: [start, indoor, end],
+        exact: true, geometryInputComplete: true }, secondTrain, { ...last, index: 4 }];
+    const wire = base.walkingSnapshot!;
+    const walks = [wire.walks[0], { legIndex: 2, provider:'tmap' as const,
+        points:[start, street, end].map(p => ({lat:p.latitude,lng:p.longitude})) }, { ...wire.walks[1], legIndex:4 }];
+    const input = { ...base, legs, walkingSnapshot: { ...wire, walks } };
+    const snapshot = f.at(f.now);
+    snapshot.guidanceRoute = { ...f.binding, legs:legs.map((leg,i) => ({ index:i, kind:leg.kind,
+        ...(i === 2 ? {walkingGeometrySource:'ODSAY_TRANSFER'} : {}) })) };
+    const path = () => presentSavedJourneyWalkingMap(snapshot, f.binding, input, f.now).find(w => w.legIndex === 2);
+    expect(path()?.coordinates[1]).toEqual(indoor);
+    snapshot.guidanceRoute.routeInputDigest = 'c'.repeat(64);
+    expect(path()?.coordinates[1]).toEqual(street);
+    expect(input.walkingSnapshot.walks[1].points[1].lat).toBe(street.latitude);
 });

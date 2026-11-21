@@ -6,7 +6,7 @@ enum NoLateSavedGuidanceSubwayArrivalPolicy {
     guard data.count <= 262_144, now.isFinite, now < session.binding.expiresAtEpochSeconds,
       session.binding.syncScope == "AUTHENTICATED", session.binding.savedRouteValidated == true,
       session.binding.guidanceEnabled == true, !session.core.snapshot.status.isTerminal,
-      let index = session.requestedSubwayLegIndex,
+      let index = session.requestedSubwayLegIndex(now:now),
       let route = try? JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self, from: Data(session.routeJSON.utf8)),
       route.legs.indices.contains(index), route.legs[index].kind == "SUBWAY",
       let savedLine = safe(route.legs[index].display?.lineName),
@@ -45,7 +45,7 @@ enum NoLateSavedGuidanceSubwayArrivalPolicy {
     let arrival = NoLateGuidanceArrival(providerRouteId: line, directionLabel: "\(terminal)행",
       expectedAt: expected, sourceUpdatedAt: source, validUntil: until,
       busLegIndex: index, kind: "SUBWAY")
-    return .init("WAITING_INFORMATION", arrival, busLegIndex: index)
+    return .init("WAITING_INFORMATION", arrival, busLegIndex: index, subwayTrainNumber: train)
   }
   private static func safe(_ value: String?) -> String? {
     NoLateGuidanceRouteLayoutPolicy.safeName(value)

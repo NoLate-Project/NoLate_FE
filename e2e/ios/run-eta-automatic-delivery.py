@@ -7,6 +7,7 @@ The test-classpath observer bounds real evaluations to three and stops on provid
 import argparse
 import datetime as dt
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,8 @@ from eta_pinned_app import (
     require_private_development_client, reset_private_navigation,
     open_private_test_endpoint, restore_private_endpoint,
 )
+from eta_automatic_cadence import resume_at as cadence_resume_at, verify_postdeparture_tick, provider_error
+from eta_planned_route_evidence import qualifying_planned_observation
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
@@ -92,10 +95,36 @@ def main():
     parser.add_argument('--journey-provider', choices=('odsay', 'tmap'), default='odsay')
     parser.add_argument('--target-lead-minutes', type=int, choices=(75, 80, 90), default=75)
     parser.add_argument('--arm-delay-seconds', type=int, default=0)
+    parser.add_argument('--verify-postdeparture-cadence', action='store_true',
+                        help='Three actual scheduled evaluations with a bounded wall-clock pause; no OS delivery/accuracy claim')
+    parser.add_argument('--backend-snapshot', type=Path, help='Owned frozen backend copy matching the ETA sources')
     args = parser.parse_args()
     assert 0 <= args.arm_delay_seconds <= 900
+    assert not args.verify_postdeparture_cadence or args.arm_delay_seconds == 0
     copied = args.copied_input.resolve(strict=True)
     assert str(copied).startswith('/private/tmp/nolate-real-naver-requery-04-')
+    build_be = BE
+    source_hashes = {}
+    if args.backend_snapshot:
+        build_be = args.backend_snapshot.resolve(strict=True)
+        assert str(build_be).startswith('/private/tmp/nolate-be-planned-build.') and (build_be / 'gradlew').is_file()
+        critical = [p for folder in ('eta', 'schedule', 'transit')
+                    for p in (BE / 'src/main/kotlin/com/noLate' / folder).rglob('*.kt')]
+        critical += list((BE / 'src/test/kotlin/com/noLate/eta/simulator').glob('*.kt'))
+        for path in critical:
+            relative = path.relative_to(BE)
+            raw = path.read_bytes()
+            assert (build_be / relative).read_bytes() == raw, 'Frozen backend differs from current ETA sources'
+            source_hashes[str(relative)] = hashlib.sha256(raw).hexdigest()
+    if args.verify_postdeparture_cadence:
+        assert args.backend_snapshot, 'New cadence verification requires a frozen owned backend'
+        capture_source = (build_be / 'src/test/kotlin/com/noLate/eta/simulator/EtaRealProviderSimulatorServer.kt').read_text()
+        automatic_capture = capture_source.split('fun captureEvaluation(', 1)[1].split('mapper.writeValue(output.resolve("evaluation-', 1)[0]
+        # Fail before the server can read a public feed when its observer still
+        # lacks the persisted clock required by this new scenario.
+        assert '"etaRefreshDueAt" to job.lastEtaRefreshDueAt' in automatic_capture, 'Automatic cadence capture is not prepared'
+        assert '"automaticAlarmBoundary" to automaticAlarmTrace?.tickBoundary(executionThread)' in automatic_capture, 'Real ETA/alarm boundary observer missing'
+        assert '"alarmLifecycleTrace" to automaticAlarmTrace?.snapshot()' in automatic_capture, 'Real expiry-writer observer missing'
     root = Path(tempfile.mkdtemp(prefix='nolate-eta-real-e2e.', dir='/private/tmp'))
     server = metro = None
     report = {'classification': 'UI_CREATE_AUTOMATIC_REAL_ETA_OS_DELIVERY_E2E', 'result': 'PARTIAL',
@@ -104,6 +133,12 @@ def main():
               'manualWorkerInvocations': 0, 'fcmDeliveryVerified': False, 'cases': [],
               'physicalIphoneSound': 'DEFERRED_BY_USER', 'nativeCleanup': 'NOT_RUN', 'journeyProvider': args.journey_provider}
     report.update(targetLeadMinutes=args.target_lead_minutes, realClockArmDelaySeconds=args.arm_delay_seconds)
+    report['backendSourceSnapshot'] = {'root': str(build_be), 'sourceSha256': source_hashes}
+    if args.verify_postdeparture_cadence:
+        report.update(classification='UI_CREATE_REAL_POSTDEPARTURE_SCHEDULED_CADENCE_E2E',
+                      uninterruptedSchedulerCadenceVerified=False, osDeliveryVerifiedByThisRun=False,
+                      arrivalAccuracyVerified=False, maximumEvaluations=3,
+                      privateObserverPausedBetweenFirstAndSecond=True)
 
     def emit(**v):
         print(json.dumps(v), flush=True)
@@ -175,14 +210,15 @@ def main():
             occupied = subprocess.run(['/usr/sbin/lsof', '-t', f'-iTCP:{port}', '-sTCP:LISTEN'], capture_output=True)
             assert occupied.returncode in (0, 1) and not occupied.stdout.strip(), 'Do not stop unrelated servers'
         with log('compile.log') as output:
-            subprocess.run(['./gradlew', '-I', 'e2e/eta-fixture.init.gradle', 'etaSimulatorFixtureClasspath',
-                            '-PetaFixtureOutput=' + str(root), '--console=plain'], cwd=BE, stdout=output,
+            subprocess.run(['./gradlew', '-I', str(BE / 'e2e/eta-fixture.init.gradle'), 'etaSimulatorFixtureClasspath',
+                            '-PetaFixtureOutput=' + str(root), '--console=plain'], cwd=build_be, stdout=output,
                            stderr=subprocess.STDOUT, check=True, timeout=300)
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.real-isolated=true',
                 '-Dnolate.eta.real-automatic-delivery=true', '-classpath', (root / 'classpath.txt').read_text(),
                 'com.noLate.eta.simulator.EtaRealProviderSimulatorServer', str(root), str(copied), args.journey_provider,
                 str(args.target_lead_minutes)],
+                # Runtime settings stay in the authorized BE directory; compile classes remain frozen.
                 cwd=BE, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         prepared = wait(lambda: read('prepared.json'))
         assert prepared['automaticScheduling'] and prepared['scheduleCountBeforeUi'] == prepared['jobCountBeforeUi'] == 0
@@ -213,23 +249,63 @@ def main():
         registration = read('scheduler-registration.json')
         assert registration['registeredWorkerCount'] == 1 and registration['observedBeanIsScheduledTarget'] is True
         emit(state='waiting_actual_scheduler_no_manual_worker')
+        def next_automatic_evaluation(index):
+            value = read(f'evaluation-{index}.json')
+            if value:
+                return value
+            last = read('automatic-attempt-3.json')
+            if last and last['historyCount'] < index:
+                raise RuntimeError('AutomaticWorkerCompletedWithoutNewHistory_' + last['jobStatus'])
+            return None
+
         previous = chosen = None
         for i in range(1, 4):
-            def next_evaluation():
-                value = read(f'evaluation-{i}.json')
-                if value:
-                    return value
-                last = read('automatic-attempt-3.json')
-                if last and last['historyCount'] < i:
-                    raise RuntimeError('AutomaticWorkerCompletedWithoutNewHistory_' + last['jobStatus'])
-                return None
-            value = wait(next_evaluation, 390)
+            value = wait(lambda: next_automatic_evaluation(i), 390)
             verify_automatic(value, previous)
             verify_saved_route(value['savedScheduleInput'], args.journey_provider)
+            # The provider latch applies before acceptance and before either
+            # scenario can arm another scheduled round.
+            if provider_error(value):
+                raise RuntimeError('ProviderErrorNoRetry')
             report['cases'].append({'index': i, 'accepted': accepted(value), 'evaluatedAt': value['evaluatedAt'],
                                     'nextCheckAt': value['nextCheckAt'], 'executionThread': value['executionThread'],
                                     'failureCode': (value.get('failureReason') or '').split(':')[0]})
             emit(state='automatic_evaluation', **report['cases'][-1])
+            if args.verify_postdeparture_cadence:
+                command('pause')
+                initial = value
+                resume = cadence_resume_at(initial, dt.datetime.now(dt.timezone.utc))
+                report['realClockObservationWaits'] = [resume.isoformat()]
+                emit(state='waiting_real_postdeparture_cadence_window', notBefore=resume.isoformat())
+                wait(lambda: dt.datetime.now(dt.timezone.utc) >= resume,
+                     (resume - dt.datetime.now(dt.timezone.utc)).total_seconds() + 15)
+                command('arm')
+                previous = initial
+                for index in (2, 3):
+                    current = wait(lambda: next_automatic_evaluation(index), 190)
+                    verify_automatic(current, previous)
+                    result = verify_postdeparture_tick(initial, previous, current)
+                    report['cases'].append(result)
+                    emit(state='postdeparture_scheduled_tick', **result)
+                    previous = current
+                command('pause')
+                snapshot = current['effectiveSnapshot']
+                failure = (snapshot.get('plannedRouteUpdate') or {}).get('failure')
+                method = ('testVerifyIsolatedRealProviderPlannedTimingFailure' if failure else
+                          'testVerifyIsolatedRealProviderPlannedArrival' if qualifying_planned_observation(current) else
+                          'testVerifyIsolatedRealProviderPlannedFallback')
+                ui(method, 'ui-cadence-planned-status', (
+                    '--real-isolated-evidence', str(root / 'evaluation-3.json'),
+                    '--real-isolated-previous-evidence', str(root / 'evaluation-1.json'),
+                    '--schedule-id', '363', '--existing-title', TITLE))
+                public = read('ui-status.json')
+                assert public['recommendedDepartureAt'] == current['recommendedDepartureAt']
+                assert public['etaRefreshDueAt'] == current['etaRefreshDueAt']
+                assert public['nextCheckAt'] == current['nextCheckAt']
+                assert public['predictedArrivalAt'] is None and public['effectiveTransitRoute'] is None
+                report.update(installedAppEta='POSTDEPARTURE_PLAN_PASSED_NOT_NORMAL_LIVE_ETA',
+                              automaticPostdepartureCadence='PASSED', result='PASSED')
+                break
             if accepted(value):
                 chosen = (i, value)
                 # Retain this actual generation while observing its OS delivery. No ETA/time is changed.
@@ -250,8 +326,6 @@ def main():
                 # sleep can itself miss a correctly scheduled near-term alarm.
                 break
             previous = value
-            if value.get('providerFailures'):
-                raise RuntimeError('ProviderErrorNoRetry')
             if i < 3:
                 window = next_observation_window(value, dt.datetime.now(dt.timezone.utc))
                 if window:
@@ -261,21 +335,22 @@ def main():
                     wait(lambda: dt.datetime.now(dt.timezone.utc) >= window,
                          (window - dt.datetime.now(dt.timezone.utc)).total_seconds() + 10)
                     command('arm')
-        assert chosen is not None, 'No real accepted automatic evaluation'
-        i, value = chosen
-        state, = value['alarmStates']
-        assert state['operation'] == 'UPSERT'
-        assert dt.datetime.fromisoformat(state['trigger_at']) == dt.datetime.fromisoformat(value['recommendedDepartureAt'])
-        remaining = (dt.datetime.fromisoformat(state['trigger_at']) - dt.datetime.now(dt.timezone.utc)).total_seconds()
-        assert 20 < remaining < 1200, 'Actual result must still permit observed future delivery'
-        if remaining > 300:
-            wait(lambda: dt.datetime.now(dt.timezone.utc) >= dt.datetime.fromisoformat(state['trigger_at']) - dt.timedelta(seconds=300), remaining)
-        ui('testObserveIsolatedNativeAlarmDelivery', 'ui-delivery', native=f'evaluation-{i}.json')
-        spec = importlib.util.spec_from_file_location('native_delivery', Path(__file__).with_name('run-eta-native-delivery.py'))
-        native = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(native)
-        report['delivery'] = native.verify_delivery(value, (root / 'ui-delivery/run.log').read_text(), 'background')
-        report['result'] = 'PASSED'
+        if not args.verify_postdeparture_cadence:
+            assert chosen is not None, 'No real accepted automatic evaluation'
+            i, value = chosen
+            state, = value['alarmStates']
+            assert state['operation'] == 'UPSERT'
+            assert dt.datetime.fromisoformat(state['trigger_at']) == dt.datetime.fromisoformat(value['recommendedDepartureAt'])
+            remaining = (dt.datetime.fromisoformat(state['trigger_at']) - dt.datetime.now(dt.timezone.utc)).total_seconds()
+            assert 20 < remaining < 1200, 'Actual result must still permit observed future delivery'
+            if remaining > 300:
+                wait(lambda: dt.datetime.now(dt.timezone.utc) >= dt.datetime.fromisoformat(state['trigger_at']) - dt.timedelta(seconds=300), remaining)
+            ui('testObserveIsolatedNativeAlarmDelivery', 'ui-delivery', native=f'evaluation-{i}.json')
+            spec = importlib.util.spec_from_file_location('native_delivery', Path(__file__).with_name('run-eta-native-delivery.py'))
+            native = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(native)
+            report['delivery'] = native.verify_delivery(value, (root / 'ui-delivery/run.log').read_text(), 'background')
+            report['result'] = 'PASSED'
     except KeyboardInterrupt:
         report.update(result='PARTIAL', failureKind='KeyboardInterrupt', failureStage='OperatorStoppedOwnedRun')
         emit(state='stopped_owned_run')

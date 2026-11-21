@@ -65,6 +65,25 @@ class PinnedPublicLifecycleTest(unittest.TestCase):
 
     @patch('eta_pinned_app.subprocess.check_output')
     @patch('eta_pinned_app.subprocess.run')
+    def test_restoration_requires_its_own_test_and_marker(self, run, check):
+        check.return_value = json.dumps(self.summary()).encode()
+        def emit_marker(command, **kwargs):
+            kwargs['stdout'].write(marker)
+            return subprocess.CompletedProcess(command, 0)
+        run.side_effect = emit_marker
+        with tempfile.TemporaryDirectory() as root:
+            marker = b'ETA_PINNED_PRIVATE_LIFECYCLE_URL_DISPATCHED\n'
+            with self.assertRaises(AssertionError):
+                open_private_client_with_xcuitest(DEVICE, Path(root) / 'wrong', restore=True)
+            marker = b'ETA_PINNED_ORIGINAL_ENDPOINT_DISPATCHED\n'
+            result = open_private_client_with_xcuitest(DEVICE, Path(root) / 'restored', restore=True)
+        self.assertTrue(result['restoringOriginalEndpoint'])
+        self.assertIn('-only-testing:NoLateE2ETests/NoLatePinnedDeviceControlsTests/testRestoreDevelopmentClientEndpoint',
+                      run.call_args.args[0])
+        self.assertEqual(run.call_args.kwargs['env']['TEST_RUNNER_E2E_RESTORE_DEVELOPMENT_ENDPOINT'], '1')
+
+    @patch('eta_pinned_app.subprocess.check_output')
+    @patch('eta_pinned_app.subprocess.run')
     def test_failed_lifecycle_is_not_retried_or_replaced_with_a_simctl_reset(self, run, check):
         run.side_effect = subprocess.CalledProcessError(65, 'owned-xcuitest')
         with tempfile.TemporaryDirectory() as root:

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Animated, Easing } from "react-native";
-import { useReducedMotion } from "react-native-reanimated";
+import { useSystemReduceMotion } from "../../performance/useSystemReduceMotion";
+import { useScheduleAddPickerAnimation } from "../components/form/useScheduleAddPickerAnimation";
 
-import { CATEGORY_PICKER_MARGIN, isDateType, pickerTargetH, type PickerType } from "./scheduleEditPresentation";
+import { CATEGORY_PICKER_MARGIN, type PickerType } from "./scheduleEditPresentation";
 
 /** 카테고리 선택 영역의 열림·닫힘 상태와 여백·화살표 애니메이션을 함께 관리합니다. */
 export function useCategoryPickerAnimation(initialOpen: boolean) {
-    const reduceMotion = useReducedMotion();
+    const reduceMotion = useSystemReduceMotion();
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(initialOpen);
     const [categoryPickerClosing, setCategoryPickerClosing] = useState(false);
     const categoryPickerOpenRef = useRef(initialOpen);
@@ -66,51 +67,12 @@ export function useCategoryPickerAnimation(initialOpen: boolean) {
 export function useScheduleDateTimePickerAnimation() {
     const [picker, setPicker] = useState<PickerType | null>(null);
     const [displayPicker, setDisplayPicker] = useState<PickerType | null>(null);
-    const heightAnim = useRef(new Animated.Value(0)).current;
-    const outerOpacity = useRef(new Animated.Value(0)).current;
-    const contentFade = useRef(new Animated.Value(1)).current;
-    const prevPickerRef = useRef<PickerType | null>(null);
+    const { heightAnim, outerOpacity, contentFade } = useScheduleAddPickerAnimation({ picker, setDisplayPicker });
 
     /** 지정한 피커를 열고, 이미 같은 피커가 열려 있으면 닫습니다. */
     const togglePicker = useCallback((type: PickerType) => {
         setPicker((previous) => previous === type ? null : type);
     }, []);
-
-    useEffect(() => {
-        const previous = prevPickerRef.current;
-        prevPickerRef.current = picker;
-        if (picker !== null && previous === null) {
-            setDisplayPicker(picker);
-            Animated.parallel([
-                Animated.spring(heightAnim, {
-                    toValue: pickerTargetH(picker), useNativeDriver: false, damping: 18, stiffness: 160, mass: 0.8,
-                }),
-                Animated.timing(outerOpacity, { toValue: 1, duration: 200, useNativeDriver: false }),
-            ]).start();
-        } else if (picker === null && previous !== null) {
-            Animated.parallel([
-                Animated.timing(heightAnim, { toValue: 0, duration: 220, useNativeDriver: false }),
-                Animated.timing(outerOpacity, { toValue: 0, duration: 180, useNativeDriver: false }),
-            ]).start(({ finished }) => {
-                if (finished) setDisplayPicker(null);
-            });
-        } else if (picker !== null && previous !== null) {
-            if (isDateType(picker) !== isDateType(previous)) {
-                Animated.timing(contentFade, { toValue: 0, duration: 120, useNativeDriver: false })
-                    .start(({ finished }) => {
-                        if (!finished) return;
-                        setDisplayPicker(picker);
-                        Animated.parallel([
-                            Animated.spring(heightAnim, {
-                                toValue: pickerTargetH(picker), useNativeDriver: false,
-                                damping: 18, stiffness: 160, mass: 0.8,
-                            }),
-                            Animated.timing(contentFade, { toValue: 1, duration: 220, useNativeDriver: false }),
-                        ]).start();
-                    });
-            } else setDisplayPicker(picker);
-        }
-    }, [contentFade, heightAnim, outerOpacity, picker]);
 
     return { picker, setPicker, displayPicker, togglePicker, heightAnim, outerOpacity, contentFade };
 }

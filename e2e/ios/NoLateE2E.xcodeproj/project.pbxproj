@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0B87234E214D1B5D2B0A66D1 /* NoLateE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91472FE6C4394F1BB7640F2B /* NoLateE2ETests.swift */; };
+		F0885C104F5F4005BD92AC81 /* CarNavigationProductTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1709E796BD1545A8A297B520 /* CarNavigationProductTests.swift */; };
 		30DAFDFEFA191CBBA1204323 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3DAE106CBC97FD71B5D6DCA6 /* Foundation.framework */; };
 /* End PBXBuildFile section */
 
@@ -15,6 +16,7 @@
 		3DAE106CBC97FD71B5D6DCA6 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		62649991890B9372BF9AD34E /* NoLateE2ETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NoLateE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		91472FE6C4394F1BB7640F2B /* NoLateE2ETests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NoLateE2ETests.swift; sourceTree = "<group>"; };
+		1709E796BD1545A8A297B520 /* CarNavigationProductTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CarNavigationProductTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,6 +61,7 @@
 				3C06BD9A3A441BD278484209 /* Products */,
 				EA0B64B66CF04EB6290BC1EE /* Frameworks */,
 				91472FE6C4394F1BB7640F2B /* NoLateE2ETests.swift */,
+				1709E796BD1545A8A297B520 /* CarNavigationProductTests.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -127,6 +130,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0B87234E214D1B5D2B0A66D1 /* NoLateE2ETests.swift in Sources */,
+				F0885C104F5F4005BD92AC81 /* CarNavigationProductTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

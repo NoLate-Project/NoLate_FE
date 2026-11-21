@@ -286,7 +286,7 @@ export function RouteSelectResultsScreen({
             {timetableLeg && <IntercityTimetableSheet importedTicket={importedTicket} visible={timetableVisible}
                 kind={timetableLeg.leg.kind === "COACH" ? undefined : timetableLeg.leg.kind as "TRAIN" | "EXPRESS_BUS" | "INTERCITY_BUS"}
                 departureName={timetableLeg.leg.startName} arrivalName={timetableLeg.leg.endName}
-                date={routeDepartureAt ?? new Date()} dark={isDark}
+                date={routeDepartureAt ?? new Date()} targetArrivalAt={routeTargetArrivalAt} dark={isDark}
                 onSelect={async (selection, isCurrent) => {
                     const connectedId = await applyIntercityService(timetableLeg.option, timetableLeg.legIndex, selection, isCurrent);
                     if (isCurrent()) timetableReturnId.current = connectedId;

@@ -28,10 +28,10 @@ function get(view: ReactTestRenderer, label: string) {
   return button;
 }
 async function press(view: ReactTestRenderer, label: string) { await act(async () => { const button = get(view, label); if (!button.props.disabled) button.props.onPress(); }); }
-async function choose(onSelect: (selection: IntercitySelection, isCurrent: () => boolean) => Promise<void>) {
+async function lookupServices(onSelect: (selection: IntercitySelection, isCurrent: () => boolean) => Promise<void>, targetArrivalAt?: Date) {
   const close = jest.fn();
   let view!: ReactTestRenderer;
-  await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date('2099-10-13T00:00:00+09:00')} dark={false} departureName="수서" arrivalName="공주" onClose={close} onSelect={onSelect} />); });
+  await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date('2099-10-13T00:00:00+09:00')} targetArrivalAt={targetArrivalAt} dark={false} departureName="수서" arrivalName="공주" onClose={close} onSelect={onSelect} />); });
   await press(view, '출발 역·터미널 선택');
   expect(view.root.findAll(node => node.props.accessibilityLabel === '서울특별시')).toHaveLength(0);
   await press(view, '시·도 선택');
@@ -50,10 +50,52 @@ async function choose(onSelect: (selection: IntercitySelection, isCurrent: () =>
   const lookup = get(view, '운행편 조회').props.onPress;
   await act(async () => { lookup(); lookup(); });
   expect(getIntercityServices).toHaveBeenCalledTimes(1);
+  return { view, close };
+}
+async function choose(onSelect: (selection: IntercitySelection, isCurrent: () => boolean) => Promise<void>) {
+  const { view, close } = await lookupServices(onSelect);
   expect(get(view, '12:20 123 운행편 선택')).toBeTruthy();
   await press(view, '12:20 123 운행편 선택');
   return { view, close };
 }
+test('only upcoming rides reaching the terminal by the deadline are initially shown, including a ride arriving exactly at midnight', async () => {
+  jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2099-10-13T09:00+09:00'));
+  const atMidnight = { ...service, id: 'midnight', trainNumber: '456', departureAt: '2099-10-13T23:00+09:00', arrivalAt: '2099-10-14T00:00+09:00' };
+  const late = { ...atMidnight, id: 'late', trainNumber: '789', arrivalAt: '2099-10-14T00:01+09:00' };
+  const departed = { ...service, id: 'past', trainNumber: '111', departureAt: '2099-10-13T09:00+09:00' };
+  (getIntercityServices as jest.Mock).mockResolvedValue(page([departed, service, atMidnight, late]));
+  const { view } = await lookupServices(jest.fn(), new Date('2099-10-13T15:00Z'));
+  const toggle = '일정에 맞는 운행편만 보기';
+  expect(get(view, toggle).props.accessibilityState.checked).toBe(true);
+  expect(get(view, '23:00 456 운행편 선택').props.disabled).toBe(false);
+  expect(() => get(view, '23:00 789 운행편 선택')).toThrow();
+  expect(() => get(view, '09:00 111 운행편 선택')).toThrow();
+  await press(view, toggle);
+  expect(get(view, '23:00 789 운행편 선택').props.disabled).toBe(true);
+  expect(get(view, '09:00 111 운행편 선택').props.disabled).toBe(true);
+  expect(getIntercityServices).toHaveBeenCalledTimes(1);
+});
+test('a failed next page retains the deadline filter and can be retried, even with no matches on the first page', async () => {
+  const late = { ...service, id: 'late', arrivalAt: '2099-10-13T15:18+09:00' };
+  (getIntercityServices as jest.Mock)
+    .mockResolvedValueOnce({ ...page([late]), hasMore: true })
+    .mockResolvedValueOnce({ ...page([]), page: 2, status: 'RATE_LIMITED' })
+    .mockResolvedValueOnce({ ...page([service]), page: 2, hasMore: true })
+    .mockResolvedValueOnce({ ...page([]), page: 3, status: 'NO_SERVICES' });
+  const { view } = await lookupServices(jest.fn(), new Date('2099-10-13T14:00+09:00'));
+  const next = '다음 운행편 보기';
+  const count = (n: number) => view.root.findAll(node => node.props.accessibilityLabel === `운행편 ${n}개`).length;
+  expect(count(0)).toBeGreaterThan(0);
+  await press(view, next);
+  expect(count(0)).toBeGreaterThan(0);
+  expect(get(view, '일정에 맞는 운행편만 보기').props.accessibilityState.checked).toBe(true);
+  await press(view, next);
+  expect(count(1)).toBeGreaterThan(0);
+  await press(view, next);
+  expect(count(1)).toBeGreaterThan(0);
+  expect(() => get(view, next)).toThrow();
+  expect((getIntercityServices as jest.Mock).mock.calls.map(([query]) => query.page)).toEqual([1, 2, 2, 3]);
+});
 test('lookup and row selection do not apply a journey until station mapping is confirmed', async () => {
   const select = jest.fn().mockResolvedValue(undefined);
   const { view, close } = await choose(select);
@@ -65,6 +107,36 @@ test('lookup and row selection do not apply a journey until station mapping is c
   expect(close).toHaveBeenCalledTimes(1);
   expect(get(view, '이 운행편으로 경로 연결').props.accessibilityState.busy).toBe(false);
   expect(select).toHaveBeenCalledWith(expect.objectContaining({ service, mappingConfirmed: true, boardingBufferMinutes: 15, alightingBufferMinutes: 5 }), expect.any(Function));
+});
+test('missing bus terminals expose the booking actions and a chosen terminal supplies the label for its exact ID', async () => {
+  const dep = { id: 'NAI2238202', name: '인천공항2터미널' };
+  const arr = { id: 'NAI2839701', name: '청주' };
+  (getIntercityStops as jest.Mock).mockReset()
+    .mockResolvedValueOnce({ ...page([]), status: 'NO_SERVICES' })
+    .mockResolvedValueOnce(page([dep])).mockResolvedValueOnce(page([arr]));
+  const bus = { ...service, kind: 'INTERCITY_BUS', departureId: dep.id, arrivalId: arr.id,
+    departureName: dep.id, arrivalName: arr.name, trainNumber: null, grade: '심야우등' };
+  (getIntercityServices as jest.Mock).mockResolvedValueOnce(page([bus]));
+  const select = jest.fn().mockResolvedValue(undefined);
+  let view!: ReactTestRenderer;
+  await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet kind="INTERCITY_BUS" date={new Date(service.departureAt)}
+    departureName={dep.name} arrivalName={arr.name} dark={false} onClose={jest.fn()} onSelect={select} />); });
+  await press(view, '출발 역·터미널 선택');
+  await press(view, '역 터미널 검색');
+  expect(get(view, '티머니GO 공식 예매 열기')).toBeTruthy();
+  expect(get(view, '버스타고 공식 예매 열기')).toBeTruthy();
+  await press(view, '역 터미널 검색');
+  await press(view, `${dep.name} ${dep.id}`);
+  await press(view, '도착 역·터미널 선택');
+  await press(view, '역 터미널 검색');
+  await press(view, `${arr.name} ${arr.id}`);
+  await press(view, '운행편 조회');
+  await press(view, '12:20 심야우등 운행편 선택');
+  await press(view, '같은 승하차 장소입니다');
+  await press(view, '이 운행편으로 경로 연결');
+  expect(select).toHaveBeenCalledWith(expect.objectContaining({ service: {
+    ...bus, departureName: dep.name, arrivalName: arr.name,
+  } }), expect.any(Function));
 });
 test('invalid buffers prevent a connection and returning restores the same service and buffers', async () => {
   const select = jest.fn().mockResolvedValue(undefined);
@@ -226,11 +298,14 @@ test.each(['cancel', 'unmount'])('%s invalidates a pending connection response',
   expect(close).not.toHaveBeenCalled();
 });
 test('reviewed ticket is available without TAGO and still requires mapping confirmation', async () => {
-  const ticket: ImportedTrainTicket = { version: 1, id: 'ticket:12345678-1234-1234-1234-123456789012', kind: 'TRAIN', source: 'IOS_SHARE_TEXT', verification: 'USER_CONFIRMED', bookingStatus: 'UNVERIFIED', departureName: '수서', arrivalName: '공주', departureAt: '2099-10-13T12:20:00+09:00', arrivalAt: '2099-10-13T13:12:00+09:00', trainNumber: '615', grade: 'SRT', confirmedAt: new Date().toISOString() };
+  const ticket: ImportedTrainTicket = { version: 1, id: 'ticket:12345678-1234-1234-1234-123456789012', kind: 'TRAIN', source: 'IOS_SHARE_TEXT', verification: 'USER_CONFIRMED', bookingStatus: 'UNVERIFIED', departureName: '수서', arrivalName: '공주', departureAt: '2099-10-13T23:20:00+09:00', arrivalAt: '2099-10-14T00:12:00+09:00', trainNumber: '615', grade: 'SRT', confirmedAt: new Date().toISOString() };
   const select = jest.fn().mockResolvedValue(undefined); const close = jest.fn();
   let view!: ReactTestRenderer;
   await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet importedTicket={ticket} kind="TRAIN" date={new Date()} dark={false} onClose={close} onSelect={select} />); });
+  const shownTimes = () => view.root.findAllByType(Text).map(node => [node.props.children].flat().join(''));
+  expect(shownTimes()).toContain('수서 → 공주 · 2099-10-13 23:20 → 10-14 00:12 · 615편');
   await press(view, '가져온 승차권으로 연결');
+  expect(shownTimes()).toContain('23:20 → 10-14 00:12');
   await press(view, '이 운행편으로 경로 연결');
   expect(select).not.toHaveBeenCalled();
   await press(view, '같은 승하차 장소입니다');

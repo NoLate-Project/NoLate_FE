@@ -18,8 +18,15 @@ const styles = StyleSheet.create({
     },
     guidanceCurrentRow: {
         ...StyleSheet.absoluteFillObject,
-        borderRadius: 8,
-        borderLeftWidth: 3,
+    },
+    currentLocationMarker: {
+        backgroundColor: "#FFFFFF",
+        borderColor: "#1468D4",
+        borderWidth: 2.5,
+    },
+    transferLocationMarker: {
+        position: "absolute",
+        top: 0,
     },
     item: {
         flexDirection: "row",

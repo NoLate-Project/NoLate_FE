@@ -49,7 +49,7 @@ enum NoLateSavedGuidanceSubwayPolicy {
     guard data.count <= 262_144, now.isFinite, now < session.binding.expiresAtEpochSeconds,
       session.binding.syncScope == "AUTHENTICATED", session.binding.savedRouteValidated == true,
       session.binding.guidanceEnabled == true, !session.core.snapshot.status.isTerminal,
-      let index = session.requestedSubwayLegIndex,
+      let index = session.requestedSubwayLegIndex(now:now),
       let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], root["success"] as? Bool == true,
       let body = root["data"] as? [String: Any], integer(body["schemaVersion"]) == 2,
       body["sessionId"] as? String == session.binding.sessionId,

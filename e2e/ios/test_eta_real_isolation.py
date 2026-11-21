@@ -13,6 +13,20 @@ spec.loader.exec_module(verifier)
 
 
 class RealIsolationVerifierTest(unittest.TestCase):
+    def test_route_search_uses_the_same_departure_as_the_future_schedule(self):
+        runner_spec = importlib.util.spec_from_file_location('eta_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        requested = '2026-11-19T21:20:00+09:00'
+        prepared = {'journeyProvider': 'odsay', 'comparisonRequestedDepartureAt': requested}
+        seed = {'provider': 'odsay', 'requestedDepartureAt': '2026-11-19T12:14:00Z',
+                'departureAt': '2026-11-19T12:20:00Z'}
+        # Even a matching output departure does not validate a different provider request.
+        with self.assertRaises(ValueError):
+            runner.verify_odsay_departure_input(requested, prepared, seed)
+        seed.update(requestedDepartureAt='2026-11-19T12:20:00Z', departureAt='2026-11-19T12:23:00Z')
+        self.assertEqual(runner.verify_odsay_departure_input(requested, prepared, seed), seed['requestedDepartureAt'])
+
     def test_saved_bus_departure_status_rejects_rounded_time_or_unproven_live_data(self):
         runner_spec = importlib.util.spec_from_file_location('bus_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
         runner = importlib.util.module_from_spec(runner_spec)
@@ -60,7 +74,10 @@ class RealIsolationVerifierTest(unittest.TestCase):
         for code in ('ENDPOINT_MISMATCH', 'NO_PATH', 'TIMEOUT'):
             self.assertFalse(runner.provider_error_requires_stop({'providerWire': [],
                 'walkingRefinement': {'failureCounts': {code: 1}}}))
-        self.assertTrue(runner.provider_error_requires_stop({'providerWire': [{'outcome': 'rate_limited'}]}))
+        for outcome in ('error', 'rate_limited', 'application_error', 'local_rate_limited'):
+            self.assertTrue(runner.provider_error_requires_stop({'providerWire': [{'outcome': outcome}]}))
+        for outcome in ('success', 'empty'):
+            self.assertFalse(runner.provider_error_requires_stop({'providerWire': [{'outcome': outcome}]}))
 
     def test_postdeparture_audit_keeps_recommendation_evidence_separate_from_live_success(self):
         runner_spec = importlib.util.spec_from_file_location('postdeparture_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
@@ -74,8 +91,32 @@ class RealIsolationVerifierTest(unittest.TestCase):
         self.assertTrue(partial['automaticAlarmStateAbsent'])
         self.assertFalse(partial['nativeAlarmDeliveryTested'])
         self.assertEqual(runner.postdeparture_audit(records, True)['result'], 'PASSED')
+        self.assertEqual(runner.postdeparture_audit(records, True, require_final_alighting=True)['result'], 'PARTIAL')
+        direct = [records[0], {**records[1], 'uiResult': 'PROVISIONAL_PASSED',
+                               'freshFinalAlighting': {'trainNumber': '2014'}}]
+        self.assertEqual(runner.postdeparture_audit(direct, True, require_final_alighting=True)['result'], 'PASSED')
+        direct[1]['uiResult'] = 'FALLBACK_PASSED_NOT_LIVE_CORRECTION'
+        self.assertEqual(runner.postdeparture_audit(direct, True, require_final_alighting=True)['result'], 'PARTIAL')
         changed = [records[0], {**records[1], 'recommendedDepartureAt': '2026-10-22T05:49:29+09:00'}]
         self.assertEqual(runner.postdeparture_audit(changed, True)['result'], 'PARTIAL')
+
+    def test_new_service_binding_has_an_explicit_gate_and_cannot_pass_original_train_verification(self):
+        runner_spec = importlib.util.spec_from_file_location('service_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        first = {'recommendedDepartureAt': '2026-11-20T15:10:00+09:00', 'automaticAlarmStateCount': 0}
+        selected = {**first, 'uiResult': 'PROVISIONAL_PASSED', 'observedServiceConnection': {
+            'classification': 'TWO_ENDPOINT_ACTUAL_SERVICE_CONNECTION_NOT_TIMETABLE_ALIAS',
+            'services': [{'trainNumber': '3202', 'comparisonTimetableTrainNumber': '2202'}]}}
+        result = runner.postdeparture_audit([first, selected], False, require_observed_service_connection=True)
+        self.assertEqual(result['result'], 'PASSED')
+        self.assertTrue(result['observedServiceApiAndAppVerified'])
+        self.assertFalse(result['finalAlightingForecastVerified'])
+        self.assertFalse(result['physicalArrivalMeasured'])
+        self.assertEqual(runner.postdeparture_audit([first, selected], True, require_final_alighting=True)['result'], 'PARTIAL')
+        fallback = {**selected, 'uiResult': 'FALLBACK_PASSED_NOT_LIVE_CORRECTION'}
+        self.assertEqual(runner.postdeparture_audit([first, fallback], False,
+            require_observed_service_connection=True)['result'], 'PARTIAL')
 
     def test_postdeparture_status_separates_new_origin_failure_from_saved_plan(self):
         runner_spec = importlib.util.spec_from_file_location('split_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
@@ -97,6 +138,28 @@ class RealIsolationVerifierTest(unittest.TestCase):
         missing_diagnostic['originReplanDiagnostic'] = None
         with self.assertRaises(RuntimeError):
             runner.verify_postdeparture_status_split(worker, missing_diagnostic)
+
+    def test_planned_timing_warning_requires_this_worker_read_without_a_cached_arrival(self):
+        spec = importlib.util.spec_from_file_location('warning_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        at = '2026-11-18T04:17:40Z'
+        departure = '2026-11-18T04:17:28Z'
+        update = {'routeIdentity': 'plan', 'failure': 'EARLY_BOARDING_UNCONFIRMED', 'route': None}
+        diagnostic = {'travelMinutes': 65, 'source': 'SELECTED_ROUTE', 'stale': True, 'failureReason': None}
+        worker = dict(diagnostic, scheduleId=363, evaluatedAt=at, recommendedDepartureAt=departure,
+                      effectiveSnapshot={'inProgressPlannedRoute': {'identity': 'plan'}, 'plannedRouteUpdate': update})
+        public = dict(scheduleId=363, evaluatedAt=at, recommendedDepartureAt=departure, stale=True,
+                      plannedJourneyTimingFailureReason=update['failure'], originReplanDiagnostic=diagnostic,
+                      _isolationReadWindow={'startedAt': at, 'finishedAt': at})
+        runner.verify_planned_timing_failure(worker, public)
+        for key, wrong in (('plannedJourneyTimingFailureReason', None), ('plannedJourneyTimingFailureReason', 'TIMELINE_INCONSISTENT'),
+                           ('scheduleId', 364), ('evaluatedAt', departure), ('recommendedDepartureAt', at),
+                           ('_isolationReadWindow', {'startedAt': departure, 'finishedAt': at}),
+                           ('plannedJourneyArrivalPrediction', {'basis': 'LAST_ACCEPTED_PLAN'}),
+                           ('futureTimetablePrediction', {'arrivalAt': at}), ('effectiveTransitRoute', {'identity': 'plan'})):
+            with self.subTest(field=key), self.assertRaises(RuntimeError):
+                runner.verify_planned_timing_failure(worker, {**public, key: wrong})
 
     def test_explicit_comparison_appointment_only_changes_future_input(self):
         runner_spec = importlib.util.spec_from_file_location('comparison_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
@@ -344,6 +407,41 @@ class RealIsolationVerifierTest(unittest.TestCase):
         self.assertEqual(verifier.verify_values(worker, public)['sourceAgeSeconds'], 40)
         self.assertEqual(verifier.verify_values(worker, public)['walkingBoundaryAudit']['timingResult'], 'PASSED')
 
+    def test_accepted_early_transfer_needs_station_evidence_and_keeps_scheduled_alighting(self):
+        for fault in (None, 'stale', 'shifted_alighting', 'missing_station_clock', 'wrong_journey_basis', 'no_observation'):
+            worker, public = self.sample()
+            snap = worker['effectiveSnapshot']
+            snap['transitTimingBasis'] = public['transitTimingBasis'] = 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED'
+            route = snap['effectiveTransitRoute']
+            first = route['segments'][1]['rideTiming']
+            first['timetable']['arrivalAt'] = '2026-10-08T02:06:00Z'
+            first['predictedArrivalAt'] = '2026-10-08T02:07:00Z'
+            ride = route['segments'][3]['rideTiming']
+            ride['timetable'].update(boardingAt='2026-10-08T02:13:00Z', arrivalAt='2026-10-08T02:20:00Z')
+            ride['predictedArrivalAt'] = ride['timetable']['arrivalAt']
+            worker['predictedArrivalAt'] = public['predictedArrivalAt'] = route['arrivalAt'] = '2026-10-08T02:22:00Z'
+            worker['travelMinutes'] = public['travelMinutes'] = route['totalMinutes'] = 22
+            ride.update(basis='TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
+                        observationSourceUpdatedAt=worker['evaluatedAt'], predictedBoardingAt='2026-10-08T02:12:00Z')
+            ride['timetable']['boardingStationArrivalAt'] = '2026-10-08T02:12:30Z'
+            if fault == 'stale':
+                ride['observationSourceUpdatedAt'] = '2026-10-08T01:57:59Z'
+            elif fault == 'shifted_alighting':
+                ride['predictedArrivalAt'] = '2026-10-08T02:19:30Z'
+            elif fault == 'missing_station_clock':
+                del ride['timetable']['boardingStationArrivalAt']
+            elif fault == 'wrong_journey_basis':
+                snap['transitTimingBasis'] = public['transitTimingBasis'] = 'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE'
+            elif fault == 'no_observation':
+                ride.update(basis='TIMETABLE', observationSourceUpdatedAt=None, predictedBoardingAt=ride['timetable']['boardingAt'])
+            public['effectiveTransitRoute'] = copy.deepcopy(snap['effectiveTransitRoute'])
+            with self.subTest(fault=fault):
+                if fault is None:
+                    self.assertEqual(verifier.verify_values(worker, public)['rides'][1], ride)
+                else:
+                    with self.assertRaises((AssertionError, KeyError)):
+                        verifier.verify_values(worker, public)
+
     def test_first_live_shift_compares_station_arrivals_with_scheduled_dwell(self):
         worker, public = self.sample()
         route = worker['effectiveSnapshot']['effectiveTransitRoute']
@@ -490,6 +588,24 @@ class RealIsolationVerifierTest(unittest.TestCase):
             else: p['failureReason'] = 'DIFFERENT'
             with self.subTest(change=change), self.assertRaises(AssertionError):
                 verifier.verify_diagnostic_values(w, p, seed, s)
+
+    def test_short_first_ride_preserves_odsay_stop_ids_and_rejects_other_corridors(self):
+        rides = [{'mode': 'SUBWAY', 'from': {'providerStopId': a, 'name': start},
+                  'to': {'providerStopId': b, 'name': end}, 'line': {'providerRouteId': line}}
+                 for a, b, start, end, line in [('431', '433', '동작', '사당', '1000:4'),
+                                                ('226', '230', '사당', '신림', '1000:2')]]
+        seed = {'provider': 'odsay', 'legs': rides}
+        selected = {'provider': 'odsay', 'routeInfo': {'provider': 'odsay'}, 'providerTimeBasis': 'route_estimate',
+                    'transitLegs': [{'kind': 'SUBWAY', 'startID': r['from']['providerStopId'],
+                                    'endID': r['to']['providerStopId'], 'providerRouteId': r['line']['providerRouteId']}
+                                   for r in rides]}
+        verifier.verify_odsay_selection(seed, selected)
+        for fault in ('changed-id', 'changed-station'):
+            bad_seed, bad_selected = copy.deepcopy(seed), copy.deepcopy(selected)
+            if fault == 'changed-id': bad_selected['transitLegs'][0]['startID'] = '411'
+            else: bad_seed['legs'][0]['from']['name'] = '서울'
+            with self.subTest(fault=fault), self.assertRaises(AssertionError):
+                verifier.verify_odsay_selection(bad_seed, bad_selected)
 
     def test_odsay_link_geometry_does_not_imply_exact_seconds_or_platform_coverage(self):
         worker, public = self.sample()

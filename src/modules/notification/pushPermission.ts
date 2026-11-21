@@ -19,9 +19,8 @@ function getMessagingPermissionApi(): MessagingPermissionApi {
 /**
  * Requests only the user-facing notification permission.
  *
- * This intentionally stays separate from remote-token registration so an iOS
- * Simulator can present the local permission prompt even though it cannot
- * obtain an APNs device token.
+ * This stays separate from remote-token registration so local notifications
+ * remain usable even where an APNs device token is unavailable.
  */
 export async function requestPushNotificationPermission(
     messaging?: FirebaseMessagingTypes.Module,

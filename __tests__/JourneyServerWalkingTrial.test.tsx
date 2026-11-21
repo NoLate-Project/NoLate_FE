@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { JourneyServerWalkingTrial } from '../src/modules/journey/JourneyServerWalkingTrial';
+import { JourneyServerWalkingTrial } from './fixtures/journey/JourneyServerWalkingTrial';
 jest.mock('../src/modules/journey/serverWalkingContractTrial', () => ({
     walkingContractCases: ['complete', 'owner', 'revision', 'route', 'expired', 'gap', 'source', 'http-complete', 'http-edited',
         'http-revoked', 'http-redirect', 'http-large', 'http-timeout'], loadWalkingContractTrial: jest.fn(),

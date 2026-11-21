@@ -15,13 +15,15 @@ export type AutomaticJourneyBinding = {
     officialBusAdmission?: OfficialBusAdmission;
     /** Static official subway path crosswalk; never a train or passenger-position claim. */
     officialSubwayAdmission?: OfficialSubwayAdmission;
+    officialBusAdmissions?: OfficialBusAdmission[];
+    officialSubwayAdmissions?: OfficialSubwayAdmission[];
 };
 export type OfficialBusAdmission = {
-    schemaVersion: 1; identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK'; busLegIndex: 1;
+    schemaVersion: 1; identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK'; busLegIndex: number;
     routeId: string; direction: string; stationCount: number; firstStopSequence: number; lastStopSequence: number;
 };
 export type OfficialSubwayAdmission = {
-    schemaVersion: 1; identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK'; subwayLegIndex: 1;
+    schemaVersion: 1; identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK'; subwayLegIndex: number;
     providerRouteId: string; startRoutingStationId: string; endRoutingStationId: string; stationCount: number;
 };
 export type AutomaticJourneyDeparture = Pick<AutomaticJourneyBinding,
@@ -90,17 +92,18 @@ const noticeCount = (value: unknown): number => typeof value === 'number' && Num
     && value >= 0 && value <= 100_000 ? value : 0;
 const safeCode = (value: unknown): string | null => typeof value === "string" && /^[A-Z][A-Z0-9_]{0,95}$/.test(value) ? value : null;
 const epoch = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0 && value < 253_402_300_800;
+const transitLegIndex = (value: unknown): value is number => automaticPositiveInteger(value) && value <= 29 && value % 2 === 1;
 const officialBusAdmission = (value: unknown): OfficialBusAdmission | null => {
     const item = automaticRecord(value);
     if (!item || item.schemaVersion !== 1 || item.identityEvidence !== 'OFFICIAL_STOP_SHAPE_CROSSWALK'
-        || item.busLegIndex !== 1 || typeof item.routeId !== 'string' || !/^[1-9][0-9]{8}$/.test(item.routeId)
+        || !transitLegIndex(item.busLegIndex) || typeof item.routeId !== 'string' || !/^[1-9][0-9]{8}$/.test(item.routeId)
         || typeof item.direction !== 'string' || !item.direction.trim() || item.direction.length > 128
         || Array.from(item.direction).some(c => { const code = c.codePointAt(0)!; return code <= 31 || code >= 127 && code <= 159; })
         || !Number.isSafeInteger(item.stationCount) || (item.stationCount as number) < 1 || (item.stationCount as number) > 63
         || !Number.isSafeInteger(item.firstStopSequence) || (item.firstStopSequence as number) < 0
         || !Number.isSafeInteger(item.lastStopSequence)
         || (item.lastStopSequence as number) - (item.firstStopSequence as number) !== item.stationCount) return null;
-    return { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK', busLegIndex: 1,
+    return { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK', busLegIndex: item.busLegIndex,
         routeId: item.routeId, direction: item.direction, stationCount: item.stationCount as number,
         firstStopSequence: item.firstStopSequence as number, lastStopSequence: item.lastStopSequence as number };
 };
@@ -108,22 +111,39 @@ const officialSubwayAdmission = (value: unknown): OfficialSubwayAdmission | null
     const item = automaticRecord(value);
     const stationId = (id: unknown) => typeof id === 'string' && /^[0-9]{1,20}$/.test(id) && /[1-9]/.test(id);
     if (!item || item.schemaVersion !== 1 || item.identityEvidence !== 'OFFICIAL_STATION_PATH_CROSSWALK'
-        || item.subwayLegIndex !== 1 || typeof item.providerRouteId !== 'string'
+        || !transitLegIndex(item.subwayLegIndex) || typeof item.providerRouteId !== 'string'
         || !/^1000:[0-9]{1,20}$/.test(item.providerRouteId) || !/[1-9]/.test(item.providerRouteId.slice(5))
         || !stationId(item.startRoutingStationId) || !stationId(item.endRoutingStationId)
         || item.startRoutingStationId === item.endRoutingStationId
         || !Number.isSafeInteger(item.stationCount) || (item.stationCount as number) < 1
         || (item.stationCount as number) > 63) return null;
-    return { schemaVersion: 1, identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK', subwayLegIndex: 1,
+    return { schemaVersion: 1, identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK', subwayLegIndex: item.subwayLegIndex,
         providerRouteId: item.providerRouteId, startRoutingStationId: item.startRoutingStationId as string,
         endRoutingStationId: item.endRoutingStationId as string, stationCount: item.stationCount as number };
 };
 
 export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourneyBinding | null {
     const binding = automaticRecord(value);
-    // A Release simulator may carry the same server-issued official bus proof
-    // during isolated E2E. Physical iPhones still require DEVICE execution.
-    const isolatedSimulatorBusProof = Platform.OS === "ios" && !Device.isDevice && binding?.execution === "SIMULATOR";
+    const simulator = Platform.OS === 'ios' && !Device.isDevice && binding?.execution === 'SIMULATOR';
+    const canReceiveProof = binding?.syncScope === 'AUTHENTICATED' && (binding.execution === 'DEVICE' || simulator);
+    const bus = officialBusAdmission(binding?.officialBusAdmission);
+    const subway = officialSubwayAdmission(binding?.officialSubwayAdmission);
+    const indexed = binding?.officialBusAdmissions != null || binding?.officialSubwayAdmissions != null;
+    let transferProofs: Pick<AutomaticJourneyBinding, 'officialBusAdmissions' | 'officialSubwayAdmissions'> = {};
+    if (indexed && binding) {
+        if (!canReceiveProof || binding.officialBusAdmission != null || binding.officialSubwayAdmission != null
+            || !Array.isArray(binding.officialBusAdmissions) || !Array.isArray(binding.officialSubwayAdmissions)
+            || binding.officialBusAdmissions.length + binding.officialSubwayAdmissions.length > 15) return null;
+        const buses = binding.officialBusAdmissions.map(officialBusAdmission);
+        const trains = binding.officialSubwayAdmissions.map(officialSubwayAdmission);
+        if (!buses.every((p): p is OfficialBusAdmission => p !== null)
+            || !trains.every((p): p is OfficialSubwayAdmission => p !== null)) return null;
+        const indices = [...buses.map(p => p.busLegIndex), ...trains.map(p => p.subwayLegIndex)].sort((a, b) => a - b);
+        if (indices.length < 2 || indices.some((index, i) => index !== 2 * i + 1)
+            || buses.some((p, i) => i > 0 && buses[i - 1].busLegIndex >= p.busLegIndex)
+            || trains.some((p, i) => i > 0 && trains[i - 1].subwayLegIndex >= p.subwayLegIndex)) return null;
+        transferProofs = { officialBusAdmissions: buses, officialSubwayAdmissions: trains };
+    }
     if (!binding || !automaticUUID(binding.sessionId) || !automaticUUID(binding.clientOwnerId)
         || typeof binding.scheduleId !== "string" || !/^[1-9]\d{0,17}$/.test(binding.scheduleId)
         || !automaticPositiveInteger(binding.generation) || !automaticPositiveInteger(binding.routeRevision)
@@ -133,11 +153,8 @@ export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourn
         || binding.expiresAtEpochSeconds - binding.preparedAtEpochSeconds > (binding.syncScope === 'AUTHENTICATED' ? 7200.001 : 600.001)
         || !["SIMULATOR", "DEVICE"].includes(String(binding.execution))
         || binding.execution === "DEVICE" && binding.syncScope !== "AUTHENTICATED"
-        || binding.officialBusAdmission != null && (binding.execution !== 'DEVICE' && !isolatedSimulatorBusProof
-            || binding.syncScope !== 'AUTHENTICATED' || !officialBusAdmission(binding.officialBusAdmission))
-        || binding.officialSubwayAdmission != null && (binding.execution !== 'DEVICE'
-            || binding.syncScope !== 'AUTHENTICATED' || !officialSubwayAdmission(binding.officialSubwayAdmission)
-            || binding.officialBusAdmission != null)
+        || binding.officialBusAdmission != null && (!canReceiveProof || bus?.busLegIndex !== 1)
+        || binding.officialSubwayAdmission != null && (!canReceiveProof || subway?.subwayLegIndex !== 1 || bus !== null)
         || binding.rerouteValidated === true && binding.officialBusAdmission == null
         || !["LOCAL_ONLY", "SANDBOX", "AUTHENTICATED"].includes(String(binding.syncScope))) return null;
     if (binding.syncScope === "AUTHENTICATED" && (!journeyAuthenticationOrigin(binding.apiOrigin)
@@ -154,8 +171,9 @@ export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourn
             ? { savedRouteValidated: true as const, guidanceEnabled: true as const } : {}),
         ...(binding.rerouteValidated === true && binding.savedRouteValidated === true && binding.officialBusAdmission != null
             ? { rerouteValidated: true as const } : {}),
-        ...(binding.officialBusAdmission != null ? { officialBusAdmission: officialBusAdmission(binding.officialBusAdmission)! } : {}),
-        ...(binding.officialSubwayAdmission != null ? { officialSubwayAdmission: officialSubwayAdmission(binding.officialSubwayAdmission)! } : {}),
+        ...(bus ? { officialBusAdmission: bus } : {}),
+        ...(subway ? { officialSubwayAdmission: subway } : {}),
+        ...transferProofs,
     };
 }
 
@@ -257,8 +275,11 @@ export function normalizeAutomaticJourneyDeparture(value: unknown, binding: Auto
 }
 
 type NativeAutomaticJourney = {
+    configureRunningJourneyNoticeMode(mode: string, sessionId: string): Promise<unknown>;
     configureAutomaticJourneyNoticeMode(mode: string): Promise<unknown>;
     configureAutomaticJourneyPushPilot(fcmToken: string): Promise<unknown>;
+    configureAutomaticJourneyRemoteUpdates(fcmToken: string): Promise<unknown>;
+    updateAutomaticJourneyRemoteRegistration(fcmToken: string, bindingJSON: string): Promise<unknown>;
     refreshAutomaticJourneyCredentials(apiOrigin: string, refreshToken: string): Promise<unknown>;
     postAuthenticatedAutomaticJourney(authJSON: string, path: string, bodyJSON: string): Promise<unknown>;
     configureAutomaticJourneyAuthentication(authJSON: string): Promise<unknown>;
@@ -301,15 +322,24 @@ async function invoke(method: Exclude<keyof NativeAutomaticJourney, "addListener
     } catch { return { enabled: false, reason: "AUTOMATIC_ENGINE_UNAVAILABLE" }; }
 }
 export const getAutomaticJourneySnapshot = async () => normalizeAutomaticJourneySnapshot(await invoke("getAutomaticJourneySnapshot"));
-export async function configureAutomaticJourneyNoticeMode(mode: 'OFF' | 'NOTIFICATIONS' | 'VOICE_AND_NOTIFICATIONS'): Promise<void> {
+export type JourneyNoticeMode = 'OFF' | 'NOTIFICATIONS' | 'VOICE_AND_NOTIFICATIONS';
+export async function configureAutomaticJourneyNoticeMode(mode: JourneyNoticeMode, sessionId?: string): Promise<void> {
     if (!['OFF', 'NOTIFICATIONS', 'VOICE_AND_NOTIFICATIONS'].includes(mode)) throw new Error('GUIDANCE_NOTICE_MODE_REJECTED');
-    const result = automaticRecord(await invoke('configureAutomaticJourneyNoticeMode', [mode]));
+    const result = automaticRecord(sessionId === undefined ? await invoke('configureAutomaticJourneyNoticeMode', [mode])
+        : await invoke('configureRunningJourneyNoticeMode', [mode, sessionId]));
     if (result?.accepted !== true) throw new Error('GUIDANCE_NOTICE_MODE_UNAVAILABLE');
 }
 /** Empty token probes ActivityKit token issuance only. No token is ever included in snapshots. */
 export async function configureAutomaticJourneyPushPilot(fcmToken = ""): Promise<void> {
     const result = automaticRecord(await invoke("configureAutomaticJourneyPushPilot", [fcmToken]));
     if (result?.accepted !== true) throw new Error("AUTOMATIC_APNS_PILOT_UNAVAILABLE");
+}
+/** Optional remote path; local guidance remains available if the native capability is absent. */
+export async function configureAutomaticJourneyRemoteUpdates(fcmToken: string): Promise<boolean> {
+    return automaticRecord(await invoke('configureAutomaticJourneyRemoteUpdates', [fcmToken]))?.accepted === true;
+}
+export async function updateAutomaticJourneyRemoteRegistration(fcmToken: string, binding: AutomaticJourneyBinding): Promise<boolean> {
+    return automaticRecord(await invoke('updateAutomaticJourneyRemoteRegistration', [fcmToken, JSON.stringify(binding)]))?.accepted === true;
 }
 /** Null means debug transport opt-in is absent; enabled failures must never fall back to fetch. */
 export async function refreshAutomaticJourneyCredentials(apiOrigin: string, refreshToken: string): Promise<unknown | null> {

@@ -141,7 +141,7 @@ describe("RouteStepTimeline timing", () => {
         route.matchedTimeline = true;
         route.steps[1].matchedTimeline = {
             startAt: "2026-11-22T09:34:00Z", endAt: "2026-11-22T10:22:00Z", movementSeconds: 2880,
-            startsWithStationArrivalPrediction: true,
+            startsWithStationArrivalPrediction: true, firstBoardingIntervalSeconds: 283,
         };
         route.steps[2].matchedTimeline = {
             startAt: "2026-11-22T10:26:30Z", endAt: "2026-11-22T10:34:00Z",
@@ -155,10 +155,31 @@ describe("RouteStepTimeline timing", () => {
         const first = renderer!.root.findByProps({ testID: "route-step-row-leg-0" });
         const second = renderer!.root.findByProps({ testID: "route-step-row-leg-1" });
         const label = "환승 대기 예상 1분 53초";
+        const firstWait = "첫 승차 대기 약 4분 43초 (열차 도착 기준)";
+        expect(first.findAllByType(Text).some(node => node.props.children === firstWait)).toBe(true);
+        expect(second.findAllByType(Text).some(node => node.props.children === firstWait)).toBe(false);
         expect(first.findAllByType(Text).some(node => node.props.children === "열차 도착 예측")).toBe(true);
         expect(second.findAllByType(Text).some(node => node.props.children === "열차 도착 예측")).toBe(false);
         expect(first.findAllByType(Text).some(node => node.props.children === label)).toBe(false);
         expect(second.findAllByType(Text).some(node => node.props.children === label)).toBe(true);
+    });
+
+    it("shows the same station-to-station seconds once in the inline rail", async () => {
+        const route = buildRouteInfo([{ durationMinutes: 8 }]);
+        route.matchedTimeline = true;
+        route.steps[1] = { ...route.steps[1], alightingName: "신림", passStops: [{ name: "신림" }],
+            description: "신림까지 · 7분 30초", matchedTimeline: {
+                startAt: "2026-11-19T15:10:30Z", endAt: "2026-11-19T15:18:00Z",
+                movementSeconds: 450, transferWaitSeconds: 113,
+            } };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <RouteStepTimeline routeInfo={route} compact inlineStationRail realtimeArrivalsActive={false} />
+            );
+        });
+        const texts = renderer!.root.findAllByType(Text).map(node => node.props.children);
+        expect(texts.filter(value => value === "7분 30초")).toHaveLength(1);
+        expect(texts).not.toContain("8분");
     });
 
     it("renders delayed data using its source time even when the response just arrived", async () => {

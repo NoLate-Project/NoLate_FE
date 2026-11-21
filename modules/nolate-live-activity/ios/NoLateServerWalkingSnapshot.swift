@@ -27,8 +27,6 @@ struct NoLateServerWalkingSnapshot: Codable, Equatable, Sendable {
     // A saved ODsay route may lack a timetable claim. The walking contract can
     // still be assessed; server-owned official transit admission remains a
     // separate requirement before any native guidance session is armed.
-    let unknownSingleTransit=input.serviceState == "UNKNOWN" && input.legs.count == 3
-      && ["BUS","SUBWAY"].contains(input.legs[1].kind)
     try require((schemaVersion == 1 && walks.count == 2 || schemaVersion == 2 && (3...16).contains(walks.count)
       || [3,4].contains(schemaVersion) && (2...16).contains(walks.count)) && UUID(uuidString:snapshotId)?.uuidString.lowercased() == snapshotId
       && (1...safe).contains(memberId) && (1...safe).contains(scheduleId)
@@ -38,7 +36,7 @@ struct NoLateServerWalkingSnapshot: Codable, Equatable, Sendable {
       && transitProvider == "odsay" && walkProvider == "tmap" && !navigationReady && reason == "TRANSIT_ADMISSION_PENDING"
       && input.context == "SAVED_ROUTE" && input.provider == "odsay" && input.source == "api"
       && ["live_provider","provider_estimate"].contains(input.reliability)
-      && input.plausibility == "normal" && (input.serviceState == "operating" || unknownSingleTransit)
+      && input.plausibility == "normal" && ["operating","UNKNOWN"].contains(input.serviceState)
       && (3...31).contains(input.legs.count) && input.legs.count % 2 == 1
       && input.legs.enumerated().allSatisfy { $0.offset % 2 == 0 ? $0.element.kind == "WALK" : ["BUS","SUBWAY"].contains($0.element.kind) }
       && walks.map(\.legIndex) == Array(stride(from:0,to:input.legs.count,by:2))

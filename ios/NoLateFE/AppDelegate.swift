@@ -2,7 +2,6 @@ import Expo
 import FirebaseCore
 import kakao_login
 import NaverThirdPartyLogin
-import NoLateLiveActivity
 import React
 import ReactAppDependencyProvider
 
@@ -77,11 +76,6 @@ FirebaseApp.configure()
       in: window,
       launchOptions: launchOptions)
 
-#if DEBUG
-    if ProcessInfo.processInfo.arguments.contains("-NoLateLiveActivityPreview") {
-      NoLateLiveActivityDebugBridge.resetAndStartPreview()
-    }
-#endif
     initialLaunchOptions = nil
     return window
   }

@@ -341,10 +341,21 @@ import {
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
     isPushNavigationReady,
+    localGuidanceNoticeTarget,
     SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "../src/modules/notification/pushNavigation";
 
 describe("schedule push navigation payload", () => {
+    test("승강장 알림은 즉시 전달된 로컬 알림의 유효한 일정과 세션만 연다", () => {
+        const data = { scheduleId: "42", guidanceSession: "11f709cb-18cd-49f0-90d0-e0bb0fd6e6d4" };
+        const request = { identifier: "nolate.guidance.notice." + "a".repeat(64), trigger: null, content: { data } };
+        expect(localGuidanceNoticeTarget(request)).toEqual(data);
+        expect(localGuidanceNoticeTarget({ ...request, trigger: { type: "push" } })).toBeUndefined();
+        expect(localGuidanceNoticeTarget({ ...request, identifier: "another-notice" })).toBeUndefined();
+        expect(localGuidanceNoticeTarget({ ...request, content: { data: { ...data, scheduleId: "0" } } })).toBeUndefined();
+        expect(localGuidanceNoticeTarget({ ...request, content: { data: { ...data, guidanceSession: "invalid" } } })).toBeUndefined();
+    });
+
     test("인증과 온보딩이 끝날 때까지 알림 목적지를 보존한 뒤 한 번만 꺼낸다", () => {
         const queue = createPendingPushNavigationQueue();
         const target = { kind: "scheduleDetail" as const, scheduleId: "42" };

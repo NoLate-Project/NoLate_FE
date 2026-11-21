@@ -43,7 +43,7 @@ import { canOpenParticipantTravelPlan } from '../../modules/schedule/travelPlanP
 import { completeScheduleDeparture } from '../../modules/schedule/scheduleDepartureCompletion';
 import { canOpenJourneyGuidance } from '../../modules/journey/journeyFeature';
 import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
-import { useSavedJourneyBinding } from '../../modules/journey/useSavedJourneyBinding';
+import { useSavedJourneyNavigationLifecycle } from '../../modules/journey/useSavedJourneyNavigationLifecycle';
 import { useGuidanceActivityHandoff, useGuidanceActivityRepeatTap } from '../../modules/journey/useGuidanceActivityHandoff';
 import { automaticUUID } from '../../modules/journey/automaticJourney';
 import { revalidateAutomaticJourneySavedRoute } from '../../modules/journey/automaticJourneyTrial';
@@ -85,8 +85,6 @@ import { useScheduleDepartureStatusController } from './useScheduleDepartureStat
 export function useScheduleDetailController({
   previewItem,
   initialItem,
-  previewOfflineGuidanceMap = false,
-  previewGuidanceAuthenticationSource,
   initialSheetMode = 'compact',
   initialParticipantsExpanded = false,
   previewNowMs,
@@ -109,7 +107,6 @@ export function useScheduleDetailController({
   const [navigationScheduleId, setNavigationScheduleId] = useState<string | null>(
     () => !internalPreviewItem && navigationModeParam === '1' && id ? id : null,
   );
-  const [navigationEnd, setNavigationEnd] = useState<{ scheduleId: string; reason: string }>();
   useEffect(() => {
     if (!internalPreviewItem && navigationModeParam === '1' && id) setNavigationScheduleId(id);
   }, [id, internalPreviewItem, navigationModeParam]);
@@ -212,9 +209,11 @@ export function useScheduleDetailController({
     ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
   [internalPreviewItem, authoritativeDetailLoaded, loadError, item?.id, id, currentMemberId,
     item?.myTravelPlan?.memberId, item?.ownerMemberId, item?.route, item?.origin, item?.destination]);
-  const ownedGuidanceBinding = useSavedJourneyBinding(ownedGuidanceInput, String(id ?? ''));
+  const { sessionObserved, navigationEnd, navigationReconciling } = useSavedJourneyNavigationLifecycle(
+    ownedGuidanceInput, String(id ?? ''), currentMemberId,
+  );
   const navigationMode = navigationScheduleId === id || liveActivityEntry !== undefined
-    || ownedGuidanceBinding !== null || navigationEnd?.scheduleId === id;
+    || sessionObserved || navigationEnd?.scheduleId === id;
   const {
     compactSummaryScrollable,
     handleCompactContentSizeChange,
@@ -233,6 +232,7 @@ export function useScheduleDetailController({
     sheetBottomPadding,
     sheetMaxHeight,
     sheetMinHeight,
+    sheetVisibleHeight,
     sheetMode,
     sheetPanResponder,
     sheetQuickSummaryAnimatedStyle,
@@ -246,7 +246,7 @@ export function useScheduleDetailController({
     windowHeight,
     bottomInset: insets.bottom,
     previewEnabled: Boolean(internalPreviewItem),
-    guidanceNavigation: navigationMode || Boolean(internalPreviewItem && previewOfflineGuidanceMap),
+    guidanceNavigation: navigationMode,
     inspectingCompanion: Boolean(inspectedTravelPlan),
     initialSheetMode,
     initialParticipantsExpanded,
@@ -356,7 +356,6 @@ export function useScheduleDetailController({
     displayMarkers,
     displayOrigin,
     displayPathOverlays,
-    guidanceWalkingPaths,
     savedDisplayTravelMinutes,
     displayTravelMode,
     handleMapMarkerPress,
@@ -368,6 +367,7 @@ export function useScheduleDetailController({
     mapCoords,
     mapRef,
     mapZoom,
+    mapPitch,
     moveToCurrentLocation,
     showWholeRoute,
     routeDetailInfo: savedRouteDetailInfo,
@@ -388,22 +388,25 @@ export function useScheduleDetailController({
     topInset: insets.top,
     routeMapHeaderHeight: largeRouteHeader ? 0 : routeMapHeaderHeight,
     sheetMinHeight,
+    sheetVisibleHeight,
     openRouteDetail: fromGuidanceActivity ? undefined : openRouteDetail,
     liveActivityEntry,
     reduceMotion,
     navigationMode,
+    navigationEnd,
+    screenVisible: pathname === `/schedule/${id}`,
     snapSheet,
   });
   const currentTravelMinutes = displayedDepartureTiming.travelMinutes;
   const routeDetailInfo = useMemo(() => inspectedTravelPlan
     ? savedRouteDetailInfo
-    : applyMatchedTransitTimeline(savedRouteDetailInfo, departureStatus),
-    [departureStatus, inspectedTravelPlan, savedRouteDetailInfo]);
+    : applyMatchedTransitTimeline(savedRouteDetailInfo, departureStatus, nowMs),
+    [departureStatus, inspectedTravelPlan, savedRouteDetailInfo, nowMs]);
   const effectiveTransitRoutePresentation = inspectedTravelPlan
     ? undefined
     : buildPlannedJourneyArrivalPresentation(departureStatus, nowMs) ??
       buildEffectiveTransitRoutePresentation(departureStatus) ??
-      buildFutureTimetablePredictionPresentation(departureStatus);
+      buildFutureTimetablePredictionPresentation(departureStatus, nowMs);
   const departureDisplayState: DepartureDisplayState = item
     ? getDepartureDisplayState(
         recommendedDepartureAt,
@@ -522,7 +525,9 @@ export function useScheduleDetailController({
       // Enter guidance on the current map. Preparation and GPS, not this tap,
       // determine whether the journey has actually started.
       setNavigationScheduleId(id);
-      snapSheet('compact');
+      // Present consent and channel settings directly instead of requiring a
+      // second preparation-entry tap. Arming later restores the map focus.
+      snapSheet('expanded');
       return;
     }
     if (!id || currentMemberDepartedAt || departureRequests.has(id)) return;
@@ -889,6 +894,7 @@ export function useScheduleDetailController({
   return {
     id,
     goBack,
+    scheduleScreenVisible: pathname === `/schedule/${id}`,
     insets,
     colors,
     mode,
@@ -896,10 +902,6 @@ export function useScheduleDetailController({
     mapRef,
     sheetScrollRef,
     internalPreviewItem,
-    offlineGuidancePreview: __DEV__ && !!internalPreviewItem && internalPreviewItem.id === '9001'
-      && currentMemberId === 7 && previewOfflineGuidanceMap,
-    guidancePreviewAuthenticationSource: __DEV__ && !!internalPreviewItem && internalPreviewItem.id === '9001'
-      && currentMemberId === 7 && previewOfflineGuidanceMap ? previewGuidanceAuthenticationSource : undefined,
     loading,
     authoritativeDetailLoaded,
     guidanceEndedHandoff: guidanceActivityHandoff === 'ended',
@@ -917,6 +919,7 @@ export function useScheduleDetailController({
     sheetTranslateY,
     sheetMode,
     mapZoom,
+    mapPitch,
     shareSheetVisible,
     setShareSheetVisible,
     memoSheetVisible,
@@ -965,7 +968,6 @@ export function useScheduleDetailController({
     displayTravelMode,
     routeOption,
     displayPathOverlays,
-    guidanceWalkingPaths,
     displayMarkers,
     mapCoords,
     routeDetailInfo,
@@ -988,7 +990,7 @@ export function useScheduleDetailController({
     journeyGuidanceAvailable,
     navigationMode,
     navigationEnd,
-    setNavigationEnd,
+    navigationReconciling,
     confirmDepartureNudge,
     openParticipantTravelPlan,
     openCurrentRoutePlanner,

@@ -21,6 +21,36 @@ private struct SharedPlace: Codable {
   let lng: Double?
 }
 
+private enum SharedContent {
+  case schedule(String)
+  case ticket(TrainTicketDraft, source: String)
+  case needsTicketContent
+}
+
+private func recognizeTicket(in image: CGImage, requiresSmartTicketLayout: Bool = false) throws -> TrainTicketDraft {
+  let request = VNRecognizeTextRequest()
+  request.recognitionLevel = .accurate; request.recognitionLanguages = ["ko-KR", "en-US"]
+  request.usesLanguageCorrection = false
+  try VNImageRequestHandler(cgImage: image).perform([request])
+  var lines: [TicketImageRegion] = []
+  var words: [TicketImageRegion] = []
+  for observation in request.results ?? [] {
+    guard let candidate = observation.topCandidates(1).first else { continue }
+    let line = TicketImageRegion(text: candidate.string, bounds: observation.boundingBox)
+    lines.append(line)
+    let tokens = candidate.string.split(whereSeparator: \.isWhitespace)
+    if tokens.count == 1 {
+      words.append(TicketImageRegion(text: String(tokens[0]), bounds: line.bounds))
+    } else {
+      for token in tokens {
+        guard let box = try? candidate.boundingBox(for: token.startIndex..<token.endIndex) else { continue }
+        words.append(TicketImageRegion(text: String(token), bounds: box.boundingBox))
+      }
+    }
+  }
+  return TrainTicketDraft.parseImage(lines: lines, words: words, requiresSmartTicketLayout: requiresSmartTicketLayout)
+}
+
 private struct ParseResult: Decodable {
   let title: String?
   let notes: String?
@@ -609,14 +639,18 @@ final class ShareViewController: UIViewController {
     do {
       try Task.checkCancellation()
       guard api.isLoggedIn else { throw ShareAPIError.loginRequired }
-      let shared = try await extractSharedContent()
-      sharedText = shared.text.trimmingCharacters(in: .whitespacesAndNewlines)
-      if ["IOS_SHARE_IMAGE", "IOS_SHARE_PDF"].contains(shared.source) || (TrainTicketDraft.isTicketText(sharedText) && URL(string: sharedText)?.host == nil) {
-        try await importTrainTicket(text: sharedText, source: shared.source)
+      switch try await extractSharedContent() {
+      case let .schedule(text):
+        sharedText = text
+      case let .ticket(draft, source):
+        try await importTrainTicket(draft: draft, source: source)
         return
-      }
-      if let url = URL(string: sharedText), let host = url.host, ["korail.com", "korail.go.kr", "letskorail.com", "srail.or.kr"].contains(where: { host == $0 || host.hasSuffix("." + $0) }) {
-        throw ShareAPIError.server("링크만으로 승차권 내용을 확인할 수 없어요. 승차권 이미지 또는 상세 텍스트를 공유해 주세요.")
+      case .needsTicketContent:
+        showFailure(
+          title: "승차권 내용이 필요해요",
+          message: "승차권 상세 내용이 전달되지 않았어요. 출발·도착 정보가 보이는 승차권을 캡처해 사진 앱에서 공유해 주세요. 카카오톡에서는 ‘Safari로 열기’로 승차권을 연 뒤 다시 공유할 수도 있어요."
+        )
+        return
       }
       try Task.checkCancellation()
       guard !sharedText.isEmpty else { throw ShareAPIError.server("공유된 텍스트가 없습니다.") }
@@ -764,7 +798,7 @@ final class ShareViewController: UIViewController {
   }
 
   @MainActor
-  private func importTrainTicket(text: String, source: String) async throws {
+  private func importTrainTicket(draft: TrainTicketDraft, source: String) async throws {
     let categories: [ScheduleCategory] = try await api.get("api/schedule-categories")
     guard let category = categories.first(where: { $0.canWrite && $0.shared != true }) else {
       throw ShareAPIError.server("승차권 정보는 개인 카테고리에 저장합니다. 앱에서 개인 카테고리를 먼저 만들어 주세요.")
@@ -774,7 +808,7 @@ final class ShareViewController: UIViewController {
     let preparesSavingDuringDismissal = usesStandardLayout
     let payload: [String: Any]? = await withCheckedContinuation { continuation in
       let review = TrainTicketReviewController(
-        draft: TrainTicketDraft.parse(text), source: source, categoryName: category.title,
+        draft: draft, source: source, categoryName: category.title,
         willSave: preparesSavingDuringDismissal ? { [weak self] in self?.prepareSaving() } : nil
       ) {
         continuation.resume(returning: $0)
@@ -803,8 +837,9 @@ final class ShareViewController: UIViewController {
     showSaved(title: scheduleTitle)
   }
 
-  private func extractSharedContent() async throws -> (text: String, source: String) {
-    let providers = (extensionContext?.inputItems as? [NSExtensionItem])?.flatMap { $0.attachments ?? [] } ?? []
+  private func extractSharedContent() async throws -> SharedContent {
+    let items = extensionContext?.inputItems as? [NSExtensionItem] ?? []
+    let providers = items.flatMap { $0.attachments ?? [] }
     let pdfs = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) }
     guard pdfs.count <= 1, !(pdfs.count == 1 && providers.count > 1) else { throw ShareAPIError.server("승차권 파일 한 개만 공유해 주세요.") }
     if let provider = pdfs.first {
@@ -818,22 +853,19 @@ final class ShareViewController: UIViewController {
         data = try Data(contentsOf: url, options: .mappedIfSafe)
       } else { throw ShareAPIError.server("PDF를 읽을 수 없어요.") }
       guard data.count <= 20 * 1024 * 1024 else { throw ShareAPIError.server("20MB 이하의 PDF를 공유해 주세요.") }
-      let text = try await Task.detached(priority: .userInitiated) {
+      let draft = try await Task.detached(priority: .userInitiated) {
         guard let document = PDFDocument(data: data), !document.isLocked, document.pageCount == 1, let page = document.page(at: 0) else {
           throw ShareAPIError.server("잠기지 않은 한 페이지 승차권 PDF만 공유해 주세요. 왕복·여러 표는 한 운행편씩 공유하세요.")
         }
-        if let text = page.string, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          guard text.utf8.count <= 32000 else { throw ShareAPIError.server("PDF 내용이 너무 많아요. 한 운행편만 공유해 주세요.") }
-          return text
+        let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.utf8.count <= 32000 else { throw ShareAPIError.server("PDF 내용이 너무 많아요. 한 운행편만 공유해 주세요.") }
+        return try TrainTicketDraft.parsePDF(text: text) { requiresSmartTicketLayout in
+          let image = page.thumbnail(of: CGSize(width: 1600, height: 2000), for: .mediaBox)
+          guard let cgImage = image.cgImage else { throw ShareAPIError.server("PDF 이미지를 읽을 수 없어요.") }
+          return try recognizeTicket(in: cgImage, requiresSmartTicketLayout: requiresSmartTicketLayout)
         }
-        let image = page.thumbnail(of: CGSize(width: 1600, height: 2000), for: .mediaBox)
-        guard let cgImage = image.cgImage else { throw ShareAPIError.server("PDF 이미지를 읽을 수 없어요.") }
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate; request.recognitionLanguages = ["ko-KR", "en-US"]; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: cgImage).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
       }.value
-      return (text, "IOS_SHARE_PDF")
+      return .ticket(draft, source: "IOS_SHARE_PDF")
     }
     let images = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }
     guard images.count <= 1 else { throw ShareAPIError.server("한 번에 승차권 이미지 한 장만 공유해 주세요.") }
@@ -852,22 +884,36 @@ final class ShareViewController: UIViewController {
       } else { throw ShareAPIError.server("공유한 이미지 형식을 읽을 수 없어요.") }
       guard data.count <= 20 * 1024 * 1024 else { throw ShareAPIError.server("20MB 이하의 승차권 이미지를 공유해 주세요.") }
       // Downsample before recognition to fit the share extension memory budget.
-      let text = try await Task.detached(priority: .userInitiated) {
+      let draft = try await Task.detached(priority: .userInitiated) {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 2048,
                 kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: false,
               ] as CFDictionary) else { throw ShareAPIError.server("이미지를 읽을 수 없어요. 다른 승차권 이미지를 공유해 주세요.") }
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate; request.recognitionLanguages = ["ko-KR", "en-US"]
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        return try recognizeTicket(in: image)
       }.value
-      return (text, "IOS_SHARE_IMAGE")
+      return .ticket(draft, source: "IOS_SHARE_IMAGE")
     }
-    var texts: [String] = []
+    // Safari supplies this property list only after running TicketWebPage.js.
+    // The page is parsed locally and still goes through explicit ticket review.
+    let pages = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier) }
+    var ticketPages: [(site: TicketBookingSource, text: String?, regions: Any?)] = []
+    for provider in pages {
+      try Task.checkCancellation()
+      let item: NSSecureCoding
+      do { item = try await provider.loadItem(forTypeIdentifier: UTType.propertyList.identifier) }
+      catch is CancellationError { throw CancellationError() }
+      catch { continue }
+      if let dictionary = item as? [String: Any],
+         let result = dictionary[NSExtensionJavaScriptPreprocessingResultsKey] as? [String: Any],
+         let site = TrainTicketSharedWebPage.site(from: result) {
+        ticketPages.append((site, try TrainTicketSharedWebPage.ticketText(from: result), result["regions"]))
+      }
+    }
+    guard ticketPages.count <= 1 else { throw ShareAPIError.server("한 번에 승차권 페이지 한 개만 공유해 주세요.") }
+    var texts: [[String]] = []
     for provider in providers {
+      var alternatives: [String] = []
       for type in [UTType.plainText.identifier, UTType.text.identifier, UTType.url.identifier]
       where provider.hasItemConformingToTypeIdentifier(type) {
         do {
@@ -875,18 +921,24 @@ final class ShareViewController: UIViewController {
           let value: String?
           if let string = item as? String { value = string }
           else if let attributed = item as? NSAttributedString { value = attributed.string }
-          else if let url = item as? URL, ["http", "https"].contains(url.scheme ?? "") { value = url.absoluteString }
+          else if let url = item as? URL, ["http", "https"].contains(url.scheme?.lowercased() ?? "") || TicketBookingSource(url: url) != nil { value = url.absoluteString }
           else if let data = item as? Data { value = String(data: data, encoding: .utf8) }
           else { value = nil }
-          if let value { texts.append(value); break }
+          if let value, !alternatives.contains(value) { alternatives.append(value) }
         } catch is CancellationError { throw CancellationError() }
         catch { continue }
       }
+      if !alternatives.isEmpty { texts.append(alternatives) }
     }
-    guard texts.count == 1, let text = texts.first, text.utf8.count <= 32000 else {
-      throw ShareAPIError.server("승차권 텍스트 한 개 또는 이미지 한 장을 공유해 주세요.")
+    let captions = items.flatMap { [$0.attributedTitle?.string, $0.attributedContentText?.string].compactMap { $0 } }
+    switch try TrainTicketShareText.select(providers: texts, page: ticketPages.first?.text, pageSite: ticketPages.first?.site, captions: captions) {
+    case let .schedule(text): return .schedule(text)
+    case let .ticket(text): return .ticket(TrainTicketDraft.parse(text), source: "IOS_SHARE_TEXT")
+    case let .busTicket(text, site): return .ticket(TrainTicketDraft.parse(text, bookingSite: site), source: "IOS_SHARE_TEXT")
+    case let .webTicket(text):
+      return .ticket(TrainTicketSharedWebPage.draft(text: text, regions: ticketPages.first?.regions), source: "IOS_SHARE_TEXT")
+    case .needsTicketContent: return .needsTicketContent
     }
-    return (text, "IOS_SHARE_TEXT")
   }
 
   private func placeJSON(_ place: SharedPlace) -> [String: Any]? {

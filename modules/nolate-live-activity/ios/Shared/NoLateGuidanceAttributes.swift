@@ -17,3 +17,12 @@ public struct NoLateGuidanceAttributes: ActivityAttributes {
     routeLegs = try values.decodeIfPresent([NoLateGuidanceRouteLeg].self, forKey: .routeLegs) ?? []
   }
 }
+
+/// Car sessions are local-only and have a distinct lifecycle from automatic transit or departure activities.
+@available(iOS 16.2, *)
+struct NoLateDrivingAttributes: ActivityAttributes {
+  typealias ContentState = NoLateDrivingContent
+  let owner: String
+  let scheduleId: String
+  let destination: String
+}

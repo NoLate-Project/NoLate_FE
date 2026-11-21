@@ -48,6 +48,7 @@ type UseScheduleIndexToolbarPresentationParams = {
   monthCalendarTransitionProgress: Animated.Value;
   outgoingMonthAgendaPanelKind: MonthAgendaPanelKind | null;
   primaryPillVisible: boolean;
+  reduceMotionEnabled: boolean;
   retainedMonthAgendaPanelKind: MonthAgendaPanelKind;
   searchHeaderTargetWidth: number;
   searchToolbarProgress: Animated.Value;
@@ -86,6 +87,7 @@ export function useScheduleIndexToolbarPresentation({
   monthCalendarTransitionProgress,
   outgoingMonthAgendaPanelKind,
   primaryPillVisible,
+  reduceMotionEnabled,
   retainedMonthAgendaPanelKind,
   searchHeaderTargetWidth,
   searchToolbarProgress,
@@ -97,31 +99,31 @@ export function useScheduleIndexToolbarPresentation({
   yearOverviewClosing,
   yearOverviewVisible,
 }: UseScheduleIndexToolbarPresentationParams) {
-  const dropdownScaleX = toolbarDropdownProgress.interpolate({
+  const dropdownScaleX = reduceMotionEnabled ? 1 : toolbarDropdownProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [0.68, 1],
   });
-  const dropdownScaleY = toolbarDropdownProgress.interpolate({
+  const dropdownScaleY = reduceMotionEnabled ? 1 : toolbarDropdownProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [0.2, 1],
   });
-  const dropdownTranslateY = toolbarDropdownProgress.interpolate({
+  const dropdownTranslateY = reduceMotionEnabled ? 0 : toolbarDropdownProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [-4, 0],
   });
-  const viewDropdownScaleX = toolbarDropdownProgress.interpolate({
+  const viewDropdownScaleX = reduceMotionEnabled ? 1 : toolbarDropdownProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [0.92, 1],
   });
-  const viewDropdownScaleY = toolbarDropdownProgress.interpolate({
+  const viewDropdownScaleY = reduceMotionEnabled ? 1 : toolbarDropdownProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [0.86, 1],
   });
-  const viewDropdownTranslateY = toolbarDropdownProgress.interpolate({
+  const viewDropdownTranslateY = reduceMotionEnabled ? 0 : toolbarDropdownProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [-8, 0],
   });
-  const searchHeaderWidth = searchToolbarProgress.interpolate({
+  const searchHeaderWidth = reduceMotionEnabled ? searchHeaderTargetWidth : searchToolbarProgress.interpolate({
     inputRange: [0, 0.1, 1],
     outputRange: [
       LIQUID_TOOLBAR_ACTIONS_WIDTH,
@@ -143,12 +145,12 @@ export function useScheduleIndexToolbarPresentation({
     outputRange: [0, 0, 1],
     extrapolate: 'clamp',
   });
-  const searchFieldContentTranslateX = searchToolbarProgress.interpolate({
+  const searchFieldContentTranslateX = reduceMotionEnabled ? 0 : searchToolbarProgress.interpolate({
     inputRange: [0, SEARCH_FIELD_REVEAL_START_PROGRESS, 1],
     outputRange: [6, 6, 0],
     extrapolate: 'clamp',
   });
-  const searchFieldContentTranslateY = searchToolbarProgress.interpolate({
+  const searchFieldContentTranslateY = reduceMotionEnabled ? 0 : searchToolbarProgress.interpolate({
     inputRange: [0, SEARCH_FIELD_REVEAL_START_PROGRESS, 1],
     outputRange: [3, 3, 0],
     extrapolate: 'clamp',

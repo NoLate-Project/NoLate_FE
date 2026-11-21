@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { JourneyAutomaticTrialPanel } from "../../../src/modules/journey/JourneySelectedRouteTrial";
+import { JourneyAutomaticTrialPanel } from "./JourneySelectedRouteTrial";
 import { journeyRouteFixtures } from "../../../src/modules/journey/journeyRouteFixtures";
 
 const fixtureIds = ["direct-provider-shape", "wrong-direction-shape", "invalid-middle-coordinate"];

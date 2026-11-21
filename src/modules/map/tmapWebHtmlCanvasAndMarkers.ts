@@ -246,6 +246,14 @@ export function buildTmapWebHtmlCanvasAndMarkers(
       }
 
       function markerDotIcon(item) {
+        // The web fallback is north-up and has rotation gestures disabled.
+        var course = item && item.courseDegrees;
+        if (typeof course === "number" && isFinite(course) && course >= 0 && course < 360) {
+          var heading = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">' +
+            '<circle cx="20" cy="20" r="18" fill="white" stroke="#1066EF" stroke-width="2.5"/>' +
+            '<path d="M20 9L28.5 27L20 23.5L11.5 27Z" fill="#1066EF" stroke="#1066EF" stroke-linejoin="round" transform="rotate(' + course + ' 20 20)"/></svg>';
+          return { uri: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(heading), width: 40, height: 40 };
+        }
         var bg = item && item.tintColor ? String(item.tintColor) : "#1D72FF";
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.95)";
         var rawSize = Number(item && item.dotSize);

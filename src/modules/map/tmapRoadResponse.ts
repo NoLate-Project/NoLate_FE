@@ -106,11 +106,33 @@ export function normalizeInstruction(value: unknown): string | undefined {
     return normalized || undefined;
 }
 
+// The map overview may be thinned. Maneuver distances require the original ordered road links.
+function readDrivingLink(geometry: { type?: string; coordinates?: unknown }, budget: number): RoutePathCoord[] | null {
+    const lines = geometry.type === "MultiLineString" ? geometry.coordinates : [geometry.coordinates];
+    if (!Array.isArray(lines) || !lines.length) return null;
+    const points: RoutePathCoord[] = [];
+    for (const line of lines) {
+        if (!Array.isArray(line) || line.length < 2 || points.length + line.length > budget) return null;
+        for (const [index, pair] of line.entries()) {
+            if (!Array.isArray(pair) || typeof pair[0] !== "number" || typeof pair[1] !== "number"
+                || !isWgs84Coordinate(pair[1], pair[0])) return null;
+            const last = points[points.length - 1];
+            if (last && last.lat === pair[1] && last.lng === pair[0]) continue;
+            if (last && index === 0) return null; // Disconnected MultiLineString parts.
+            points.push({ lat: pair[1], lng: pair[0] });
+        }
+    }
+    return points.length >= 2 ? points : null;
+}
+
 /** 공급자 원본 값을 `parseRoadRouteDetails` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
-export function parseRoadRouteDetails(data: any): Pick<ParsedRoadRoute, "guideSteps" | "trafficSections"> {
+export function parseRoadRouteDetails(data: any, mode?: "driving"): Pick<ParsedRoadRoute, "guideSteps" | "trafficSections" | "drivingGeometryComplete"> {
     const features = Array.isArray(data?.features) ? data.features : [];
     const guideSteps: RouteGuideStep[] = [];
     const trafficSections: RouteTrafficSection[] = [];
+
+    let drivingComplete = true;
+    let drivingPoints = 0;
 
     features.forEach((feature: any) => {
         const geometryType = feature?.geometry?.type;
@@ -118,8 +140,13 @@ export function parseRoadRouteDetails(data: any): Pick<ParsedRoadRoute, "guideSt
 
         if (geometryType === "Point") {
             const coordinate = parseLatLngPair(feature?.geometry?.coordinates) ?? undefined;
+            if (mode === "driving" && (!coordinate || !isWgs84Coordinate(coordinate.lat, coordinate.lng))) drivingComplete = false;
             const instruction = normalizeInstruction(properties?.description);
-            if (!instruction || /^(출발지|도착지)$/u.test(instruction)) return;
+            if (!instruction || /^(출발지|도착지)$/u.test(instruction)) {
+                const type = String(properties?.turnType ?? "");
+                if (mode === "driving" && type && type !== "200" && type !== "201") drivingComplete = false;
+                return;
+            }
             guideSteps.push({
                 instruction,
                 roadName: normalizeInstruction(properties?.nextRoadName ?? properties?.name),
@@ -130,7 +157,10 @@ export function parseRoadRouteDetails(data: any): Pick<ParsedRoadRoute, "guideSt
         }
 
         if (geometryType !== "LineString" && geometryType !== "MultiLineString") return;
-        const pathCoords = parseFeaturePathCoords(feature);
+        const exact = mode === "driving" ? readDrivingLink(feature.geometry, 20000 - drivingPoints) : null;
+        if (mode === "driving" && !exact) drivingComplete = false;
+        drivingPoints += exact?.length ?? 0;
+        const pathCoords = exact ?? parseFeaturePathCoords(feature);
         if (!pathCoords) return;
         trafficSections.push(...parseTrafficSectionsFromFeature(feature, pathCoords));
 
@@ -152,19 +182,20 @@ export function parseRoadRouteDetails(data: any): Pick<ParsedRoadRoute, "guideSt
                 pathCoords: segmentData.pathCoords,
                 coordinate: previousGuide.coordinate ?? segmentData.coordinate,
             });
-        } else if (instruction) {
-            guideSteps.push({ instruction, ...segmentData });
+        } else if (instruction || mode === "driving") {
+            guideSteps.push({ instruction: instruction ?? "", ...segmentData });
         }
     });
 
     return {
+        ...(mode === "driving" ? { drivingGeometryComplete: drivingComplete && drivingPoints >= 2 } : {}),
         guideSteps: guideSteps.length > 0 ? guideSteps : undefined,
         trafficSections: trafficSections.length > 0 ? trafficSections : undefined,
     };
 }
 
 /** 공급자 원본 값을 `parseTmapRoadRouteResponse` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
-export function parseTmapRoadRouteResponse(data: any): ParsedRoadRoute {
+export function parseTmapRoadRouteResponse(data: any, mode?: "driving"): ParsedRoadRoute {
     const features = Array.isArray(data?.features) ? data.features : [];
     let distanceMeters: number | undefined;
     let minutes: number | undefined;
@@ -192,7 +223,7 @@ export function parseTmapRoadRouteResponse(data: any): ParsedRoadRoute {
     }
 
     const pathCoords = parsePathFromTmapFeatureCollection(data);
-    const details = parseRoadRouteDetails(data);
+    const details = parseRoadRouteDetails(data, mode);
     return { minutes, distanceMeters, tollFareWon, taxiFareWon, pathCoords, ...details };
 }
 

@@ -48,7 +48,7 @@ final class NoLateJourneyFinalWalkCoreTests: XCTestCase {
   func testStationaryTimeMissingStaleOrCandidateSeparationCannotCommit() {
     for mode in 0..<4 {
       var c=C(route:route())
-      var s=separation();if mode==1{s.validUntil=1000};if mode==2{s.status="COLLECTING"};if mode==3{s.evidenceCount=2}
+      var s=separation();if mode==1{s.validUntil=1000};if mode==2{s.status="COLLECTING"};if mode==3{s.evidenceCount=1}
       c.ingest(fix(1,1000,1000),separation:mode==0 ? nil:s,now:1000);walk(&c)
       XCTAssertFalse(c.committed)
     }

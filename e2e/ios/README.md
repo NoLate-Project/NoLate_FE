@@ -573,9 +573,20 @@ DB는 별도 메모리 H2다. 실제 이동 정확도나 이번 실행의 기기
 테스트 중 같은 계정으로 API 로그인을 하면 앱 세션이 무효화될 수 있으므로
 API 검증용 계정은 분리한다. 사용자의 기존 시뮬레이터/계정은 사용하지 않는다.
 
-ODsay 한도 초과가 확인되면 해당 개발 세션을 `EXPO_PUBLIC_TRANSIT_PROVIDER=tmap`으로
-시작한다. 운영 기본 공급자나 env 파일을 변경하는 자동 fallback은 아니다.
+현재 iOS 앱은 ODsay로 대중교통 경로를 검색한다. 아래 10월 기록의
+`EXPO_PUBLIC_TRANSIT_PROVIDER=tmap` 설정은 당시 테스트 앱에서 사용했다.
+현재 앱은 이 값으로 대중교통 공급자를 전환하지 않는다.
 예상 경로 시각은 실제 운행 시간표로 간주하지 않으며 출발 알림은 비활성 상태로 저장한다.
+
+`testIntercityRailKeywordSearchSaveReopen`은 전용 계정에 서울역을 최근 장소
+`서울역 E2E`로 등록한 뒤 다음 날 14시 일정을 만든다. 도착지에 ‘동대구역’을 입력하고
+TMAP의 KTX 정차역 결과를 선택한다. ODsay 기차 경로에서 시간표를 열어 일정 날짜를
+확인하고 서울→동대구의 TAGO 운행편을 조회한다. 처음에는 아직 출발하지 않았고
+14시까지 동대구역에 도착하는 편이 보인다. 시간 조건을 꺼서 하루 전체 시간표와
+늦게 도착하는 편의 표시를 확인하고, 다음 페이지를 조회한 뒤 조건을 다시 적용한다.
+역에서 최종 목적지까지의 이동과 하차 여유는 운행편을 경로에 연결할 때 검증한다.
+경로를 일정에 저장하고 앱을 재실행해 기차 구간을 확인한다. 이 테스트에는 실제 ODsay
+iOS 키, TMAP 장소 검색 키와 별도 로컬 서버의 TAGO 열차 키가 필요하다.
 
 ```sh
 python3 e2e/ios/run.py \
@@ -934,9 +945,14 @@ python3 e2e/ios/run.py \
 ## iOS 시외버스 실경로 검색·저장·재실행
 
 `testIntercityBusSearchSaveReopen`은 동서울종합터미널 → 속초시외버스터미널을 실제
-TMAP으로 검색해 `시외버스` 후보를 선택한다. 다음 날 14:00 도착 희망 일정으로 저장하고
+대중교통 경로 API(현재 ODsay)로 검색해 `시외버스` 후보를 선택한다. 다음 날 14:00 도착 희망 일정으로 저장하고
 프로세스 종료·재실행 후 상세에서 시외버스 구간이 유지되는지 확인한다. 기존 기차·고속버스
 테스트와 같은 공통 흐름을 사용하며 이 사례는 시간표의 특정 운행편을 선택하지 않는다.
+
+현재 테스트는 동서울의 TAGO 터미널 검색도 확인한다. 목록에 없으면 해당 화면에서
+티머니GO와 버스타고 예매처를 바로 열 수 있어야 한다. 동서울이 검색되는 날에는
+존재하지 않는 터미널 이름으로 같은 빈 결과를 검증한다. 시간표를 닫은 후에는
+선택한 시외버스 경로를 저장하고 앱을 재실행해 확인한다.
 
 전용 API 5524와 위 TMAP 전용 Metro 설정을 사용한다. 신규 합성 UI 계정을 정상
 가입·로그인으로 만들고 정상 `/api/recent-route-places` API에 아래 두 장소를 등록한다.
@@ -1127,3 +1143,188 @@ python3 e2e/ios/run-physical-booking-smoke.py \
 초기 복사 캐시 경로 오류와 background 테스트 실행기의 URL 요청 거절은 실패 기록으로 남겼다. 수신 bundle을 지정한 중간 URL 진입 검증은 최종 통과 수에 합산하지 않았다. 실제 달력과 예매 앱의 화면이 담긴 스크린샷·녹화·원시 로그는 저장소 밖 비공개 xcresult에만 보관한다. 사용한 테스트 실행기만 종료 후 제거했고, NoLate와 실제 예매 앱은 유지했다.
 
 [실기기 URL 실행 검증 기록](../evidence/intercity-2026-10-15/physical-booking-validation.json)
+
+## 저장된 버스 경로의 잠금 상태 하차·최종 도보
+
+`testIsolatedSavedRouteNavigationEntry`의 `E2E_BUS_LOCK_FULL_TRIP=1`은
+`E2E_EXPECT_OFFICIAL_BUS=1`, `E2E_BUS_GPS_REPLAY=1`, `E2E_BUS_FULL_TRIP=1`과 함께 사용한다.
+격리 계정의 저장된 1711 경로와 독립적인 시험 차량/GPS 재생이 필요하며,
+교통 단계나 도착 상태를 API로 강제 변경하지 않는다.
+
+`E2E_BUS_LOCK_BEFORE_HANDOFF_READY` 뒤 **해당 시험 UDID의 독립 Device Hub 창**에서
+Controls → Lock을 사용한다. 다른 시뮬레이터나 실기기를 잠그지 않는다.
+첫 Live Activity 표시 허용 창이 있으면 시험 기기의 NoLate 요청인지 확인한다.
+XCUITest는 잠금 화면의 정류장 접근 안내와 `목적지까지` 전환을 확인하고,
+자동 도착 뒤 `위치 안내를 종료했어요` 종료 카드를 먼저 확인한다.
+제품은 이 인계 카드를 최대 90초 유지한다. 이후 최종 도보 제목·경로 식별 정보·
+종료 카드가 모두 30초 연속 사라져야 카드 제거로 판단하고 화면을 보관한다.
+순간적인 접근성 트리 갱신이나, 도보 카드가 종료 카드로 바뀌는 것은 제거로 세지 않는다.
+`E2E_BUS_LOCK_CARD_REMOVED` 뒤 같은 시뮬레이터를 잠금 해제하면,
+앱 화면의 `목적지에 도착했어요`도 확인해야 통과한다.
+카드 제목이 잠깐 사라지는 것만으로 자동 도착을 통과 처리하지 않는다.
+
+이는 로컬 Live Activity와 주입 GPS의 제품 화면 시험이다. 실제 APNs 수신,
+현장 차량 응답의 연속성, 실기기 GPS·무음·음성 전달을 증명하지 않는다.
+
+## 일반 제품 화면의 버스 환승 완주
+
+`testIsolatedSavedRouteNavigationEntry`의 `E2E_BUS_TRANSFER_FULL_TRIP=1`은 일반
+로그인·저장 일정·지도·경로 시트에서 첫 버스 대기/탑승→환승 도보→두 번째 버스
+대기/탑승→최종 도보→자동 도착을 검사한다. 두 번째 탑승 때 접힌 경로 바의 현재
+위치 마커도 검사한다. 안내 단계·탑승·도착을 강제로 설정하는 입력은 사용하지 않는다.
+
+BE test source의 `TransferBusProductSimulatorServer`는 명시적인
+`-Dnolate.journey.transfer-product-e2e=true`와 권한 0700의 새
+`/private/tmp/nolate-transfer-product-e2e.*` 디렉터리를 요구한다. loopback 5528/H2만
+사용하며 실기기 준비는 꺼져 있다. 동일 디렉터리의 `start-bus-1`/`start-bus-3`은
+승객 GPS를 받지 않는 별도 시험 차량 시계만 시작한다. `bus-*-started-at`의 확인된
+시각에 맞춰 지정 시험 시뮬레이터에 GPS를 주입한다. 차량 시계를 시작한 뒤 재생을
+반복하려면 새 서버와 새 디렉터리를 사용한다. 안내 준비·차량 시계 전에 앱 실행만
+실패했다면 같은 미사용 서버와 새 결과 폴더에서 재시도할 수 있다. 이때 설치 앱의
+해시·정상 기동과 이전 실행의 실제 종료를 확인하고 실패 결과를 보존한다.
+정상 종료·실패 모두 주입 GPS를 정리한다.
+
+현재 사례는 120m 환승 도보와 110m 최종 도보다. 10m 정류장 인근의 짧은 환승에서는
+연속 위치 근거 후 다음 버스 대기로 바로 넘어갈 수 있어, 도보 문구가 반드시 오래
+표시된다는 가정을 사용하지 않는다. 합성 경로·보행 HTTP 응답·시험 차량이므로 공식
+노선 완주, 전국 지원, 실제 차량/APNs 또는 실기기 검증으로 집계하지 않는다.
+
+## 서울역에서 충무로를 거쳐 경복궁까지 지하철 환승
+
+`run-journey-subway-transfer.py`는 전용 시뮬레이터에 Release 앱을 새로 설치하고 저장 일정 563에서 출발한다.
+서울역 승차, 명동에서 다음 역 환승 안내, 충무로 환승 도보와 3호선 대기, 을지로3가의 경로 바,
+경복궁 하차와 최종 도보 도착을 차례로 확인한다. `--lock`을 주면 독립 시뮬레이터 창을
+`LOCK_READY`에서 잠가, 3호선 열차의 다음 역인 종로3가를 잠금 카드에서 확인한다.
+`--verify-transfer-copy`로 실행하면 첫 번째 열차에서 세션 검증 재시도와 위치 복구를 거쳐
+충무로 환승 도보까지만 진행한다. 3호선 승차 안내, 기술 코드와 지난 경고가 사라진 화면을 확인하고 앱에서 안내를 종료한다.
+
+```sh
+python3 e2e/ios/run-journey-subway-transfer.py <격리-결과-디렉터리> <Release-시뮬레이터-앱> <전용-UDID> --lock
+```
+
+BE 시험 서버 `OfficialSubwayProductSimulatorServer`를
+`-Dnolate.journey.official-subway-product-e2e=true -Dnolate.journey.transfer-subway-replay=true`로
+시작한다. 인자는 새 0700 디렉터리 `/private/tmp/nolate-transfer-subway-product.*`이다.
+원본 ODsay 응답을 제품 파서와 경로 데코레이터로 읽은 `product-route.json`, 출도착 `places.json`,
+각 탑승 구간의 공식 역명·종점 코드 조회 응답 `path-{1,3}-{name,code}.json`, 서울교통공사
+`official-coordinates.csv`, 각 보행 요청의 TMAP 응답 `walk-{0,2,4}.json`을 여기에 둔다.
+각 구간은 저장된 경로와 동일한 출도착 좌표로 받아야 한다. 서버는 이 파일을 제품 경로로 재검증하고
+`127.0.0.1:5535`의 H2에 시험용 일정과 계정을 저장한다. 열차 관측은 두 독립 시계에서 만들고
+승객 위치는 시뮬레이터에 주입한다. 판정 결과는 `simulator-e2e/result.xcresult`와
+`subway-responses.jsonl`에서 확인한다.
+
+회현에서 명동으로 이동할 때 같은 역 이름 쌍이 유지되는 동안 두 시점의 경로 바 마커 위치를 비교한다.
+명동에서 충무로로 이동할 때 승객의 위치 입력만 약 18초간 중단해 직전 역 기록으로 돌아가고
+현재 위치 마커가 사라지는지 확인한다. `--lock`을 쓰면 두 번째 열차의 을지로3가→종로3가 역간 표시와
+이후 종로3가 정차 표시를 잠금 화면에서 각각 확인한다. 정차역의 승객·열차 일치 판정은 별도로 유지한다.
+이 격리 서버는 첫 보행 구간의 재검증 요청 한 번에 H2의 시험 계정 행을 잠근다.
+시험은 해당 요청의 503 응답, 잠금 해제 후 같은 세션의 200 응답, 앱의 길안내 지속을 함께 검증한다.
+
+### Safari 승차권 본문 공유 (2026-11-19)
+
+공유 확장에 Apple의 JavaScript preprocessing과 활성화 dictionary version 2를 등록했다.
+주소와 본문처럼 한 항목에 여러 표현이 있어도 지원 형식을 제공하면 표시한다. Safari가 제공한 공식 철도
+도메인의 표시 본문만 기기에서 분석하고 기존 승차권 확인 화면으로 보낸다. 전달용 URL의
+경로·query, 쿠키, 폼, HTML, QR 이미지를 수집하거나 링크를 별도로 조회하지 않는다.
+확인된 승차권 필드는 기존 `IOS_SHARE_TEXT` 계약으로 저장하며 사용자 확인은 필수다.
+
+카카오톡 내 브라우저 등에서 URL만 보내면 본문을 읽었다고 간주하지 않는다. 이 경우
+`승차권 내용이 필요해요`와 Safari에서 재공유하거나 사진 앱에서 캡처를 공유하는 방법을
+표시한다. 실제 받은 승차권 URL·해당 페이지의 DOM·카카오톡의 본문 전달은 아직 검증하지 않았다.
+
+`node --test scripts/ticket-web-page.test.cjs`는 전처리의 도메인·본문·URL 제외·크기 제한을,
+`TrainTicketImportPolicyTests.swift`는 네이티브 본문 검증과 기존 승차권 검증을 확인한다.
+`testTrainTicketWebPageShareReviewAndURLOnlyRecovery`는 합성 공유 앱이 제공한 URL과
+전처리 property list에서 본문을 우선 사용해 역·열차번호를 채우는지, 저장이 사용자 확인
+전에는 잠겨 있는지, 취소 후 URL만 공유하면 재공유 안내가 나오는지 확인한다. 실제 Safari나
+코레일이 본문을 전달했다는 증거로 집계하지 않는다.
+
+Apple 계약: [App Extension Programming Guide — Accessing a Webpage](https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/ExtensionScenarios.html).
+
+2026-11-19 최종 실행은 서명된 Release 공유 확장과 전용 iOS 27 시뮬레이터에서
+위 UI 검사 1건·0건 실패(66.827초), 전처리 Node 검사 4건·0건 실패, Swift 정책 검사와
+변경 JavaScript lint(오류·경고 0개)가 통과했다. 합성 브라우저는 URL placeholder로
+공유 대상을 선택한 다음 `NSExtensionItem`에 URL·전처리 결과를 제공한다. 전처리 결과를
+처음부터 제공해 공유 목록에서 빠진 앞선 시도와, 이미지 OCR의 모든 역 이름을 자동
+채움으로 가정했던 실패도 [검증 기록](../../docs/qa/2026-11-19-ticket-webpage-share-validation.json)에
+보존했다. 실제 Safari JavaScript 실행·실제 코레일 승차권·카카오톡 호환성 및 아이폰 설치는
+이 결과에 포함하지 않는다.
+
+### 코레일 스마트티켓 사진 공유
+
+`prepare-ticket-share-fixture.py`에 `--smart-ticket-photo`를 추가하면 전용 시뮬레이터의
+사진 보관함에 `NoLateSmartTicketFixture.jpg`를 넣는다. 합성 사진에는 상태바 시각과
+서울 06:43, 동대구 08:32, KTX 255가 두 열로 배치돼 있다.
+`testSmartTicketScreenshotFromPhotos`를 실행할 때 해당 시뮬레이터 UDID를
+`TEST_RUNNER_E2E_DEVICE_ID`에, 사진 보관함에 표시되는 해당 썸네일의 전체 접근성 레이블을
+`TEST_RUNNER_E2E_SMART_TICKET_PHOTO_LABEL`에 전달한다. 사진 앱의 공유 시트에서 NoLate를
+열어 역·시각·열차번호와 확인 전 저장 버튼 상태를 검사한다.
+
+`testSmartTicketUpcomingSaveAndReopen`은 같은 배치의 합성 표를 한국 시간 기준 다음 날로
+생성한다. 격리 서버에 로그인한 테스트 계정 이메일을 `TEST_RUNNER_E2E_TICKET_WRITE_EMAIL`에
+전달하면 프로필을 확인한 뒤 표를 일정에 저장하고 앱을 재실행해 달력과 상세 화면에서 확인한다.
+`--smart-ticket-photo upcoming`으로 다음 날 표를 사진 보관함에 넣고 그 썸네일 레이블을
+`TEST_RUNNER_E2E_UPCOMING_SMART_TICKET_PHOTO_LABEL`에 지정하면 같은 저장 검사를 사진 앱에서 시작한다.
+
+### 스마트티켓 PDF를 파일 앱에서 공유하기
+
+전용 iOS 시뮬레이터와 격리 계정에서 다음 순서로 Safari가 생성한 한 페이지 PDF를 확인한다.
+
+1. FE 루트에서 `python3 -m http.server 8765 --bind 127.0.0.1 --directory e2e/ios/fixtures`를 실행한다.
+2. 시뮬레이터 Safari로 `http://127.0.0.1:8765/smart-ticket-print.html`을 연다. 공유 시트의 **옵션 → PDF**를 선택하고 **파일에 저장 → 나의 iPhone**에 `NoLate 합성 승차권.pdf`를 저장한다.
+3. 파일 앱에서 **나의 iPhone**을 연다. `TEST_RUNNER_E2E_SAFARI_SMART_TICKET_PDF=1`과 `TEST_RUNNER_E2E_DEVICE_ID`를 해당 시뮬레이터 테스트에 전달하고 `testSmartTicketPDFFromFiles`를 실행한다. 테스트는 저장된 PDF를 길게 눌러 NoLate에 공유하고 역·시각·열차번호와 확인 전 저장 버튼 상태를 검사한다.
+
+`testSmartTicketTextPDFRecognizesBothColumns`와 `testSmartTicketScannedPDFRecognizesBothColumns`는 같은 표를 선택 가능한 텍스트 PDF와 스캔 PDF로 각각 공유한다. `testSmartTicketUpcomingScannedPDFSaveAndReopen`은 격리 계정의 `TEST_RUNNER_E2E_TICKET_WRITE_EMAIL`을 확인한 뒤 다음 날 표를 저장하고 앱을 재실행해 캘린더에서 다시 연다.
+
+`testSmartTicketHybridPDFRecognizesBothColumns`는 이미지로 된 승차권 아래에 선택 가능한 ‘전자문서 사본’ 한 줄이 있는 PDF를 검사한다. `testSmartTicketHybridPDFRejectsRefundedTicket`은 그 줄에 ‘환불 완료’가 있으면 사용자가 원본을 확인한 뒤에도 저장이 거절되는지 검사한다.
+
+시외버스 스캔 PDF에서는 iOS Vision이 실제 화살표를 `인천공항2터미널 >> 청주`로 읽은 사례도 검사한다. 같은 파일의 저장·재실행 검증은 `testBusTicketScannedPDFShareSaveReopen`, 선택 가능한 PDF의 중복 저장 검증은 `testBusTicketPDFShareDuplicateSaveReopen`을 사용한다. [기차·버스 PDF 검증 기록](../../docs/qa/2026-11-20-smart-ticket-pdf-validation.json)
+
+### 웹페이지 본문으로 전달되는 두 열의 스마트티켓
+
+공유 호스트를 `prepare-ticket-share-fixture.py`로 준비하면 빌드한 공유 확장의 `TicketWebPage.js`와 인쇄용 합성 HTML이 함께 설치된다. `testSmartTicketRenderedWebPageRecognizesBothColumns`는 iOS WebKit으로 이 HTML을 메모리에서 렌더링하고, 제품 스크립트의 반환값과 테스트 URL을 시스템 공유 시트를 통해 NoLate로 보낸다. 원본 사이트로 네트워크 요청을 보내지 않는다.
+
+`testSmartTicketReversedWebPageUsesVisualOrder`는 화면을 유지한 채 HTML 요소의 순서를 뒤집고 열차명과 번호를 나눠 검증한다. `testSmartTicketLabelledWebPageUsesClockLabels`는 본문에 도착 시각이 먼저 나와도 출발·도착 라벨에 따라 시각을 읽는지 확인한다. `testSmartTicketPartialWebPageLeavesTimesForReview`는 도착 시각이 빠지고 표 밖에 다른 시계가 있어도 입력이 비어 있는지 확인한다. `testSmartTicketPastWebPageRejectsSave`는 지난 표의 저장 거절을 확인한다. `testSmartTicketUpcomingWebPageSaveAndReopen`는 전용 시뮬레이터와 로그인한 합성 계정에서 다음 날 표를 확인·저장한 뒤 앱을 재실행해 달력 상세를 검사한다. 실제 코레일 페이지의 구성과 카카오톡이 제공하는 공유 항목은 실기기에서 별도로 확인한다.
+
+전체 앱을 새로 설치해 검사할 때는 Release 빌드에 전달한 `EXPO_PUBLIC_API_BASE_URL`·`EXPO_PUBLIC_LOCAL_API_BASE_URL`과 공유 확장의 `NOLATE_API_BASE_URL`을 같은 테스트 서버로 설정한다. Metro는 공개 환경 설정이 달라지면 변환 캐시를 구분한다. 빌드 결과의 `Release-iphonesimulator/main.jsbundle`에 기록된 두 API 설정값과 앱에 포함된 공유 확장의 `Info.plist`에서 실제 주소를 대조할 수 있다. [웹페이지 공유 검증 기록](../../docs/qa/2026-11-19-ticket-webpage-share-validation.json)
+
+### 출발·도착 시각과 실제 Safari 공유
+
+`testTicketLabelledTextAndPDFKeepAfternoonRideTimes`는 도착을 먼저 적은 한국어 승차권을 텍스트와 PDF로 공유한다. 현재 시각이 함께 있고 출발 시각만 빠진 경우에도 확인 화면의 두 입력값을 검사한다. `testTicketLabelledOvernightBusPDFSaveAndReopen`은 양쪽 날짜가 명시된 심야 시외버스 표를 공유하고, 다음 날 달력에서 저장된 일정을 다시 연다. 저장 테스트는 기존 승차권 테스트와 같은 전용 계정과 `E2E_TICKET_WRITE_EMAIL`을 사용한다.
+
+`testSmartTicketFromSafariWebShare`는 시뮬레이터의 Safari에서 합성 페이지의 공유 버튼을 누른다. `NoLate_FE`에서 다음 명령으로 페이지를 열 수 있다.
+
+```sh
+python3 -m http.server 8765 --bind 127.0.0.1 --directory e2e/ios/fixtures
+```
+
+XCUITest 실행 시 `TEST_RUNNER_E2E_SMART_TICKET_SAFARI_URL=http://127.0.0.1:8765/smart-ticket-share.html`을 전달한다. 이 페이지는 웹 공유 API로 승차권 상세 텍스트와 공개 코레일 홈페이지 주소를 각각 보낸다.
+
+`TEST_RUNNER_E2E_PUBLIC_RAIL_BOOKING_HOME=1`로 `testSmartTicketKorailHomeFromSafariToolbar`를 실행하면 Safari 도구 막대에서 실제 코레일 공개 홈페이지를 공유한다. 예매 양식의 기본 출발역·도착역·시각이 승차권으로 표시되는지 검사한다. `testSmartTicketForwardedPreviewNeedsTicketDetails`는 전달 링크와 제목만 담은 두 가지 공유 형식에서 안내를 확인하고, 승차권 상세를 함께 보냈을 때 원래 역·시각·열차번호가 표시되는지 검사한다. 개인 승차권 페이지와 카카오톡 앱의 공유 동작은 실기기 확인 대상이다.
+
+`testSmartTicketCompactRailPhotoReadsPrintedRoute`는 수서 → 공주 SRT 615 합성 이미지를 공유해 역 이름을 직접 입력하기 전의 확인 화면을 검사한다. 같은 화살표를 Vision이 iOS 26.5에서는 `>`, iOS 27.0에서는 `>>`로 읽었다. 날짜와 열차번호 사이에 경로 한 줄이 있고 출발·도착 시각이 확인되는 경우를 검증한다.
+
+같은 페이지에서 `testSmartTicketBusLinksAndDetailsFromSafari`를 실행하면 티머니 시외버스·버스타고·고속버스통합예매 링크를 각각 공유한 뒤 버스타고 링크와 합성 승차권 본문을 함께 공유한다. 링크만 받으면 상세 내용이 필요하다는 안내가 나오고, 본문을 함께 받으면 터미널·등급·시각을 확인할 수 있다. `testSmartTicketCarrierAppLinksRequestTicketContent`는 테스트 호스트에서 티머니GO 앱 주소와 코레일톡 앱 주소를 시스템 공유 시트로 보낸다.
+
+`testSmartTicketBusWebPageUsesCarrierAndRejectsBookingHome`는 WebKit으로 렌더링한 합성 고속버스 승차권과 예매 양식을 검사한다. `testSmartTicketOvernightBusWebPageSaveAndReopen`은 전용 계정의 달력에서 저장된 다음 날 도착편을 다시 연다. `TEST_RUNNER_E2E_PUBLIC_BUS_BOOKING_HOME=1`을 설정하면 `testSmartTicketTmoneyHomeFromSafariToolbar`에서 Safari 도구 막대로 티머니 시외버스 공개 홈페이지를 공유하는 흐름도 검사할 수 있다.
+
+
+### Reported boarding followed by a fresh alighting forecast
+
+`run-eta-early-transfer.py --phase reported-boarding --java <java21> --backend-snapshot <owned-copy>`
+uses three Worker evaluations in isolated H2: accepted plan, an ARRIVED state without a matching
+alighting vehicle, then a later fresh forecast for that exact vehicle. The pending state must remain
+LAST_ACCEPTED_PLAN. The final API and pinned installed app must distinguish historical station
+arrival from a future forecast, retain the original departure/alarm and walking segments, and use
+the actual vehicle number rather than the comparison timetable number. All provider rows and
+clock advances are declared synthetic; this is not an accuracy or physical-boarding result.
+
+The real runner's `--verify-reported-boarding-chain` requires
+`--verify-timetable-planned-postdeparture --verify-observed-service-connection --observe-train-positions`.
+An explicit departure selectable in Naver’s public ten-minute picker is required before startup.
+It spends only the original three evaluations: initial future plan, last boarding +30 seconds,
+and a later alighting window. A missing natural ARRIVED state stays unverified; another simultaneous
+endpoint match cannot satisfy this historical-state scenario. The maximum remains three ETA
+rounds, 16 separate position HTTP calls, and one supplementary station per production refresh.
+Provider/auth/quota errors stop the run without retry or key changes. Keep the accepted input,
+actual clock and results intact; use only the authorized simulator, H2 and owned 5523/8086.

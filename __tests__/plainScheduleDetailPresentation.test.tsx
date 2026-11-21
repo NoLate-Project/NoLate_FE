@@ -12,11 +12,9 @@ jest.mock("react-native/Libraries/Utilities/useWindowDimensions", () => ({
 }));
 
 jest.mock("../src/modules/map/TmapMapView", () => () => null);
-jest.mock("../src/modules/journey/SavedJourneyRoutePreview", () => ({ SavedJourneyRoutePreview: () => null }));
 jest.mock("../src/modules/journey/useSavedJourneyGuidanceView", () => ({
     useSavedJourneyGuidanceView: () => ({ snapshot: null, stage: null }),
 }));
-jest.mock("../src/modules/schedule/components/detail/ScheduleArrivalObservationAction", () => () => null);
 jest.mock("../src/api/scheduleSharing", () => ({ getShareInbox: jest.fn() }));
 
 import { getShareInbox } from "../src/api/scheduleSharing";

@@ -99,7 +99,11 @@ enum NoLateSavedGuidanceArrivalPolicy {
     let status: String
     let arrival: NoLateGuidanceArrival?
     let busLegIndex: Int
-    init(_ status: String, _ arrival: NoLateGuidanceArrival? = nil, busLegIndex: Int = 1) {
+    // Local notice identity. ActivityKit and remote updates only receive the public arrival.
+    let subwayTrainNumber: String?
+    init(_ status: String, _ arrival: NoLateGuidanceArrival? = nil, busLegIndex: Int = 1,
+      subwayTrainNumber: String? = nil) {
+      self.subwayTrainNumber = subwayTrainNumber
       self.status = status; self.arrival = arrival; self.busLegIndex = busLegIndex
     }
   }

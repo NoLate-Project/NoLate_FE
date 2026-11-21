@@ -17,11 +17,13 @@ import {
 import { registerPushToken } from "../../api/notification";
 import {
     cancelPendingPushRegistration,
+    getPushRegistrationGeneration,
     isPushRegistrationGenerationCurrent,
     runPushRegistration,
 } from "./pushRegistrationCoordinator";
 import { retryPushRegistration } from "./pushRegistrationRetry";
-import { shouldRegisterRemotePush } from "./pushRegistrationDevicePolicy";
+import { shouldRegisterRemotePush, supportsIosSimulatorPush } from "./pushRegistrationDevicePolicy";
+import { acceptPushRoute } from './acceptedPushRoute';
 import { requestPushNotificationPermission } from "./pushPermission";
 import {
     activateDepartureReminderAccountForAuthenticatedSession,
@@ -52,6 +54,11 @@ async function registerToken(
     isCurrent: () => boolean = () => true,
 ): Promise<void> {
     if (!isCurrent()) return;
+    const routeContext = Platform.OS === 'ios' ? {
+        apiOrigin: (require('../../api/api') as typeof import('../../api/api')).API_BASE_URL,
+        credentialRevision: (require('../auth/authStorage') as typeof import('../auth/authStorage')).getAuthCredentialRevision(),
+        registrationGeneration: getPushRegistrationGeneration(),
+    } : null;
     if (!(await activateDepartureReminderAccountForAuthenticatedSession(memberId))) {
         throw new Error("Native departure reminder account binding is unavailable.");
     }
@@ -64,6 +71,11 @@ async function registerToken(
         deliveryAckCapabilityVersion: 1,
     });
     if (!isCurrent()) return;
+    if (routeContext && routeContext.credentialRevision ===
+        (require('../auth/authStorage') as typeof import('../auth/authStorage')).getAuthCredentialRevision()
+        && isPushRegistrationGenerationCurrent(routeContext.registrationGeneration)) {
+        acceptPushRoute({ ...routeContext, memberId, token });
+    }
     pushRegistrationSuccessListeners.forEach((listener) => listener(memberId));
     // A successful token registration is a durable point at which missed
     // data-only commands can be recovered from the authoritative snapshot.
@@ -95,12 +107,18 @@ async function waitForApnsToken(): Promise<string> {
     }
 
     throw new Error(
-        "APNs device token is unavailable. iOS push registration requires a signed build on a physical device.",
+        "APNs device token is unavailable. Check signing and APNs support for this iOS device or Simulator.",
     );
 }
 
 function getApnsTokenType(): "prod" | "sandbox" {
-    return __DEV__ ? "sandbox" : "prod";
+    // Simulator APNs uses Sandbox even for an optimized Release application.
+    return !Device.isDevice || __DEV__ ? "sandbox" : "prod";
+}
+
+function canRegisterRemotePush(): boolean {
+    return shouldRegisterRemotePush(Platform.OS, Device.isDevice,
+        Platform.OS === 'ios' && supportsIosSimulatorPush(Platform.Version, Device.supportedCpuArchitectures));
 }
 
 function createNativePushContext(apnsToken?: string, apnsTokenType?: string): string {
@@ -153,7 +171,7 @@ async function performPushRegistration(memberId: number, generation: number): Pr
     if (!memberId) return;
     // expo-constants 18에서 Constants.isDevice가 제거됐다. 제거된 값을 검사하면 undefined가
     // false로 평가되어 실제 iPhone까지 시뮬레이터로 오인하고 모든 토큰 등록을 건너뛴다.
-    if (!shouldRegisterRemotePush(Platform.OS, Device.isDevice)) return;
+    if (!canRegisterRemotePush()) return;
 
     const messaging = getMessaging();
     let apnsToken: string | undefined;
@@ -219,7 +237,7 @@ export function subscribePushTokenRefresh(memberId?: number): () => void {
 export async function clearPushRegistrationAfterLogout(): Promise<void> {
     cancelPendingPushRegistration();
     await SecureStore.deleteItemAsync(PUSH_NATIVE_CONTEXT_KEY);
-    if (!shouldRegisterRemotePush(Platform.OS, Device.isDevice)) return;
+    if (!canRegisterRemotePush()) return;
 
     try {
         await deleteToken(getMessaging());

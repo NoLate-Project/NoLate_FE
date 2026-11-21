@@ -82,7 +82,7 @@ final class NoLateJourneyTransferWalkCoreTests: XCTestCase {
   func testMissingStalePartialSeparationAndClockOnlyCannotCommit() throws {
     for mode in 0...3 {
       var c=C(route:try route());var s=separation()
-      if mode==1 { s.validUntil=1000 };if mode==2 { s.evidenceCount=2 };if mode==3 { s.status="COLLECTING" }
+      if mode==1 { s.validUntil=1000 };if mode==2 { s.evidenceCount=1 };if mode==3 { s.status="COLLECTING" }
       c.ingest(fix(1,1000,1000),separation:mode==0 ? nil:s,now:1000);walking(&c)
       XCTAssertFalse(c.committed);XCTAssertFalse(c.readyForNextTransit)
     }

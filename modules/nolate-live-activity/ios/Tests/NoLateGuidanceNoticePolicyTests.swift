@@ -38,8 +38,35 @@ final class NoLateGuidanceNoticePolicyTests: XCTestCase {
     XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(waiting, legs: subwayLegs, now: 1001).action,
       "성수행 열차 약 2분 뒤 도착 · 탑승 전")
     XCTAssertEqual(policy.next(waiting, legs: subwayLegs, now: 1001)?.body,
-      "2호선 · 약 2분 후 도착 예정입니다. 탑승을 준비해 주세요.")
+      "2호선 성수행 열차가 약 2분 후 도착합니다.")
     XCTAssertNil(policy.next(waiting, legs: subwayLegs, now: 1002))
+  }
+  func testPassengerRemainingOnPlatformGetsTheFollowingTrainOnce() {
+    let subwayLegs = [legs[0], NoLateGuidanceRouteLeg(index: 1, kind: "SUBWAY",
+      boardingStopName: "서울역", lineName: "수도권 4호선", alightingStopName: "충무로"), legs[2]]
+    var policy = NoLateGuidanceNoticePolicy()
+    func notice(_ number: String, _ now: Double, _ expected: Double) -> NoLateGuidanceNotice? {
+      let arrival = NoLateGuidanceArrival(providerRouteId: "4호선", directionLabel: "진접행",
+        expectedAt: expected, sourceUpdatedAt: now, validUntil: min(now + 120, expected), busLegIndex: 1, kind: "SUBWAY")
+      let waiting = NoLateGuidanceContent(sessionId: "trip", scheduleId: "9001", generation: 1, routeRevision: 1,
+        routeInputDigest: String(repeating: "a", count: 64), sequence: Int64(now), status: "ACTIVE",
+        phase: "WAITING", quality: "GOOD", instruction: "열차 대기", activeLegIndex: 1, walkProgress: 1,
+        observedAt: now, validUntil: now + 15, arrivalStatus: "WAITING_INFORMATION", arrival: arrival)
+      return policy.next(waiting, legs: subwayLegs, now: now, subwayTrainNumber: number)
+    }
+    XCTAssertEqual(notice("90401", 1000, 1110)?.body, "4호선 진접행 열차가 약 2분 후 도착합니다.")
+    XCTAssertNil(notice("90401", 1020, 1118)) // Same train, revised forecast.
+    XCTAssertNil(notice("90402", 1030, 1140)) // The forecasts overlap.
+    XCTAssertNil(notice("90401", 1109, 1118))
+    XCTAssertEqual(notice("90402", 1119, 1220)?.kind, "ARRIVAL_SOON")
+    XCTAssertNil(notice("90402", 1130, 1223))
+    XCTAssertNil(notice("90401", 1225, 1230)) // Old provider row resurfaces.
+  }
+  func testNoticeExpiresWhenVehicleArrivesBeforePositionExpires() {
+    var policy = NoLateGuidanceNoticePolicy()
+    let notice = policy.next(content("WAITING", eta: 1004), legs: legs, now: 1001)
+    XCTAssertEqual(notice?.kind, "ARRIVAL_SOON")
+    XCTAssertEqual(notice?.expiresAt, 1004)
   }
   func testNearPlatformWalkingShowsSubwayArrivalWithoutClaimingBoardingOrRepeatingNotice() {
     let subwayLegs = [legs[0], NoLateGuidanceRouteLeg(index: 1, kind: "SUBWAY",

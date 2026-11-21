@@ -135,7 +135,7 @@ export async function getDrivingRouteViaTmap(
         }
     );
 
-    return parseTmapRoadRouteResponse(response.data);
+    return parseTmapRoadRouteResponse(response.data, "driving");
 }
 
 /** 지도 공급자 호출과 대체 경로를 조율해 `getWalkingRouteViaTmap` 결과를 반환합니다. */
@@ -253,6 +253,7 @@ export async function getDrivingAlternatives(origin: Place, destination: Place, 
                 taxiFareWon: parsed.taxiFareWon,
                 pathCoords: parsed.pathCoords,
                 guideSteps: parsed.guideSteps,
+                drivingGeometryComplete: parsed.drivingGeometryComplete,
                 trafficSections: parsed.trafficSections,
                 providerRouteOption: searchOption,
                 source: "api",

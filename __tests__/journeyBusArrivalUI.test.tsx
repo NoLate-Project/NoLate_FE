@@ -1,7 +1,7 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { AppState } from "react-native";
-import { JourneyBusArrivalTrial } from "../src/modules/journey/JourneyBusArrivalTrial";
+import { JourneyBusArrivalTrial } from "./fixtures/journey/JourneyBusArrivalTrial";
 import type { JourneyRouteInput } from "../src/modules/journey/journeyRouteInput";
 import type { JourneyBusRouteMapping } from "../src/modules/journey/journeyBusRouteBinding";
 

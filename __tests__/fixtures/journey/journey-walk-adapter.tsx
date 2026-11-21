@@ -4,8 +4,8 @@ import { Pressable, ScrollView, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseTmapPedestrianGeometry } from '../../../src/modules/map/tmapPedestrianGeometry';
 import { pedestrianGeometryFixture } from '../../../src/modules/journey/pedestrianGeometryFixtures';
-import { JourneyServerWalkingTrial } from '../../../src/modules/journey/JourneyServerWalkingTrial';
-import { JourneyWalkingSnapshotTrial } from '../../../src/modules/journey/JourneyWalkingSnapshotTrial';
+import { JourneyServerWalkingTrial } from './JourneyServerWalkingTrial';
+import { JourneyWalkingSnapshotTrial } from './JourneyWalkingSnapshotTrial';
 
 const examples = [ ['complete', '연결된 원본'], ['gap', '끊어진 원본'], ['invalid', '잘못된 좌표'],
     ['endpoint', '다른 도착지'] ] as const;

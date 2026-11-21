@@ -40,7 +40,6 @@ type Props = {
         onPress: (restoreFocus?: () => void) => void;
         participantContent?: React.ReactNode;
     };
-    arrivalObservation?: React.ReactNode;
 };
 
 type DetailInfoRowProps = {
@@ -192,7 +191,6 @@ export default function PlainScheduleDetailView({
     contentTopInset,
     contentBottomInset,
     travelPlan,
-    arrivalObservation,
 }: Props) {
     const largeTravelPlanText = useWindowDimensions().fontScale > 1.35;
     const { colors, mode } = useTheme();
@@ -417,11 +415,6 @@ export default function PlainScheduleDetailView({
                     </View>
                 ) : null}
 
-                {arrivalObservation ? (
-                    <View style={styles.arrivalObservation}>
-                        {arrivalObservation}
-                    </View>
-                ) : null}
 
                 {presentation.notes ? section("memo", receivedReading ? (
                     <ScheduleDetailReadingRow testID="plain-schedule-detail-memo" label="메모" value={presentation.notes} />
@@ -593,9 +586,6 @@ const styles = StyleSheet.create({
         fontWeight: "600",
     },
     travelPlanSection: {
-        marginBottom: 14,
-    },
-    arrivalObservation: {
         marginBottom: 14,
     },
     travelPlanRow: {

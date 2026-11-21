@@ -22,6 +22,8 @@ import { JOURNEY_ROUTE_INPUT_LIMITS, journeyRouteUTF8Bytes, buildJourneyRouteInp
 import { createJourneyStopOutbox } from './journeyStopOutbox';
 import { requestWalkingSnapshot, savedWalkingBaseJSON } from './serverWalkingSnapshot';
 import { getEnv } from '../../api/env';
+import { configurePreparedJourneyRemoteUpdates, updatePreparedJourneyRemoteRegistration } from './journeyRemoteUpdates';
+import { subscribeAcceptedPushRoute } from '../notification/acceptedPushRoute';
 
 const BINDING_KEY = "@nolate/automatic-journey-trial-binding-v1";
 // Fixed isolated fixture endpoint. Never reads API configuration or attaches user auth tokens.
@@ -272,8 +274,13 @@ function observeLifetime() {
     if (disposeLifetime) return;
     const automaticRetry = () => {
         retryAutomaticJourneyStops().catch(() => undefined);
-        if (Date.now() >= nextAutomaticRetryAt) retryAutomaticJourneySync().catch(() => undefined);
+        if (Date.now() >= nextAutomaticRetryAt) retryAutomaticJourneySync().then(updateRemoteRegistration).catch(() => undefined);
     };
+    const updateRemoteRegistration = () => {
+        if (current && nativeAuthentication) return updatePreparedJourneyRemoteRegistration(nativeAuthentication, current);
+        return Promise.resolve();
+    };
+    const registration = subscribeAcceptedPushRoute(() => { updateRemoteRegistration().catch(() => undefined); });
     const unsub = subscribeAutomaticJourney(snapshot => {
         if (current && snapshot.sessionId === current.sessionId && ['STOPPED', 'EXPIRED'].includes(snapshot.status)) {
             // A native terminal event also owns remote cleanup (including lease expiry and
@@ -294,7 +301,7 @@ function observeLifetime() {
     const timer = setInterval(() => {
         if (AppState.currentState === "active") automaticRetry();
     }, 5000);
-    disposeLifetime = () => { unsub(); app.remove(); auth(); clearInterval(timer); disposeLifetime = null; };
+    disposeLifetime = () => { unsub(); registration(); app.remove(); auth(); clearInterval(timer); disposeLifetime = null; };
 }
 function searchRerouteAfterConfirmedOffRoute(snapshot: AutomaticJourneySnapshot) {
     if (getEnv('EXPO_PUBLIC_AUTOMATIC_REROUTE_ENABLED') !== 'true' || AppState.currentState !== 'active') return;
@@ -402,6 +409,7 @@ async function installCommittedReroute(pending: PendingRerouteCommit,
         preparedAtEpochSeconds: Date.parse(receipt.preparedAt as string) / 1000,
         expiresAtEpochSeconds: Date.parse(receipt.expiresAt as string) / 1000,
         rerouteValidated: true, officialBusAdmission: receipt.officialBusAdmission,
+        officialSubwayAdmission: undefined, officialBusAdmissions: undefined, officialSubwayAdmissions: undefined,
     });
     if (!replacement || replacement.routeInputDigest !== digest || replacement.routeRevision !== routeRevision) {
         throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
@@ -577,12 +585,29 @@ export async function retryAutomaticJourneySync(): Promise<void> {
                 } catch(error) {
                     if(['SNAPSHOT_REPLACED','SNAPSHOT_NOT_FOUND','REVISION_CHANGED','SAVED_ROUTE_CHANGED','EXPIRED','OWNER_CHANGED',
                         'INVALID_WALKING_SNAPSHOT'].includes(codeFor(error)))throw new Error('AUTOMATIC_SERVER_REJECTED');
+                    if (codeFor(error) === 'AUTOMATIC_SERVER_UNAVAILABLE') throw new Error('SAVED_ROUTE_VALIDATION_UNAVAILABLE');
                     throw error;
                 }
                 if(revision!==generation||current!==binding)return;
             }
             const event = await getAutomaticJourneyDeparture(binding);
-            if (revision !== generation || !event) return;
+            if (revision !== generation || current !== binding) return;
+            if (!event) {
+                // A successful validation can recover even after departure was acknowledged.
+                // Retire only its own retry, leaving stop and reroute work to their handlers.
+                const recovery = syncState;
+                if (binding.syncScope === 'AUTHENTICATED' && selected?.walkingSnapshot && recovery.status === 'RETRY_WAIT'
+                    && recovery.errorCode === 'SAVED_ROUTE_VALIDATION_UNAVAILABLE' && !recovery.pendingStopCount
+                    && (!recovery.rerouteState || recovery.rerouteState === 'IDLE')) {
+                    const confirmed = await getAutomaticJourneySnapshot();
+                    if (revision === generation && current === binding && syncState === recovery
+                        && confirmed.sessionId === binding.sessionId && confirmed.routeRevision === binding.routeRevision
+                        && ['ARMED', 'ACTIVE'].includes(confirmed.status) && !confirmed.pendingDeparture) {
+                        publish({status: confirmed.departureAcknowledged ? 'ACKNOWLEDGED' : 'IDLE', errorCode: null});
+                    }
+                }
+                return;
+            }
             if (binding.syncScope === "LOCAL_ONLY" || syncState.paused) { publish({ status: "PENDING", errorCode: null }); return; }
             publish({ status: "SENDING", errorCode: null });
             await transportFor(binding).depart(event);
@@ -636,15 +661,20 @@ async function selectedInput(input: JourneyRouteInput, scope: AutomaticJourneyBi
     return { routeJSON, input: copied, digest: await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, routeJSON) };
 }
 
-export async function prepareAutomaticJourneyTrial(input: JourneyRouteInput, scope: AutomaticJourneyBinding["syncScope"], savedScheduleId?: string, authSource?: JourneyAuthenticationSource): Promise<AutomaticJourneySnapshot> {
+export async function prepareAutomaticJourneyTrial(input: JourneyRouteInput, scope: AutomaticJourneyBinding["syncScope"], savedScheduleId?: string,
+    authSource?: JourneyAuthenticationSource, departureSignal?: AbortSignal): Promise<AutomaticJourneySnapshot> {
     if (!isAutomaticJourneyDevelopment()) throw new Error("DEVELOPMENT_IOS_ONLY");
-    if (operationBusy || stopping) throw new Error("AUTOMATIC_OPERATION_PENDING");
+    if (stopping || (operationBusy && !(departureSignal && reconciliation))) throw new Error("AUTOMATIC_OPERATION_PENDING");
     if (!["LOCAL_ONLY", "SANDBOX", "AUTHENTICATED"].includes(scope)) throw new Error("INVALID_SYNC_SCOPE");
+    let revision = generation;
     await retryAutomaticJourneyStops(authSource);
+    // Returning from the system location prompt can start a foreground checkpoint
+    // check during this same tap. Finish that check before admitting a new session.
+    if (departureSignal && reconciliation) await reconciliation;
+    if (departureSignal?.aborted || revision !== generation) throw new Error('AUTOMATIC_OPERATION_CANCELLED');
     if (stopOutbox.summary().pendingCount || stopOutbox.summary().errorCode) throw new Error('PENDING_STOP_BLOCKS_PREPARE');
     if (operationBusy || stopping) throw new Error('AUTOMATIC_OPERATION_PENDING');
     operationBusy = true;
-    let revision = generation;
     let binding: AutomaticJourneyBinding | null = null;
     let armRequested = false;
     observeLifetime(); // Also fences logout while preparation is still in flight and the view closes.
@@ -656,7 +686,7 @@ export async function prepareAutomaticJourneyTrial(input: JourneyRouteInput, sco
         // A restarted process has not loaded the saved outbox yet. Never use a failed new arm
         // and its fail-closed cleanup to implicitly revoke a recoverable prior session.
         if (existing.checkpointAvailable || await AsyncStorage.getItem(BINDING_KEY)) throw new Error("CHECKPOINT_RESTORE_OR_STOP_REQUIRED");
-        if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
+        if (departureSignal?.aborted || revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
         revision = ++generation;
         if (savedScheduleId && (scope === "LOCAL_ONLY" || !/^[1-9]\d{0,17}$/.test(savedScheduleId))) throw new Error("INVALID_SAVED_SCOPE");
         const selected = await selectedInput(input, scope, !!savedScheduleId);
@@ -689,11 +719,12 @@ export async function prepareAutomaticJourneyTrial(input: JourneyRouteInput, sco
             if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
             await configureAutomaticJourneyAuthentication(latest);
             nativeAuthentication = latest;
+            await configurePreparedJourneyRemoteUpdates(latest, binding);
         }
         if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
         // Only identity/digest/expiry persist in JS, never route coordinates or auth material.
         await AsyncStorage.setItem(BINDING_KEY, JSON.stringify(binding));
-        if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
+        if (departureSignal?.aborted || revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
         armRequested = true;
         const snapshot = await armAutomaticJourney(selected.routeJSON, binding);
         if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
@@ -785,6 +816,7 @@ export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, aut
                     preparedAtEpochSeconds: typeof server.preparedAt === 'string' ? Date.parse(server.preparedAt) / 1000 : null,
                     expiresAtEpochSeconds: typeof server.expiresAt === 'string' ? Date.parse(server.expiresAt) / 1000 : null,
                     rerouteValidated: true, officialBusAdmission: server.rerouteBusAdmission,
+                    officialSubwayAdmission: undefined, officialBusAdmissions: undefined, officialSubwayAdmissions: undefined,
                 });
                 if (!recovered || await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256,
                     server.rerouteInputJSON) !== recovered.routeInputDigest) throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
@@ -792,6 +824,7 @@ export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, aut
                 requireJourneyAuthenticationIdentity(auth, recovered as Required<AutomaticJourneyBinding>);
                 await configureAutomaticJourneyAuthentication(auth);
                 nativeAuthentication = auth;
+                await configurePreparedJourneyRemoteUpdates(auth, recovered);
                 // If the previous process persisted native first, merely align JS storage.
                 let alreadyInstalled = false;
                 try { alreadyInstalled = await readSavedAutomaticJourneyCheckpointRoute(recovered) === server.rerouteInputJSON; }
@@ -837,6 +870,7 @@ export async function restoreAutomaticJourneyTrial(input: JourneyRouteInput, aut
             if (revision !== generation) throw new Error("AUTOMATIC_OPERATION_CANCELLED");
             if (!nativeAuthentication) await configureAutomaticJourneyAuthentication(auth);
             nativeAuthentication = auth;
+            await configurePreparedJourneyRemoteUpdates(auth, binding);
         }
         if (savedCheckpoint) {
             routeJSON = await readSavedAutomaticJourneyCheckpointRoute(binding);

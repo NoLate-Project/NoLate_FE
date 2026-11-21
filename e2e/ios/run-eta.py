@@ -10,6 +10,15 @@ import urllib.request
 from eta_fixture_scope import DATED_TIMETABLE_API_BASES, INCIDENT_API_BASE, PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE, REAL_ALTERNATE_API_BASE, require_memory_fixture_api
 from eta_timetable_preview import preview_exclusion
 from eta_diagnostic_warning import diagnostic_warning
+from eta_planned_route_evidence import accepted_departure_plan, first_ride_intervals, transfer_ride_labels, qualifying_planned_observation, verified_timetable_plan
+from eta_observed_service import selected_train_number
+
+def set_real_ride_intervals(expected, route):
+    if intervals := first_ride_intervals(route):
+        expected['TEST_RUNNER_E2E_REAL_FIRST_WAIT'] = intervals['wait']
+        expected['TEST_RUNNER_E2E_REAL_FIRST_RIDE'] = intervals['ride']
+    if transfers := transfer_ride_labels(route):
+        expected['TEST_RUNNER_E2E_REAL_TRANSFER_INTERVALS'] = json.dumps(transfers, ensure_ascii=False)
 
 APPROVED_DEVICE = '9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69'
 APPROVED_DEVICE_NAME = 'NoLate XCUITest 20261003'
@@ -35,7 +44,9 @@ METHODS += ('testVerifyRealEtaDiagnostic',)
 METHODS += ('testVerifyRealLateEtaComparison',)
 METHODS += ('testVerifyProtectedRealEtaDiagnostic',)
 METHODS += ('testVerifyIsolatedRealProviderEta',)
-METHODS += ('testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback')
+PLANNED_REAL_METHODS = ('testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback',
+                        'testVerifyIsolatedRealProviderPlannedTimingFailure')
+METHODS += PLANNED_REAL_METHODS
 METHODS += ('testVerifyIsolatedRealProviderDiagnostic',)
 METHODS += ('testVerifyIsolatedOdsayTimetableSelection',)
 METHODS += ('testVerifyIsolatedRealProviderObservationExpiry',)
@@ -67,7 +78,7 @@ parser.add_argument('--assert-quota-failure', action='store_true')
 parser.add_argument('--inspect-tmap-after-login', action='store_true')
 parser.add_argument('--expected-diagnostic', choices=('TRANSIT_ARRIVAL_UNAVAILABLE', 'TRANSIT_ARRIVAL_OUT_OF_HORIZON'))
 parser.add_argument('--api-base', choices=('http://127.0.0.1:5522', PRIVATE_API_BASE, INCIDENT_API_BASE, REAL_ALTERNATE_API_BASE, QUOTA_ALTERNATE_API_BASE, *DATED_TIMETABLE_API_BASES), default='http://127.0.0.1:5522')
-parser.add_argument('--fixture-phase', choices=('success', 'reconnect', 'early-transfer', 'dwell-transfer', 'early-transfer-risk', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture', 'planned-alighting', 'unknown', 'missed', 'recovered', 'late'))
+parser.add_argument('--fixture-phase', choices=('success', 'reconnect', 'early-transfer', 'dwell-transfer', 'first-alighting-late', 'onward-delay', 'early-transfer-risk', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture', 'planned-alighting', 'planned-first-alighting', 'reported-boarding', 'unknown', 'missed', 'recovered', 'late'))
 parser.add_argument('--fixture-evidence', type=Path, help='Private H2 phase result; verifies exact displayed time/duration')
 parser.add_argument('--fixture-first-timetable-alighting', action='store_true')
 parser.add_argument('--natural-evidence', type=Path, help='Private natural due-time Worker result')
@@ -101,7 +112,7 @@ if args.api_base == INCIDENT_API_BASE and (
         or args.title != 'ETA E2E calendar 1'):
     parser.error('The alternate port is reserved for the synthetic incident')
 quota_ui = args.only == 'testVerifyIsolatedQuotaEta'
-alternate_fixture_assertion = args.only == 'testVerifyIsolatedEtaFixture' and args.fixture_phase in ('early-transfer', 'dwell-transfer', 'planned-alighting')
+alternate_fixture_assertion = args.only == 'testVerifyIsolatedEtaFixture' and args.fixture_phase in ('early-transfer', 'dwell-transfer', 'first-alighting-late', 'onward-delay', 'planned-alighting')
 if args.api_base == QUOTA_ALTERNATE_API_BASE and (
         (args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedQuotaEta', 'testVerifyIsolatedNativeAlarmState')
          and not alternate_fixture_assertion)
@@ -151,9 +162,9 @@ if args.api_base == REAL_ALTERNATE_API_BASE and (not args.real_isolated or args.
 if args.real_isolated:
     automatic_methods = ('testCreateIsolatedEtaJourney', 'testObserveIsolatedNativeAlarmDelivery', 'testVerifyIsolatedNativeAlarmState') if args.real_automatic else ()
     if (args.api_base not in (PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE, *DATED_TIMETABLE_API_BASES) or args.title != 'ETA E2E real isolated fixture' or
-            args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry', 'testVerifyIsolatedOdsayTimetableSelection', 'testInspectEtaJourney') + automatic_methods):
+            args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry', 'testVerifyIsolatedOdsayTimetableSelection', 'testInspectEtaJourney') + PLANNED_REAL_METHODS + automatic_methods):
         parser.error('Real isolation is restricted to its explicit account-296 methods on the separate memory DB')
-    if args.only in ('testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback'):
+    if args.only in PLANNED_REAL_METHODS:
         if args.real_isolated_evidence is None or args.real_isolated_previous_evidence is None:
             parser.error('Post-departure UI requires both real Worker evaluations')
         current_path = args.real_isolated_evidence.resolve(strict=True)
@@ -163,32 +174,71 @@ if args.real_isolated:
             parser.error('Both evaluations must belong to one private real-provider run')
         current, previous = json.loads(current_path.read_text()), json.loads(previous_path.read_text())
         snapshot = current.get('effectiveSnapshot') or {}
-        plan = snapshot.get('inProgressPlannedRoute') or {}
-        prior_route = (previous.get('effectiveSnapshot') or {}).get('effectiveTransitRoute') or {}
-        observation = snapshot.get('plannedArrivalObservation') or {}
+        original_snapshot = previous.get('effectiveSnapshot') or {}
+        if current_path == previous_path:
+            # An expiry-only read inspects the same saved evaluation before a second Worker run.
+            plan = snapshot.get('inProgressPlannedRoute') or snapshot.get('lastTimetablePlannedRoute') or snapshot.get('effectiveTransitRoute') or {}
+            prior_route = original_snapshot.get('effectiveTransitRoute') if original_snapshot.get('accepted') else verified_timetable_plan(previous)
+        else:
+            plan = snapshot.get('inProgressPlannedRoute') or {}
+            prior_route = accepted_departure_plan(original_snapshot) if original_snapshot.get('accepted') else verified_timetable_plan(previous)
+        observation = qualifying_planned_observation(current) or {}
         evaluated = dt.datetime.fromisoformat(current['evaluatedAt'])
         source = dt.datetime.fromisoformat(observation['sourceUpdatedAt']) if observation.get('sourceUpdatedAt') else None
         same_train_mode = args.only == 'testVerifyIsolatedRealProviderPlannedArrival'
+        warning_mode = args.only == 'testVerifyIsolatedRealProviderPlannedTimingFailure'
+        update = snapshot.get('plannedRouteUpdate') or {}
+        failure = update.get('failure')
+        if warning_mode:
+            if (not failure or failure not in ('EARLY_BOARDING_UNCONFIRMED', 'TRANSFER_RECONNECTION_UNAVAILABLE', 'TIMELINE_INCONSISTENT')
+                    or current_path == previous_path or update.get('route') or update.get('routeIdentity') != plan.get('identity')):
+                parser.error('A retained timing conflict for the same evaluated route is required')
+        elif failure:
+            parser.error('An unresolved route cannot supply a provisional arrival')
+        preserved_plan = snapshot.get('lastUpdatedPlannedRoute') or plan
+        predicted = observation.get('predictedArrivalAt') if same_train_mode else preserved_plan.get('arrivalAt')
+        read_at = dt.datetime.now(dt.timezone.utc)
         observation_is_valid = (observation.get('routeIdentity') == plan.get('identity') and
                                 source is not None and 0 <= (evaluated - source).total_seconds() <= 120)
         if (any(row.get('classification') != 'REAL_PROVIDER_ISOLATED_WORKER' or
                 row.get('database') != 'H2_MEMORY_ONLY' or row.get('providersMocked') is not False or
                 row.get('clockMode') != 'SYSTEM_WALL_CLOCK' or row.get('memberId') != 296 or
                 row.get('scheduleId') != 363 or row.get('processed') != 1 for row in (previous, current)) or
-                previous.get('stale') is not False or previous.get('source') != 'LIVE_PROVIDER' or
+                (previous.get('stale') is not False or previous.get('source') != 'LIVE_PROVIDER') and verified_timetable_plan(previous) is None or
                 not prior_route or plan != prior_route or
+                preserved_plan.get('identity') != plan.get('identity') or
+                preserved_plan.get('departureAt') != plan.get('departureAt') or
                 (not observation_is_valid if same_train_mode else bool(observation)) or
-                evaluated < dt.datetime.fromisoformat(plan['departureAt']) or
+                (evaluated if same_train_mode else read_at) < dt.datetime.fromisoformat(plan['departureAt']) or
                 current['recommendedDepartureAt'] != previous['recommendedDepartureAt'] or
                 dt.datetime.fromisoformat(current['targetArrivalAt']) != dt.datetime.fromisoformat(args.target_arrival) or
-                abs((dt.datetime.now(dt.timezone.utc) - evaluated).total_seconds()) > 180):
+                (same_train_mode and abs((read_at - evaluated).total_seconds()) > 180) or
+                not predicted or read_at >= dt.datetime.fromisoformat(predicted)):
             parser.error('A scoped real post-departure plan and frozen departure are required')
-        predicted = observation['predictedArrivalAt'] if same_train_mode else plan['arrivalAt']
         real_expected = {'TEST_RUNNER_E2E_REAL_ISOLATED': '1',
+                         'TEST_RUNNER_E2E_REAL_DEPARTURE_AT': previous['recommendedDepartureAt'],
                          'TEST_RUNNER_E2E_REAL_DEPARTURE_CLOCK': dt.datetime.fromisoformat(
-                             previous['recommendedDepartureAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
-                         'TEST_RUNNER_E2E_REAL_PROVISIONAL_CLOCK': dt.datetime.fromisoformat(
-                             predicted).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
+                             previous['recommendedDepartureAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
+        if warning_mode:
+            real_expected['TEST_RUNNER_E2E_REAL_TIMING_FAILURE'] = failure
+        else:
+            real_expected['TEST_RUNNER_E2E_REAL_PROVISIONAL_CLOCK'] = dt.datetime.fromisoformat(
+                predicted).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')
+        shown_route = None if warning_mode else (observation.get('effectiveTransitRoute') if same_train_mode else preserved_plan)
+        set_real_ride_intervals(real_expected, shown_route)
+        if shown_route and all(s.get('rideTiming') for s in shown_route['segments'] if s['kind'] == 'SUBWAY'):
+            clock = lambda value, fmt: dt.datetime.fromisoformat(value).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime(fmt)
+            provider = shown_route['provider']
+            if provider not in ('odsay', 'tmap'):
+                parser.error('Expected a saved ODsay or Tmap rail for the planned journey')
+            rail_prefix = 'route-step-row-odsay-leg-' if provider == 'odsay' else 'route-step-row-leg-'
+            real_expected['TEST_RUNNER_E2E_REAL_PROVISIONAL_RIDES'] = json.dumps([
+                {'rowIdentifier': f"{rail_prefix}{s['sequence']}", 'train': selected_train_number(s),
+                 'board': clock(s['rideTiming']['predictedBoardingAt'], '%H:%M'),
+                 'alight': clock(s['rideTiming']['predictedArrivalAt'], '%H:%M'),
+                 'boardSeconds': clock(s['rideTiming']['predictedBoardingAt'], '%H:%M:%S'),
+                 'alightSeconds': clock(s['rideTiming']['predictedArrivalAt'], '%H:%M:%S')}
+                for s in shown_route['segments'] if s['kind'] == 'SUBWAY'])
     if args.only == 'testVerifyIsolatedRealProviderObservationExpiry':
         if args.real_isolated_evidence is None:
             parser.error('Original accepted Worker evidence is required for an expired API read')
@@ -237,8 +287,10 @@ if args.real_isolated:
                              diagnostic_warning(diagnostic['failureReason']),
                          'TEST_RUNNER_E2E_REAL_DEPARTURE_CLOCK': dt.datetime.fromisoformat(diagnostic['recommendedDepartureAt']).astimezone(
                              dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
-        future = (diagnostic.get('effectiveSnapshot') or {}).get('effectiveTransitRoute')
-        timetable_preview = diagnostic['failureReason'].startswith(
+        from eta_planned_route_evidence import verified_timetable_plan
+        independent_future = verified_timetable_plan(diagnostic)
+        future = independent_future or (diagnostic.get('effectiveSnapshot') or {}).get('effectiveTransitRoute')
+        timetable_preview = independent_future is not None or diagnostic['failureReason'].startswith(
             ('TRANSIT_TRAIN_NOT_YET_OBSERVED:', 'TRANSIT_ARRIVAL_SOURCE_STALE:')) and (
             diagnostic.get('source') == 'TIMETABLE_PROVIDER' and future is not None)
         if not timetable_preview:
@@ -249,18 +301,29 @@ if args.real_isolated:
             # Test that absence; never weaken production freshness/visibility to display it.
             real_expected['TEST_RUNNER_E2E_REAL_FUTURE_WITHHELD'] = withheld_future
         elif timetable_preview:
-            future = diagnostic['effectiveSnapshot']['effectiveTransitRoute']
             def seoul_clock(value, seconds=False):
                 return dt.datetime.fromisoformat(value).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S' if seconds else '%H:%M')
             real_expected['TEST_RUNNER_E2E_REAL_FUTURE_SUMMARY'] = (
                 seoul_clock(future['departureAt']) + ' 출발 예측 · ' + seoul_clock(future['arrivalAt']) +
                 ' 도착 예측 · 총 ' + str(future['totalMinutes']) + '분')
             real_expected['TEST_RUNNER_E2E_REAL_FUTURE_DEPARTURE_AT'] = future['departureAt']
+            set_real_ride_intervals(real_expected, future)
             real_expected['TEST_RUNNER_E2E_REAL_FUTURE_RIDE_TEXT'] = json.dumps([
                 s['rideTiming']['timetable']['trainNumber'] + '열차 · 시간표 · ' +
                 seoul_clock(s['rideTiming']['predictedBoardingAt'], True) + ' 승차 → ' +
                 seoul_clock(s['rideTiming']['predictedArrivalAt'], True) + ' 하차 예측'
                 for s in future['segments'] if s['kind'] == 'SUBWAY'], ensure_ascii=False)
+            if diagnostic['effectiveSnapshot'].get('transitRouteProvenance') == 'SELECTED_ROUTE_PRESERVED':
+                saved = json.loads((diagnostic_path.parent / 'selected-route.json').read_text())['routeInfo']
+                steps = [s for s in saved['steps'] if s['type'] not in ('ORIGIN', 'DESTINATION')]
+                segments = sorted(future['segments'], key=lambda s: s['sequence'])
+                if (saved.get('provider') != future['provider'] or
+                        [step['type'] for step in steps] != [s['kind'] for s in segments]):
+                    parser.error('Selected timetable and saved route must share their provider and ordered steps')
+                real_expected['TEST_RUNNER_E2E_REAL_FUTURE_RAIL'] = json.dumps([
+                    ['route-step-row-' + step['id'], seoul_clock(segment['rideTiming']['predictedBoardingAt']) + ' 승차 계획',
+                     seoul_clock(segment['rideTiming']['predictedArrivalAt'])]
+                    for step, segment in zip(steps, segments) if segment['kind'] == 'SUBWAY'], ensure_ascii=False)
     if args.only == 'testVerifyIsolatedRealProviderEta':
         if args.real_isolated_evidence is None:
             parser.error('Fresh real Worker evidence is required')
@@ -298,11 +361,12 @@ if args.real_isolated:
             'TRANSFER_ALIGHTING_REALTIME': '하차역 실시간 예측',
             'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME': '승하차역 실시간 예측',
             'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING': '승차역 실시간 · 하차역 시간표',
+            'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING': '승차역 실시간 · 하차역 시간표',
         }
         def boarding_clock_label(timing):
             if timing['basis'] in ('FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME',
                                    'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
-                                   'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE'):
+                                   'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING'):
                 return '승차역 열차 도착 예측'
             return '승차'
         real_expected['TEST_RUNNER_E2E_REAL_RIDE_TEXT'] = json.dumps([
@@ -313,6 +377,8 @@ if args.real_isolated:
             dt.datetime.fromisoformat(timing['predictedArrivalAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S') +
             ' 하차 예측' for timing in rides], ensure_ascii=False)
         effective_snapshot = isolated['effectiveSnapshot']
+        if effective_snapshot.get('routeChanged') is False:
+            set_real_ride_intervals(real_expected, effective_snapshot['effectiveTransitRoute'])
         if (args.api_base == REAL_ALTERNATE_API_BASE and isolated.get('journeyProvider') == 'odsay'
                 and effective_snapshot.get('routeChanged') is False):
             station_zone = dt.timezone(dt.timedelta(hours=9))
@@ -349,7 +415,7 @@ if args.real_isolated:
                 '접근 도보', '환승 도보', '도착 도보']:
             parser.error('Recorded public-station ODsay fixture must preserve all three walking distances')
         real_expected['TEST_RUNNER_E2E_REAL_WALK_TEXT'] = json.dumps(walking, ensure_ascii=False)
-elif args.real_isolated_evidence is not None or args.real_isolated_previous_evidence is not None or args.only in ('testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry'):
+elif args.real_isolated_evidence is not None or args.real_isolated_previous_evidence is not None or args.only in PLANNED_REAL_METHODS + ('testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry'):
     parser.error('Real-isolated verification requires its explicit mode')
 if args.only in ('testVerifyAcceptedRealEtaComparison', 'testVerifyRealEtaDiagnostic', 'testVerifyRealLateEtaComparison', 'testVerifyProtectedRealEtaDiagnostic'):
     real_scopes = {'ETA E2E NAVER 1007 02': ('365', '02'), 'ETA E2E NAVER 1007 03': ('366', '03'),
@@ -534,7 +600,7 @@ if args.fixture_phase:
         parser.error('Fixture phase was not processed exactly once')
     if dt.datetime.fromisoformat(evidence['targetArrivalAt']) != dt.datetime.fromisoformat(args.target_arrival):
         parser.error('UI target must match the actual private schedule')
-    if args.fixture_phase in ('success', 'reconnect', 'early-transfer', 'dwell-transfer', 'transfer-observed', 'recovered'):
+    if args.fixture_phase in ('success', 'reconnect', 'early-transfer', 'dwell-transfer', 'first-alighting-late', 'onward-delay', 'transfer-observed', 'recovered'):
         # These expectations are independent of the returned ETA values.
         epoch = dt.datetime.fromisoformat(evidence['epoch'])
         fixture_expected = {
@@ -544,6 +610,21 @@ if args.fixture_phase:
         }
         transfers = [leg['transferTiming'] for leg in evidence['effectiveSnapshot']['effectiveTransitRoute']['segments']
                      if leg.get('transferTiming')]
+        if intervals := first_ride_intervals(evidence['effectiveSnapshot']['effectiveTransitRoute']):
+            fixture_expected['TEST_RUNNER_E2E_FIXTURE_FIRST_INTERVALS'] = intervals['wait'] + ' · ' + intervals['ride']
+            fixture_expected['TEST_RUNNER_E2E_FIXTURE_FIRST_INCLUSIVE_MINUTES'] = str(intervals['inclusiveMinutes'])
+            if args.fixture_phase in ('success', 'reconnect', 'recovered'):
+                # The fixture train takes 20 minutes. A protected alarm may precede the journey's departure.
+                route = evidence['effectiveSnapshot']['effectiveTransitRoute']
+                first = next(s['rideTiming'] for s in route['segments'] if s['kind'] == 'SUBWAY')
+                board = epoch + dt.timedelta(seconds=210 if args.fixture_phase == 'success' else 407)
+                alight = board + dt.timedelta(minutes=20)
+                if (dt.datetime.fromisoformat(first['predictedBoardingAt']) != board or
+                        dt.datetime.fromisoformat(first['predictedArrivalAt']) != alight):
+                    parser.error('First train clocks differ from the fixed station response and timetable')
+                access_end = dt.datetime.fromisoformat(route['departureAt']) + dt.timedelta(seconds=111)
+                fixture_expected['TEST_RUNNER_E2E_FIXTURE_FIRST_RIDE_MINUTES'] = str(
+                    (int((alight - access_end).total_seconds()) + 59) // 60)
         if len(transfers) == 1:
             transfer = transfers[0]
             elapsed = dt.datetime.fromisoformat(transfer['boardingAt']) - dt.datetime.fromisoformat(transfer['previousArrivalAt'])
@@ -552,6 +633,27 @@ if args.fixture_phase:
                 minutes, seconds = divmod(wait, 60)
                 duration = ' '.join(part for part in (f'{minutes}분' if minutes else '', f'{seconds}초' if seconds else '') if part)
                 fixture_expected['TEST_RUNNER_E2E_FIXTURE_TRANSFER_WAIT'] = f'환승 대기 약 {duration}'
+        if args.fixture_phase == 'onward-delay':
+            zone = dt.timezone(dt.timedelta(hours=9))
+            clock_at = lambda seconds: (epoch + dt.timedelta(seconds=seconds)).astimezone(zone).strftime('%H:%M:%S')
+            fixture_expected.update(
+                TEST_RUNNER_E2E_FIXTURE_MINUTES='23',
+                TEST_RUNNER_E2E_FIXTURE_FIRST_RIDE_TEXT=f'4012열차 · 첫 승차 실시간 반영 · {clock_at(210)} 승차역 열차 도착 예측 → {clock_at(413)} 하차 예측',
+                TEST_RUNNER_E2E_FIXTURE_TRANSFER_RIDE_TEXT=f'2012열차 · 환승역 실시간 반영 · {clock_at(740)} 승차역 열차 도착 예측 → {clock_at(860)} 하차 예측',
+                TEST_RUNNER_E2E_FIXTURE_THIRD_RIDE_TEXT=f'1014열차 · 시간표 · {clock_at(1080)} 승차 → {clock_at(1200)} 하차 예측',
+                TEST_RUNNER_E2E_FIXTURE_ARRIVAL_CLOCK=clock_at(1371)[:5],
+            )
+        if args.fixture_phase == 'first-alighting-late':
+            zone = dt.timezone(dt.timedelta(hours=9))
+            clock_at = lambda seconds: (epoch + dt.timedelta(seconds=seconds)).astimezone(zone).strftime('%H:%M:%S')
+            fixture_expected.update(
+                TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK=clock_at(0)[:5],
+                TEST_RUNNER_E2E_FIXTURE_MINUTES='31',
+                TEST_RUNNER_E2E_FIXTURE_FIRST_RIDE_MINUTES='9',
+                TEST_RUNNER_E2E_FIXTURE_FIRST_RIDE_TEXT=f'4012열차 · 승하차역 실시간 예측 · {clock_at(270)} 승차역 열차 도착 예측 → {clock_at(700)} 하차 예측',
+                TEST_RUNNER_E2E_FIXTURE_TRANSFER_RIDE_TEXT=f'2014열차 · 시간표 · {clock_at(1300)} 승차 → {clock_at(1781)} 하차 예측',
+                TEST_RUNNER_E2E_FIXTURE_ARRIVAL_CLOCK=clock_at(1952)[:5],
+            )
         if args.fixture_phase == 'dwell-transfer':
             zone = dt.timezone(dt.timedelta(hours=9))
             clock_at = lambda seconds: (epoch + dt.timedelta(seconds=seconds)).astimezone(zone).strftime('%H:%M:%S')
@@ -579,9 +681,9 @@ if args.fixture_phase:
         estimated = dt.datetime.fromisoformat(evidence['targetArrivalAt']) - dt.timedelta(minutes=65)
         fixture_expected = {'TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK':
                             estimated.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
-    elif args.fixture_phase in ('planned-postdeparture', 'planned-alighting'):
+    elif args.fixture_phase in ('planned-postdeparture', 'planned-alighting', 'planned-first-alighting', 'reported-boarding'):
         prediction = evidence.get('provisionalPrediction') or {}
-        if prediction.get('basis') != 'MATCHED_TRAIN_REALTIME' or not prediction.get('predictedArrivalAt'):
+        if prediction.get('basis') not in (('OBSERVED_SERVICE_CONNECTION',) if args.fixture_phase == 'reported-boarding' else ('MATCHED_TRAIN_REALTIME', 'MATCHED_RIDE_AND_ONWARD_TIMETABLE')) or not prediction.get('predictedArrivalAt'):
             parser.error('A same-train post-departure observation is required')
         fixture_expected = {
             'TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK': dt.datetime.fromisoformat(evidence['recommendedDepartureAt']).astimezone(
@@ -589,6 +691,25 @@ if args.fixture_phase:
             'TEST_RUNNER_E2E_FIXTURE_PROVISIONAL_CLOCK': dt.datetime.fromisoformat(prediction['predictedArrivalAt']).astimezone(
                 dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
         }
+        if args.fixture_phase == 'reported-boarding':
+            onward = [leg for leg in prediction['effectiveTransitRoute']['segments'] if leg['kind'] == 'SUBWAY'][-1]
+            timing = onward['rideTiming']
+            board, alight = [dt.datetime.fromisoformat(timing[key]).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S')
+                              for key in ('predictedBoardingAt', 'predictedArrivalAt')]
+            fixture_expected.update(TEST_RUNNER_E2E_FIXTURE_TRANSFER_RIDE_TEXT=
+                f'3202열차 · {board} 승차역 도착 관측 → {alight} 하차 예측',
+                TEST_RUNNER_E2E_RAIL_BOARD_3=board[:5], TEST_RUNNER_E2E_RAIL_ALIGHT_3=alight[:5])
+        if args.fixture_phase == 'planned-first-alighting':
+            epoch = dt.datetime.fromisoformat(evidence['epoch'])
+            clock_at = lambda s: (epoch + dt.timedelta(seconds=s)).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S')
+            fixture_expected.update(
+                TEST_RUNNER_E2E_FIXTURE_FIRST_RIDE_TEXT=f'4012열차 · 하차역 실시간 · 승차 계획 유지 · {clock_at(210)} 승차역 열차 도착 계획 → {clock_at(700)} 하차 예측',
+                TEST_RUNNER_E2E_FIXTURE_TRANSFER_RIDE_TEXT=f'2014열차 · 시간표 · {clock_at(1300)} 승차 → {clock_at(1781)} 하차 예측',
+            )
+            for leg, board, alight in ((1, 210, 700), (3, 1300, 1781)):
+                fixture_expected[f'TEST_RUNNER_E2E_RAIL_BOARD_{leg}'] = clock_at(board)[:5]
+                fixture_expected[f'TEST_RUNNER_E2E_RAIL_ALIGHT_{leg}'] = clock_at(alight)[:5]
+
 elif args.fixture_evidence is not None:
     parser.error('Fixture evidence is only valid for an isolated fixture phase')
 if args.expected_diagnostic is not None and args.only not in ('testVerifyTimetableEtaPresentation', 'testVerifyCurrentTimetableEtaPresentation'):

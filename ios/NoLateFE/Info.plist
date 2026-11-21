@@ -96,9 +96,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>현재 위치를 출발지로 설정하고 대중교통 길안내 중 출발·승차·하차·환승 시점을 안내합니다. 위치 좌표는 서버에 저장하지 않습니다.</string>
+	<string>자차·대중교통 길안내 중 현재 위치를 이용해 다음 회전과 승차·환승·하차 시점을 안내합니다. 현재 위치를 출발지로 설정할 수도 있습니다.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>길안내 중 화면을 잠가도 현재 경로와 승차·환승·하차 시점을 안내하기 위해 위치를 사용합니다. 위치 좌표는 서버에 저장하지 않습니다.</string>
+	<string>길안내 중 화면을 잠가도 주행 경로의 다음 회전과 대중교통 승차·환승·하차 시점을 안내하기 위해 위치를 사용합니다. 위치 좌표는 서버에 저장하지 않습니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>NoLate에서 음성으로 빠른 일정을 만들기 위해 마이크 권한이 필요합니다.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

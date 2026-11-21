@@ -82,7 +82,7 @@ export function useCalendarImportController() {
   const currentStepRef = useRef<OnboardingStep>('intro');
   const scanAttemptRef = useRef(0);
   const hasCompletedScan = useRef(false);
-  const stepMotionDidMountRef = useRef(false);
+  const previousMotionStepRef = useRef<OnboardingStep | null>(null);
   const stepMotion = useRef(new Animated.Value(1)).current;
   const scrollOffsets = useRef<Partial<Record<OnboardingStep, number>>>({});
   const visibleStepRef = useRef<OnboardingStep>("intro");
@@ -353,12 +353,16 @@ export function useCalendarImportController() {
     const frame = requestAnimationFrame(() => {
       scrollViewRef.current?.scrollTo({ y: scrollOffsets.current[step] ?? 0, animated: false });
       visibleStepRef.current = step;
-      if (reduceMotionEnabled) restoreControlFocus();
     });
+    return () => cancelAnimationFrame(frame);
+  }, [step]);
 
-    if (!stepMotionDidMountRef.current || reduceMotionEnabled) {
-      stepMotionDidMountRef.current = true;
+  useEffect(() => {
+    const previousStep = previousMotionStepRef.current;
+    previousMotionStepRef.current = step;
+    if (previousStep === step || previousStep === null || reduceMotionEnabled) {
       stepMotion.setValue(1);
+      const frame = requestAnimationFrame(restoreControlFocus);
       return () => cancelAnimationFrame(frame);
     }
 
@@ -373,7 +377,6 @@ export function useCalendarImportController() {
       if (finished && currentStepRef.current === step) restoreControlFocus();
     });
     return () => {
-      cancelAnimationFrame(frame);
       animation.stop();
     };
   }, [reduceMotionEnabled, restoreControlFocus, step, stepMotion, stepTransitionDirection]);

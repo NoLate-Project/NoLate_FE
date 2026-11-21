@@ -5,7 +5,10 @@ enum NoLateAutomaticGuidanceProjection {
   static func displayRoute(_ session: NoLateJourneyAutomaticSession) -> [String: Any]? {
     guard session.binding.savedRouteValidated == true, session.binding.guidanceEnabled == true,
       let data = try? JSONEncoder().encode(session.routeLegs),
-      let legs = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return nil }
+      var legs = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return nil }
+    for index in session.indoorTransferIndices where legs.indices.contains(index) {
+      legs[index]["walkingGeometrySource"] = "ODSAY_TRANSFER"
+    }
     let binding = session.binding
     return ["sessionId": binding.sessionId, "scheduleId": binding.scheduleId, "generation": binding.generation,
       "routeRevision": binding.routeRevision, "routeInputDigest": binding.routeInputDigest, "legs": legs]
@@ -13,26 +16,40 @@ enum NoLateAutomaticGuidanceProjection {
   /// Ephemeral UI location only. Never added to Activity content, checkpoints or HTTP requests.
   static func position(_ session: NoLateJourneyAutomaticSession, coordinate: NoLateJourneyEngineCore.Coordinate,
     accuracy: Double, observedAt: Double, now: Double) -> [String: Double]? {
-    let content = content(session, now: now)
     guard session.binding.savedRouteValidated == true, session.binding.guidanceEnabled == true,
-      ["SANDBOX", "AUTHENTICATED"].contains(session.binding.syncScope), content.status == "ACTIVE", content.quality == "GOOD",
-      content.observedAt == observedAt, now < content.validUntil,
+      ["SANDBOX", "AUTHENTICATED"].contains(session.binding.syncScope),
       accuracy.isFinite, accuracy >= 0, accuracy <= session.core.snapshot.policy.maximumAccuracyMeters,
       coordinate.latitude.isFinite, coordinate.longitude.isFinite,
       abs(coordinate.latitude) <= 90, abs(coordinate.longitude) <= 180 else { return nil }
-    return ["latitude": coordinate.latitude, "longitude": coordinate.longitude, "accuracyMeters": accuracy,
+    let core = session.core.snapshot
+    if core.status == .armed {
+      // A measured origin fix can orient the map before there is enough movement for departure.
+      let until = min(session.binding.expiresAtEpochSeconds, observedAt + 15)
+      guard core.quality == .good || core.reason == .stationary,
+        core.inputSource == .realLocation, core.lastObservationAt == observedAt,
+        observedAt >= core.armedAt, observedAt <= now, now < until else { return nil }
+      return ["latitude": coordinate.latitude, "longitude": coordinate.longitude, "accuracyMeters": accuracy,
+        "observedAt": observedAt, "validUntil": until]
+    }
+    let content = content(session, now: now)
+    guard content.status == "ACTIVE", content.quality == "GOOD",
+      content.observedAt == observedAt, now < content.validUntil else { return nil }
+    let measured = content.subwaySegment != nil ? session.subway?.passengerSegment?.point : coordinate
+    guard let measured else { return nil }
+    return ["latitude": measured.latitude, "longitude": measured.longitude, "accuracyMeters": accuracy,
       "observedAt": observedAt, "validUntil": content.validUntil]
   }
   static func content(_ session: NoLateJourneyAutomaticSession, now: TimeInterval,
     arrival: NoLateSavedGuidanceArrivalPolicy.Result? = nil) -> NoLateGuidanceContent {
     let core = session.core.snapshot, bus = session.bus?.snapshot, ride = session.ride?.snapshot
-    let busIndex = bus?.route.legIndex ?? 1
+    let busIndex = bus?.route.legIndex ?? session.requestedSubwayLegIndex(now:now) ?? 1
     var phase = "UNAVAILABLE", quality = "UNCERTAIN", instruction = "현재 위치 확인 필요", index = 0
     var progress: Double?
     var observation = bus?.quality == .good ? bus?.lastObservationAt : core.lastObservationAt
     var expiry = min(session.binding.expiresAtEpochSeconds, (observation ?? now - 15) + 15)
     var rideProgress: Double?
     var subwayPosition: NoLateGuidanceSubway?
+    var subwaySegment: NoLateGuidanceSubwaySegment?
     var lastConfirmedSubway: NoLateGuidanceLastSubway?
     var lastConfirmedBus: NoLateGuidanceLastBus?
     if core.status == .active, let subway = session.subway, !session.walkingHandoffCommitted,
@@ -56,6 +73,22 @@ enum NoLateAutomaticGuidanceProjection {
         }
       }
     }
+    if core.status == .active, !session.walkingHandoffCommitted, let ride = session.subway, let sample = ride.passengerSegment,
+      let input = try? JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self, from: Data(session.routeJSON.utf8)),
+      input.legs.indices.contains(ride.route.legIndex), sample.observedAt <= now, now < sample.validUntil {
+      let stops = input.legs[ride.route.legIndex].stops
+      if stops.count == ride.route.stations.count, stops.indices.contains(sample.from+1),
+        let from = NoLateGuidanceRouteLayoutPolicy.safeName(stops[sample.from].name),
+        let to = NoLateGuidanceRouteLayoutPolicy.safeName(stops[sample.from+1].name) {
+        let segment = NoLateGuidanceSubwaySegment(fromStopIndex:sample.from,totalStops:stops.count,fromStopName:from,
+          toStopName:to,progress:sample.progress,confirmedAt:sample.confirmedAt)
+        if segment.valid(observedAt:sample.observedAt,validUntil:sample.validUntil) {
+          phase = "RIDING_SEGMENT"; quality = "GOOD"; instruction = "지하철 역 사이 이동 중"
+          index = ride.route.legIndex; rideProgress = segment.legProgress
+          observation = sample.observedAt; expiry = sample.validUntil; subwaySegment = segment
+        }
+      }
+    }
     if core.status == .active, let transfer = session.transferWalk, transfer.committed,
       transfer.snapshot.phase == "TRANSFER_WALK", let at = transfer.snapshot.observedAt,
       let until = transfer.snapshot.validUntil, let along = transfer.snapshot.along {
@@ -64,7 +97,12 @@ enum NoLateAutomaticGuidanceProjection {
         now < until, until <= at + 15, (1...10_000).contains(length), (0...length).contains(along) {
         observation = at; expiry = min(session.binding.expiresAtEpochSeconds,until)
         if now < expiry { phase = "TRANSFER_WALK"; quality = "GOOD"; instruction = "환승 승차 지점으로 도보 이동 중"
-          index = transfer.route.walkingLegIndex; progress = along / length }
+          index = transfer.route.walkingLegIndex; progress = along / length
+          if transfer.readyForNextTransit && transfer.route.nextTransitKind == "SUBWAY" {
+            phase = "WAITING"; instruction = "승차역에서 열차 대기 · 탑승 미확정"
+            index = transfer.route.nextTransitLegIndex; progress = 1
+          }
+        }
       }
     }
     if core.status == .active, session.finalWalk?.committed == true, let walk = session.finalWalk?.snapshot,
@@ -125,6 +163,15 @@ enum NoLateAutomaticGuidanceProjection {
         if length > 0 { progress = min(1, max(0, along / length)) }
       }
     }
+    // A train may leave while the passenger stays. Fresh fixes at that same platform
+    // still place the person on the map without attributing a vehicle to them.
+    if core.status == .active, phase == "UNAVAILABLE", !session.walkingHandoffCommitted,
+      let subway = session.subway, let at = subway.platformFixAt,
+      at >= core.armedAt, at <= now, now < min(at + 15, session.binding.expiresAtEpochSeconds) {
+      phase = "WAITING"; quality = "GOOD"; instruction = "승차역에서 열차 대기 · 탑승 미확정"
+      index = subway.route.legIndex; progress = 1
+      observation = at; expiry = min(at + 15, session.binding.expiresAtEpochSeconds)
+    }
     if core.status == .active, phase == "UNAVAILABLE", !session.walkingHandoffCommitted,
       let subway = session.subway, session.routeLegs.indices.contains(subway.route.legIndex),
       session.routeLegs[subway.route.legIndex].kind == "SUBWAY",
@@ -135,7 +182,10 @@ enum NoLateAutomaticGuidanceProjection {
       if stops.count == subway.route.stations.count, stops.indices.contains(stop),
         let name = NoLateGuidanceRouteLayoutPolicy.safeName(stops[stop].name) {
         let last = NoLateGuidanceLastSubway(stopIndex: stop, totalStops: stops.count, stopName: name, confirmedAt: at)
-        if last.valid(now: now) { lastConfirmedSubway = last }
+        if last.valid(now: now) {
+          lastConfirmedSubway = last
+          index = subway.route.legIndex == 1 ? 0 : subway.route.legIndex
+        }
       }
     }
     if core.status == .active, !session.walkingHandoffCommitted,
@@ -162,12 +212,12 @@ enum NoLateAutomaticGuidanceProjection {
       generation: session.binding.generation, routeRevision: session.binding.routeRevision, routeInputDigest: session.binding.routeInputDigest,
       sequence: sequence.overflow || ridingSequence.overflow || finalSequence.overflow || transferSequence.overflow || subwaySequence.overflow || retiredSequence.overflow ? Int64.max : retiredSequence.partialValue, status: core.status.rawValue, phase: phase, quality: quality,
       instruction: instruction, activeLegIndex: index, walkProgress: quality == "GOOD" ? progress : nil,
-      observedAt: observation, validUntil: expiry, arrivalStatus: arrival?.status,
+      observedAt: observation, validUntil: expiry, arrivalStatus: subwaySegment == nil ? arrival?.status : nil,
       arrival: (phase == "WAITING" ? index : index + 1) == arrival?.busLegIndex && quality == "GOOD"
         && (["APPROACHING_STOP", "WAITING"].contains(phase) || nearSubwayPlatform)
         && arrival?.arrival.map({ now < $0.validUntil && now < $0.expectedAt }) == true ? arrival?.arrival : nil,
-      rideProgress: rideProgress, boardingConfirmed: phase == "RIDING",
+      rideProgress: rideProgress, boardingConfirmed: phase == "RIDING" || phase == "RIDING_SEGMENT",
       alighting: phase == "RIDING" ? NoLateJourneyBusAlightingPolicy.notice(route:session.alightingRoute, ride:ride, now:now) : nil,
-      subway: subwayPosition, lastConfirmedSubway: lastConfirmedSubway, lastConfirmedBus: lastConfirmedBus)
+      subway: subwayPosition, lastConfirmedSubway: lastConfirmedSubway, lastConfirmedBus: lastConfirmedBus, subwaySegment: subwaySegment)
   }
 }

@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState } from "react";
 import Reanimated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import type { TmapLoadState } from "../../modules/map/TmapMapView";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import LoadingIndicator from "../../ui/LoadingIndicator";
 import {
   canSendDepartureNudge,
@@ -21,11 +21,15 @@ import {
   travelPlanParticipantLabel,
 } from "./scheduleDetailModel";
 import { createScheduleDetailStyles } from "./schedule-detail.styles";
+import type { Place } from "../../modules/schedule/types";
 import type { ScheduleDetailPresentation } from "./scheduleDetailPresentationModel";
 import { ScheduleDetailAuxiliarySheets } from "./ScheduleDetailAuxiliarySheets";
 import { ScheduleDetailBackground } from "./ScheduleDetailBackground";
 import { ScheduleDetailHeader } from "./ScheduleDetailHeader";
 import { ScheduleDetailRouteSheet } from "./ScheduleDetailRouteSheet";
+
+import { DrivingNavigationScreen, canStartSavedDrive } from "../../modules/journey/DrivingNavigationScreen";
+import { isJourneyGuidanceEnabled } from "../../modules/journey/journeyFeature";
 
 type ScheduleDetailLayoutProps = {
   presentation: ScheduleDetailPresentation;
@@ -39,8 +43,7 @@ export function ScheduleDetailLayout({
 }: ScheduleDetailLayoutProps) {
   const [mapState, setMapState] = useState<TmapLoadState | 'retrying'>('loading');
   const [mapRevision, setMapRevision] = useState(0);
-  const hasInteractiveMap = presentation.shouldRenderMap &&
-    (!presentation.offlineGuidancePreview || Boolean(presentation.inspectedTravelPlan));
+  const hasInteractiveMap = presentation.shouldRenderMap;
 
   const updateMapLoadState = useCallback((state: TmapLoadState) => {
     setMapState(current => current === 'retrying' && state === 'loading' ? current : state);
@@ -69,6 +72,18 @@ export function ScheduleDetailLayout({
     participantPresentations,
     travelPlanParticipants,
   } = presentation;
+  const [drivingTrip, setDrivingTrip] = useState<{
+    scheduleId: string; memberId: number; route: unknown; origin: Place; destination: Place;
+  } | null>(null);
+  const ownPlan = item.myTravelPlan;
+  const driveRoute = ownPlan?.route ?? item.route;
+  const driveOrigin = ownPlan?.origin ?? item.origin;
+  const driveDestination = ownPlan?.destination ?? item.destination;
+  const canStartDrive = Platform.OS === 'ios' && isJourneyGuidanceEnabled()
+    && presentation.authoritativeDetailLoaded && !presentation.loadError && !presentation.internalPreviewItem
+    && !inspectedTravelPlan && !item.routeSetupRequired && currentMemberId != null
+    && (ownPlan?.memberId ?? item.ownerMemberId) === currentMemberId
+    && (ownPlan?.travelMode ?? item.travelMode) === 'CAR' && canStartSavedDrive(driveOrigin, driveDestination);
   const departureByMember = new Map(participantPresentations.map(person => [person.memberId, person]));
   const planByMember = new Map(travelPlanParticipants.map(plan => [plan.memberId, plan]));
   const companionIds = [...new Set([...departureByMember.keys(), ...planByMember.keys()])];
@@ -300,6 +315,13 @@ export function ScheduleDetailLayout({
     );
   };
 
+  if (drivingTrip?.scheduleId === item.id && drivingTrip.memberId === currentMemberId && canStartDrive) {
+    return <DrivingNavigationScreen key={item.id} scheduleId={item.id} savedRoute={drivingTrip.route}
+      origin={drivingTrip.origin} destination={drivingTrip.destination} isDark={isDark}
+      departureRecorded={!!presentation.currentMemberDepartedAt || presentation.departureSubmissionStatus === 'recorded'}
+      onDeparted={presentation.completeDeparture} onExit={() => setDrivingTrip(null)} />;
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScheduleDetailBackground
@@ -317,6 +339,9 @@ export function ScheduleDetailLayout({
       <ScheduleDetailRouteSheet
         presentation={presentation}
         companionCount={companionIds.length}
+        onStartDriving={canStartDrive && driveOrigin && driveDestination && currentMemberId != null
+          ? () => setDrivingTrip({scheduleId:item.id, memberId:currentMemberId, route:driveRoute, origin:driveOrigin, destination:driveDestination})
+          : undefined}
         renderRouteCompanions={renderRouteCompanions}
       />
       <ScheduleDetailAuxiliarySheets presentation={presentation} />

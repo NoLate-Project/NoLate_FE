@@ -23,13 +23,13 @@ it('shows one-stop-before distance on the bus segment, never final walking or ar
     expect(JSON.stringify(stage)).not.toMatch(/하차 완료|도착 완료|도보|%|분 남음/);
 });
 it('near-stop notice still means riding and never confirms alighting',()=>{
-    const s=snapshot({alighting:{kind:'NEAR_STOP',remainingMeters:20}});
+    const s=snapshot({alighting:{kind:'NEAR_STOP',remainingMeters:230}});
     expect(presentSavedJourneyStage(s,binding,input,1021)?.action).toBe('정류장 근처 · 하차 준비');
     expect(s.guidance?.boardingConfirmed).toBe(true);
     expect(presentSavedJourneyRoutePosition(s,binding,input,1021)?.legIndex).toBe(1);
 });
 it.each([{schemaVersion:2},{schemaVersion:1},{boardingConfirmed:false},{activeLegIndex:2},
-    {alighting:null},{alighting:{kind:'ARRIVED',remainingMeters:0}},{alighting:{kind:'NEAR_STOP',remainingMeters:60}},
+    {alighting:null},{alighting:{kind:'ARRIVED',remainingMeters:0}},{alighting:{kind:'NEAR_STOP',remainingMeters:270}},
     {alighting:{kind:'ONE_STOP_BEFORE',remainingMeters:NaN}},{alighting:{kind:'ONE_STOP_BEFORE',remainingMeters:11}},
     {alighting:{kind:'ONE_STOP_BEFORE',remainingMeters:180,latitude:37.5}}, {quality:'UNCERTAIN'}])('hides invalid or contradictory alighting notice %j',patch=>{
     expect(presentSavedJourneyRoutePosition(snapshot(patch),binding,input,1021)).toBeNull();

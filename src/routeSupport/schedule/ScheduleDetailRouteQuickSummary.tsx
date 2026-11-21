@@ -27,7 +27,9 @@ import { getImportedTicket } from '../../modules/schedule/importedTicket';
 type ScheduleDetailRouteQuickSummaryProps = {
   presentation: ScheduleDetailPresentation;
   automaticGuidanceActive?: boolean;
+  reservedFooterHeight?: number;
   automaticRouteSummary?: React.ReactNode;
+  navigationInstruction?: React.ReactNode;
   departureAction?: React.ReactNode;
 };
 
@@ -35,7 +37,9 @@ type ScheduleDetailRouteQuickSummaryProps = {
 export function ScheduleDetailRouteQuickSummary({
   presentation,
   automaticGuidanceActive = false,
+  reservedFooterHeight = 0,
   automaticRouteSummary,
+  navigationInstruction,
   departureAction,
 }: ScheduleDetailRouteQuickSummaryProps) {
   const {
@@ -113,8 +117,10 @@ export function ScheduleDetailRouteQuickSummary({
       <ScrollView
         ref={summaryScrollRef}
         style={styles.compactSummaryScroll}
-        contentContainerStyle={styles.improvedCompactSummary}
-        onContentSizeChange={!largeRouteHeader && !automaticGuidanceActive ? handleCompactContentSizeChange : undefined}
+        contentContainerStyle={[styles.improvedCompactSummary,
+          automaticGuidanceActive && { minHeight: 0 },
+          reservedFooterHeight > 0 && { paddingBottom: reservedFooterHeight + 8 }]}
+        onContentSizeChange={!largeRouteHeader ? handleCompactContentSizeChange : undefined}
         showsVerticalScrollIndicator={largeRouteHeader || compactSummaryScrollable}
       >
         {!presentation.internalPreviewItem && getImportedTicket(presentation.item.route) ? (
@@ -290,6 +296,7 @@ export function ScheduleDetailRouteQuickSummary({
           {largeRouteHeader && arrivalSummary}
           </SummaryDetails>
         </View>}
+        {sheetMode === 'compact' && navigationInstruction}
         {sheetMode === 'compact' && automaticRouteSummary}
       </ScrollView>
     </Animated.View>

@@ -1,0 +1,150 @@
+{
+  "date": "2026-11-19",
+  "status": "latest_release_whole_trip_and_viewport_passed",
+  "wholeGoalComplete": false,
+  "artifactChanged": "Native app JS camera consumer and sheet/controller height contract; existing screen structure",
+  "environment": "Signed iOS27.0 Release1.3.0(58), owned simulator8858, local5528/H2, synthetic five legs and injected GPS",
+  "changes": [
+    "Use actual visible sheet height for map padding",
+    "Reanchor following position after sheet height changes while GPS remains still",
+    "Compare manual pan against commanded padded camera center",
+    "Preserve concurrent destination-focus/lifecycle changes"
+  ],
+  "regressionBefore": {
+    "tests": 1,
+    "failures": 1,
+    "reason": "Following camera used raw passenger center; observed latitude37.5 instead of smaller padded latitude"
+  },
+  "focusedAfter": {
+    "suites": 5,
+    "tests": 41,
+    "failures": 0
+  },
+  "sheetBehavior": {
+    "suites": 2,
+    "tests": 4,
+    "failures": 0,
+    "replacement": "Replaced obsolete source-string assertion with actual safe-area/content/visible-height hook behavior"
+  },
+  "fullVerifyBeforeLaterConcurrentLifecycleEdit": {
+    "suites": 369,
+    "tests": 4011,
+    "failures": 0,
+    "typecheck": 0,
+    "lintErrors": 0,
+    "lintWarnings": 264,
+    "root": "/private/tmp/nolate-transfer-product-e2e.tahk2wy0"
+  },
+  "releaseArtifact": {
+    "artifact": 0,
+    "codesign": 0,
+    "app": "/private/tmp/nolate-camera-follow-build.u7r02c_e/Build/Products/Release-iphonesimulator/NoLateFE.app",
+    "version": "1.3.0",
+    "build": "58",
+    "apiPort": 5528,
+    "bundleSha256": "563f5fc9eec17661ce8d1c6d6dc3ccca6438e019f885117ef86fbab956f85521",
+    "binarySha256": "f6bf1cc51e1e0fdf5d29d2642cda66d98bd7d82bee1074a659962163afaabc9e",
+    "trackedApplicationSourcesChangedDuringBuild": [],
+    "testSourceChangedSinceBuild": [
+      "e2e/ios/NoLateE2ETests.swift"
+    ],
+    "currentTestSourceHash": "d8a61f041a3a1feb000c0d2e50e34dc252afad984d4c4e96ed4b621dc2fd9d8e"
+  },
+  "limits": [
+    "Synthetic route/GPS/providers; no physical device or APNs",
+    "Later ticket share extension changes are verified separately and were not embedded in this whole-trip binary",
+    "Full roadmap remains incomplete"
+  ],
+  "previousWholeTripAssertionFailure": {
+    "root": "/private/tmp/nolate-transfer-product-e2e.tahk2wy0",
+    "frameworkTests": 1,
+    "frameworkFailures": 1,
+    "durationSeconds": 580.591,
+    "gpsCleared": true,
+    "failureClassification": "Invalid XCTest label assumption; arrival compact handle is 경로 시트 펼치기, not active-session 저장 경로 보기",
+    "actualFailureScreenshotShows": [
+      "Automatic arrival title",
+      "Destination map at saved route",
+      "Compacted sheet and whole-route bar"
+    ],
+    "assertionCorrectedTo": "Collapsed whole-route bar existence",
+    "actualProductViewportFixVisuallyVerified": true,
+    "currentSourceRetryRoot": "/private/tmp/nolate-transfer-product-e2e.t6suw4i1",
+    "screenshots": [
+      "evidence/journey-map-viewport-20261119/01-before-expanded-first-ride.png",
+      "evidence/journey-map-viewport-20261119/02-after-expanded-first-ride.png",
+      "evidence/journey-map-viewport-20261119/03-after-transfer-walk.png",
+      "evidence/journey-map-viewport-20261119/04-after-second-ride.png",
+      "evidence/journey-map-viewport-20261119/05-after-arrival-map-and-compact.png"
+    ]
+  },
+  "wholeTrip": {
+    "root": "/private/tmp/nolate-transfer-product-e2e.t6suw4i1",
+    "frameworkTests": 1,
+    "frameworkFailures": 0,
+    "durationSeconds": 563.379,
+    "resultBundle": "/private/tmp/nolate-transfer-product-e2e.t6suw4i1/trip-01/result.xcresult",
+    "uiExit": 0,
+    "markers": {
+      "GPS_ARMED": true,
+      "FIRST_WAITING": true,
+      "FIRST_RIDING": true,
+      "WALK_VISIBLE": true,
+      "SECOND_WAITING": true,
+      "SECOND_RIDING": true,
+      "FINAL_WALK": true,
+      "DESTINATION_ARRIVED": true
+    },
+    "gpsCleared": true,
+    "forcedPhaseTransitions": false,
+    "nativeReadOnlyProof": {
+      "readOnly": true,
+      "udid": "8858D769-7107-4032-9A90-7C58AEB96C56",
+      "apiPort": 5528,
+      "events": [
+        {
+          "at": 1795095886.7518349,
+          "status": "ARMED",
+          "busLegIndex": 1,
+          "completedLegSequence": 0
+        },
+        {
+          "at": 1795095934.113214,
+          "status": "ACTIVE",
+          "busLegIndex": 1,
+          "completedLegSequence": 0
+        },
+        {
+          "at": 1795096154.915888,
+          "status": "ACTIVE",
+          "busLegIndex": 3,
+          "completedLegSequence": 1316
+        },
+        {
+          "at": 1795096369.7110431,
+          "terminalRevocation": true
+        }
+      ]
+    },
+    "screenshots": [
+      "evidence/journey-map-viewport-20261119/06-latest-expanded-first-ride.png",
+      "evidence/journey-map-viewport-20261119/07-latest-transfer-walk.png",
+      "evidence/journey-map-viewport-20261119/08-latest-second-ride.png",
+      "evidence/journey-map-viewport-20261119/09-latest-arrival-map-and-compact.png"
+    ],
+    "visuallyVerified": [
+      "Current position is above expanded sheet in first ride",
+      "Automatic arrival banner, saved destination marker and collapsed whole-route bar remain visible"
+    ],
+    "testAssertion": "Collapsed-only saved-journey-route-bar existence after automatic arrival"
+  },
+  "fullVerifyBeforeSubsequentShareExtensionWork": {
+    "suites": 370,
+    "tests": 4029,
+    "failures": 0,
+    "typecheck": 0,
+    "lintErrors": 0,
+    "lintWarnings": 265,
+    "root": "/private/tmp/nolate-transfer-product-e2e.t6suw4i1"
+  }
+}

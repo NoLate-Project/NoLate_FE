@@ -1,5 +1,7 @@
 import * as Location from "expo-location";
 
+export const watchDeviceHeading = Location.watchHeadingAsync;
+
 type Coords = {
     latitude: number;
     longitude: number;
@@ -9,11 +11,12 @@ type Coords = {
 const GEO_TIMEOUT_MS = 12000;
 const GEO_MAX_AGE_MS = 5000;
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number,
+    timeoutError = () => new Error("현재 위치를 가져오는 데 시간이 오래 걸립니다. 잠시 후 다시 시도해 주세요.")): Promise<T> {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
         timeoutId = setTimeout(() => {
-            reject(new Error("현재 위치를 가져오는 데 시간이 오래 걸립니다. 잠시 후 다시 시도해 주세요."));
+            reject(timeoutError());
         }, timeoutMs);
     });
 
@@ -24,14 +27,13 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
     }
 }
 
-async function ensureForegroundPermission() {
-    const servicesEnabled = await Location.hasServicesEnabledAsync();
-    if (!servicesEnabled) {
+export async function ensureForegroundPermission() {
+    const status = await getCurrentLocationPermissionState();
+    if (!status.servicesEnabled) {
         throw new Error("기기 위치 서비스가 꺼져 있습니다. 위치 서비스를 켠 뒤 다시 시도해 주세요.");
     }
 
-    const current = await Location.getForegroundPermissionsAsync();
-    if (current.granted) return;
+    if (status.granted) return;
 
     const requested = await Location.requestForegroundPermissionsAsync();
     if (!requested.granted) {
@@ -39,7 +41,16 @@ async function ensureForegroundPermission() {
     }
 }
 
-export async function getCurrentLocationPermissionState() {
+export function getCurrentLocationPermissionState() {
+    // Bound passive system reads. The permission prompt itself stays under the user's control.
+    return withTimeout(readPermissionState(), GEO_TIMEOUT_MS, () => {
+        const error = new Error("기기의 위치 서비스 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+        error.name = "LocationStatusTimeoutError";
+        return error;
+    });
+}
+
+async function readPermissionState() {
     const servicesEnabled = await Location.hasServicesEnabledAsync();
     if (!servicesEnabled) {
         return {

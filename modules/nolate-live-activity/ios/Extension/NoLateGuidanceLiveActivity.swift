@@ -108,7 +108,7 @@ private struct NoLateGuidanceRouteBar: View {
     let position = NoLateGuidanceRoutePositionPolicy.position(content, legs: legs,
       now: now, isStale: isStale)
     let layout = NoLateGuidanceRouteLayoutPolicy.layout(legs)
-    let activeRideIndex = position != nil && ["WAITING", "RIDING"].contains(content.phase)
+    let activeRideIndex = position != nil && ["WAITING", "RIDING", "RIDING_SEGMENT"].contains(content.phase)
       ? content.activeLegIndex : nil
     VStack(alignment: .leading, spacing: 3) {
       GeometryReader { proxy in
@@ -179,6 +179,7 @@ private struct NoLateGuidanceRouteBar: View {
     case "TRANSFER_WALK": return " 현재 위치: 환승 도보 구간"
     case "FINAL_WALK": return " 현재 위치: 최종 도보 구간"
     case "RIDING": return content.subway == nil ? " 현재 위치: 버스 이동 구간" : " 현재 위치: 지하철 이동 구간"
+    case "RIDING_SEGMENT": return " 현재 위치: 지하철 역 사이"
     case "WAITING": return " 현재 위치: 승차 정류장"
     default: return content.activeLegIndex > 0 ? " 현재 위치: 환승 승차점 도보 구간" : " 현재 위치: 첫 도보 구간"
     }
@@ -203,5 +204,121 @@ private struct NoLateGuidanceMarkerEntrance: AnimatableModifier {
       .scaleEffect(0.82 + 0.18 * progress)
       .offset(y: -7 * (1 - progress))
       .opacity(0.2 + 0.8 * progress)
+  }
+}
+
+private func drivingIcon(_ turn: NoLateDrivingContent.Turn?, size: CGFloat, status: String) -> Image {
+  let code: UInt32
+  switch turn?.type {
+  case "11": code = 61769 // arrow-up-outline
+  case "12": code = 62783 // return-up-back-outline
+  case "13": code = 62786 // return-up-forward-outline
+  case "14": code = 62777 // return-down-back-outline
+  case "117": code = 61751 // arrow-forward-outline
+  case "118": code = 61739 // arrow-back-outline
+  case "201": code = 62225 // flag-outline
+  default: code = status == "GUIDING" ? 62576 : 62402 // navigate-outline, locate-outline
+  }
+  return NoLateActivityIcons.image(code, size: size)
+}
+
+@available(iOSApplicationExtension 16.2, *)
+struct NoLateDrivingLiveActivity: Widget {
+  var body: some WidgetConfiguration {
+    ActivityConfiguration(for: NoLateDrivingAttributes.self) { context in
+      let content = context.state.visible(now: Date(), isStale: context.isStale)
+      NoLateDrivingCard(content: content, destination: context.attributes.destination)
+        .activityBackgroundTint(Color(hex: "121D30"))
+        .activitySystemActionForegroundColor(.white)
+        .widgetURL(scheduleURL(context.attributes))
+    } dynamicIsland: { context in
+      let content = context.state.visible(now: Date(), isStale: context.isStale)
+      return DynamicIsland {
+        DynamicIslandExpandedRegion(.bottom) {
+          NoLateDrivingCard(content: content, destination: context.attributes.destination, compact: true)
+        }
+      } compactLeading: {
+        drivingIcon(content.next, size: 17, status: content.status)
+          .foregroundStyle(Color(hex: "98C4FF")).accessibilityLabel(content.statusText)
+      } compactTrailing: {
+        Text(content.next.map { NoLateDrivingContent.distance($0.meters) } ?? (content.status == "GUIDING" ? "주행" : "위치 확인"))
+          .font(.caption2.weight(.semibold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+      } minimal: {
+        drivingIcon(content.next, size: 18, status: content.status)
+          .foregroundStyle(Color(hex: "98C4FF")).accessibilityLabel(content.statusText)
+      }
+      .widgetURL(scheduleURL(context.attributes))
+    }
+  }
+
+  private func scheduleURL(_ attributes: NoLateDrivingAttributes) -> URL? {
+    URL(string: attributes.scheduleId.isEmpty ? "nolate://schedule" : "nolate://schedule/\(attributes.scheduleId)")
+  }
+}
+
+private struct NoLateDrivingCard: View {
+  let content: NoLateDrivingContent
+  let destination: String
+  var compact = false
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 12) {
+        drivingIcon(content.next, size: compact ? 27 : 36, status: content.status)
+          .foregroundStyle(.white).accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 2) {
+          if let next = content.next {
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+              Text(NoLateDrivingContent.distance(next.meters))
+                .font(.system(size: compact ? 22 : 28, weight: .bold)).monospacedDigit()
+                .accessibilityIdentifier("driving-lock-distance")
+              Text(next.title).font(.headline)
+                .accessibilityIdentifier("driving-lock-instruction")
+            }
+            if !next.road.isEmpty {
+              Text(next.road).font(.subheadline).foregroundStyle(.white.opacity(0.9)).privacySensitive()
+            }
+          } else {
+            Text(content.statusText).font(.headline).accessibilityIdentifier("driving-lock-instruction")
+          }
+        }
+        Spacer(minLength: 0)
+      }
+      .lineLimit(1).minimumScaleFactor(0.8)
+      .padding(.horizontal, compact ? 8 : 17).padding(.vertical, compact ? 5 : 10)
+      .background(content.status == "GUIDING" ? Color(hex: "1158B4") : Color(hex: "27384E"))
+
+      if let following = content.following {
+        HStack(spacing: 7) {
+          drivingIcon(following, size: 15, status: content.status).accessibilityHidden(true)
+          Text("이어서 \(NoLateDrivingContent.distance(following.meters)) 뒤 \(following.title)")
+            .font(.caption.weight(.semibold)).lineLimit(1).accessibilityIdentifier("driving-lock-following")
+          Spacer(minLength: 0)
+        }
+        .foregroundStyle(Color(hex: "E2EDFF"))
+        .padding(.horizontal, compact ? 8 : 17).padding(.vertical, 4).background(Color(hex: "164482"))
+      }
+
+      HStack(spacing: 7) {
+        Text(destination.isEmpty ? "목적지" : destination)
+          .foregroundStyle(Color(hex: "CAD6E6")).lineLimit(1).privacySensitive()
+          .accessibilityIdentifier("driving-lock-destination")
+        Spacer(minLength: 2)
+        if let remaining = content.remainingMeters {
+          HStack(spacing: 5) {
+            if let seconds = content.remainingSeconds, let expiry = content.staleDate {
+              Text(expiry.addingTimeInterval(TimeInterval(seconds) - 12), style: .time)
+              Text("도착 · \(max(1, Int(ceil(Double(seconds) / 60))))분")
+            }
+            Text(NoLateDrivingContent.distance(remaining))
+          }
+          .fontWeight(.semibold).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+          .accessibilityElement(children: .combine).accessibilityIdentifier("driving-lock-summary")
+        }
+      }
+      .font(.caption).padding(.horizontal, compact ? 8 : 17).padding(.vertical, compact ? 5 : 9)
+    }
+    .foregroundStyle(.white)
+    .accessibilityElement(children: .contain).accessibilityIdentifier("driving-lock-card")
   }
 }

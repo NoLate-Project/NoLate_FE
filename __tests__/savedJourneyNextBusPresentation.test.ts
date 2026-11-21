@@ -42,7 +42,7 @@ it('uses the next occurrence alighting name, never the previous ride',()=>{
     expect(presentSavedJourneyStage(s,binding,input,1201)?.title).toBe('하차 3');
 });
 it.each([{schemaVersion:2},{activeLegIndex:1},{activeLegIndex:2},{activeLegIndex:31},{activeLegIndex:3.5},
-    {boardingConfirmed:false},{walkProgress:1},{rideProgress:1.1},{arrival:{}},{alighting:{kind:'NEAR_STOP',remainingMeters:60}}])('rejects mismatched next ride %j',patch=>{
+    {boardingConfirmed:false},{walkProgress:1},{rideProgress:1.1},{arrival:{}},{alighting:{kind:'NEAR_STOP',remainingMeters:270}}])('rejects mismatched next ride %j',patch=>{
     expect(presentSavedJourneyRoutePosition(snapshot('RIDING',3,patch),binding,input,1201)).toBeNull();
 });
 it('rejects a plausible index on foreign immutable metadata or wrong topology',()=>{

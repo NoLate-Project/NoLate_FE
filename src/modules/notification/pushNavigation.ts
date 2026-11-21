@@ -24,10 +24,28 @@ export type PushNavigationTarget =
     | {
         kind: "scheduleDetail";
         scheduleId: string;
+        guidanceSession?: string;
     }
     | {
         kind: "shareInbox";
     };
+
+/** Immediate native guidance notices link to the same session as its Live Activity. */
+export function localGuidanceNoticeTarget(request: {
+    identifier: string;
+    trigger?: unknown;
+    content: { data?: Record<string, unknown> | null };
+}): { scheduleId: string; guidanceSession: string } | undefined {
+    if (request.trigger != null || !/^nolate\.guidance\.notice\.[a-f0-9]{64}$/.test(request.identifier)) return;
+    const data = request.content.data;
+    const scheduleId = data?.scheduleId;
+    const guidanceSession = data?.guidanceSession;
+    if (typeof scheduleId === "string" && /^[1-9]\d{0,15}$/.test(scheduleId)
+        && typeof guidanceSession === "string"
+        && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(guidanceSession)) {
+        return { scheduleId, guidanceSession };
+    }
+}
 
 export type ScheduleDetailRoute = {
     pathname: "/schedule/[id]";

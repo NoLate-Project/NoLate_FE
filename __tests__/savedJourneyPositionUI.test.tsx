@@ -1,5 +1,7 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { AppState, Text } from 'react-native';
+import { useWalkingCompass } from '../src/modules/map/useWalkingCompass';
+import { watchDeviceHeading } from '../src/modules/map/currentLocation';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { useSavedJourneyPosition } from '../src/modules/journey/useSavedJourneyPosition';
 import { SavedJourneyTrialControls } from '../src/modules/journey/SavedJourneyTrialControls';
@@ -12,6 +14,7 @@ import type { ScheduleItem } from '../src/modules/schedule/types';
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('../src/modules/map/currentLocation', () => ({
+    watchDeviceHeading: jest.fn().mockResolvedValue({ remove: jest.fn() }),
     getCurrentLocation: async () => ({ latitude: 37.501, longitude: 127 }),
     getCurrentLocationPermissionState: async () => ({ servicesEnabled: true, granted: true, canAskAgain: true }),
 }));
@@ -153,6 +156,110 @@ it('keeps the saved map without falling back to an earlier manual position durin
         guidancePosition: { ...snapshot.guidancePosition, observedAt, validUntil: observedAt + 15 },
     }));
     expect(hasMarker(liveMarker)).toBe(true);
+    mockBinding.mockReturnValue(null);
+    act(() => mockEvent({ ...snapshot, status: 'STOPPED', qualityReason: 'DESTINATION_ARRIVED' }));
+    expect(hasMarker(liveMarker)).toBe(false);
+    expect(hasMarker(manualMarker)).toBe(false);
+    await act(async () => map.moveToCurrentLocation());
+    expect(hasMarker(manualMarker)).toBe(true);
+    act(() => view.unmount());
+});
+it('keeps the followed position above an expanded sheet without mistaking its camera offset for a user pan', async () => {
+    const { route, origin, destination } = savedJourneyProviderFixture();
+    const item: ScheduleItem = {
+        id: '9001', ownerMemberId: 7, route: { ...route, mode: 'TRANSIT' }, origin, destination, travelMode: 'TRANSIT',
+        title: '안내 검토', category: { id: 'other', title: '기타', color: '#64748B' },
+        startAt: '2026-11-16T12:00:00+09:00', endAt: '2026-11-16T13:00:00+09:00',
+    };
+    const handle = { fitToCoordinates: jest.fn(), animateCameraTo: jest.fn(), animateRegionTo: jest.fn(),
+        resizeMap: jest.fn(), zoomBy: jest.fn() };
+    let map!: ReturnType<typeof useScheduleDetailMapController>;
+    function RouteMap({ sheetHeight }: { sheetHeight: number }) {
+        const viewport = { sheetVisibleHeight: sheetHeight };
+        map = useScheduleDetailMapController({
+            scheduleId: item.id, item, currentMemberId: 7, isDark: false, topInset: 0,
+            routeMapHeaderHeight: 119, sheetMinHeight: 180, ...viewport,
+            reduceMotion: true, navigationMode: true, snapSheet: jest.fn(),
+        });
+        map.mapRef.current = handle;
+        return null;
+    }
+    let view!: ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<RouteMap sheetHeight={180} />); });
+    const compact = handle.animateCameraTo.mock.calls.at(-1)![0];
+    expect(compact.zoom).toBe(16);
+    expect(compact.latitude).toBeLessThan(point.latitude);
+    handle.animateCameraTo.mockClear();
+    act(() => view.update(<RouteMap sheetHeight={500} />));
+    expect(handle.animateCameraTo).toHaveBeenCalledTimes(1);
+    const expanded = handle.animateCameraTo.mock.calls.at(-1)![0];
+    expect(expanded.latitude).toBeLessThan(compact.latitude);
+    expect(expanded.longitude).toBeCloseTo(compact.longitude, 8);
+    act(() => jest.advanceTimersByTime(2000));
+    act(() => map.handleMapCameraChanged({ ...expanded, zoom: 16 }));
+    handle.animateCameraTo.mockClear();
+    const updatedAt = Date.now() / 1000;
+    act(() => mockEvent({ ...snapshot,
+        guidance: { ...snapshot.guidance, observedAt: updatedAt, validUntil: updatedAt + 15 },
+        guidancePosition: { ...snapshot.guidancePosition!, latitude: 37.5002, observedAt: updatedAt, validUntil: updatedAt + 15 },
+    }));
+    expect(handle.animateCameraTo).toHaveBeenCalledTimes(1);
+    expect(handle.animateCameraTo.mock.calls.at(-1)![0].pitchDegrees).toBe(0);
+    const transition = (phase: 'WALKING_TO_STOP' | 'WAITING') => act(() => mockEvent({
+        ...snapshot, guidance: { ...snapshot.guidance, phase, observedAt: updatedAt, validUntil: updatedAt + 15 },
+        guidancePosition: { ...snapshot.guidancePosition!, latitude: 37.5002, observedAt: updatedAt, validUntil: updatedAt + 15 },
+    }));
+    transition('WALKING_TO_STOP');
+    expect(handle.animateCameraTo.mock.calls.at(-1)![0]).toMatchObject({ pitchDegrees: 28, bearingDegrees: 0, duration: 0 });
+    transition('WAITING');
+    expect(handle.animateCameraTo.mock.calls.at(-1)![0].pitchDegrees).toBe(0);
+    act(() => view.unmount());
+});
+it('keeps an automatic arrival focused on the destination once without obstructing route inspection', async () => {
+    const { route, origin, destination } = savedJourneyProviderFixture();
+    const item: ScheduleItem = {
+        id: '9001', ownerMemberId: 7, route: { ...route, mode: 'TRANSIT' }, origin, destination, travelMode: 'TRANSIT',
+        title: '안내 검토', category: { id: 'other', title: '기타', color: '#64748B' },
+        startAt: '2026-11-16T12:00:00+09:00', endAt: '2026-11-16T13:00:00+09:00',
+    };
+    mockBinding.mockReturnValue(null);
+    const mapHandle = { fitToCoordinates: jest.fn(), animateCameraTo: jest.fn(), animateRegionTo: jest.fn(),
+        resizeMap: jest.fn(), zoomBy: jest.fn() };
+    const snapSheet = jest.fn();
+    let map!: ReturnType<typeof useScheduleDetailMapController>;
+    function RouteMap({ reason, scheduleId = item.id }: { reason?: string; scheduleId?: string }) {
+        map = useScheduleDetailMapController({
+            scheduleId: item.id, item, currentMemberId: 7, isDark: false, topInset: 0,
+            routeMapHeaderHeight: 119, sheetMinHeight: 180, reduceMotion: true, navigationMode: true,
+            navigationEnd: reason ? { scheduleId, reason } : undefined, snapSheet,
+        });
+        map.mapRef.current = mapHandle;
+        return null;
+    }
+    let view!: ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<RouteMap />); });
+    mapHandle.animateCameraTo.mockClear(); snapSheet.mockClear();
+    act(() => view.update(<RouteMap reason="USER_STOPPED" />));
+    expect(mapHandle.animateCameraTo).not.toHaveBeenCalled();
+    act(() => view.update(<RouteMap reason="DESTINATION_ARRIVED" scheduleId="another-schedule" />));
+    expect(mapHandle.animateCameraTo).not.toHaveBeenCalled();
+    act(() => view.update(<RouteMap reason="DESTINATION_ARRIVED" />));
+    const destinationPin = map.displayMarkers.find(marker => marker.id === 'destination')!;
+    expect(mapHandle.animateCameraTo).toHaveBeenLastCalledWith({ latitude: destinationPin.latitude,
+        longitude: destinationPin.longitude, zoom: 17.2, pitchDegrees: 0, bearingDegrees: 0, duration: 0 });
+    expect(map.camera).toEqual({ latitude: destinationPin.latitude, longitude: destinationPin.longitude, zoom: 17.2 });
+    expect(snapSheet).toHaveBeenCalledTimes(1);
+    expect(snapSheet).toHaveBeenCalledWith('compact');
+    expect(map.displayMarkers.some(marker => marker.id === 'schedule-detail-guidance-location')).toBe(false);
+    const before = mapHandle.animateCameraTo.mock.calls.length;
+    act(() => view.update(<RouteMap reason="DESTINATION_ARRIVED" />));
+    act(() => jest.advanceTimersByTime(2000));
+    expect(mapHandle.animateCameraTo).toHaveBeenCalledTimes(before);
+    act(() => map.showWholeRoute());
+    expect(mapHandle.animateCameraTo).toHaveBeenCalledTimes(before + 1);
+    expect(mapHandle.animateCameraTo.mock.calls.at(-1)![0].zoom).toBeLessThan(17.2);
+    act(() => view.update(<RouteMap reason="DESTINATION_ARRIVED" />));
+    expect(snapSheet).toHaveBeenCalledTimes(1);
     act(() => view.unmount());
 });
 it('reads verified position in the explicitly enabled iOS release build', async () => {
@@ -191,7 +298,7 @@ it('detail entry has consent/prepare/stop but no manual departure or phase advan
     let view!: ReactTestRenderer;
     await act(async () => { view = TestRenderer.create(<SavedJourneyTrialControls input={input} savedRoute={route} />); });
     expect(mockTrial).toHaveBeenCalledWith(input, 'SANDBOX', false, '9001', undefined, undefined);
-    expect(view.root.findAll(node => node.props.accessibilityLabel === '위치 안내 준비')[0].props.disabled).toBe(true);
+    expect(view.root.findAll(node => node.props.accessibilityLabel === '길안내 시작')[0].props.disabled).toBe(true);
     mockTrial.mockReturnValue({ ...trial, eligible: true, canPrepare: true, consented: true });
     act(() => view.update(<SavedJourneyTrialControls input={input} savedRoute={route} />));
     await act(async () => view.root.findAll(node => node.props.testID === 'saved-detail-prepare')[0].props.onPress());
@@ -266,4 +373,37 @@ it('authenticated detail entry uses the actual schedule and fences a stale displ
     read.mockResolvedValue({ ...auth, authMemberId: 8 });
     await expect(source()).rejects.toThrow('AUTOMATIC_AUTH_CHANGED');
     act(() => view.unmount()); read.mockRestore();
+});
+
+it('uses a calibrated phone heading only in the current walking session and expires old readings', async () => {
+    const initial = AppState.currentState;
+    AppState.currentState = 'active';
+    const watch = jest.mocked(watchDeviceHeading);
+    const remove = jest.fn();
+    watch.mockResolvedValue({ remove });
+    let view: ReactTestRenderer | undefined;
+    let direction: number | null = null;
+    function Compass({ scope }: { scope: string | null }) {
+        direction = useWalkingCompass(scope);
+        return null;
+    }
+    try {
+        await act(async () => { view = TestRenderer.create(<Compass scope="first-walk" />); });
+        const changed = watch.mock.calls[0][0];
+        act(() => changed({ accuracy: 3, trueHeading: 92, magHeading: 85 }));
+        expect(direction).toBe(92);
+        act(() => changed({ accuracy: 1, trueHeading: 92, magHeading: 85 }));
+        expect(direction).toBeNull();
+        act(() => changed({ accuracy: 2, trueHeading: -1, magHeading: 0 }));
+        expect(direction).toBe(0);
+        act(() => jest.advanceTimersByTime(12_000));
+        expect(direction).toBeNull();
+        await act(async () => view!.update(<Compass scope={null} />));
+        expect(remove).toHaveBeenCalledTimes(1);
+        act(() => changed({ accuracy: 3, trueHeading: 90, magHeading: 90 }));
+        expect(direction).toBeNull();
+    } finally {
+        AppState.currentState = initial;
+        act(() => view?.unmount());
+    }
 });

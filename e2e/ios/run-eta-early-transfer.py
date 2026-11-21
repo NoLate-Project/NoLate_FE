@@ -2,6 +2,7 @@
 """Synthetic early-train Worker -> API -> pinned installed-app regression; never map accuracy."""
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -41,17 +42,70 @@ def verify_calendar_smoke_record(records):
     return {key: row[key] for key in ('id', 'ownerMemberId', 'title', 'startAt', 'allDay')}
 
 
+def verify_reported_boarding(worker, public):
+    assert worker['classification'] == 'SYNTHETIC_REPORTED_BOARDING_WORKER_CHAIN'
+    assert worker['database'] == 'H2_MEMORY_ONLY' and worker['providersMocked'] is True
+    assert worker['physicalTransitHttpCalls'] == 0 and worker['productionDatabaseModified'] is False
+    assert worker['processed'] == 1 and worker['historyCount'] == 3
+    assert worker['savedScheduleInput'] == worker['savedScheduleAfterEvaluation']
+    assert worker['alarmStates'] == worker['alarmBeforeEvaluation'] == []
+    pending = worker['pendingUpdate']
+    assert pending.get('route') is None and pending.get('failure') is None
+    record, = pending['reportedBoardings']
+    assert record['service']['trainNumber'] == '3202'
+    assert worker['pendingPrediction']['basis'] == 'LAST_ACCEPTED_PLAN'
+    prediction = public['plannedJourneyArrivalPrediction']
+    assert prediction['basis'] == 'OBSERVED_SERVICE_CONNECTION'
+    route = prediction['effectiveTransitRoute']
+    assert route == worker['provisionalPrediction']['effectiveTransitRoute']
+    assert instant(public['recommendedDepartureAt']) == instant(worker['beforeRecommendedDepartureAt'])
+    assert route['departureAt'] == worker['originalPlan']['departureAt']
+    assert public['stale'] is True
+    for key in ('travelMinutes', 'source', 'liveFetchedAt', 'failureReason', 'predictedArrivalAt', 'effectiveTransitRoute'):
+        assert public.get(key) is None, 'Conditional plan was promoted into normal ETA: ' + key
+    rides = [leg['rideTiming'] for leg in route['segments'] if leg['kind'] == 'SUBWAY']
+    onward = rides[-1]
+    assert onward['basis'] == 'REPORTED_BOARDING_AND_ALIGHTING_REALTIME'
+    assert onward['observedService']['trainNumber'] == '3202' and onward['timetable']['trainNumber'] == '2012'
+    assert onward['reportedBoarding'] == record
+    assert instant(onward['predictedBoardingAt']) == instant(record['sourceUpdatedAt'])
+    assert instant(onward['predictedArrivalAt']) == instant(worker['evaluatedAt']) + dt.timedelta(seconds=450)
+    assert instant(route['arrivalAt']) == instant(onward['predictedArrivalAt']) + dt.timedelta(seconds=171)
+    assert [s for s in route['segments'] if s['kind'] == 'WALK'] == [s for s in worker['originalPlan']['segments'] if s['kind'] == 'WALK']
+    assert instant(prediction['sourceUpdatedAt']) == instant(worker['evaluatedAt']) - dt.timedelta(seconds=1)
+    assert instant(worker['evaluatedAt']) - instant(record['sourceUpdatedAt']) > dt.timedelta(seconds=120)
+    assert '사당/2호선' in worker['pendingStations'] and '신림/2호선' in worker['queriedStations']
+    return {'result': 'PASSED', 'historicalBoardingThenFreshSameVehicleAlighting': True,
+            'pendingStateWasNotFreshEta': True, 'walkingAndDeparturePreserved': True,
+            'actualTripAccuracyVerified': False, 'providerInputsSynthetic': True}
+
+
 def verify_planned_postdeparture(worker, public):
     assert worker['classification'] == 'SYNTHETIC_POST_DEPARTURE_WORKER'
     assert worker['database'] == 'H2_MEMORY_ONLY' and worker['providersMocked'] is True
     assert worker['physicalTransitHttpCalls'] == 0 and worker['productionDatabaseModified'] is False
     assert worker['processed'] == 1 and worker['historyCount'] == 2
     prediction = public['plannedJourneyArrivalPrediction']
-    assert prediction['basis'] == 'MATCHED_TRAIN_REALTIME'
+    assert prediction['basis'] in ('MATCHED_TRAIN_REALTIME', 'MATCHED_RIDE_AND_ONWARD_TIMETABLE')
     assert prediction['routeIdentity'] == worker['inProgressPlanIdentity']
     assert instant(prediction['predictedArrivalAt']) == instant(worker['provisionalPrediction']['predictedArrivalAt'])
     assert instant(public['recommendedDepartureAt']) == instant(worker['beforeRecommendedDepartureAt'])
     assert public['stale'] is True
+    if worker.get('phase') == 'planned-first-alighting':
+        assert prediction['basis'] == 'MATCHED_RIDE_AND_ONWARD_TIMETABLE'
+        route = prediction['effectiveTransitRoute']
+        epoch = instant(worker['epoch'])
+        at = lambda seconds: epoch + dt.timedelta(seconds=seconds)
+        assert instant(route['arrivalAt']) == at(1952)
+        first, onward = [s['rideTiming'] for s in route['segments'] if s['kind'] == 'SUBWAY']
+        assert first['basis'] == 'PLANNED_RIDE_ALIGHTING_REALTIME'
+        assert first['plannedBoardingIsStationArrival'] is True
+        assert instant(first['predictedArrivalAt']) == at(700)
+        assert onward['timetable']['trainNumber'] == '2014'
+        assert instant(onward['predictedBoardingAt']) == at(1300)
+        assert instant(onward['predictedArrivalAt']) == at(1781)
+        assert [s['durationSeconds'] for s in route['segments'] if s['kind'] == 'WALK'] == [111, 243, 171]
+        assert -5 <= (dt.datetime.now(dt.timezone.utc) - instant(prediction['sourceUpdatedAt'])).total_seconds() <= 120
     for key in ('travelMinutes', 'source', 'liveFetchedAt', 'failureReason', 'predictedArrivalAt',
                 'effectiveTransitRoute', 'firstBoardingObservation', 'futureTimetablePrediction'):
         assert public.get(key) is None, 'New-origin replan leaked into planned journey: ' + key
@@ -112,6 +166,41 @@ def verify_prediction(worker, public, phase='early-transfer', first_timetable_al
     epoch = instant(worker['epoch'])
     at = lambda seconds: epoch + dt.timedelta(seconds=seconds)
     assert instant(worker['recommendedDepartureAt']) == instant(public['recommendedDepartureAt'])
+    if phase == 'onward-delay':
+        route = public['effectiveTransitRoute']
+        assert route == worker['effectiveSnapshot']['effectiveTransitRoute']
+        assert instant(public['predictedArrivalAt']) == instant(worker['predictedArrivalAt']) == at(1371)
+        assert route['totalMinutes'] == public['travelMinutes'] == 23
+        timings = [s['rideTiming'] for s in route['segments'] if s['kind'] == 'SUBWAY']
+        assert [t['timetable']['trainNumber'] for t in timings] == ['4012', '2012', '1014']
+        assert [instant(t['predictedArrivalAt']) for t in timings] == [at(413), at(860), at(1200)]
+        assert timings[1]['basis'] == 'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE'
+        assert timings[2]['basis'] == 'TIMETABLE'
+        assert instant(timings[1]['predictedBoardingAt']) == at(740)
+        assert instant(timings[2]['predictedBoardingAt']) == at(1080)
+        assert [s['durationSeconds'] for s in route['segments'] if s['kind'] == 'WALK'] == [111, 60, 60, 171]
+        transfers = [s['transferTiming'] for s in route['segments'] if s.get('transferTiming')]
+        assert len(transfers) == 2 and all(t['requiredMarginSeconds'] == 60 for t in transfers)
+        assert at(980) in [instant(q['notBefore']) for q in worker['timetableQueries'] if q['line'] == 'LINE_1']
+        return {'result': 'PASSED', 'observedMiddleRideReconnectedOnwardTrain': True,
+                'walkingAndMarginPreserved': True, 'actualTripAccuracyVerified': False}
+    if phase == 'first-alighting-late':
+        route = public['effectiveTransitRoute']
+        assert route == worker['effectiveSnapshot']['effectiveTransitRoute']
+        assert instant(public['predictedArrivalAt']) == instant(worker['predictedArrivalAt']) == at(1952)
+        first, onward = [s['rideTiming'] for s in route['segments'] if s['kind'] == 'SUBWAY']
+        assert first['basis'] == 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME'
+        assert instant(first['predictedArrivalAt']) == at(700)
+        assert onward['timetable']['trainNumber'] == '2014' and onward['basis'] == 'TIMETABLE'
+        assert instant(onward['predictedBoardingAt']) == at(1300)
+        assert instant(onward['predictedArrivalAt']) == at(1781)
+        assert [s['durationSeconds'] for s in route['segments'] if s['kind'] == 'WALK'] == [111, 243, 171]
+        transfer = route['segments'][3]['transferTiming']
+        assert transfer['requiredMarginSeconds'] == 60
+        assert instant(transfer['previousArrivalAt']) == at(700)
+        assert at(1003) in [instant(q['notBefore']) for q in worker['timetableQueries'] if q['line'] == 'LINE_2']
+        return {'result': 'PASSED', 'directAlightingReconnectedTransfer': True,
+                'walkingAndMarginPreserved': True, 'actualTripAccuracyVerified': False}
     if phase == 'dwell-transfer':
         assert worker['effectiveSnapshot']['transitTimingBasis'] == public['transitTimingBasis'] == (
             'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE')
@@ -221,7 +310,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', required=True)
     parser.add_argument('--api-port', type=int, choices=(5523, 5528), default=5523)
-    parser.add_argument('--phase', choices=('early-transfer', 'dwell-transfer', 'early-transfer-risk', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture', 'planned-alighting'), default='early-transfer')
+    parser.add_argument('--phase', choices=('early-transfer', 'dwell-transfer', 'first-alighting-late', 'onward-delay', 'early-transfer-risk', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture', 'planned-alighting', 'planned-first-alighting', 'reported-boarding'), default='early-transfer')
+    parser.add_argument('--backend-snapshot', type=Path, help='Owned read-only source copy for independent Gradle outputs')
     parser.add_argument('--calendar-smoke', action='store_true', help='Also create/edit/relaunch a synthetic all-day schedule after early-transfer verification')
     parser.add_argument('--first-alighting-risk', action='store_true',
                         help='Use a direct first-train alighting observation instead of an early connecting service')
@@ -233,7 +323,12 @@ def main():
         parser.error('The first-alighting check requires the transfer-risk fixture')
     if args.first_timetable_alighting and phase != 'early-transfer':
         parser.error('Timetable alighting requires the early-transfer fixture')
-    postdeparture = phase in ('planned-postdeparture', 'planned-alighting')
+    postdeparture = phase in ('planned-postdeparture', 'planned-alighting', 'planned-first-alighting', 'reported-boarding')
+    build_be = BE
+    if args.backend_snapshot:
+        build_be = args.backend_snapshot.resolve(strict=True)
+        if not str(build_be).startswith('/private/tmp/nolate-be-planned-build.') or not (build_be / 'gradlew').is_file():
+            parser.error('Only an owned backend source snapshot is supported')
     if args.api_port != 5523 and (phase not in ('early-transfer', 'dwell-transfer', 'planned-alighting') or args.calendar_smoke):
         parser.error('The alternate port supports only the scoped reconnection and alighting assertions')
     base = f'http://127.0.0.1:{args.api_port}'
@@ -248,6 +343,26 @@ def main():
     report['calendarSmokeRequested'] = args.calendar_smoke
     report['firstAlightingRiskRequested'] = args.first_alighting_risk
     report['firstTimetableAlightingRequested'] = args.first_timetable_alighting
+    if args.backend_snapshot:
+        critical = list((BE / 'src/main/kotlin/com/noLate/eta').rglob('*.kt')) + [BE / path for path in (
+            'src/main/kotlin/com/noLate/schedule/application/TrafficClient.kt',
+            'src/main/kotlin/com/noLate/schedule/application/EffectiveTransitRouteSnapshot.kt',
+            'src/main/kotlin/com/noLate/schedule/application/PlannedTransitRouteUpdate.kt',
+            'src/main/kotlin/com/noLate/schedule/application/ReportedSubwayBoardingEvidence.kt',
+            'src/main/kotlin/com/noLate/schedule/application/TransitTimetablePlanEvidence.kt',
+            'src/main/kotlin/com/noLate/schedule/application/TimetableDeparturePlanPolicy.kt',
+            'src/main/kotlin/com/noLate/schedule/application/service/SchedulePushJobWorker.kt',
+            'src/main/kotlin/com/noLate/schedule/application/service/ScheduleDepartureEtaService.kt',
+            'src/main/kotlin/com/noLate/schedule/domain/ScheduleEta.kt',
+            'src/test/kotlin/com/noLate/eta/simulator/EtaSimulatorFixtureServer.kt')]
+        source_hashes = {}
+        for path in critical:
+            relative = path.relative_to(BE)
+            original = path.read_bytes()
+            assert (build_be / relative).read_bytes() == original, 'Backend source snapshot does not match the current ETA code'
+            source_hashes[str(relative)] = hashlib.sha256(original).hexdigest()
+        report['backendSourceSnapshot'] = {'path': str(build_be), 'etaSourcesIdenticalAtLaunch': True,
+                                           'sourceSha256': source_hashes}
 
     def emit(**value):
         print(json.dumps(value), flush=True)
@@ -342,17 +457,19 @@ def main():
         free(8086)
         with log('compile.log') as output:
             subprocess.run(['./gradlew', '-I', 'e2e/eta-fixture.init.gradle', 'etaSimulatorFixtureClasspath',
-                '-PetaFixtureOutput=' + str(root), '--console=plain'], cwd=BE, stdout=output,
-                stderr=subprocess.STDOUT, check=True, timeout=300)
+                '-PetaFixtureOutput=' + str(root), '--max-workers=2', '--console=plain'], cwd=build_be,
+                stdout=output, stderr=subprocess.STDOUT, check=True, timeout=300)
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.simulator-fixture=true',
                 '-Dnolate.eta.alighting-replay=' + str(phase == 'planned-alighting').lower(),
+                '-Dnolate.eta.first-alighting-replay=' + str(phase == 'planned-first-alighting').lower(),
+                '-Dnolate.eta.reported-boarding-replay=' + str(phase == 'reported-boarding').lower(),
                 '-Dnolate.eta.first-alighting-risk=' + str(args.first_alighting_risk).lower(),
                 '-Dnolate.eta.first-timetable-alighting=' + str(args.first_timetable_alighting).lower(),
                 f'-Dnolate.eta.simulator-fixture.port={args.api_port}',
                 '-Dnolate.eta.native-delivery-lead-seconds=' + ('240' if phase == 'early-transfer-risk' else
-                    '90' if phase == 'early-transfer' else
-                    '60' if phase in ('transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture') else '600'),
+                    '90' if phase in ('early-transfer', 'first-alighting-late') else
+                    '60' if phase in ('onward-delay', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture') else '600'),
                 '-classpath', (root / 'classpath.txt').read_text(),
                 'com.noLate.eta.simulator.EtaSimulatorFixtureServer', str(root)], cwd=BE,
                 stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True)
@@ -366,23 +483,8 @@ def main():
         # The fixture writes this file after the Worker commits; existence can
         # precede the final byte, so wait for a complete JSON document.
         wait(lambda: json.loads((root / (first_phase + '.json')).read_text()) is not None, server, 60)
-        if postdeparture:
-            first = json.loads((root / 'transfer-observed.json').read_text())
-            assert first['effectiveSnapshot']['accepted'] is True
-            server.stdin.write(phase + '\n')
-            server.stdin.flush()
-            wait(lambda: json.loads((root / (phase + '.json')).read_text()) is not None, server, 60)
-        worker = json.loads((root / (phase + '.json')).read_text())
-        if postdeparture:
-            assert worker['classification'] == 'SYNTHETIC_POST_DEPARTURE_WORKER'
-            assert worker['processed'] == 1 and worker['historyCount'] == 2
-            assert worker['recommendedDepartureAt'] == worker['beforeRecommendedDepartureAt']
-            assert worker['provisionalPrediction']['basis'] == 'MATCHED_TRAIN_REALTIME'
-            delay_seconds = 30 if phase == 'planned-alighting' else 120
-            assert instant(worker['provisionalPrediction']['predictedArrivalAt']) == instant(worker['beforeArrivalAt']) + dt.timedelta(seconds=delay_seconds)
-            assert worker['plannedArrivalObservation']['routeIdentity'] == worker['inProgressPlanIdentity']
-        else:
-            assert worker['effectiveSnapshot']['accepted'] is (phase not in ('transfer-first-unobserved', 'early-transfer-risk'))
+        worker = json.loads((root / (first_phase + '.json')).read_text())
+        assert worker['effectiveSnapshot']['accepted'] is (phase not in ('transfer-first-unobserved', 'early-transfer-risk'))
         target = instant(worker['targetArrivalAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).isoformat()
         env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=base, EXPO_NO_DOTENV='1',
                    EXPO_PUBLIC_ODSAY_IOS_API_KEY='', EXPO_PUBLIC_ODSAY_ANDROID_API_KEY='',
@@ -400,6 +502,23 @@ def main():
         report['startupTransport'] = open_private_client_with_xcuitest(DEVICE, root / 'ui-private-lifecycle')
         ui('testLoginDedicatedEtaAccount', 'ui-login', target, ['--credentials', str(root / 'credentials.json')])
         if postdeparture:
+            # Evaluate after actual app preparation so source freshness is never extended for build latency.
+            server.stdin.write(phase + '\n')
+            server.stdin.flush()
+            wait(lambda: json.loads((root / (phase + '.json')).read_text()) is not None, server, 60)
+            worker = json.loads((root / (phase + '.json')).read_text())
+            if phase == 'reported-boarding':
+                assert worker['classification'] == 'SYNTHETIC_REPORTED_BOARDING_WORKER_CHAIN'
+                assert worker['historyCount'] == 3
+            else:
+                assert worker['classification'] == 'SYNTHETIC_POST_DEPARTURE_WORKER'
+                assert worker['processed'] == 1 and worker['historyCount'] == 2
+                assert worker['recommendedDepartureAt'] == worker['beforeRecommendedDepartureAt']
+                expected_basis = 'MATCHED_RIDE_AND_ONWARD_TIMETABLE' if phase == 'planned-first-alighting' else 'MATCHED_TRAIN_REALTIME'
+                assert worker['provisionalPrediction']['basis'] == expected_basis
+                if phase != 'planned-first-alighting':
+                    delay_seconds = 30 if phase == 'planned-alighting' else 120
+                    assert instant(worker['provisionalPrediction']['predictedArrivalAt']) == instant(worker['beforeArrivalAt']) + dt.timedelta(seconds=delay_seconds)
             # The private Worker advanced its logical clock to a future due time. Wait until
             # the device wall clock reaches that observation; never relax the app's source-age gate.
             seconds_until_observation = (instant(worker['evaluatedAt']) - dt.datetime.now(dt.timezone.utc)).total_seconds()
@@ -411,7 +530,9 @@ def main():
             '--fixture-evidence', str(root / (phase + '.json'))] +
            (['--fixture-first-timetable-alighting'] if args.first_timetable_alighting else []))
         public = json.loads((root / (phase + '-status.json')).read_text())
-        if postdeparture:
+        if phase == 'reported-boarding':
+            report['predictionAudit'] = verify_reported_boarding(worker, public)
+        elif postdeparture:
             report['predictionAudit'] = verify_planned_postdeparture(worker, public)
         else:
             report['predictionAudit'] = verify_prediction(worker, public, phase, args.first_timetable_alighting)

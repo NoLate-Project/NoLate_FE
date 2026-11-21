@@ -469,7 +469,7 @@ export function useRouteSelectController({
             ? { lat: oppositeLat, lng: oppositeLng }
             : undefined;
         try {
-            const items = await searchAddressByKeyword(query, { center, radiusKm: 33 });
+            const items = await searchAddressByKeyword(query, { center });
             if (searchRequestIdRef.current === requestId) setSearchResults(items);
         } catch (error) {
             if (searchRequestIdRef.current !== requestId) return;

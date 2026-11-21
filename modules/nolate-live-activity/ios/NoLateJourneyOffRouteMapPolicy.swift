@@ -9,6 +9,15 @@ struct NoLateJourneyOffRouteMapPolicy {
     let observedAt: TimeInterval
   }
 
+  static func transitStillCorrelated(busPhase: String?, busConfirmedAt: TimeInterval?,
+    subwayPhase: String?, subwayConfirmedAt: TimeInterval?, now: TimeInterval) -> Bool {
+    guard now.isFinite else { return false }
+    if busPhase == "RIDING" || subwayPhase == "RIDING" { return true }
+    return [busConfirmedAt, subwayConfirmedAt].compactMap { $0 }.contains { at in
+      at.isFinite && at <= now && now - at < 90
+    }
+  }
+
   static func usable(_ fix: Fix, now: TimeInterval, armedAt: TimeInterval, expiresAt: TimeInterval) -> Bool {
     fix.latitude.isFinite && fix.longitude.isFinite && abs(fix.latitude) <= 90 && abs(fix.longitude) <= 180
       && fix.accuracyMeters.isFinite && (0...25).contains(fix.accuracyMeters)

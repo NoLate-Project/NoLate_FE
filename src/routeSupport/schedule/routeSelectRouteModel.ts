@@ -1,3 +1,4 @@
+import { serviceTimeRange } from "../../modules/schedule/intercityTimetableModel";
 import { formatTransferBoardingTarget, isTransitRideKind, isIntercityRideKind, transitModeLabel, intercityRideColor } from "../../modules/map/transitModes";
 import type { RouteAlternativeOption } from "../../modules/map/routingService";
 import {
@@ -418,7 +419,7 @@ export function buildRouteDropdownSummaryItems(
                 kind: leg.kind,
                 color: getTransitLegColor(leg),
                 title: `${prefix}${lineLabel}${timeSuffix}`,
-                subtitle: [placeName, stopCountText, rideClock, leg.intercityService && `${leg.intercityService.departureAt.slice(11, 16)} → ${leg.intercityService.arrivalAt.slice(11, 16)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · "),
+                subtitle: [placeName, stopCountText, rideClock, leg.intercityService && `${serviceTimeRange(leg.intercityService)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · "),
             };
         }
 

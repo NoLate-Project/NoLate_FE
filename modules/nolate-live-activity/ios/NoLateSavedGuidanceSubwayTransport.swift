@@ -6,6 +6,7 @@ import Foundation
   private var task: Task<Void, Never>?
   private var token: UUID?
   private var binding: NoLateJourneyAutomaticSession.Binding?
+  private var legIndex: Int?
   private var raw: Data?
   private var deadline: ContinuousClock.Instant?
   private var arrivalRaw: Data?
@@ -18,7 +19,7 @@ import Foundation
     self.authentication = authentication; self.changed = changed
   }
   func clear() {
-    task?.cancel(); task = nil; token = nil; binding = nil; raw = nil
+    task?.cancel(); task = nil; token = nil; binding = nil; legIndex = nil; raw = nil
     deadline = nil; arrivalRaw = nil; arrivalDeadline = nil; nextAt = 0; status = "NOT_REQUESTED"
   }
   func input(session: NoLateJourneyAutomaticSession, now: Double) -> NoLateSavedGuidanceSubwayPolicy.Input? {
@@ -33,10 +34,10 @@ import Foundation
     return NoLateSavedGuidanceSubwayArrivalPolicy.decode(arrivalRaw,session:session,now:now)
   }
   func update(session: NoLateJourneyAutomaticSession?, now: Double) {
-    guard let session, session.binding.syncScope == "AUTHENTICATED", let index = session.requestedSubwayLegIndex,
+    guard let session, session.binding.syncScope == "AUTHENTICATED", let index = session.requestedSubwayLegIndex(now:now),
       session.binding.savedRouteValidated == true, session.binding.guidanceEnabled == true,
       now < session.binding.expiresAtEpochSeconds, authentication()?.matches(session.binding,now:now) == true else { clear(); return }
-    if binding != session.binding { clear(); binding = session.binding }
+    if binding != session.binding || legIndex != index { clear(); binding = session.binding; legIndex = index }
     guard task == nil, now >= nextAt else { return }
     let token = UUID(); self.token = token
     let auth = authentication()

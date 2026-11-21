@@ -264,7 +264,7 @@ final class NoLateJourneyDiagnostics: NSObject, CLLocationManagerDelegate, AVSpe
     speechMode = mode
     speechError = nil
     do {
-      try session.setCategory(category, mode: audioMode, options: options)
+      try session.setCategory(category, mode: audioMode, options: category == .ambient ? [] : options)
       try session.setActive(true)
     } catch {
       speechState = "ERROR"
@@ -346,7 +346,7 @@ final class NoLateJourneyDiagnostics: NSObject, CLLocationManagerDelegate, AVSpe
     }
     do {
       try session.setActive(false, options: .notifyOthersOnDeactivation)
-      try session.setCategory(lease.previousCategory, mode: lease.previousMode, options: lease.previousOptions)
+      try session.setCategory(lease.previousCategory, mode: lease.previousMode, options: lease.previousCategory == .ambient ? [] : lease.previousOptions)
     } catch {
       speechError = "AUDIO_SESSION_RESTORE_FAILED"
     }

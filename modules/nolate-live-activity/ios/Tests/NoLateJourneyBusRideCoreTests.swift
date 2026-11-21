@@ -75,6 +75,16 @@ final class NoLateJourneyBusRideCoreTests: XCTestCase {
     ride.tick(now: 1051)
     XCTAssertNil(ride.snapshot.alongRouteMeters); XCTAssertFalse(ride.snapshot.boardingConfirmed)
   }
+  func testRecentConfirmationForAlightingKeepsOnlyBoundedPrivateRideEvidence() throws {
+    var (ride, approach) = try make(); confirmed(&ride, &approach)
+    step(&ride, &approach, 10, 265, 1040, vehicles: [])
+    XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    XCTAssertNil(ride.snapshot.alongRouteMeters)
+    let recent = try XCTUnwrap(ride.recentConfirmation(now:1040))
+    XCTAssertEqual(recent.vehicleId,"100000123")
+    XCTAssertEqual(recent.alongRouteMeters,240,accuracy:0.01)
+    XCTAssertNil(ride.recentConfirmation(now:1126))
+  }
   func testNoVehicleEvidenceCannotPromoteCandidate() throws {
     var (ride, approach) = try make(); candidate(&ride, &approach)
     for i in 7...9 { step(&ride, &approach, i, Double(i - 3) * 40, 1000 + Double(i) * 4, vehicles: []) }
@@ -116,6 +126,33 @@ final class NoLateJourneyBusRideCoreTests: XCTestCase {
     XCTAssertTrue(ride.snapshot.boardingConfirmed)
     XCTAssertEqual(ride.snapshot.phase, "RIDING")
     XCTAssertEqual(ride.snapshot.lastConfirmedAt, 1088)
+  }
+  func testRecentConfirmedBusResumesOnlyOnNextDistinctMatchingSourceFix() throws {
+    var (ride, approach) = try make(); confirmed(&ride, &approach)
+    for i in 10...16 {
+      step(&ride, &approach, i, 240 + Double(i - 9) * 40,
+        1036 + Double(i - 9) * 4, vehicles: [])
+    }
+    XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    XCTAssertNil(ride.snapshot.alongRouteMeters)
+    let current = location(17, 560, 1068)
+    approach.ingest(current, now: 1068)
+    let repeated = Ride.Vehicle(id: "100000123", routeId: "100100447", direction: "상명대",
+      coordinate: point(240), sourceAt: 1036, receivedAt: 1068, validUntil: 1081,
+      source: .syntheticReplay)
+    ride.ingest(current, approach: approach.snapshot, vehicles: [repeated], now: 1068)
+    XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    XCTAssertNil(ride.snapshot.alongRouteMeters)
+    let next = location(18, 600, 1072)
+    approach.ingest(next, now: 1072)
+    let fresh = Ride.Vehicle(id: "100000123", routeId: "100100447", direction: "상명대",
+      coordinate: point(520), sourceAt: 1064, receivedAt: 1072, validUntil: 1109,
+      source: .syntheticReplay)
+    ride.ingest(next, approach: approach.snapshot, vehicles: [fresh], now: 1072)
+    XCTAssertTrue(ride.snapshot.boardingConfirmed)
+    XCTAssertEqual(ride.snapshot.phase, "RIDING")
+    XCTAssertEqual(ride.snapshot.evidenceCount, 1)
+    XCTAssertEqual(try XCTUnwrap(ride.snapshot.alongRouteMeters), 600, accuracy: 0.01)
   }
   func testDifferentVehicleCannotUseShortProviderGapToReplaceConfirmedRide() throws {
     var (ride, approach) = try make(); confirmed(&ride, &approach)
@@ -242,6 +279,21 @@ final class NoLateJourneyBusRideCoreTests: XCTestCase {
       XCTAssertNil(ride.snapshot.alongRouteMeters)
       XCTAssertFalse(ride.snapshot.boardingConfirmed)
     }
+  }
+  func testRejectedMovementHidesPositionUntilFreshSameVehicleAndPassengerHistoryAgree() throws {
+    var (ride, approach) = try make(); confirmed(&ride, &approach)
+    step(&ride, &approach, 10, 800, 1040)
+    XCTAssertEqual(ride.snapshot.reason, "PASSENGER_MOVEMENT_UNRELIABLE")
+    XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    XCTAssertNil(ride.snapshot.alongRouteMeters)
+    XCTAssertNotNil(ride.recentConfirmation(now: 1040))
+
+    step(&ride, &approach, 11, 280, 1044, vehicles: [])
+    XCTAssertFalse(ride.snapshot.boardingConfirmed)
+    step(&ride, &approach, 12, 320, 1048, vehicles: [vehicle(320, 1048)])
+    XCTAssertTrue(ride.snapshot.boardingConfirmed)
+    XCTAssertEqual(ride.snapshot.phase, "RIDING")
+    XCTAssertEqual(try XCTUnwrap(ride.snapshot.alongRouteMeters), 320, accuracy: 0.01)
   }
   func testStopCannotBeReopenedByLaterFreshInputs() throws {
     var (ride, approach) = try make(); confirmed(&ride, &approach)

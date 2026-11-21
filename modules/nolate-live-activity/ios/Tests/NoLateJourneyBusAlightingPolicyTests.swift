@@ -45,6 +45,8 @@ final class NoLateJourneyBusAlightingPolicyTests: XCTestCase {
     XCTAssertNil(P.notice(route:route,ride:snapshot(424),now:1021))
     let one=try XCTUnwrap(P.notice(route:route,ride:snapshot(426),now:1021))
     XCTAssertEqual(one.kind,"ONE_STOP_BEFORE"); XCTAssertEqual(one.remainingMeters,380)
+    XCTAssertEqual(P.notice(route:route,ride:snapshot(560),now:1021)?.kind,"ONE_STOP_BEFORE")
+    XCTAssertEqual(P.notice(route:route,ride:snapshot(570),now:1021)?.kind,"NEAR_STOP")
     XCTAssertEqual(P.notice(route:route,ride:snapshot(780),now:1021)?.kind,"NEAR_STOP")
     XCTAssertEqual(P.notice(route:route,ride:snapshot(800),now:1021)?.remainingMeters,0)
   }
@@ -99,7 +101,7 @@ final class NoLateJourneyBusAlightingPolicyTests: XCTestCase {
     XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(c,legs:legs,now:1021).action,"정류장 근처 · 하차 준비")
     XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(c,legs:legs,now:1025))
     XCTAssertNil(c.arrival)
-    for a in [NoLateGuidanceAlighting(kind:"ARRIVED",remainingMeters:0),.init(kind:"NEAR_STOP",remainingMeters:60),
+    for a in [NoLateGuidanceAlighting(kind:"ARRIVED",remainingMeters:0),.init(kind:"NEAR_STOP",remainingMeters:270),
       .init(kind:"ONE_STOP_BEFORE",remainingMeters:Double.nan),.init(kind:"ONE_STOP_BEFORE",remainingMeters:11)] { XCTAssertFalse(a.valid) }
   }
 }

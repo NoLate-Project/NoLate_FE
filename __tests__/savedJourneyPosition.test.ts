@@ -1,9 +1,6 @@
 import { presentSavedJourneyOffRouteLocation, presentSavedJourneyPosition } from '../src/modules/journey/useSavedJourneyPosition';
-import { buildGuidancePreviewSVG } from '../src/modules/journey/SavedJourneyRoutePreview';
 import type { AutomaticJourneyBinding, AutomaticJourneySnapshot } from '../src/modules/journey/automaticJourney';
-import type { JourneyRouteInput } from '../src/modules/journey/journeyRouteInput';
 jest.mock('../src/modules/journey/automaticJourneyTrial', () => ({ getAutomaticJourneyTrialBinding: jest.fn(), subscribeAutomaticJourneySync: jest.fn() }));
-jest.mock('react-native-webview', () => ({ WebView: 'WebView' }));
 const binding = { sessionId: '11111111-1111-4111-8111-111111111111', scheduleId: '9001', generation: 1, routeRevision: 1,
     routeInputDigest: 'a'.repeat(64), syncScope: 'SANDBOX', savedRouteValidated: true, guidanceEnabled: true,
     preparedAtEpochSeconds: 1000, expiresAtEpochSeconds: 1600 } as AutomaticJourneyBinding;
@@ -21,6 +18,17 @@ it.each([{ latitude: NaN }, { longitude: 181 }, { latitude: -91 }, { accuracyMet
 });
 it.each(['BOARDING_CANDIDATE', 'UNAVAILABLE', 'READY'])('hides position for %s', phase => {
     expect(presentSavedJourneyPosition({ ...snapshot, guidance: { ...snapshot.guidance, phase, quality: 'UNCERTAIN' } }, binding, 1021)).toBeNull();
+});
+it('shows a fresh stationary passenger dot while departure is still armed', () => {
+    const ready: AutomaticJourneySnapshot = { ...snapshot, status: 'ARMED', guidance: { ...snapshot.guidance,
+        status: 'ARMED', phase: 'READY', quality: 'UNAVAILABLE', walkProgress: null, observedAt: null,
+        validUntil: binding.expiresAtEpochSeconds } };
+    expect(presentSavedJourneyPosition(ready, binding, 1021)).toEqual({latitude: 37.5, longitude: 127});
+    expect(presentSavedJourneyPosition(ready, binding, 1035)).toBeNull();
+    expect(presentSavedJourneyPosition(ready, binding, 1019)).toBeNull();
+    expect(presentSavedJourneyPosition({ ...ready, guidancePosition: null }, binding, 1021)).toBeNull();
+    expect(presentSavedJourneyPosition(ready, { ...binding, generation: 2 }, 1021)).toBeNull();
+    expect(presentSavedJourneyPosition({ ...ready, guidancePosition: { ...ready.guidancePosition, validUntil: 1050 } }, binding, 1021)).toBeNull();
 });
 it('stopped/unvalidated sessions cannot reveal location', () => {
     expect(presentSavedJourneyPosition({ ...snapshot, status: 'STOPPED' }, binding, 1021)).toBeNull();
@@ -42,13 +50,4 @@ it('rejects foreign, unreliable, stopped and riding off-route map fixes', () => 
     expect(presentSavedJourneyOffRouteLocation({ ...offRoute, status: 'STOPPED' }, binding, 1021)).toBeNull();
     expect(presentSavedJourneyOffRouteLocation({ ...offRoute, ridePhase: 'RIDING' }, binding, 1021)).toBeNull();
     expect(presentSavedJourneyOffRouteLocation({ ...offRoute, qualityReason: 'TRACKING' }, binding, 1021)).toBeNull();
-});
-const input = { legs: [{ kind: 'WALK', coordinates: [{ latitude: 37.5, longitude: 127 }, { latitude: 37.5, longitude: 127.001 }] },
-    { kind: 'BUS', coordinates: [{ latitude: 37.5, longitude: 127.001 }, { latitude: 37.51, longitude: 127.01 }] }] } as JourneyRouteInput;
-it('renders all validated leg geometry without scripts, remote resources or injecting route names', () => {
-    const svg = buildGuidancePreviewSVG(input, { latitude: 37.5, longitude: 127 });
-    expect(svg?.match(/polyline/g)).toHaveLength(2); expect(svg?.match(/circle/g)).toHaveLength(3);
-    expect(svg).not.toMatch(/script|href=|<image/);
-    expect(buildGuidancePreviewSVG(input, null)?.match(/circle/g)).toHaveLength(2);
-    expect(buildGuidancePreviewSVG({ ...input, legs: [{ ...input.legs[0], coordinates: [null] }] }, null)).toBeNull();
 });

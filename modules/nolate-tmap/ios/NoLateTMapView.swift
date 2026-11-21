@@ -15,6 +15,7 @@ private struct NoLateTMapCamera: Equatable {
   let latitude: Double
   let longitude: Double
   let zoom: Int?
+  var pitchDegrees: Int = 0
 }
 
 public final class NoLateTMapView: ExpoView, TMapViewDelegate {
@@ -45,6 +46,10 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
 
   private var markersByID: [String: TMapMarker] = [:]
   private var markerConfigurationSignaturesByID: [String: String] = [:]
+  private var headingView: UIImageView?
+  private var headingPosition: (coordinate: CLLocationCoordinate2D, ahead: CLLocationCoordinate2D)?
+  private var headingFrames: CADisplayLink?
+  private var projectUntil: CFTimeInterval = 0
   private var polylines: [TMapPolyline] = []
   private var trafficLines: [TMapTrafficLine] = []
   private var cameraEventWorkItem: DispatchWorkItem?
@@ -171,6 +176,9 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
   }
 
   private func applyData(_ data: [String: Any]) {
+    if let showCompass = NoLateTMapValue.bool(data["showCompass"]), mapView.isShowCompass != showCompass {
+      mapView.isShowCompass = showCompass
+    }
     applyTheme(data)
     applyMarkers(data)
     applyRoutes(data)
@@ -198,6 +206,7 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
       (NoLateTMapValue.double(lhs["zIndex"]) ?? 0) < (NoLateTMapValue.double(rhs["zIndex"]) ?? 0)
     }
     var activeMarkerIDs = Set<String>()
+    var hasHeading = false
     for (index, item) in sortedItems.enumerated() {
       guard
         let id = NoLateTMapValue.string(item["id"]),
@@ -207,6 +216,11 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
         continue
       }
 
+      if let degrees = NoLateTMapValue.double(item["courseDegrees"]), (0..<360).contains(degrees) {
+        setHeadingMarker(at: coordinate, degrees: degrees, id: id, compass: item["headingSource"] as? String == "compass")
+        hasHeading = true
+        continue
+      }
       let configurationSignature = markerConfigurationSignature(item, fallbackZIndex: index)
       let existingMarker = markersByID[id]
       let configurationChanged = existingMarker == nil ||
@@ -252,11 +266,80 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
       markerConfigurationSignaturesByID[id] = configurationSignature
     }
 
+    if !hasHeading {
+      headingPosition = nil
+      headingView?.isHidden = true
+      stopHeadingFrames()
+    }
     let staleMarkerIDs = Set(markersByID.keys).subtracting(activeMarkerIDs)
     for id in staleMarkerIDs {
       markersByID.removeValue(forKey: id)?.map = nil
       markerConfigurationSignaturesByID.removeValue(forKey: id)
     }
+  }
+
+  private func setHeadingMarker(at coordinate: CLLocationCoordinate2D, degrees: Double, id: String, compass: Bool) {
+    if headingView == nil {
+      let view = UIImageView(image: NoLateTMapMarkerRenderer.headingImage)
+      view.isUserInteractionEnabled = false
+      view.isAccessibilityElement = true
+      view.accessibilityTraits = .image
+      view.accessibilityLabel = "현재 위치"
+      addSubview(view)
+      headingView = view
+    }
+    headingView?.accessibilityIdentifier = id + "-heading"
+    let directions = ["북", "북동", "동", "남동", "남", "남서", "서", "북서"]
+    headingView?.accessibilityValue = directions[Int((degrees / 45).rounded()) % 8] + (compass ? "쪽을 향하고 있음" : "쪽으로 이동 중")
+    let radians = degrees * .pi / 180
+    let ahead = CLLocationCoordinate2D(
+      latitude: coordinate.latitude + cos(radians) * 25 / 111_195,
+      longitude: coordinate.longitude + sin(radians) * 25 / (111_195 * max(0.01, cos(coordinate.latitude * .pi / 180)))
+    )
+    headingPosition = (coordinate, ahead)
+    trackHeadingFrames()
+  }
+
+  // Project two real ground coordinates. Their screen vector includes both
+  // perspective and rotation, even while the user freely manipulates the map.
+  private func projectHeading() {
+    guard let view = headingView, let headingPosition,
+          let here = mapView.convertCoordinatesToPoint(headingPosition.coordinate),
+          let ahead = mapView.convertCoordinatesToPoint(headingPosition.ahead),
+          here.x.isFinite, here.y.isFinite, ahead.x.isFinite, ahead.y.isFinite,
+          mapView.bounds.contains(here), hypot(ahead.x - here.x, ahead.y - here.y) > 0.01 else {
+      headingView?.isHidden = true
+      return
+    }
+    view.center = mapView.convert(here, to: self)
+    view.transform = CGAffineTransform(rotationAngle: atan2(ahead.x - here.x, here.y - ahead.y))
+    view.isHidden = false
+  }
+
+  private func trackHeadingFrames() {
+    guard headingPosition != nil, window != nil else { return }
+    projectHeading()
+    projectUntil = CACurrentMediaTime() + 0.55
+    guard headingFrames == nil else { return }
+    let frames = CADisplayLink(target: self, selector: #selector(projectHeadingFrame))
+    frames.preferredFramesPerSecond = 30
+    frames.add(to: .main, forMode: .common)
+    headingFrames = frames
+  }
+
+  @objc private func projectHeadingFrame() {
+    projectHeading()
+    if CACurrentMediaTime() >= projectUntil { stopHeadingFrames() }
+  }
+
+  private func stopHeadingFrames() {
+    headingFrames?.invalidate()
+    headingFrames = nil
+  }
+
+  public override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { stopHeadingFrames() } else { trackHeadingFrames() }
   }
 
   private func markerConfigurationSignature(
@@ -570,7 +653,16 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
     if let zoom, let renderer = mapView.vsmMapView {
       let point = VSMMapPoint(longitude: coordinate.longitude, latitude: coordinate.latitude)
       let update: VSMCameraUpdate?
-      if shouldAnimate {
+      if let pitch = NoLateTMapValue.double(payload["pitchDegrees"]) {
+        let bearing = NoLateTMapValue.double(payload["bearingDegrees"]) ?? Double(renderer.rotateAngle)
+        let position = VSMCameraPosition(center: point, zoom: Double(zoom), tilt: min(55, max(0, pitch)), angle: bearing)
+        if shouldAnimate {
+          let milliseconds = UInt32(max(1, min(1_000, duration ?? 400)).rounded())
+          update = VSMCameraUpdate(cameraPosition: position, animation: VSMAnimationInfoMake(.easeOutCubic, milliseconds))
+        } else {
+          update = VSMCameraUpdate(cameraPosition: position)
+        }
+      } else if shouldAnimate {
         let milliseconds = UInt32(max(1, min(1_000, duration ?? 400)).rounded())
         let animation = VSMAnimationInfoMake(.easeOutCubic, milliseconds)
         update = VSMCameraUpdate(center: point, zoom: Double(zoom), animation: animation)
@@ -579,6 +671,7 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
       }
       if let update {
         renderer.moveCamera(update)
+        trackHeadingFrames()
         return
       }
     }
@@ -661,12 +754,13 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
     let camera = NoLateTMapCamera(
       latitude: center.latitude,
       longitude: center.longitude,
-      zoom: zoom
+      zoom: zoom,
+      pitchDegrees: Int((mapView.vsmMapView?.tiltAngle ?? 0).rounded())
     )
     if let lastEmittedCamera,
        abs(lastEmittedCamera.latitude - camera.latitude) < 0.0000001,
        abs(lastEmittedCamera.longitude - camera.longitude) < 0.0000001,
-       lastEmittedCamera.zoom == camera.zoom {
+       lastEmittedCamera.zoom == camera.zoom, lastEmittedCamera.pitchDegrees == camera.pitchDegrees {
       return
     }
     lastEmittedCamera = camera
@@ -682,6 +776,7 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
       "latitude": center.latitude,
       "longitude": center.longitude,
       "zoom": zoom,
+      "pitchDegrees": camera.pitchDegrees,
       "metersPerPixel": metersPerPixel
     ])
   }
@@ -724,6 +819,7 @@ public final class NoLateTMapView: ExpoView, TMapViewDelegate {
   }
 
   public func mapViewDidChangeBounds() {
+    trackHeadingFrames()
     scheduleCameraEvent()
   }
 

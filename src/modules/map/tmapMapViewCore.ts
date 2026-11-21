@@ -33,6 +33,8 @@ export type TmapMarker = {
   eventIntent?: 'board' | 'alight' | 'transfer';
   badgeSide?: 'left' | 'right';
   dotSize?: number;
+  courseDegrees?: number;
+  headingSource?: 'compass';
   markerScale?: number;
   zIndex?: number;
 };
@@ -83,6 +85,8 @@ export type TmapMapViewHandle = {
     latitude: number;
     longitude: number;
     zoom?: number;
+    pitchDegrees?: number;
+    bearingDegrees?: number;
     duration?: number;
     easing?: string;
   }) => void;
@@ -128,6 +132,7 @@ export type TmapCameraState = {
   latitude: number;
   longitude: number;
   zoom: number;
+  pitchDegrees?: number;
   metersPerPixel?: number;
 };
 
@@ -227,6 +232,7 @@ export type TmapMapViewProps = {
   mapBaseDimOpacity?: number;
   routeFocusMode?: boolean;
   nightModeEnabled?: boolean;
+  showCompass?: boolean;
   showLocationButton?: boolean;
   showZoomControls?: boolean;
   onTapMap?: (event: { latitude: number; longitude: number }) => void;

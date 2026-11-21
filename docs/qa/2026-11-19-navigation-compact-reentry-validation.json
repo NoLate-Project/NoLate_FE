@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-19",
+  "status": "passed",
+  "wholeGoalComplete": false,
+  "scope": "Owned ODsay 1711 stored route on an isolated Release simulator; injected CoreLocation and an independent delayed fixture vehicle",
+  "problem": "Reentered compact route previously depended on mounting guidance settings to retain terminal navigation state",
+  "implementation": "Read-only owned lifecycle observer in the detail controller, independent of settings mounting; scoped terminal result and context retained through binding cleanup",
+  "device": "180F9626-79FD-40FA-BE80-F8D13EE4EB8D",
+  "apiPort": 5534,
+  "scheduleId": "363",
+  "e2e": {
+    "tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "durationSeconds": 751.886,
+    "resultBundle": "/private/tmp/nolate-navigation-compact-reentry-arrival-e2e-20261119/result.xcresult",
+    "privateReplayDriver": "/private/tmp/nolate-navigation-compact-reentry-arrival-e2e-20261119.py",
+    "settingsSheetTapsAfterReentry": 0,
+    "manualStopTapsAfterReentry": 0,
+    "vehicleClockRemoved": true,
+    "replayDriverExitCode": 0,
+    "forcedPhaseTransitions": false,
+    "checkpoints": [
+      "calendar reentry",
+      "compact riding marker",
+      "alighting approach",
+      "final walk",
+      "automatic arrival",
+      "no new prepare or live position marker after arrival"
+    ]
+  },
+  "checks": {
+    "relatedJest": 93,
+    "previewRemovalJest": 8,
+    "typeScript": "passed",
+    "releaseBuild": "passed",
+    "changedFilesEslintErrors": 0
+  },
+  "sourceHashes": {
+    "src/modules/journey/useSavedJourneyNavigationLifecycle.ts": "a12613a0268321bbef40c38ff37760e94f1448ffa424152ebc06c004399353c8",
+    "src/routeSupport/schedule/useScheduleDetailController.tsx": "095b65e1b6394fc9517ae499e3ab60cfcf5881b7fcba8c3b4a6cda78d92027e6",
+    "src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx": "ca49296dea12070fbc48bfcff81d9d1c6db7c8a7c435cf830b921dbce772a480",
+    "src/routeSupport/schedule/ScheduleDetailHeader.tsx": "5b234944558ca71e28ecb2fec37737baf922fcac5fdace54b3adf0110958504c",
+    "e2e/ios/NoLateE2ETests.swift": "cc7115cf0c9d9e7483fa5bb0687fd1e15fd8e8642cabdcb6153334c8f45f736e"
+  },
+  "testedArtifactHashes": {
+    "NoLateFE": "2a31bdc714cd67b3c07dcb629910c0485c9a37612c9b6853394bcecd32cc8e0f",
+    "main.jsbundle": "8c42adf6a03d0a49c44e911e2fa00fac26ff1e7c9490f815362ee3799a83c844"
+  },
+  "limits": [
+    "No physical GPS, real full-trip vehicle feed, APNs delivery, audible voice or hardware silent-mode verification",
+    "Warm calendar reentry, not an app process restart or native session restore",
+    "Single BUS route; this does not close mixed subway transfers or production remote Activity updates"
+  ]
+}

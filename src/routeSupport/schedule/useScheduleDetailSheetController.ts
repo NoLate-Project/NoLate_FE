@@ -91,8 +91,9 @@ export function useScheduleDetailSheetController({
     setCompactSummaryHeight(current => Math.abs(current - measuredHeight) > 1 ? measuredHeight : current);
   }, []);
   const compactMinimumHeight = Math.max(
-    baseSheetHeights.minHeight,
-    Math.ceil(IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT * Math.max(1, fontScale)) + bottomInset,
+    guidanceNavigation ? 0 : baseSheetHeights.minHeight,
+    Math.ceil((guidanceNavigation ? 128 : IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT)
+      * Math.max(1, fontScale)) + bottomInset,
   ) + companionHeaderHeight;
   const fittedCompactHeight = largeRouteHeader || compactSummaryHeight === 0
     ? compactMinimumHeight
@@ -408,6 +409,7 @@ export function useScheduleDetailSheetController({
     sheetBottomPadding,
     sheetMaxHeight,
     sheetMinHeight,
+    sheetVisibleHeight: sheetMode === 'expanded' ? expandedVisibleHeight : sheetMinHeight,
     sheetMode,
     sheetPanResponder,
     sheetQuickSummaryAnimatedStyle: sheetContentStyles.quickSummary,

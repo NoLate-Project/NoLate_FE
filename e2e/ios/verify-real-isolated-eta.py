@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import subprocess
 from eta_timetable_preview import preview_exclusion
+from eta_planned_route_evidence import verified_timetable_plan
 from eta_fixture_scope import PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE
 
 DEVICE = '9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69'
@@ -136,7 +137,13 @@ def verify_diagnostic_values(worker, public, seed, selected):
             assert timing['predictedArrivalAt'] == timing['timetable']['arrivalAt']
         assert verify_odsay_minute_walking(route)['timingResult'] == 'PASSED'
         timetable_verified = True
-    if timetable_verified and worker['failureReason'].startswith(
+    independent_future = verified_timetable_plan(worker)
+    if independent_future is not None:
+        route = independent_future
+        verify_odsay_selection(seed, selected, route)
+        assert verify_odsay_minute_walking(route)['timingResult'] == 'PASSED'
+        future_verified = verify_future_visibility(worker, public, route)
+    elif timetable_verified and worker['failureReason'].startswith(
             ('TRANSIT_TRAIN_NOT_YET_OBSERVED:', 'TRANSIT_ARRIVAL_SOURCE_STALE:')):
         future_verified = verify_future_visibility(worker, public, route)
     else:
@@ -145,6 +152,7 @@ def verify_diagnostic_values(worker, public, seed, selected):
     return {'evaluatedAt': worker['evaluatedAt'], 'failureCode': worker['failureReason'].split(':')[0],
             'journeyProvider': 'odsay', 'selectedProviderIdsPreserved': True,
             'futureTimetablePredictionVerified': future_verified,
+            'independentFutureTimetableVerified': independent_future is not None,
             'expiredTimetablePreviewHidden': (timetable_verified and public.get('futureTimetablePrediction') is None and
                 (instant(route['departureAt']) < instant(worker['evaluatedAt']) or
                  ('_isolationReadWindow' in public and instant(route['departureAt']) <
@@ -160,7 +168,8 @@ def verify_odsay_selection(seed, selected, route=None):
     rides = [leg for leg in seed['legs'] if leg['mode'] == 'SUBWAY']
     saved = [leg for leg in selected['transitLegs'] if leg['kind'] == 'SUBWAY']
     assert len(rides) == len(saved) == 2
-    assert [(leg['from']['name'], leg['to']['name']) for leg in rides] == [('노원', '사당'), ('사당', '신림')]
+    assert [(leg['from']['name'], leg['to']['name']) for leg in rides] in (
+        [('노원', '사당'), ('사당', '신림')], [('동작', '사당'), ('사당', '신림')])
     for before, after in zip(rides, saved):
         assert before['from']['providerStopId'] == after['startID']
         assert before['to']['providerStopId'] == after['endID']
@@ -226,7 +235,9 @@ def verify_values(worker, public):
     assert worker['failureReason'] is public['failureReason'] is None
     snapshot = worker['effectiveSnapshot']
     assert snapshot['accepted'] is True
-    assert snapshot['transitTimingBasis'] == public['transitTimingBasis'] == 'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE'
+    journey_basis = snapshot['transitTimingBasis']
+    assert journey_basis == public['transitTimingBasis'] and journey_basis in (
+        'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE', 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED')
     route = snapshot['effectiveTransitRoute']
     provider = worker.get('journeyProvider', 'tmap')
     assert provider in ('tmap', 'odsay')
@@ -274,8 +285,25 @@ def verify_values(worker, public):
                 assert boarding < scheduled_origin_arrival and arrival == raw_arrival
             else:
                 assert arrival - raw_arrival == boarding - scheduled_origin_arrival
+        elif timing['basis'] == 'TIMETABLE':
+            assert boarding == raw_boarding and arrival == raw_arrival and timing.get('observationSourceUpdatedAt') is None
         else:
-            assert timing['basis'] == 'TIMETABLE' and boarding == raw_boarding and arrival == raw_arrival
+            assert journey_basis == 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED'
+            evaluated = instant(worker['evaluatedAt'])
+            source = instant(timing['observationSourceUpdatedAt'])
+            assert arrival > boarding and -5 <= (evaluated - source).total_seconds() <= 120
+            station_clock = raw_arrival if timing['basis'] == 'TRANSFER_ALIGHTING_REALTIME' else raw_boarding
+            assert -120 <= (station_clock - evaluated).total_seconds() <= 900
+            if timing['basis'] == 'TRANSFER_ALIGHTING_REALTIME':
+                assert boarding == raw_boarding and arrival > raw_arrival
+            elif timing['basis'] == 'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING':
+                assert boarding < instant(table['boardingStationArrivalAt']) <= raw_boarding and arrival == raw_arrival
+            else:
+                assert timing['basis'] == 'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE'
+                origin = instant(table.get('boardingStationArrivalAt') or table['boardingAt'])
+                assert origin <= raw_boarding and boarding > origin and arrival - raw_arrival == boarding - origin
+    if journey_basis == 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED':
+        assert any(t['basis'] != 'TIMETABLE' for t in rides[1:]) or rides[0]['basis'] == 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME'
     walks = [s for s in route['segments'] if s['kind'] == 'WALK']
     assert {s['walkingScope'] for s in walks} == {'ACCESS', 'TRANSFER', 'EGRESS'}
     # Current real-feed runs must carry the new metadata through snapshot/API equality above.
@@ -461,6 +489,7 @@ def verify_comparison_export(worker, prediction):
             'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME',
             'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
             'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
+            'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
         )
         assert ride['boardingClockKind'] == ('STATION_ARRIVAL_PREDICTION' if station_arrival else 'BOARDING')
         assert ride['arrivalAt'] == timing['predictedArrivalAt']

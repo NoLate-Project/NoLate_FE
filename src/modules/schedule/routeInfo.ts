@@ -1,3 +1,4 @@
+import { serviceTimeRange } from "./intercityTimetableModel";
 import type { IntercityJourney } from './intercityJourney';
 import type { IntercityRideService } from './importedTicket';
 import { isIntercityBusKind, isIntercityRideKind, isTransitRideKind, transitModeLabel, intercityRideColor } from "../map/transitModes";
@@ -46,8 +47,11 @@ export interface RouteStep {
         startAt: string;
         endAt: string;
         movementSeconds: number;
+        firstBoardingIntervalSeconds?: number;
         transferWaitSeconds?: number;
         startsWithStationArrivalPrediction?: true;
+        startsWithReportedStationArrival?: true;
+        provisionalPlan?: true;
     };
     scheduledRide?: { boardingAt: string; arrivalAt: string };
     alightingName?: string;
@@ -90,6 +94,7 @@ export function hasRenderableRouteStepGeometry(step: RouteStep, pointCount: numb
 export interface RouteInfo {
     /** Only the schedule detail presentation sets this on an in-memory copy. */
     matchedTimeline?: true;
+    matchedTimelineBasis?: "PLANNED" | "TIMETABLE";
     intercityJourney?: IntercityJourney;
     id: string;
     /** 시간표와 경로를 제공한 공급자. 기존 저장 데이터 호환을 위해 선택값으로 유지한다. */
@@ -211,6 +216,18 @@ export function formatRouteDurationSeconds(seconds: number): string {
     const remainder = seconds % 60;
     if (!minutes) return `${remainder}초`;
     return remainder ? `${minutes}분 ${remainder}초` : `${minutes}분`;
+}
+
+export function rideMovementDurationLabel(minutes?: number, matchedSeconds?: number): string | undefined {
+    if (typeof matchedSeconds === "number" && Number.isSafeInteger(matchedSeconds) && matchedSeconds > 0) {
+        return formatRouteDurationSeconds(matchedSeconds);
+    }
+    return typeof minutes === "number" ? `${minutes}분` : undefined;
+}
+
+export function firstBoardingIntervalLabel(seconds: number | undefined, stationArrival = false): string | undefined {
+    if (typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds <= 0) return undefined;
+    return `첫 승차 대기 약 ${formatRouteDurationSeconds(seconds)} (열차 ${stationArrival ? "도착" : "출발"} 기준)`;
 }
 
 export function formatRouteDistance(distanceMeters?: number): string | undefined {
@@ -480,7 +497,7 @@ function buildRideStep(leg: TransitLegDetail, index: number, scheduledRide?: Rou
         type,
         title: startName ?? lineName ?? fallbackKind,
         alightingName: endName,
-        description: [destinationHint(endName), stationText, durationText, leg.intercityService && `${leg.intercityService.timingBasis === 'TICKET' ? '승차권 입력' : '시간표'} ${leg.intercityService.departureAt.slice(11, 16)} → ${leg.intercityService.arrivalAt.slice(11, 16)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · ") || undefined,
+        description: [destinationHint(endName), stationText, durationText, leg.intercityService && `${leg.intercityService.timingBasis === 'TICKET' ? '승차권 입력' : '시간표'} ${serviceTimeRange(leg.intercityService)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · ") || undefined,
         durationMinutes,
         intercityService: leg.intercityService,
         waitingMinutes: leg.waitingMinutes,

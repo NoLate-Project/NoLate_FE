@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act,type ReactTestRenderer} from 'react-test-renderer';
-import {JourneyWalkingSnapshotTrial} from '../src/modules/journey/JourneyWalkingSnapshotTrial';
+import {JourneyWalkingSnapshotTrial} from './fixtures/journey/JourneyWalkingSnapshotTrial';
 jest.mock('../src/modules/journey/serverWalkingSnapshot',()=>({walkingSnapshotTrialCases:['issue','current','replace','cancel','revision','logout','expire'],loadWalkingSnapshotTrial:jest.fn()}));
 import {loadWalkingSnapshotTrial} from '../src/modules/journey/serverWalkingSnapshot';
 let screen:ReactTestRenderer;

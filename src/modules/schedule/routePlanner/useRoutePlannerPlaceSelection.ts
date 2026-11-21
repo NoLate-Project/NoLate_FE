@@ -564,7 +564,6 @@ export function useRoutePlannerPlaceSelection({
             : undefined;
         const items = await searchAddressByKeyword(text.trim(), {
           center: oppositePoint,
-          radiusKm: 33,
         });
         if (searchRequestIdRef.current !== requestId) return;
         setSearchResults(items);

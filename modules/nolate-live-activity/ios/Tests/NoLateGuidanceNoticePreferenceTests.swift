@@ -22,6 +22,20 @@ final class NoLateGuidanceNoticePreferenceTests: XCTestCase {
     XCTAssertEqual(NoLateGuidanceNoticePreference.load(from: defaults), "NOTIFICATIONS")
   }
 
+  func testDrivingInheritsTheChosenChannelUntilTheUserOverridesIt() {
+    let defaults = isolatedDefaults()
+    XCTAssertFalse(NoLateGuidanceNoticePreference.drivingVoiceEnabled(from: defaults))
+    NoLateGuidanceNoticePreference.save("VOICE_AND_NOTIFICATIONS", to: defaults)
+    XCTAssertTrue(NoLateGuidanceNoticePreference.drivingVoiceEnabled(from: defaults))
+    NoLateGuidanceNoticePreference.setDrivingVoiceEnabled(false, in: defaults)
+    XCTAssertFalse(NoLateGuidanceNoticePreference.drivingVoiceEnabled(from: defaults))
+    XCTAssertEqual(NoLateGuidanceNoticePreference.load(from: defaults), "VOICE_AND_NOTIFICATIONS")
+    NoLateGuidanceNoticePreference.save("NOTIFICATIONS", to: defaults)
+    NoLateGuidanceNoticePreference.setDrivingVoiceEnabled(true, in: defaults)
+    XCTAssertTrue(NoLateGuidanceNoticePreference.drivingVoiceEnabled(from: defaults))
+    XCTAssertEqual(NoLateGuidanceNoticePreference.load(from: defaults), "NOTIFICATIONS")
+  }
+
   func testExplicitOffPersistsAndInvalidWriteCannotChangeIt() {
     let defaults = isolatedDefaults()
     NoLateGuidanceNoticePreference.save("VOICE_AND_NOTIFICATIONS", to: defaults)

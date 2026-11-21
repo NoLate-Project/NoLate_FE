@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import TestRenderer,{act,type ReactTestRenderer} from 'react-test-renderer';
+jest.mock('@expo/vector-icons',()=>({Ionicons:()=>null}));
 import {SavedJourneyTrialControls} from '../src/modules/journey/SavedJourneyTrialControls';
 import {savedJourneyProviderFixture} from '../test-support/savedJourneyProviderFixture';
 const mockContext=jest.fn(),mockIssue=jest.fn(),mockTrial=jest.fn(),mockNotice=jest.fn(),mockPermission=jest.fn(),mockBinding=jest.fn();
@@ -23,6 +24,43 @@ function setup(){
 beforeEach(()=>{jest.clearAllMocks();mockBinding.mockReturnValue(null);mockContext.mockResolvedValue(context);mockTrial.mockReturnValue({snapshot:{status:'IDLE'},sync:{errorCode:null},
     running:false,pending:false,canAssess:true,canPrepare:false,consented:false,eligible:false,assess:jest.fn(),prepare:jest.fn()});});
 const schedule={scheduleId:'9001',memberId:7};
+const ownedBinding={scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',
+    savedRouteValidated:true,guidanceEnabled:true,authMemberId:7};
+test('a confirmed transfer drops a recovered network warning, preserves current failures and isolates diagnostics', async () => {
+    const f = setup();
+    const now = Math.floor(Date.now() / 1000);
+    const binding = {...ownedBinding, generation: 1, routeRevision: 4, routeInputDigest: 'a'.repeat(64),
+        preparedAtEpochSeconds: now - 30, expiresAtEpochSeconds: now + 600};
+    const snapshot = {enabled: true, status: 'ACTIVE', sessionId: binding.sessionId, routeRevision: 4,
+        departureAcknowledged: true, pendingDeparture: null, guidance: {...binding, schemaVersion: 5, sequence: 12,
+            status: 'ACTIVE', phase: 'TRANSFER_WALK', activeLegIndex: 2, quality: 'GOOD',
+            observedAt: now, validUntil: now + 15, walkProgress: 0.4, boardingConfirmed: false}};
+    mockBinding.mockReturnValue(binding);
+    const transient = 'AUTOMATIC_SERVER_UNAVAILABLE';
+    const state = {running: true, pending: false, errorCode: transient, snapshot,
+        sync: {status: 'ACKNOWLEDGED', errorCode: transient}};
+    mockTrial.mockReturnValue(state);
+    const screen = (diagnostics = false) => <SavedJourneyTrialControls input={f.input} savedRoute={f.route}
+        authenticatedSchedule={schedule} showDiagnostics={diagnostics}/>;
+    let view!: ReactTestRenderer;
+    await act(async () => {view = TestRenderer.create(screen());});
+    expect(view.root.findAllByProps({testID: 'saved-detail-runtime-error'})).toHaveLength(0);
+    expect(JSON.stringify(view.toJSON())).not.toContain(transient);
+
+    mockTrial.mockReturnValue({...state, sync: {status: 'RETRY_WAIT', errorCode: transient}});
+    await act(async () => view.update(screen()));
+    expect(JSON.stringify(view.toJSON())).toContain('서버에 연결하지 못했어요');
+    expect(JSON.stringify(view.toJSON())).not.toContain(transient);
+
+    mockTrial.mockReturnValue({...state, snapshot: {...snapshot, lastErrorCode: 'LOCATION_PERMISSION_DENIED'}});
+    await act(async () => view.update(screen()));
+    expect(JSON.stringify(view.toJSON())).toContain('위치 접근을 허용해 주세요');
+    expect(JSON.stringify(view.toJSON())).not.toContain('LOCATION_PERMISSION_DENIED');
+    await act(async () => view.update(screen(true)));
+    expect(view.root.findByProps({testID: 'saved-detail-diagnostics'})).toBeDefined();
+    expect(JSON.stringify(view.toJSON())).toContain(transient);
+    act(() => view.unmount());
+});
 test('an existing checkpoint protects the owned walking route and requires explicit consent to resume',async()=>{
     const f=setup();let view!:ReactTestRenderer;
     const restoreSaved=jest.fn(),setConsented=jest.fn();
@@ -98,6 +136,7 @@ test('actual detail owns a collapsed explicit notice selection and fences prepar
 });
 test.each(['ARMED','ACTIVE'])('expired admission does not falsely reject an existing %s session in the UI',async status=>{
     const f=setup();
+    mockBinding.mockReturnValue(ownedBinding);
     const input={...f.input,walkingSnapshot:{...f.snapshot,schemaVersion:3 as const,transitProvider:'odsay' as const,
         walkProvider:'tmap' as const,reason:'TRANSIT_ADMISSION_PENDING' as const,navigationReady:false as const,
         issuedAtMs:Date.now()-301000,expiresAtMs:Date.now()-1000,navigationExpiresAtMs:Date.now()+599000,
@@ -107,7 +146,8 @@ test.each(['ARMED','ACTIVE'])('expired admission does not falsely reject an exis
         snapshot:{status,sessionId:'synthetic',lastErrorCode:'SAVED_SESSION_VALIDATION_REJECTED'},sync:{errorCode:null}});
     let view!:ReactTestRenderer;await act(async()=>{view=TestRenderer.create(render());});
     expect(view.root.findAllByProps({testID:'saved-detail-unsupported'})).toHaveLength(0);
-    expect(JSON.stringify(view.toJSON())).toContain('SAVED_SESSION_VALIDATION_REJECTED');
+    expect(JSON.stringify(view.toJSON())).toContain('저장된 경로의 안내 상태를 확인할 수 없어요');
+    expect(JSON.stringify(view.toJSON())).not.toContain('SAVED_SESSION_VALIDATION_REJECTED');
     expect(view.root.findAllByProps({testID:'saved-detail-prepare'})).toHaveLength(0);
     // This changes display only: expired input still blocks NEW admission.
     expect(mockTrial.mock.calls.at(-1)![2]).toBe(true);
@@ -142,14 +182,14 @@ test('connected detail changes its copy after GPS has actually started the owned
     const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule}/>;
     await act(async()=>{view=TestRenderer.create(render());});
     await act(async()=>{view.root.findByProps({testID:'saved-detail-connect-walking'}).props.onPress();});
-    expect(JSON.stringify(view.toJSON())).toContain('도보 경로가 준비됐어요');
+    expect(JSON.stringify(view.toJSON())).toContain('도보 경로 준비 완료');
     mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
     mockTrial.mockReturnValue({...mockTrial.mock.results.at(-1)!.value,running:true,pending:false,
         snapshot:{status:'ACTIVE',sessionId:'synthetic',guidanceNoticeMode:'OFF'},sync:{errorCode:null}});
     await act(async()=>view.update(render()));
     const active=JSON.stringify(view.toJSON());
-    expect(active).toContain('도보 경로가 준비되어 길안내 중이에요');
-    expect(active).not.toContain('도보 경로가 준비됐어요');
+    expect(active).toContain('도보 경로로 안내 중이에요');
+    expect(active).not.toContain('도보 경로 준비 완료');
     expect(active).not.toContain('준비는 출발이 아닙니다');
     act(()=>view.unmount());
 });
@@ -178,6 +218,7 @@ test.each(['STOPPED','EXPIRED'])('terminal %s clears connected input once and pe
     const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule}/>;
     await act(async()=>{view=TestRenderer.create(render());});
     await act(async()=>{view.root.findByProps({testID:'saved-detail-connect-walking'}).props.onPress();});
+    mockBinding.mockReturnValue(ownedBinding);
     mockTrial.mockReturnValue({...mockTrial.mock.results.at(-1)!.value,snapshot:{status,sessionId:'synthetic',lastErrorCode:status==='STOPPED'?'SAVED_SESSION_VALIDATION_REJECTED':null}});
     await act(async()=>view.update(render()));
     expect(view.root.findAllByProps({testID:'saved-detail-walking-connected'})).toHaveLength(0);
@@ -190,6 +231,7 @@ test('terminal callback runs once per terminal state even when snapshots refresh
     const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule} onTrialEnded={ended}/>;
     await act(async()=>{view=TestRenderer.create(render());});
     const terminal=(status:string)=>({status,sessionId:'synthetic',lastErrorCode:null});
+    mockBinding.mockReturnValue(ownedBinding);
     mockTrial.mockReturnValue({...mockTrial.mock.results.at(-1)!.value,snapshot:terminal('STOPPED')});
     await act(async()=>view.update(render()));
     expect(ended).toHaveBeenCalledTimes(1);
@@ -216,19 +258,44 @@ test.each(['DESTINATION_ARRIVED','STOPPED','EXPIRED'])('normal terminal %s clear
     const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route} authenticatedSchedule={schedule}/>;
     await act(async()=>{view=TestRenderer.create(render());});
     await act(async()=>{view.root.findByProps({testID:'saved-detail-connect-walking'}).props.onPress();});
+    mockBinding.mockReturnValue(ownedBinding);
     mockTrial.mockReturnValue({...mockTrial.mock.results.at(-1)!.value,snapshot:{status:qualityReason==='EXPIRED'?'EXPIRED':'STOPPED',sessionId:'synthetic',qualityReason,lastErrorCode:null}});
     await act(async()=>view.update(render()));
     expect(view.root.findAllByProps({testID:'saved-detail-walking-connected'})).toHaveLength(0);
     expect(JSON.stringify(view.toJSON())).not.toContain('도보 경로를 연결하지 못했어요');
     act(()=>view.unmount());
 });
-test('arrival keeps the saved route action without showing a new preparation flow', async () => {
+test('only the owned session can report arrival and it reports the terminal transition once', async () => {
+    const f=setup(); let view!:ReactTestRenderer;
+    const onTrialEnded=jest.fn();
+    const render=()=> <SavedJourneyTrialControls input={f.input} savedRoute={f.route}
+        authenticatedSchedule={schedule} onTrialEnded={onTrialEnded} />;
+    mockBinding.mockReturnValue(null);
+    mockTrial.mockReturnValue({running:false,pending:false,sync:{errorCode:null},
+        snapshot:{status:'STOPPED',sessionId:'another-session',qualityReason:'DESTINATION_ARRIVED'}});
+    await act(async()=>{view=TestRenderer.create(render());});
+    expect(onTrialEnded).not.toHaveBeenCalled();
+    mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'owned-session',syncScope:'AUTHENTICATED',
+        savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
+    mockTrial.mockReturnValue({running:true,pending:false,sync:{errorCode:null},
+        snapshot:{status:'ACTIVE',sessionId:'owned-session'}});
+    await act(async()=>view.update(render()));
+    mockBinding.mockReturnValue(null);
+    mockTrial.mockReturnValue({running:false,pending:false,sync:{errorCode:null},
+        snapshot:{status:'STOPPED',sessionId:'owned-session',qualityReason:'DESTINATION_ARRIVED'}});
+    await act(async()=>view.update(render()));
+    expect(onTrialEnded).toHaveBeenCalledTimes(1);
+    expect(onTrialEnded).toHaveBeenCalledWith({status:'STOPPED',reason:'DESTINATION_ARRIVED'});
+    await act(async()=>view.update(render()));
+    expect(onTrialEnded).toHaveBeenCalledTimes(1);
+    act(()=>view.unmount());
+});
+test('arrival leaves the inline saved route without a duplicate route action or preparation flow', async () => {
     const f = setup(); let view!: ReactTestRenderer;
     mockBinding.mockReturnValue({scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',
         savedRouteValidated:true,guidanceEnabled:true,authMemberId:7});
-    const onViewSavedRoute = jest.fn();
     const render = () => <SavedJourneyTrialControls input={f.input} savedRoute={f.route}
-        authenticatedSchedule={schedule} statusShownInRouteHeader onViewSavedRoute={onViewSavedRoute} />;
+        authenticatedSchedule={schedule} statusShownInRouteHeader />;
     mockTrial.mockReturnValue({running:true,pending:false,sync:{errorCode:null},
         snapshot:{status:'ACTIVE',sessionId:'synthetic'}});
     await act(async () => { view=TestRenderer.create(render()); });
@@ -242,7 +309,6 @@ test('arrival keeps the saved route action without showing a new preparation flo
     expect(view.root.findAllByProps({testID:'saved-detail-provider-preflight'})).toHaveLength(0);
     expect(output).not.toContain('위치 안내 준비');
     expect(output).not.toContain('저장한 경로는 계속 볼 수 있어요.');
-    await act(async () => view.root.findByProps({testID:'saved-detail-view-saved-route'}).props.onPress());
-    expect(onViewSavedRoute).toHaveBeenCalledTimes(1);
+    expect(view.root.findAllByProps({testID:'saved-detail-view-saved-route'})).toHaveLength(0);
     act(() => view.unmount());
 });

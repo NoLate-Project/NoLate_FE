@@ -95,6 +95,7 @@ describe("effective transit route presentation", () => {
                 predictedArrivalAt: "2026-08-10T10:08:00+09:00",
                 presentedAt: "2026-08-10T09:44:30+09:00",
                 routeIdentity: "a".repeat(64), basis: "MATCHED_TRAIN_REALTIME",
+                sourceUpdatedAt: "2026-08-10T09:44:30+09:00",
             } });
         const presentation = buildPlannedJourneyArrivalPresentation(status, nowMs)!;
         expect(presentation.guidanceTitle).toBe("계획 경로 기준 · 잠정 도착");
@@ -115,7 +116,7 @@ describe("effective transit route presentation", () => {
         expect(buildPlannedJourneyArrivalPresentation(status, nowMs + 121_000)).toBeUndefined();
         expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
             ...status.plannedJourneyArrivalPrediction!, basis: "LAST_ACCEPTED_PLAN",
-        } }, nowMs + 121_000)?.itinerary).toContain("새 차량 관측은 없어요");
+        } }, nowMs + 121_000)?.itinerary).toContain("계획 도착시각");
         expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
             ...status.plannedJourneyArrivalPrediction!, predictedArrivalAt: "2026-08-10T09:40:00+09:00",
         } }, nowMs)).toBeUndefined();
@@ -132,19 +133,21 @@ describe("effective transit route presentation", () => {
         const status = departureStatus({ source: "TIMETABLE_PROVIDER", stale: true,
             failureReason: "TRANSIT_TRAIN_NOT_YET_OBSERVED: safe", effectiveTransitRoute: null,
             futureTimetablePrediction: route });
-        const preview = buildFutureTimetablePredictionPresentation(status)!;
+        const departureMs = Date.parse(route.departureAt);
+        const preview = buildFutureTimetablePredictionPresentation(status, departureMs)!;
         expect(preview.guidanceTitle).toBe("미래 시간표 예측 · 실시간 미확인");
         expect(preview.itinerary).toContain("2012열차 · 시간표");
-        expect(preview.waitMeta).toContain("출발 알람은 기존 안전 시각을 유지");
+        expect(preview.waitMeta).toContain("출발 알람은 뒤로 미루지 않아요");
         const staleStatus = { ...status, failureReason: "TRANSIT_ARRIVAL_SOURCE_STALE: safe" };
-        expect(buildFutureTimetablePredictionPresentation(staleStatus)?.waitMeta).toContain("실시간 도착정보가 오래되어");
+        expect(buildFutureTimetablePredictionPresentation(staleStatus, departureMs - 1)?.waitMeta).toContain("실시간 도착정보가 오래되어");
         expect(getFreshDepartureTiming(staleStatus)).toBeUndefined();
         expect(getFreshDepartureTiming(status)).toBeUndefined();
         expect(buildEffectiveTransitRoutePresentation(status)).toBeUndefined();
-        expect(buildFutureTimetablePredictionPresentation({ ...status, failureReason: "TRANSIT_ARRIVAL_API_ERROR: safe" })).toBeUndefined();
+        expect(buildFutureTimetablePredictionPresentation({ ...status, failureReason: "TRANSIT_ARRIVAL_API_ERROR: safe" }, departureMs)).toBeUndefined();
         expect(buildFutureTimetablePredictionPresentation({ ...status, futureTimetablePrediction: {
             ...route, segments: [{ ...route.segments[0], rideTiming: null }],
-        } })).toBeUndefined();
+        } }, departureMs)).toBeUndefined();
+        expect(buildFutureTimetablePredictionPresentation(status, departureMs + 1)).toBeUndefined();
     });
     const rideTiming = (): EffectiveTransitRideTiming => ({
         timetable: {
@@ -163,6 +166,67 @@ describe("effective transit route presentation", () => {
         return status;
     }
 
+    it("shows every refreshed planned ride while keeping departure timing and stale source evidence separate", () => {
+        const nowMs = Date.parse("2026-08-10T09:45:00+09:00");
+        const timing: EffectiveTransitRideTiming = { ...rideTiming(), basis: "PLANNED_RIDE_ALIGHTING_REALTIME",
+            predictedArrivalAt: "2026-08-10T09:56:00+09:00", observationSourceUpdatedAt: "2026-08-10T09:44:50+09:00",
+            plannedBoardingIsStationArrival: true };
+        const route = { provider: "odsay", identity: "a".repeat(64), departureAt: "2026-08-10T09:20:00+09:00",
+            arrivalAt: timing.predictedArrivalAt, totalMinutes: 36,
+            segments: [{ sequence: 0, kind: "SUBWAY" as const, durationMinutes: 36, rideTiming: timing }] };
+        const status = departureStatus({ stale: true, source: null, travelMinutes: null, predictedArrivalAt: null,
+            effectiveTransitRoute: null, plannedJourneyArrivalPrediction: { predictedArrivalAt: route.arrivalAt,
+                routeIdentity: route.identity, presentedAt: "2026-08-10T09:44:55+09:00",
+                sourceUpdatedAt: "2026-08-10T09:44:50+09:00", basis: "MATCHED_RIDE_AND_ONWARD_TIMETABLE",
+                effectiveTransitRoute: route } });
+        const result = buildPlannedJourneyArrivalPresentation(status, nowMs)!;
+        expect(result.summary).toBe("09:56 도착 예상 · 총 36분");
+        expect(result.itinerary).toContain("2012열차 · 하차역 실시간 · 승차 계획 유지 · 09:30:13 승차역 열차 도착 계획 → 09:56:00 하차 예측");
+        const bothStations = { ...route, segments: route.segments.map(s => ({ ...s, rideTiming: { ...timing,
+            boardingObservationSourceUpdatedAt: "2026-08-10T09:44:49+09:00" } })) };
+        expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
+            ...status.plannedJourneyArrivalPrediction!, effectiveTransitRoute: bothStations,
+            sourceUpdatedAt: "2026-08-10T09:44:49+09:00",
+        } }, nowMs)?.itinerary).toContain("승하차역 실시간 예측 · 09:30:13 승차역 열차 도착 예측 → 09:56:00 하차 예측");
+        const expiredBoarding = { ...route, segments: route.segments.map(s => ({ ...s, rideTiming: { ...timing,
+            boardingObservationSourceUpdatedAt: "2026-08-10T09:42:59+09:00" } })) };
+        expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
+            ...status.plannedJourneyArrivalPrediction!, effectiveTransitRoute: expiredBoarding,
+        } }, nowMs)).toBeUndefined();
+        expect(result.waitMeta).not.toContain("환승은 시간표 기준");
+        const olderFirstStation = { ...timing, observationSourceUpdatedAt: "2026-08-10T09:44:20+09:00" };
+        const nextRide = { ...rideTiming(), basis: "PLANNED_RIDE_BOARDING_REALTIME" as const,
+            timetable: { ...rideTiming().timetable, trainNumber: "2014", boardingAt: "2026-08-10T09:59:00+09:00",
+                arrivalAt: "2026-08-10T10:06:00+09:00" },
+            predictedBoardingAt: "2026-08-10T09:59:10+09:00", predictedArrivalAt: "2026-08-10T10:06:10+09:00",
+            observationSourceUpdatedAt: "2026-08-10T09:44:50+09:00" };
+        const twoRides = { ...route, arrivalAt: nextRide.predictedArrivalAt, totalMinutes: 47, segments: [
+            { ...route.segments[0], rideTiming: olderFirstStation },
+            { sequence: 1, kind: "SUBWAY" as const, durationMinutes: 10, rideTiming: nextRide },
+        ] };
+        const mixedSources = { ...status.plannedJourneyArrivalPrediction!, effectiveTransitRoute: twoRides,
+            predictedArrivalAt: twoRides.arrivalAt, sourceUpdatedAt: olderFirstStation.observationSourceUpdatedAt };
+        const transferResult = buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: mixedSources }, nowMs);
+        expect(transferResult?.itinerary).toContain("2012열차 · 하차역 실시간");
+        expect(transferResult?.itinerary).toContain("2014열차 · 승차역 실시간");
+        expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
+            ...mixedSources, sourceUpdatedAt: nextRide.observationSourceUpdatedAt,
+        } }, nowMs)).toBeUndefined();
+        expect(getFreshDepartureTiming(status)).toBeUndefined();
+        expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
+            ...status.plannedJourneyArrivalPrediction!, sourceUpdatedAt: "2026-08-10T09:42:59+09:00",
+        } }, nowMs)).toBeUndefined();
+        const failed = buildPlannedJourneyArrivalPresentation({ ...status,
+            plannedJourneyTimingFailureReason: "TRANSFER_RECONNECTION_UNAVAILABLE" }, nowMs)!;
+        const early = buildPlannedJourneyArrivalPresentation(departureStatus({
+            plannedJourneyTimingFailureReason: "EARLY_BOARDING_UNCONFIRMED",
+        }), Date.now())!;
+        expect(early.compactSummary).toBe("승차 재확인 필요");
+        expect(early.itinerary).toContain("계획대로 탈 수 있을지");
+        expect(failed.guidanceTitle).toBe("계획 경로 재확인 필요");
+        expect(failed.summary).not.toContain("09:56");
+    });
+
     it("shows exact predicted ride clocks and distinguishes first boarding realtime from a future timetable", () => {
         const status = statusWithTiming();
         const result = buildEffectiveTransitRoutePresentation(status)!;
@@ -176,6 +240,33 @@ describe("effective transit route presentation", () => {
             predictedBoardingAt: table.boardingAt, predictedArrivalAt: table.arrivalAt, basis: "TIMETABLE" }))!;
         expect(timetableResult.itinerary).toContain("2012열차 · 시간표 · 09:30:00 승차 → 09:50:31 하차 예측");
         expect(timetableResult.itinerary).not.toContain("실시간 반영");
+    });
+
+    it("labels post-departure boarding observation separately from direct alighting evidence", () => {
+        const timing: EffectiveTransitRideTiming = { ...rideTiming(), basis: "PLANNED_RIDE_BOARDING_REALTIME",
+            observationSourceUpdatedAt: "2026-08-10T09:29:00+09:00" };
+        const result = buildEffectiveTransitRoutePresentation(statusWithTiming(timing))!;
+        expect(result.itinerary).toContain("승차역 실시간 · 하차역 시간표 보정");
+        expect(result.itinerary).toContain("09:30:13 승차역 열차 도착 예측 → 09:50:44 하차 예측");
+    });
+
+    it("keeps cached train clocks as an explicit plan and rejects cached realtime labels", () => {
+        const now = Date.parse("2026-08-10T09:45:00+09:00");
+        const timing: EffectiveTransitRideTiming = { ...rideTiming(), basis: "PLANNED_RIDE_BASELINE",
+            observationSourceUpdatedAt: null, plannedBoardingIsStationArrival: true };
+        const status = departureStatus({ stale: true, plannedJourneyArrivalPrediction: {
+            predictedArrivalAt: timing.predictedArrivalAt, routeIdentity: "a".repeat(64),
+            basis: "LAST_ACCEPTED_PLAN", presentedAt: "2026-08-10T09:45:00+09:00",
+            effectiveTransitRoute: { provider: "odsay", identity: "a".repeat(64), totalMinutes: 31,
+                departureAt: "2026-08-10T09:20:00+09:00", arrivalAt: timing.predictedArrivalAt,
+                segments: [{ sequence: 0, kind: "SUBWAY", durationMinutes: 31, rideTiming: timing }] } } });
+        const result = buildPlannedJourneyArrivalPresentation(status, now)!;
+        expect(result.itinerary).toContain("이전 계획");
+        expect(result.itinerary).not.toContain("실시간");
+        expect(result.waitMeta).toContain("도착시각은 이전 계획을 기준으로");
+        timing.basis = "PLANNED_RIDE_ALIGHTING_REALTIME";
+        timing.observationSourceUpdatedAt = "2026-08-10T09:44:59+09:00";
+        expect(buildPlannedJourneyArrivalPresentation(status, now)).toBeUndefined();
     });
 
     it("distinguishes a live transfer boarding prediction from a direct alighting prediction", () => {
@@ -208,6 +299,13 @@ describe("effective transit route presentation", () => {
             basis: "FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING" });
         expect(buildEffectiveTransitRoutePresentation(timetableAlighting)!.itinerary)
             .toContain("승차역 실시간 · 하차역 시간표 · 09:29:35 승차역 열차 도착 예측 → 09:50:31 하차 예측");
+        const transferEarly = { ...timetableAlighting.effectiveTransitRoute!.segments[0].rideTiming!,
+            basis: "TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING" as const, observationSourceUpdatedAt: sourceUpdatedAt };
+        expect(buildEffectiveTransitRoutePresentation(statusWithTiming(transferEarly))!.itinerary)
+            .toContain("승차역 실시간 · 하차역 시간표 · 09:29:35 승차역 열차 도착 예측 → 09:50:31 하차 예측");
+        expect(buildEffectiveTransitRoutePresentation(statusWithTiming({
+            ...transferEarly, observationSourceUpdatedAt: null,
+        }))!.itinerary).not.toContain("승차역 실시간");
     });
 
     it("shows verified transfer waiting instead of an ambiguous train segment total", () => {

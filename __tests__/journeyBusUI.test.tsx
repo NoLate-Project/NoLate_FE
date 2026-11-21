@@ -1,11 +1,11 @@
 import React from "react";
 // Arrival polling has its own boundary tests; this suite isolates the existing native bus panel.
-jest.mock("../src/modules/journey/JourneyBusArrivalTrial", () => ({ JourneyBusArrivalTrial: () => null }));
+jest.mock("./fixtures/journey/JourneyBusArrivalTrial", () => ({ JourneyBusArrivalTrial: () => null }));
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { Platform } from "react-native";
 
 import JourneyBusRoute from "./fixtures/journey/journey-bus";
-import { JourneyAutomaticTrialPanel } from "../src/modules/journey/JourneySelectedRouteTrial";
+import { JourneyAutomaticTrialPanel } from "./fixtures/journey/JourneySelectedRouteTrial";
 import { journeyBusFixtures } from "../src/modules/journey/journeyBusFixtures";
 import { normalizeAutomaticJourneySnapshot, type AutomaticJourneySnapshot } from "../src/modules/journey/automaticJourney";
 import type { JourneyRouteAssessmentResult } from "../src/modules/journey/journeyRouteAssessment";
@@ -49,7 +49,8 @@ describe("P2-1 first-bus observation UI", () => {
         trial = {
             snapshot: { ...ready }, sync: { status: "IDLE", paused: false, errorCode: null }, assessment: null,
             consented: false, pending: false, errorCode: null, running: false, eligible: false,
-            canAssess: true, canPrepare: false, canRestore: false, setConsented: mockConsent,
+            canAssess: true, canPrepare: false, canStartSelectedRoute: false, startFromDeparture: jest.fn(),
+            canRestore: false, setConsented: mockConsent,
             savedCheckpoint: undefined, canConsentToSavedRestore: false, canRestoreSaved: false, restoreSaved: jest.fn(),
             assess: mockAssess, prepare: mockPrepare, restore: mockRestore, stop: mockStop,
             retrySync: jest.fn(async () => undefined), setSyncPaused: jest.fn(), refresh: jest.fn(async () => undefined),

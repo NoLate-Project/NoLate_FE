@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act, type ReactTestRenderer} from 'react-test-renderer';
-import {JourneySubwayObservationTrial} from '../src/modules/journey/JourneySubwayObservationTrial';
+import {JourneySubwayObservationTrial} from './fixtures/journey/JourneySubwayObservationTrial';
 jest.mock('../src/modules/journey/subwayObservationDiagnostic', () => ({
     subwayDiagnosticCases: [['complete', '정상 열차 관측'], ['stale', '오래된 관측 차단']], loadSubwayObservationDiagnostic: jest.fn(),
 }));

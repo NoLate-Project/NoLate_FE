@@ -21,7 +21,7 @@ export function savedJourneyProviderPreflight(input: JourneyRouteInput | null, s
     const checks: Check[] = [];
     const add = (code: string, present: boolean, good: string, missing: string) =>
         checks.push({ code, state: present ? 'PRESENT' : 'MISSING', detail: present ? good : missing });
-    add('ROUTE_INPUT', !issue, subway?'도보와 지하철이 연결된 경로예요.':'도보와 버스가 연결된 경로예요.', issue ?? '저장 경로 입력이 필요해요.');
+    add('ROUTE_INPUT', !issue, subway?'도보와 대중교통 구간이 연결된 경로예요.':'도보와 버스가 연결된 경로예요.', issue ?? '저장 경로 입력이 필요해요.');
     add('BUS_PROVIDER', input?.provider === 'odsay' && input.source === 'api',
         'ODsay 저장 경로 형식이에요. 실제 공급자 검증은 아직 필요해요.',
         '현재 버스 연결은 ODsay의 서울 버스 원본 식별자가 필요해요. TMAP·공개 정류장 자료만으로는 준비하지 않아요.');
@@ -31,9 +31,9 @@ export function savedJourneyProviderPreflight(input: JourneyRouteInput | null, s
     }));
     add('WALK_GEOMETRY', walk, '첫 도보와 마지막 도보의 원본 형상 입력이 있어요.',
         '첫 도보·마지막 도보의 실제 경로가 필요해요. 정류장 연결선이나 표시용 보정은 사용할 수 없어요.');
-    add('BUS_GEOMETRY', !!input && input.legs.filter(leg=>leg.kind==='BUS').every(bus=>bus.exact && bus.geometryInputComplete
-        && bus.geometrySource === 'TRANSIT_PASS_SHAPE_LINESTRING' && bus.coordinates.length >= 2),
-    subway?'지하철 원본 형상 입력이 있어요. 공식 역 대응과 대조해야 해요.':'버스 원본 형상 입력이 있어요. 공식 노선 형상과 대조해야 해요.', '버스 원본 이동 형상이 필요해요.');
+    add('BUS_GEOMETRY', !!input && input.legs.filter(leg=>leg.kind==='BUS'||leg.kind==='SUBWAY').every(leg=>leg.exact && leg.geometryInputComplete
+        && leg.geometrySource === 'TRANSIT_PASS_SHAPE_LINESTRING' && leg.coordinates.length >= 2),
+    subway?'각 승차 구간의 원본 경로가 있어요.':'버스 원본 형상 입력이 있어요. 공식 노선 형상과 대조해야 해요.', '대중교통 구간의 원본 이동 경로가 필요해요.');
     // Same bounded builder/context as the displayed input. An unrelated valid route must not
     // supply identifiers for this route; canonical comparison stays private and is never returned.
     let sameInput = false;
@@ -59,9 +59,9 @@ export function savedJourneyProviderPreflight(input: JourneyRouteInput | null, s
     } catch { /* Corrupt/malformed saved claims remain unavailable; no exception text is exposed. */ }
     add('SAVED_INPUT_MATCH', sameInput, '표시 중인 경로와 원본 저장 입력이 같아요.', '표시 중인 경로와 원본 저장 입력을 함께 확인해야 해요.');
     add('BUS_IDENTIFIERS', mappingPresent, subway?'저장 경로의 지하철 ID·역 순서 입력이 있어요. 서울 역 ID 대응의 증명은 아니에요.':'서울 버스 원본 ID·정류장 순서 입력이 있어요. 누락된 방면·정류장 수는 서버 공식 자료로 다시 대조해야 해요.',
-        '서울 버스 원본 ID·정류장 순서를 확인할 수 없어요. 노선명·표시용 정류장으로 대체하지 않아요.');
+        subway ? '승차 구간의 노선 식별자와 정차 순서를 확인할 수 없어요.' : '서울 버스 원본 ID·정류장 순서를 확인할 수 없어요.');
     if(subwayTrial&&input?.legs.some(leg=>leg.kind==='SUBWAY'))checks.push({code:'SUBWAY_CATALOG',state:'RECHECK_REQUIRED',
-        detail:'공식 역 대응·정차 순서와 실시간 열차는 안내를 준비할 때 다시 확인해요. 현재 지하철 환승과 하차 자동 확정은 지원하지 않아요.'});
+        detail:'공식 역 대응·정차 순서와 실시간 열차는 안내를 준비할 때 다시 확인해요. 승차와 하차 안내에는 현재 위치와 열차 관측이 필요해요.'});
     // Coarse endpoint/connection preflight only. Native/server still check every segment,
     // ambiguity, official shape occurrences and final-walk admission independently.
     const path=(i:number)=>input?.walkingSnapshot?.walks.find(w=>w.legIndex===i)?.points.map(p=>({latitude:p.lat,longitude:p.lng})) ?? input?.legs[i].coordinates ?? [];

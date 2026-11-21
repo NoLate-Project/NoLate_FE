@@ -409,6 +409,19 @@ final class NoLateJourneySubwayRideCoreTests: XCTestCase {
     try observe(200,at:1045,trainStop:0,session:&session)
     XCTAssertEqual(session.subway?.hasObservedBoardingWait,true)
     XCTAssertEqual(NoLateAutomaticGuidanceProjection.content(session,now:1045).phase,"WAITING")
+    var staying = session
+    for time in [1050.0, 1058, 1066] {
+      try observe(200,at:time,trainStop:1,session:&staying)
+      let waiting = NoLateAutomaticGuidanceProjection.content(staying,now:time)
+      XCTAssertEqual(waiting.phase,"WAITING")
+      XCTAssertFalse(waiting.boardingConfirmed)
+      XCTAssertNil(waiting.subway)
+      XCTAssertNotNil(NoLateAutomaticGuidanceProjection.position(staying,coordinate:point(200),accuracy:5,observedAt:time,now:time))
+    }
+    XCTAssertEqual(NoLateAutomaticGuidanceProjection.content(staying,now:1081).phase,"UNAVAILABLE")
+    try observe(300,at:1073,trainStop:1,session:&staying)
+    XCTAssertNil(staying.subway?.platformFixAt)
+    XCTAssertNotEqual(NoLateAutomaticGuidanceProjection.content(staying,now:1073).phase,"WAITING")
     try observe(200,at:1062,trainStop:1,session:&session)
     let unconfirmed = NoLateAutomaticGuidanceProjection.content(session,now:1062)
     XCTAssertEqual(unconfirmed.phase,"UNAVAILABLE")
@@ -499,36 +512,276 @@ final class NoLateJourneySubwayRideCoreTests: XCTestCase {
     let otherLine = try envelope(session,at:1001,train:train(0,1000),patch:["arrivalInput":wrong])
     XCTAssertNil(NoLateSavedGuidanceSubwayArrivalPolicy.decode(otherLine,session:session,now:1001))
   }
-  private func makeSession() throws -> Session {
+  func testSameStationTransferKeepsExactSavedIndoorShapeAndFallsBackForMismatches() throws {
+    let session = try makeSession(transfer:true)
+    var data = try XCTUnwrap(JSONSerialization.jsonObject(with:Data(session.routeJSON.utf8)) as? [String:Any])
+    var legs = try XCTUnwrap(data["legs"] as? [[String:Any]])
+    var stops = try XCTUnwrap(legs[1]["stops"] as? [[String:Any]])
+    stops[2]["name"] = "충무로역"; legs[1]["stops"] = stops
+    var next = try XCTUnwrap(legs[3]["stops"] as? [[String:Any]])
+    next[0]["name"] = "충무로"; legs[3]["stops"] = next
+    let street = [0,2,4].map { index -> [String:Any] in
+      var points = (legs[index]["coordinates"] as! [[String:Double]]).map { ["lat":$0["latitude"]!, "lng":$0["longitude"]!] }
+      points[1]["lat"]! += 0.0008
+      return ["legIndex":index,"provider":"tmap","points":points]
+    }
+    data["walkingSnapshot"] = ["schemaVersion":2,"snapshotId":"11111111-1111-4111-8111-111111111111",
+      "memberId":7,"scheduleId":9001,"loginGeneration":2,"routeRevision":1,"routeFingerprint":String(repeating:"a",count:64),
+      "issuedAtMs":1000000,"expiresAtMs":1300000,"transitProvider":"odsay","walkProvider":"tmap",
+      "navigationReady":false,"reason":"TRANSIT_ADMISSION_PENDING","walks":street] as [String:Any]
+    for variant in ["valid","otherStation","incomplete","endpointGap"] {
+      var changed = legs
+      if variant == "otherStation" { var st = next; st[0]["name"]="다른역"; changed[3]["stops"]=st }
+      if variant == "incomplete" { changed[2]["geometryInputComplete"]=false }
+      if variant == "endpointGap" {
+        var coords = changed[2]["coordinates"] as! [[String:Double]]
+        coords[0]["latitude"]! += 0.00035; changed[2]["coordinates"]=coords
+      }
+      data["legs"] = changed
+      let json = try JSONSerialization.data(withJSONObject:data)
+      let input = try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:json)
+      let summary = try NoLateJourneyRouteNormalizer.normalize(json:String(decoding:json,as:UTF8.self))
+      let source = variant == "valid" ? input.legs[2].coordinates : input.walkingSnapshot!.walks[1].coordinates.map(Optional.some)
+      XCTAssertEqual(try NoLateJourneyRouteNormalizer.routeCoordinates(input,legIndex:2),source)
+      XCTAssertEqual(try XCTUnwrap(summary.legs[2].geometryLengthMeters),variant == "valid" ? 200 : 268,accuracy:2)
+      let routeJSON = String(decoding:json,as:UTF8.self)
+      var binding = try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(session.binding)) as? [String:Any])
+      binding["routeInputDigest"] = Session.digest(routeJSON)
+      binding["expiresAtEpochSeconds"] = 1300
+      let prepared = try Session(routeJSON:routeJSON,bindingJSON:String(decoding:try JSONSerialization.data(withJSONObject:binding),as:UTF8.self),now:1000)
+      let display = try XCTUnwrap(NoLateAutomaticGuidanceProjection.displayRoute(prepared)?["legs"] as? [[String:Any]])
+      XCTAssertEqual(display[2]["walkingGeometrySource"] as? String,variant == "valid" ? "ODSAY_TRANSFER" : nil)
+      XCTAssertNil(display[0]["walkingGeometrySource"])
+      for index in [0,4] {
+        XCTAssertEqual(try NoLateJourneyRouteNormalizer.routeCoordinates(input,legIndex:index),
+          input.walkingSnapshot!.walks[index/2].coordinates.map(Optional.some))
+      }
+    }
+  }
+
+  func testTransferRequiresCompleteOrderedOfficialProofsForActualOccurrences() throws {
+    let valid = try makeSession(transfer:true)
+    let binding = try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(valid.binding)) as? [String:Any])
+    let proofs = try XCTUnwrap(binding["officialSubwayAdmissions"] as? [[String:Any]])
+    var wrongStation = proofs[1]; wrongStation["startRoutingStationId"] = "222"
+    for invalid in [[],[proofs[0]],[proofs[1],proofs[0]],[proofs[0],proofs[0]],[proofs[0],wrongStation]] {
+      var other = binding; other["officialSubwayAdmissions"] = invalid
+      let text = String(decoding:try JSONSerialization.data(withJSONObject:other),as:UTF8.self)
+      XCTAssertThrowsError(try Session(routeJSON:valid.routeJSON,bindingJSON:text,now:1000))
+    }
+  }
+
+  func testBothSubwayRidesUseTheirOwnWaitStationHistoryAndOnlyLastWalkCanArrive() throws {
+    var session = try makeSession(transfer:true)
+    func walk(_ x: Double, _ t: Double) {
+      session.ingest(coordinate:point(x),accuracy:5,observedAt:t,now:t)
+    }
+    func ride(_ leg: Int, _ x: Double, _ t: Double, _ stop: Int, _ source: Double) throws {
+      let raw = try envelope(session,at:t,train:train(stop,source,id:leg == 1 ? "111" : "333"),leg:leg)
+      let input = try XCTUnwrap(NoLateSavedGuidanceSubwayPolicy.decode(raw,session:session,now:t))
+      session.ingest(coordinate:point(x),accuracy:5,observedAt:t,now:t,subwayInput:input)
+    }
+    func projected(_ t: Double) -> NoLateGuidanceContent {
+      NoLateAutomaticGuidanceProjection.content(session,now:t)
+    }
+    func assertPosition(_ phase:String, at t:Double, active:Int, position:Int, file:StaticString = #filePath, line:UInt = #line) {
+      let c = projected(t)
+      XCTAssertEqual(c.phase,phase,file:file,line:line)
+      XCTAssertEqual(c.activeLegIndex,active,file:file,line:line)
+      XCTAssertEqual(NoLateGuidanceRoutePositionPolicy.position(c,legs:session.routeLegs,now:t)?.legIndex,position,file:file,line:line)
+    }
+    for (x,t) in [(0.0,1000.0),(0,1004),(30,1008),(60,1012),(90,1016),(120,1020),(150,1024),(180,1028),(200,1032)] {
+      walk(x,t)
+    }
+    let early = try envelope(session,at:1032,train:train(0,1031),leg:3)
+    XCTAssertNil(NoLateSavedGuidanceSubwayPolicy.decode(early,session:session,now:1032))
+    for (x,t,stop,source) in [(200.0,1033.0,0,1032.0),(200,1037,0,1032),(200,1041,0,1032),
+      (320,1053,0,1052),(420,1063,0,1062),(500,1073,1,1072),(560,1081,1,1080),
+      (640,1089,1,1088),(720,1097,1,1096),(800,1105,2,1104)] { try ride(1,x,t,stop,source) }
+    assertPosition("RIDING",at:1105,active:1,position:1)
+    XCTAssertNil(session.finalWalk)
+    for i in 1...25 { walk(800 + Double(i)*8,1105 + Double(i)*4) }
+    assertPosition("TRANSFER_WALK",at:1205,active:2,position:2)
+    for i in 1...6 { walk(1000,1205 + Double(i)*4) }
+    XCTAssertEqual(session.core.snapshot.status,.active)
+    XCTAssertEqual(session.requestedSubwayLegIndex,3)
+    assertPosition("WAITING",at:1229,active:3,position:2)
+    let trainArrival = NoLateGuidanceArrival(providerRouteId:"5호선",directionLabel:"방화행",expectedAt:1330,
+      sourceUpdatedAt:1225,validUntil:1330,busLegIndex:3,kind:"SUBWAY")
+    let withArrival = NoLateAutomaticGuidanceProjection.content(session,now:1229,arrival:.init("WAITING_INFORMATION",trainArrival,busLegIndex:3))
+    XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(withArrival,legs:session.routeLegs,now:1229).compact,"열차 약 2분")
+    XCTAssertFalse(withArrival.boardingConfirmed)
+    XCTAssertNil(session.requestedSubwayLegIndex(now:1250),"Expired transfer evidence cannot authorize the next input")
+    let late = try envelope(session,at:1229,train:train(0,1228),leg:1)
+    XCTAssertNil(NoLateSavedGuidanceSubwayPolicy.decode(late,session:session,now:1229))
+    let beforeSwitch = projected(1229).sequence
+    try ride(3,1000,1230,0,1229)
+    assertPosition("WAITING",at:1230,active:3,position:2)
+    XCTAssertGreaterThan(projected(1230).sequence,beforeSwitch)
+    XCTAssertFalse(projected(1230).boardingConfirmed)
+    XCTAssertNil(projected(1230).lastConfirmedSubway)
+    let restored = try Session(restoring:session.envelope,routeJSON:session.routeJSON,
+      bindingJSON:String(decoding:try JSONEncoder().encode(session.binding),as:UTF8.self),now:1231)
+    XCTAssertEqual(restored.requestedSubwayLegIndex,3)
+    XCTAssertNil(restored.subway)
+    for (x,t,stop,source) in [(1000.0,1234.0,0,1229.0),(1000,1238,0,1229),
+      (1120,1250,0,1249),(1220,1260,0,1259),(1300,1270,1,1269)] { try ride(3,x,t,stop,source) }
+    assertPosition("RIDING",at:1270,active:3,position:3)
+    var noFeed=session
+    noFeed.tick(now:1285)
+    let history = NoLateAutomaticGuidanceProjection.content(noFeed,now:1285)
+    XCTAssertEqual(history.activeLegIndex,3)
+    XCTAssertEqual(history.lastConfirmedSubway?.stopName,"환승 후 1역")
+    XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(history,legs:session.routeLegs,now:1285))
+    XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(history,legs:session.routeLegs,now:1285).title,"마지막 확인 · 환승 후 1역")
+    for (x,t,stop,source) in [(1360.0,1278.0,1,1277.0),(1440,1286,1,1285),
+      (1520,1294,1,1293),(1600,1302,2,1301)] { try ride(3,x,t,stop,source) }
+    for i in 1...22 { walk(1600 + Double(i)*8,1302 + Double(i)*4) }
+    assertPosition("FINAL_WALK",at:1390,active:4,position:4)
+    for i in 23...25 { walk(1600 + Double(i)*8,1302 + Double(i)*4) }
+    for i in 1...6 { walk(1800,1402 + Double(i)*4) }
+    XCTAssertEqual(session.core.snapshot.reason,.destinationArrived)
+  }
+  func testMeasuredSegmentNeverAdvancesAStationAndExpiresBackToOriginalAnchor() throws {
+    var session = try makeSession(transfer:true, denseTrack:true)
+    for (x,t) in [(0.0,1000.0),(0,1004),(30,1008),(60,1012),(90,1016),(120,1020),(150,1024),(180,1028),(200,1032)] {
+      session.ingest(coordinate:point(x),accuracy:5,observedAt:t,now:t)
+    }
+    for (x,t,stop,source) in [(200.0,1033.0,0,1032.0),(200,1037,0,1032),(200,1041,0,1032),
+      (320,1053,0,1052),(420,1063,0,1062),(500,1073,1,1072)] {
+      let data = try envelope(session,at:t,train:train(stop,source))
+      let input = try XCTUnwrap(NoLateSavedGuidanceSubwayPolicy.decode(data,session:session,now:t))
+      session.ingest(coordinate:point(x),accuracy:5,observedAt:t,now:t,subwayInput:input)
+      XCTAssertNil(session.subway?.passengerSegment)
+    }
+    XCTAssertEqual(NoLateAutomaticGuidanceProjection.content(session,now:1073).schemaVersion,8)
+    let bound = try XCTUnwrap(session.subway?.route)
+    let proof = try XCTUnwrap(session.binding.subwayProof(at:1))
+    XCTAssertNil(NoLateJourneyRouteNormalizer.subwayTrack(json:session.routeJSON,proof:nil,route:bound))
+    let raw = try XCTUnwrap(JSONSerialization.jsonObject(with:Data(session.routeJSON.utf8)) as? [String:Any])
+    let rawLegs = try XCTUnwrap(raw["legs"] as? [[String:Any]])
+    let shape = try XCTUnwrap(rawLegs[1]["coordinates"] as? [[String:Double]])
+    for patch: [String:Any] in [["exact":false],["geometryInputComplete":false],["geometrySource":"PASS_STOP_LIST"],
+      ["coordinates":[shape[0],shape[2],shape.last!]],["coordinates":[shape[0],shape[2],shape[1],shape[2],shape.last!]]] {
+      var bad = raw, legs = rawLegs
+      legs[1].merge(patch){ _, new in new }; bad["legs"] = legs
+      let json = String(decoding:try JSONSerialization.data(withJSONObject:bad),as:UTF8.self)
+      XCTAssertNil(NoLateJourneyRouteNormalizer.subwayTrack(json:json,proof:proof,route:bound))
+    }
+    let boarded = session
+    let offCenter = NoLateJourneyEngineCore.Coordinate(latitude:point(650).latitude+0.00004, longitude:point(650).longitude)
+    XCTAssertTrue(session.ingest(coordinate:offCenter,accuracy:5,observedAt:1082,now:1082))
+    let c = NoLateAutomaticGuidanceProjection.content(session,now:1082)
+    XCTAssertEqual(c.schemaVersion,9); XCTAssertEqual(c.phase,"RIDING_SEGMENT")
+    XCTAssertNil(c.subway); XCTAssertNil(c.arrival); XCTAssertNil(c.alighting)
+    XCTAssertNil(session.subway?.snapshot.currentStopIndex); XCTAssertEqual(session.subway?.snapshot.lastConfirmedAt,1073)
+    let between = try XCTUnwrap(c.subwaySegment)
+    XCTAssertEqual(between.progress,0.5,accuracy:0.001); XCTAssertEqual(c.rideProgress ?? 0,0.75,accuracy:0.001)
+    let dot = try XCTUnwrap(NoLateAutomaticGuidanceProjection.position(session,coordinate:offCenter,accuracy:5,observedAt:1082,now:1082))
+    XCTAssertEqual(dot["latitude"] ?? 0,point(650).latitude,accuracy:0.000001)
+    let lock = NoLateGuidancePresentationPolicy.presentation(c,legs:session.routeLegs,now:1082)
+    XCTAssertEqual(lock.title,"중간역 → 하차역"); XCTAssertEqual(lock.action,"다음 하차역 하차 · 5호선 환승")
+    var notice = NoLateGuidanceNoticePolicy()
+    XCTAssertNil(notice.next(c,legs:session.routeLegs,now:1082))
+    let json = String(decoding:try JSONEncoder().encode(c),as:UTF8.self)
+    XCTAssertFalse(json.contains("latitude")); XCTAssertFalse(json.contains("currentStopIndex"))
+    let stale = try XCTUnwrap(c.expiringLocation(at:1097))
+    XCTAssertEqual(stale.schemaVersion,1); XCTAssertEqual(stale.lastConfirmedSubway?.confirmedAt,1073)
+    for value in [c,stale] {
+      XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(value,legs:session.routeLegs,now:1097))
+      XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(value,legs:session.routeLegs,now:1097).title,"마지막 확인 · 중간역")
+      XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(value,legs:session.routeLegs,now:1163).title,"위치 확인 중")
+    }
+    var lost = boarded
+    lost.ingest(coordinate:point(650),accuracy:60,observedAt:1082,now:1082)
+    lost.ingest(coordinate:point(680),accuracy:5,observedAt:1086,now:1086)
+    XCTAssertNil(lost.subway?.passengerSegment)
+    var gap = boarded
+    gap.ingest(coordinate:point(650),accuracy:5,observedAt:1090,now:1090)
+    XCTAssertNil(gap.subway?.passengerSegment)
+    session.ingest(coordinate:point(510),accuracy:5,observedAt:1092,now:1092)
+    XCTAssertNil(session.subway?.passengerSegment)
+    XCTAssertEqual(session.subway?.snapshot.lastConfirmedStopIndex,1)
+  }
+
+  func testStationaryOriginFixCanOrientMapBeforeConfirmedDeparture() throws {
+    var session = try makeSession()
+    let origin = point(0)
+    func dot(at observation: Double, now: Double) -> [String: Double]? {
+      NoLateAutomaticGuidanceProjection.position(session, coordinate: origin, accuracy: 5, observedAt: observation, now: now)
+    }
+    XCTAssertNil(dot(at: 1000, now: 1000))
+    for time in [1001.0, 1003.0] {
+      XCTAssertTrue(session.ingest(coordinate: origin, accuracy: 5, observedAt: time, now: time))
+    }
+    XCTAssertEqual(session.core.snapshot.status, .armed)
+    XCTAssertNil(session.core.snapshot.departureEventKey)
+    XCTAssertEqual(dot(at: 1003, now: 1004)?["latitude"], origin.latitude)
+    XCTAssertNil(dot(at: 1001, now: 1004))
+    XCTAssertNil(dot(at: 1003, now: 1018))
+    let content = NoLateAutomaticGuidanceProjection.content(session, now: 1004)
+    XCTAssertEqual(content.phase, "READY")
+    XCTAssertNil(NoLateGuidanceRoutePositionPolicy.position(content, legs: session.routeLegs, now: 1004))
+  }
+
+  private func makeSession(transfer: Bool = false, denseTrack: Bool = false) throws -> Session {
     func p(_ x:Double) -> [String:Double] { let c = point(x);return ["latitude":c.latitude,"longitude":c.longitude] }
     let walk: [String:Any] = ["index":0,"kind":"WALK","geometrySource":"WALK_STEPS_LINESTRING","exact":true,
       "geometryInputComplete":true,"stopEvidenceProvider":"odsay","stopEvidenceVersion":1,
       "coordinates":[p(0),p(100),p(200)],"start":p(0),"end":p(200),"stops":[]]
-    let subway: [String:Any] = ["index":1,"kind":"SUBWAY","geometrySource":"TRANSIT_PASS_SHAPE_LINESTRING","exact":true,
+    var subway: [String:Any] = ["index":1,"kind":"SUBWAY","geometrySource":"TRANSIT_PASS_SHAPE_LINESTRING","exact":true,
       "geometryInputComplete":true,"coordinates":[p(200),p(500),p(800)],"start":p(200),"end":p(800),
       "providerRouteId":"1000:2","directionCode":"UP","declaredStationCount":2,"stopEvidenceProvider":"odsay","stopEvidenceVersion":1,
       "display":["lineName":"수도권 2호선"],
       "stops":[200.0,500,800].enumerated().map { ["sourceIndex":$0.offset,"providerSequence":$0.offset,"name":"합성 역",
         "code":"synthetic-\($0.offset)","routingStationId":String(222+$0.offset),"coordinate":p($0.element)] as [String:Any] }]
+    if denseTrack {
+      subway["coordinates"] = [200.0,350,500,500,650,800].map(p)
+      var stops = try XCTUnwrap(subway["stops"] as? [[String:Any]])
+      for (i,name) in ["승차역","중간역","하차역"].enumerated() { stops[i]["name"] = name }
+      subway["stops"] = stops
+    }
     var final = walk
     final["index"] = 2; final["coordinates"] = [p(800),p(900),p(1000)]; final["start"] = p(800); final["end"] = p(1000)
+    var legs = [walk,subway,final]
+    if transfer {
+      var next = subway; next["index"] = 3; next["providerRouteId"] = "1000:5"
+      next["display"] = ["lineName":"5호선"]
+      next["coordinates"] = [p(1000),p(1300),p(1600)]; next["start"] = p(1000); next["end"] = p(1600)
+      next["stops"] = [1000.0,1300,1600].enumerated().map { index,x in
+        ["sourceIndex":index,"providerSequence":index,"name":"환승 후 \(index)역","routingStationId":String(510+index),
+         "code":"second-\(index)","coordinate":p(x)] as [String:Any]
+      }
+      var last = final; last["index"] = 4; last["start"] = p(1600); last["end"] = p(1800)
+      last["coordinates"] = [p(1600),p(1700),p(1800)]
+      legs += [next,last]
+    }
     let object: [String:Any] = ["schemaVersion":1,"routeRevision":1,"context":"SAVED_ROUTE","provider":"odsay","source":"api",
-      "reliability":"live_provider","plausibility":"normal","serviceState":"operating","origin":p(0),"destination":p(1000),"legs":[walk,subway,final]]
+      "reliability":"live_provider","plausibility":"normal","serviceState":transfer ? "UNKNOWN" : "operating","origin":p(0),"destination":p(transfer ? 1800 : 1000),"legs":legs]
     let json = String(decoding:try JSONSerialization.data(withJSONObject:object,options:.sortedKeys),as:UTF8.self)
-    let binding: [String:Any] = ["sessionId":identity.sessionId,"scheduleId":"9001","generation":1,"routeRevision":1,
+    var binding: [String:Any] = ["sessionId":identity.sessionId,"scheduleId":"9001","generation":1,"routeRevision":1,
       "clientOwnerId":"00000000-0000-4000-8000-000000000002","routeInputDigest":Session.digest(json),
       "preparedAtEpochSeconds":1000,"expiresAtEpochSeconds":1600,"execution":"SIMULATOR","syncScope":"AUTHENTICATED",
       "savedRouteValidated":true,"guidanceEnabled":true,"apiOrigin":"http://127.0.0.1:15547","authMemberId":7,"loginGeneration":2]
+    if transfer {
+      binding["execution"] = "DEVICE"
+      binding["officialBusAdmissions"] = [] as [[String:Any]]
+      binding["officialSubwayAdmissions"] = [1,3].map { index in
+        ["schemaVersion":1,"identityEvidence":"OFFICIAL_STATION_PATH_CROSSWALK","subwayLegIndex":index,
+         "providerRouteId":index == 1 ? "1000:2" : "1000:5","stationCount":2,
+         "startRoutingStationId":index == 1 ? "222" : "510","endRoutingStationId":index == 1 ? "224" : "512"] as [String:Any]
+      }
+    }
     return try Session(routeJSON:json,bindingJSON:String(decoding:try JSONSerialization.data(withJSONObject:binding),as:UTF8.self),now:1000)
   }
   private func envelope(_ session:Session,at:Double,train:Core.Train,patch:[String:Any] = [:],
-    stationIds:[String]? = nil) throws -> Data {
-    let stations = [200.0,500,800].enumerated().map { offset,x -> [String:Any] in
-      let c = point(x);return ["routingStationId":String(222+offset),
+    stationIds:[String]? = nil, leg: Int = 1) throws -> Data {
+    let stations = (leg == 1 ? [200.0,500,800] : [1000.0,1300,1600]).enumerated().map { offset,x -> [String:Any] in
+      let c = point(x);return ["routingStationId":String((leg == 1 ? 222 : 510)+offset),
         "stationId":stationIds?[offset] ?? String(9990000001+offset),"latitude":c.latitude,"longitude":c.longitude]
     }
     var body: [String:Any] = ["schemaVersion":2,"sessionId":session.binding.sessionId,"generation":1,"routeRevision":1,
-      "routeInputDigest":session.binding.routeInputDigest,"subwayLegIndex":1,"identityEvidence":"OWNED_AUTOMATIC_SESSION_TRAIN_REFERENCES",
+      "routeInputDigest":session.binding.routeInputDigest,"subwayLegIndex":leg,"identityEvidence":"OWNED_AUTOMATIC_SESSION_TRAIN_REFERENCES",
       "status":"TRAIN_REFERENCES_ONLY","matchingTrainCount":1,"navigationReady":false,"passengerBoardingConfirmed":false,
       "passengerPosition":NSNull(),"passengerRemainingStops":NSNull(),"nativeInput":["observedAt":at,"stations":stations,
         "trains":[["id":train.id,"stopIndex":train.stopIndex,"state":train.state,"sourceAt":train.sourceAt,"validUntil":train.validUntil]]]]

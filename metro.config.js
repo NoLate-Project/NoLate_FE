@@ -12,8 +12,16 @@
 
 
 const { getDefaultConfig } = require("expo/metro-config");
+const { createHash } = require("node:crypto");
 
 const config = getDefaultConfig(__dirname);
+// Expo inlines public environment values into JS. Release builds for different
+// servers or transit providers can otherwise reuse the first transformed module.
+const publicEnvironment = Object.keys(process.env)
+    .filter((key) => key.startsWith("EXPO_PUBLIC_"))
+    .sort()
+    .map((key) => [key, process.env[key]]);
+config.cacheVersion += ":" + createHash("sha256").update(JSON.stringify(publicEnvironment)).digest("hex");
 // Isolated E2E servers change compile-time EXPO_PUBLIC values between runs.
 // Partition their transform cache; never clear the shared 8085 server's cache.
 if (process.env.NOLATE_E2E_METRO_CACHE_NAMESPACE?.startsWith("nolate-eta-real-e2e.")) {

@@ -5,6 +5,27 @@ jest.mock("../src/api/env", () => ({
 import { parseTmapRoadRouteResponse, parseTransitOptionsFromTmap } from "../src/modules/map/tmapApi";
 
 describe("TMAP road response parser", () => {
+    test("keeps every driving link vertex when the map overview is thinned", () => {
+        const coordinates = Array.from({length: 1350}, (_, i) => [127 + i * 0.000001, 37.5]);
+        const result = parseTmapRoadRouteResponse({features: [{
+            geometry: {type: "LineString", coordinates}, properties: {},
+        }]}, "driving");
+        expect(result.drivingGeometryComplete).toBe(true);
+        expect(result.pathCoords!.length).toBeLessThan(coordinates.length);
+        expect(result.guideSteps?.[0].pathCoords).toHaveLength(coordinates.length);
+    });
+
+    test("disconnected road parts and missing turn instructions cannot authorize a drive", () => {
+        const broken = {type: "MultiLineString", coordinates: [
+            [[127, 37.5], [127.001, 37.5]], [[127.003, 37.5], [127.004, 37.5]],
+        ]};
+        expect(parseTmapRoadRouteResponse({features: [{geometry: broken}]}, "driving").drivingGeometryComplete).toBe(false);
+        const line = {type: "LineString", coordinates: [[127, 37.5], [127.001, 37.5]]};
+        expect(parseTmapRoadRouteResponse({features: [
+            {geometry: {type: "Point", coordinates: [127, 37.5]}, properties: {turnType: 13}},
+            {geometry: line},
+        ]}, "driving").drivingGeometryComplete).toBe(false);
+    });
     test("keeps provider guidance, traffic, and fare fields", () => {
         const result = parseTmapRoadRouteResponse({
             type: "FeatureCollection",

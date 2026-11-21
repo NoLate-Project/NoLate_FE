@@ -1,0 +1,26 @@
+{
+  "initial": {
+    "koreanSpeechStarts": 0,
+    "speechFinishes": 0
+  },
+  "enabled": {
+    "koreanSpeechStarts": 1,
+    "speechFinishes": 1
+  },
+  "muted": {
+    "koreanSpeechStarts": 0,
+    "speechFinishes": 0
+  },
+  "enabledAgain": {
+    "koreanSpeechStarts": 1,
+    "speechFinishes": 1
+  },
+  "relaunched": {
+    "koreanSpeechStarts": 1,
+    "speechFinishes": 1
+  },
+  "finalMute": {
+    "koreanSpeechStarts": 0,
+    "speechFinishes": 0
+  }
+}

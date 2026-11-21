@@ -122,7 +122,7 @@ public final class NoLateLiveActivityModule: Module {
     func definition() -> ModuleDefinition {
     Name("NoLateLiveActivity")
 
-    Events("onLiveActivityPushToken", "onLiveActivityStateChange", "onJourneyEngineStateChange", "onAutomaticJourneyStateChange")
+    Events("onLiveActivityPushToken", "onLiveActivityStateChange", "onJourneyEngineStateChange", "onAutomaticJourneyStateChange", "onDrivingLocation")
 
     OnCreate { [weak self] in
       if let owner = self?.journeyEventOwner {
@@ -135,6 +135,7 @@ public final class NoLateLiveActivityModule: Module {
           NoLateJourneyAutomaticRuntime.shared.setEventSink(owner: owner) { [weak self] body in
             self?.sendEvent("onAutomaticJourneyStateChange", body)
           }
+          if #available(iOS 16.2, *) { await NoLateDrivingPublication.shared.removeOrphans() }
         }
       }
       guard #available(iOS 16.1, *) else { return }
@@ -156,6 +157,8 @@ public final class NoLateLiveActivityModule: Module {
           NoLateJourneyRuntime.shared.removeEventSink(owner: owner)
           #endif
           NoLateJourneyAutomaticRuntime.shared.removeEventSink(owner: owner)
+          NoLateDrivingLocation.shared.stop(module: owner)
+          if #available(iOS 16.2, *) { await NoLateDrivingPublication.shared.close(module: owner) }
         }
       }
       #if DEBUG
@@ -167,6 +170,42 @@ public final class NoLateLiveActivityModule: Module {
       Task {
         await NoLateLiveActivityCoordinator.shared.stopObserving()
       }
+    }
+
+    AsyncFunction("startDrivingLocation") { [weak self] (token: String) -> String in
+      guard let module = self?.journeyEventOwner else { return "UNAVAILABLE" }
+      return await NoLateDrivingLocation.shared.start(owner: token, module: module) { [weak self] body in
+        self?.sendEvent("onDrivingLocation", body)
+      }
+    }
+    AsyncFunction("latestDrivingLocation") { (token: String) -> [String: Any]? in
+      await NoLateDrivingLocation.shared.latest(owner: token)
+    }
+    AsyncFunction("stopDrivingLocation") { (token: String) in
+      await NoLateDrivingLocation.shared.stop(owner: token)
+    }
+
+    Function("drivingVoiceEnabled") {
+      NoLateGuidanceNoticePreference.drivingVoiceEnabled()
+    }
+    Function("setDrivingVoiceEnabled") { (enabled: Bool) in
+      NoLateGuidanceNoticePreference.setDrivingVoiceEnabled(enabled)
+    }
+
+    AsyncFunction("openDrivingPublication") { [weak self] (token: String, scheduleId: String, destination: String) in
+      guard #available(iOS 16.2, *), let module = self?.journeyEventOwner else { return }
+      await NoLateDrivingPublication.shared.open(owner: token, scheduleId: scheduleId, destination: destination, module: module)
+    }
+    AsyncFunction("publishDrivingGuidance") { (token: String, json: String, voiceEnabled: Bool) in
+      guard #available(iOS 16.2, *) else { return }
+      await NoLateDrivingPublication.shared.publish(owner: token, json: json, voice: voiceEnabled)
+    }
+    AsyncFunction("closeDrivingPublication") { (token: String) in
+      guard #available(iOS 16.2, *) else { return }
+      await NoLateDrivingPublication.shared.close(owner: token)
+    }
+    AsyncFunction("resetDrivingPublicationRoute") { (token: String) in
+      if #available(iOS 16.2, *) { await NoLateDrivingPublication.shared.resetRoute(owner: token) }
     }
 
     AsyncFunction("getJourneyDiagnostics") {
@@ -182,6 +221,15 @@ public final class NoLateLiveActivityModule: Module {
     }
     AsyncFunction("configureAutomaticJourneyPushPilot") { (fcmToken: String) in
       return await NoLateJourneyAutomaticRuntime.shared.configurePushPilot(fcmToken: fcmToken)
+    }
+    AsyncFunction("configureAutomaticJourneyRemoteUpdates") { (fcmToken: String) in
+      return await NoLateJourneyAutomaticRuntime.shared.configureRemoteUpdates(fcmToken: fcmToken)
+    }
+    AsyncFunction("updateAutomaticJourneyRemoteRegistration") { (fcmToken: String, bindingJSON: String) in
+      return await NoLateJourneyAutomaticRuntime.shared.updateRemoteRegistration(fcmToken: fcmToken, bindingJSON: bindingJSON)
+    }
+    AsyncFunction("configureRunningJourneyNoticeMode") { (mode: String, sessionId: String) in
+      return await NoLateJourneyAutomaticRuntime.shared.configureNoticeMode(mode, sessionId: sessionId)
     }
     AsyncFunction("configureAutomaticJourneyNoticeMode") { (mode: String) in
       return await NoLateJourneyAutomaticRuntime.shared.configureNoticeMode(mode)
@@ -382,27 +430,6 @@ public final class NoLateLiveActivityModule: Module {
       return await NoLateLiveActivityCoordinator.shared.getActiveActivities()
     }
 
-    AsyncFunction("debugSimulate") {
-      guard #available(iOS 16.1, *) else {
-        return NoLateLiveActivityMutationResult(
-          supported: false,
-          applied: false,
-          operation: "ignored",
-          reason: "IOS_VERSION_UNSUPPORTED",
-          simulation: true
-        ).bridgeMap()
-      }
-      do {
-        return try await NoLateLiveActivityCoordinator.shared.debugSimulate().bridgeMap()
-      } catch {
-        return NoLateLiveActivityMutationResult(
-          applied: false,
-          operation: "ignored",
-          reason: "SIMULATION_ERROR:\(error.localizedDescription)",
-          simulation: true
-        ).bridgeMap()
-      }
-    }
   }
 
   private static func command(

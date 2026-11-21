@@ -418,6 +418,41 @@ function navigationInteger(value: unknown): number | undefined {
         : undefined;
 }
 
+/** Only admit a station transfer when every ordered provider link survives display parsing.
+ * A route with a missing point or disconnected connector can still be drawn as a preview. */
+function hasCompleteTransferWalk(leg: any, delivered: RoutePathCoord[]): boolean {
+    const links = leg?.routes;
+    if (!Array.isArray(links) || links.length < 1 || links.length > 128 || delivered.length < 2 || delivered.length > 2000) return false;
+    const points: RoutePathCoord[] = [];
+    function appendPart(raw: unknown): boolean {
+        if (!Array.isArray(raw) || raw.length < 2 || raw.length > 2000) return false;
+        for (const [index, rawPoint] of raw.entries()) {
+            const x = navigationNumber(rawPoint?.x), y = navigationNumber(rawPoint?.y);
+            const point = x !== undefined && y !== undefined && routeCoord(x, y);
+            if (!point) return false;
+            const last = points.at(-1);
+            if (last && sameCoord(last, point)) continue;
+            if (last && (index === 0 || coordinateGapScore(last, point) > 150 * 150)) return false;
+            points.push(point);
+            if (points.length > 2000) return false;
+        }
+        return true;
+    }
+    for (const [index, link] of links.entries()) {
+        if (nonNegativeInteger(link?.rseq) !== index + 1) return false;
+        const cross = link?.crossXYInfos;
+        if (cross != null && !Array.isArray(cross)) return false;
+        // An endpoint connector is evidence only when it joins its own adjacent link.
+        // A single link may have its connector at either end.
+        const connectorStart = routeCoord(cross?.[0]?.x, cross?.[0]?.y);
+        const before = index === 0 && (links.length > 1 || (connectorStart && sameCoord(delivered[0], connectorStart)));
+        if (cross?.length && before && !appendPart(cross)) return false;
+        if (!appendPart(link.xyInfos)) return false;
+        if (cross?.length && !before && (index !== links.length - 1 || !appendPart(cross))) return false;
+    }
+    return points.length === delivered.length && points.every((p, i) => sameCoord(p, delivered[i]));
+}
+
 function hasCompleteRideGraph(raw: unknown, delivered: RoutePathCoord[]): boolean {
     if (typeof raw !== "string" || raw.length > 200_000) return false;
     const pairs = raw.split("|");
@@ -653,7 +688,10 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
             startCoord,
             endCoord,
             passStops: passStops.length ? passStops : undefined,
-            navigationEvidence: parseNavigationEvidence(leg, completeRideGraph),
+            navigationEvidence: parseNavigationEvidence(leg, completeRideGraph || (kind === "WALK"
+                && normalizeLegKind(legs[index - 1]?.trafficType) === "SUBWAY"
+                && normalizeLegKind(legs[index + 1]?.trafficType) === "SUBWAY"
+                && hasCompleteTransferWalk(leg, graphPath))),
             pathCoords: pathCoords.length >= 2 ? pathCoords : undefined,
             pathCoordsIsExact: hasGraphPath,
             pathGeometrySource: hasGraphPath

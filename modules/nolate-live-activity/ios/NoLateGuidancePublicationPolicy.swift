@@ -1,5 +1,29 @@
 import Foundation
 
+/// Explicitly retire a displayed maneuver when its source location expires, including when
+/// the app is running behind the lock screen. ActivityKit's staleDate covers suspension.
+@MainActor final class NoLateDrivingDisplayExpiry {
+  private var task: Task<Void, Never>?
+
+  func cancel() {
+    task?.cancel()
+    task = nil
+  }
+
+  func observe(_ displayed: NoLateDrivingContent, onExpiry: @escaping @MainActor () async -> Void) {
+    cancel()
+    guard ["GUIDING", "OFF_ROUTE"].contains(displayed.status), let deadline = displayed.staleDate else { return }
+    task = Task {
+      while deadline > Date() {
+        do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) }
+        catch { return }
+      }
+      guard !Task.isCancelled else { return }
+      await onExpiry()
+    }
+  }
+}
+
 enum NoLateGuidanceActivityStartPolicy {
   static func allows(_ content: NoLateGuidanceContent, legs: [NoLateGuidanceRouteLeg],
     now: Double, foreground: Bool, remotePilot: Bool) -> Bool {
@@ -23,8 +47,10 @@ struct NoLateGuidanceNoticePolicy {
   private var lastObservation = -Double.infinity
   private var lastSequence: Int64 = -1
   private var stage = 0
+  private var announcedTrain: (leg: Int, number: String?, expectedAt: Double)?
   mutating func reset() { self = Self() }
-  mutating func next(_ content: NoLateGuidanceContent, legs: [NoLateGuidanceRouteLeg], now: Double) -> NoLateGuidanceNotice? {
+  mutating func next(_ content: NoLateGuidanceContent, legs: [NoLateGuidanceRouteLeg], now: Double,
+    subwayTrainNumber: String? = nil) -> NoLateGuidanceNotice? {
     guard now.isFinite, content.sequence >= 0, content.generation > 0, content.routeRevision > 0,
       !content.sessionId.isEmpty, !content.routeInputDigest.isEmpty,
       NoLateGuidanceRouteLayoutPolicy.validTopology(legs), legs.count >= 3 else { return nil }
@@ -54,6 +80,13 @@ struct NoLateGuidanceNoticePolicy {
       "\(["ARRIVAL_SOON", "BOARDING_STOP_REACHED"].contains(kind) ? busIndex : content.activeLegIndex):\(kind)"
     }
     var kind: String, body: String
+    var deadline = min(content.validUntil, now + 10)
+    var arrivalKey: String?
+    let arrivalHint = NoLateGuidancePresentationPolicy.freshArrival(content, legs: legs, now: now)
+    if let arrivalHint, arrivalHint.kind == "SUBWAY", announcedTrain?.leg == busIndex,
+      announcedTrain?.number == subwayTrainNumber {
+      announcedTrain?.expectedAt = arrivalHint.expectedAt
+    }
     if content.phase == "RIDING", let subway = content.subway, subway.valid {
       let station = NoLateGuidanceRouteLayoutPolicy.safeName(leg.alightingStopName) ?? "하차역"
       if subway.remainingStops == 0 { kind = "SUBWAY_ALIGHTING_STATION"; body = "\(station)에 도착했습니다. 하차 여부를 확인해 주세요." }
@@ -66,11 +99,32 @@ struct NoLateGuidanceNoticePolicy {
         kind = "ONE_STOP_BEFORE"; body = "다음 정류장은 \(target)입니다. 하차를 준비해 주세요."
       }
     } else if ["WALKING_TO_STOP", "WAITING", "APPROACHING_STOP"].contains(content.phase),
-      let arrival = NoLateGuidancePresentationPolicy.freshArrival(content, legs: legs, now: now),
+      let arrival = arrivalHint,
       arrival.expectedAt - now <= 120 {
       // Round up, never claim the user is on this vehicle or that it arrives at an exact second.
       let minutes = max(1, Int(ceil((arrival.expectedAt - now) / 60)))
-      kind = "ARRIVAL_SOON"; body = "\(line) · 약 \(minutes)분 후 도착 예정입니다. 탑승을 준비해 주세요."
+      kind = "ARRIVAL_SOON"
+      deadline = min(deadline, arrival.validUntil, arrival.expectedAt)
+      if arrival.kind == "SUBWAY", leg.kind == "SUBWAY",
+        let direction = NoLateGuidanceRouteLayoutPolicy.safeName(arrival.directionLabel) {
+        // If the passenger stays on the platform, a later service gets its own notice.
+        // Fluctuating forecasts for overlapping trains must not alternate announcements.
+        let key = eventKey(kind) + (subwayTrainNumber.map { ":" + $0 } ?? "")
+        if subwayTrainNumber == nil, announcedTrain?.leg == busIndex { return nil }
+        if let last = announcedTrain, last.leg == busIndex, last.expectedAt > now {
+          if last.number == nil, let number = subwayTrainNumber {
+            announcedTrain = (busIndex, number, arrival.expectedAt)
+            seen.insert(key)
+          }
+          return nil
+        }
+        guard !seen.contains(key) else { return nil }
+        announcedTrain = (busIndex, subwayTrainNumber, arrival.expectedAt)
+        arrivalKey = key
+        body = "\(NoLateGuidanceRouteLayoutPolicy.legendLabel(leg)) \(direction) 열차가 약 \(minutes)분 후 도착합니다."
+      } else {
+        body = "\(line) · 약 \(minutes)분 후 도착 예정입니다. 탑승을 준비해 주세요."
+      }
     } else if content.phase == "WAITING" {
       // GPS may first become reliable at the boarding stop. Announce the verified
       // stage instead of waiting for a walking event that can no longer occur.
@@ -93,8 +147,8 @@ struct NoLateGuidanceNoticePolicy {
     // Higher priority replaces lower priority, never drains an obsolete speech queue later.
     if kind == "NEAR_STOP" || kind == "ONE_STOP_BEFORE" { seen.insert(eventKey("BOARDING_CONFIRMED")) }
     if kind == "ARRIVAL_SOON" { seen.insert(eventKey("BOARDING_STOP_REACHED")) }
-    guard seen.insert(eventKey(kind)).inserted else { return nil }
-    return .init(kind: kind, body: body, expiresAt: min(content.validUntil, now + 10))
+    guard seen.insert(arrivalKey ?? eventKey(kind)).inserted else { return nil }
+    return .init(kind: kind, body: body, expiresAt: deadline)
   }
 }
 
@@ -125,7 +179,7 @@ struct NoLateGuidancePublicationPolicy {
         || last.activeLegIndex != content.activeLegIndex || last.schemaVersion != content.schemaVersion
         || last.instruction != content.instruction || last.walkProgress != content.walkProgress
         || last.rideProgress != content.rideProgress || last.boardingConfirmed != content.boardingConfirmed
-        || last.alighting != content.alighting || last.subway != content.subway
+        || last.alighting != content.alighting || last.subway != content.subway || last.subwaySegment != content.subwaySegment
         || last.lastConfirmedSubway != content.lastConfirmedSubway
         || last.lastConfirmedBus != content.lastConfirmedBus
         // A station dwell still needs genuinely new observation leases. Otherwise

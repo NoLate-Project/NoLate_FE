@@ -79,7 +79,7 @@ function configureJourneyProduct(info, enabled) {
     NoLateJourneyProductOriginalLocationDescription:
       info.NoLateJourneyProductOriginalLocationDescription ?? info.NSLocationWhenInUseUsageDescription ?? "",
     NSLocationWhenInUseUsageDescription:
-      "대중교통 길안내 중 현재 위치를 이용해 출발·승차·하차·환승 시점을 안내합니다. 위치 좌표는 서버에 저장하지 않습니다.",
+      "자차·대중교통 길안내 중 현재 위치를 이용해 다음 회전과 승차·환승·하차 시점을 안내합니다. 현재 위치를 출발지로 설정할 수도 있습니다.",
     UIBackgroundModes: [...new Set([...(info.UIBackgroundModes ?? []), "location"])],
   };
 }

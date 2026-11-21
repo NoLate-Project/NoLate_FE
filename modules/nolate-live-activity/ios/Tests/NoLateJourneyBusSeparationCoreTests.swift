@@ -58,6 +58,72 @@ final class NoLateJourneyBusSeparationCoreTests:XCTestCase {
     XCTAssertEqual(c.snapshot,before)
     c.tick(now:1020);XCTAssertEqual(c.snapshot.evidenceCount,0);XCTAssertNil(c.snapshot.validUntil)
   }
+  func testDelayedProviderCadencePreservesOnlyInternalSameVehicleDepartureHistory() {
+    var c=C(route:route());seed(&c)
+    for (index,t) in stride(from:1005.0,through:1070.0,by:5).enumerated() {
+      let source=t<1035 ? 1005.0 : t<1065 ? 1035.0 : 1065.0
+      let past=source==1005 ? 100.0 : source==1035 ? 160.0 : 230.0
+      let rows=t-source<15 ? [vehicle(source,past)] : []
+      c.ingest(fix(index+2,t),priorRide:nil,associatedId:nil,vehicles:rows,now:t)
+      if t==1020 || t==1050 {
+        XCTAssertEqual(c.snapshot.status,"UNAVAILABLE")
+        XCTAssertEqual(c.snapshot.evidenceCount,0)
+      }
+    }
+    XCTAssertEqual(c.snapshot.status,"SEPARATION_OBSERVED")
+    XCTAssertEqual(c.snapshot.evidenceCount,3)
+  }
+  func testTargetPassengerCanCorrelateLastRideFixWithinOneProviderSourceStep() {
+    var c=C(route:route()),p=prior()
+    p.alongRouteMeters=800
+    c.ingest(fix(1,1001),priorRide:p,associatedId:"999999998",vehicles:[],now:1001)
+    collect(&c)
+    XCTAssertEqual(c.snapshot.status,"SEPARATION_OBSERVED")
+  }
+  func testRecentConfirmedRideAndTwoDelayedDepartureSourcesCanOpenFinalWalk() {
+    var c=C(route:route())
+    let recent=R.RecentConfirmation(vehicleId:"999999998",observedAt:1000,
+      alongRouteMeters:800,routeLengthMeters:1000)
+    c.ingest(fix(1,1001),priorRide:nil,associatedId:nil,recentRide:recent,vehicles:[],now:1001)
+    for (index,t) in stride(from:1005.0,through:1035.0,by:5).enumerated() {
+      let rows:[R.Vehicle]
+      if t<1020 { rows=[vehicle(1005,100)] }
+      else if t<1035 { rows=[] }
+      else { rows=[vehicle(1033,320)] }
+      c.ingest(fix(index+2,t),priorRide:nil,associatedId:nil,recentRide:recent,vehicles:rows,now:t)
+    }
+    XCTAssertEqual(c.snapshot.status,"SEPARATION_OBSERVED")
+    XCTAssertEqual(c.snapshot.evidenceCount,2)
+    XCTAssertGreaterThan(c.snapshot.validUntil ?? 0,1035)
+  }
+  func testExpiredRecentRideCannotSeedAlighting() {
+    var c=C(route:route())
+    let expired=R.RecentConfirmation(vehicleId:"999999998",observedAt:900,
+      alongRouteMeters:800,routeLengthMeters:1000)
+    c.ingest(fix(1,1001),priorRide:nil,associatedId:nil,recentRide:expired,vehicles:[],now:1001)
+    c.ingest(fix(2,1005),priorRide:nil,associatedId:nil,vehicles:[vehicle(1005,100)],now:1005)
+    XCTAssertEqual(c.snapshot.reason,"CONFIRMED_TARGET_RIDE_REQUIRED")
+  }
+  func testDelayedDepartureHistoryRejectsSourceGapAndChangedVehicle() {
+    for changedVehicle in [false,true] {
+      var c=C(route:route());seed(&c)
+      c.ingest(fix(2,1005),priorRide:nil,associatedId:nil,vehicles:[vehicle(1005,100)],now:1005)
+      c.ingest(fix(3,1010),priorRide:nil,associatedId:nil,vehicles:[],now:1010)
+      let next=changedVehicle ? vehicle(1035,160,id:"999999997") : vehicle(1041,160)
+      c.ingest(fix(4,changedVehicle ? 1035:1041),priorRide:nil,associatedId:nil,vehicles:[next],now:changedVehicle ? 1035:1041)
+      XCTAssertEqual(c.snapshot.status,"UNAVAILABLE")
+      XCTAssertEqual(c.snapshot.evidenceCount,0)
+    }
+  }
+  func testDelayedDepartureCorrelationStillExpiresWithoutFreshTargetRide() {
+    var c=C(route:route());seed(&c)
+    c.ingest(fix(2,1005),priorRide:nil,associatedId:nil,vehicles:[vehicle(1005,100)],now:1005)
+    c.tick(now:1152)
+    c.ingest(fix(3,1153),priorRide:nil,associatedId:nil,vehicles:[vehicle(1153,200)],now:1153)
+    XCTAssertEqual(c.snapshot.status,"UNAVAILABLE")
+    XCTAssertEqual(c.snapshot.reason,"CONFIRMED_TARGET_RIDE_REQUIRED")
+    XCTAssertEqual(c.snapshot.evidenceCount,0)
+  }
   func testWrongIdentityFutureLocationBadAccuracyRegressionAndExpiredCorrelationFailClosed() {
     for mode in 0..<5 {
       var c=C(route:route());seed(&c)

@@ -35,10 +35,23 @@ struct NoLateJourneySubwayRideCore: Sendable {
     var lastConfirmedAt: Double?
   }
   let route: Route
+  let track: NoLateJourneyRouteNormalizer.SubwayTrack?
+  struct PassengerSegment: Sendable {
+    let from: Int
+    let progress: Double
+    let point: Engine.Coordinate
+    let observedAt: Double
+    let validUntil: Double
+    let confirmedAt: Double
+  }
+  private(set) var passengerSegment: PassengerSegment?
+  private var alongTrack: (at: Double, along: Double, accuracy: Double)?
   let armedAt: Double
   let expiresAt: Double
   private(set) var snapshot = Snapshot()
   private(set) var hasObservedBoardingWait = false
+  // Passenger location at a verified boarding platform, independent of which train is there.
+  private(set) var platformFixAt: Double?
   private var lastSequence: Int64 = -1
   private var lastGPS: (at: Double, coordinate: Engine.Coordinate)?
   private var waitStarted: Double?
@@ -51,7 +64,7 @@ struct NoLateJourneySubwayRideCore: Sendable {
   private var lastNow: Double?
   private var terminated = false
 
-  init(route: Route, armedAt: Double, expiresAt: Double) throws {
+  init(route: Route, armedAt: Double, expiresAt: Double, track: NoLateJourneyRouteNormalizer.SubwayTrack? = nil) throws {
     guard route.legIndex % 2 == 1, (1...29).contains(route.legIndex),
       (2...500).contains(route.stations.count),
       Set(route.stations.map(\.routingId)).count == route.stations.count,
@@ -61,7 +74,7 @@ struct NoLateJourneySubwayRideCore: Sendable {
         && $0.coordinate.longitude.isFinite && (124...132).contains($0.coordinate.longitude) }),
       armedAt.isFinite, expiresAt.isFinite, armedAt > 0, expiresAt > armedAt,
       expiresAt - armedAt <= 7200 else { throw NoLateJourneyAutomaticSession.Failure.invalidRoute }
-    self.route = route; self.armedAt = armedAt; self.expiresAt = expiresAt
+    self.route = route; self.armedAt = armedAt; self.expiresAt = expiresAt; self.track = track
   }
 
   mutating func ingest(_ fix: Engine.Observation, trains: [Train], now: Double) {
@@ -69,6 +82,8 @@ struct NoLateJourneySubwayRideCore: Sendable {
       fix.identity == route.identity, fix.sequence > lastSequence else { return }
     tick(now: now)
     guard !terminated else { return }
+    let previousPlatformFix = platformFixAt
+    platformFixAt = nil
     lastSequence = fix.sequence; snapshot.sequence = min(Int64.max - 1, snapshot.sequence) + 1
     guard fix.observedAt.isFinite, fix.observedAt >= armedAt, fix.observedAt <= now,
       now - fix.observedAt < 15, fix.horizontalAccuracyMeters.isFinite,
@@ -80,7 +95,7 @@ struct NoLateJourneySubwayRideCore: Sendable {
       // CoreLocation may deliver a newer sequence with the same (or an older)
       // observation timestamp. It is not new movement evidence, but it also
       // cannot invalidate the earlier, continuous passenger history.
-      guard elapsed > 0 else { uncertain("PASSENGER_LOCATION_UNRELIABLE"); return }
+      guard elapsed > 0 else { uncertain("PASSENGER_LOCATION_UNRELIABLE", retainTrackChain: true); return }
       guard elapsed <= 20,
         Self.distance(prior.coordinate, fix.coordinate) <= max(80, elapsed * 40) else {
         // Before boarding, a discontinuity must not bridge a missing movement history.
@@ -103,6 +118,10 @@ struct NoLateJourneySubwayRideCore: Sendable {
     guard near.count <= 1 else { uncertain("STATION_OCCURRENCE_AMBIGUOUS"); return }
     if near.first == 0 && association == nil {
       let atBoard = fresh.filter { $0.stopIndex == 0 && [0,1].contains($0.state) }
+      if fix.source == .realLocation,
+        atBoard.count == 1 || previousPlatformFix.map({ fix.observedAt - $0 < 15 }) == true {
+        platformFixAt = fix.observedAt
+      }
       // The train can leave the boarding station before the next passenger GPS fix.
       // A missing station row is not evidence that the passenger's already observed
       // waiting history disappeared. Keep it briefly, but never confirm boarding
@@ -141,7 +160,9 @@ struct NoLateJourneySubwayRideCore: Sendable {
       association != nil || boardDistance / max(1, fix.observedAt - started) >= 3,
       confirmedIndex.map({ index >= $0 && index <= $0 + 1 }) ?? (index == 1),
       association == nil || association == train.id else {
-      uncertain("TRAIN_PASSENGER_CORRELATION_REQUIRED"); return
+      uncertain("TRAIN_PASSENGER_CORRELATION_REQUIRED", retainTrackChain: true)
+      measureBetweenStations(fix, trains: fresh, now: now)
+      return
     }
     association = train.id
     confirmedIndex = index
@@ -151,17 +172,45 @@ struct NoLateJourneySubwayRideCore: Sendable {
     snapshot.observedAt = fix.observedAt
     snapshot.validUntil = min(expiresAt, train.validUntil, fix.observedAt + 15)
     snapshot.lastConfirmedStopIndex = index; snapshot.lastConfirmedAt = fix.observedAt
+    passengerSegment = nil; alongTrack = nil
+    if fix.source == .realLocation, let track, track.stopsAlong.indices.contains(index + 1),
+      let projection = track.project(fix), abs(projection.along - track.stopsAlong[index]) <= 75 {
+      alongTrack = (fix.observedAt, projection.along, fix.horizontalAccuracyMeters)
+    }
+  }
+
+  /// Display-only evidence. Never alters train association, station index/count, separation or boarding.
+  private mutating func measureBetweenStations(_ fix: Engine.Observation, trains: [Train], now: Double) {
+    guard fix.source == .realLocation, let track, let anchor = confirmedIndex, let association,
+      let confirmedAt = snapshot.lastConfirmedAt, now - confirmedAt < 90, let prior = alongTrack,
+      track.stopsAlong.indices.contains(anchor + 1), fix.observedAt > prior.at, fix.observedAt - prior.at <= 15,
+      !trains.contains(where: { $0.id == association && ![anchor,anchor+1].contains($0.stopIndex) }),
+      let projection = track.project(fix) else { alongTrack = nil; return }
+    let from = track.stopsAlong[anchor], to = track.stopsAlong[anchor + 1], delta = projection.along - prior.along
+    guard delta >= -max(3,fix.horizontalAccuracyMeters),
+      delta <= 40 * (fix.observedAt - prior.at) + prior.accuracy + fix.horizontalAccuracyMeters,
+      projection.along >= from - 75, projection.along < to - fix.horizontalAccuracyMeters else { alongTrack = nil; return }
+    alongTrack = (fix.observedAt,projection.along,fix.horizontalAccuracyMeters)
+    guard projection.along - from > max(30,2 * fix.horizontalAccuracyMeters),
+      projection.along - from >= 2 * (fix.observedAt - confirmedAt), to > from else { return }
+    passengerSegment = .init(from:anchor,progress:(projection.along-from)/(to-from),point:projection.point,
+      observedAt:fix.observedAt,validUntil:min(expiresAt,fix.observedAt+15,confirmedAt+90),confirmedAt:confirmedAt)
   }
 
   mutating func tick(now: Double) {
     guard !terminated, now.isFinite, lastNow.map({ now >= $0 }) ?? true else { return }
     lastNow = now
     if now >= expiresAt { stop(); return }
-    if let until = snapshot.validUntil, now >= until { uncertain("SUBWAY_EVIDENCE_STALE") }
+    if let at = platformFixAt, now - at >= 15 { platformFixAt = nil }
+    if let until = snapshot.validUntil, now >= until { uncertain("SUBWAY_EVIDENCE_STALE", retainTrackChain:true) }
+    if let prior = alongTrack, now - prior.at > 15 { alongTrack = nil }
+    if let segment = passengerSegment, now >= segment.validUntil { passengerSegment = nil }
   }
-  mutating func stop() { terminated = true; resetCandidate(); association = nil; confirmedIndex = nil; uncertain("SUBWAY_SESSION_STOPPED"); snapshot.phase = "STOPPED"; snapshot.lastConfirmedStopIndex = nil; snapshot.lastConfirmedAt = nil }
+  mutating func stop() { terminated = true; platformFixAt = nil; resetCandidate(); association = nil; confirmedIndex = nil; uncertain("SUBWAY_SESSION_STOPPED"); snapshot.phase = "STOPPED"; snapshot.lastConfirmedStopIndex = nil; snapshot.lastConfirmedAt = nil }
   private mutating func resetCandidate() { candidate = nil; candidateSource = nil; waitStarted = nil; waitCount = 0; departedAt = nil }
-  private mutating func uncertain(_ reason: String) {
+  private mutating func uncertain(_ reason: String, retainTrackChain: Bool = false) {
+    passengerSegment = nil
+    if !retainTrackChain { alongTrack = nil }
     snapshot.phase = "UNAVAILABLE"; snapshot.reason = reason; snapshot.boardingConfirmed = false
     snapshot.currentStopIndex = nil; snapshot.remainingStops = nil; snapshot.observedAt = nil; snapshot.validUntil = nil
   }

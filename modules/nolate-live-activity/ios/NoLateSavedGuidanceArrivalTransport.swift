@@ -142,7 +142,8 @@ import Foundation
       NoLateAuthenticatedJourneyPathPolicy.allows(path),
       let body = (try? JSONSerialization.jsonObject(with: Data(bodyJSON.utf8))) as? [String: Any],
       let url = URL(string: auth.apiOrigin + path) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
-    if path.hasSuffix("/live-activity"), Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAPNsPilotEnabled") as? Bool != true {
+    if path.hasSuffix("/live-activity"), Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAPNsPilotEnabled") as? Bool != true,
+      Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyProductEnabled") as? Bool != true {
       return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"]
     }
     do {

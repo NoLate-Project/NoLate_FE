@@ -9,6 +9,11 @@ export function isServiceDate(value: string): boolean {
 }
 /** API times carry a Korea offset; use their explicit wall time, independent of device timezone. */
 export function serviceTime(value: string): string { return value.slice(11, 16); }
+export function serviceTimeRange(service: { departureAt: string; arrivalAt: string }): string {
+    const { departureAt, arrivalAt } = service;
+    const arrivalDate = arrivalAt.slice(0, 10) === departureAt.slice(0, 10) ? "" : arrivalAt.slice(5, 10) + " ";
+    return `${serviceTime(departureAt)} → ${arrivalDate}${serviceTime(arrivalAt)}`;
+}
 export function isIntercityBufferMinutes(value: number, minimum: 0 | 5): boolean {
     return Number.isInteger(value) && value >= minimum && value <= 120;
 }

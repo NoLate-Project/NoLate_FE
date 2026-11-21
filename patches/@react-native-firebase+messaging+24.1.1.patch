@@ -1,0 +1,19 @@
+diff --git a/node_modules/@react-native-firebase/messaging/ios/RNFBMessaging/RNFBMessaging+UNUserNotificationCenter.m b/node_modules/@react-native-firebase/messaging/ios/RNFBMessaging/RNFBMessaging+UNUserNotificationCenter.m
+--- a/node_modules/@react-native-firebase/messaging/ios/RNFBMessaging/RNFBMessaging+UNUserNotificationCenter.m
++++ b/node_modules/@react-native-firebase/messaging/ios/RNFBMessaging/RNFBMessaging+UNUserNotificationCenter.m
+@@ -143,10 +143,13 @@
+     [_originalDelegate userNotificationCenter:center
+                       willPresentNotification:notification
+                         withCompletionHandler:completionHandler];
++    // Local alerts are presented by Expo's asynchronous handler. The Firebase
++    // foreground options apply to remote pushes, including when no delegate exists.
++    if (![notification.request.trigger isKindOfClass:[UNPushNotificationTrigger class]]) {
++      return;
++    }
+   }
+ 
+-  // Don't consume completionHandler before the _originalDelegate has been
+-  // processed
+   completionHandler(presentationOptions);
+ }
+ 

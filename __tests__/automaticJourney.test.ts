@@ -14,10 +14,11 @@ const mockNative = {
     refreshAutomaticJourneyCredentials: jest.fn(),
     configureAutomaticJourneyPushPilot: jest.fn(),
     configureAutomaticJourneyNoticeMode: jest.fn(),
+    configureRunningJourneyNoticeMode: jest.fn(),
     reconcileAutomaticJourneyTerminal: jest.fn(),
 };
 const mockRequire = jest.fn(() => mockNative);
-jest.mock("expo-modules-core", () => ({ requireOptionalNativeModule: () => mockRequire() }), { virtual: true });
+jest.mock("expo-modules-core", () => ({ requireOptionalNativeModule: () => mockRequire() }));
 const mockGetEnv = jest.fn((_key: string): string | undefined => undefined);
 jest.mock("../src/api/env", () => ({ getEnv: (key: string) => mockGetEnv(key) }));
 const runtime = globalThis as typeof globalThis & { __DEV__: boolean };
@@ -103,6 +104,11 @@ test('official subway crosswalk stays in a DEVICE saved-route binding and reject
             routeId: '100100185', direction: '상행', stationCount: 2, firstStopSequence: 10, lastStopSequence: 12 } })).toBeNull();
 });
 test('notice mode requires explicit supported native acceptance and never requests OS permission', async () => {
+    mockNative.configureRunningJourneyNoticeMode.mockResolvedValueOnce({ accepted: true });
+    await expect(configureAutomaticJourneyNoticeMode('OFF', 'bound-session')).resolves.toBeUndefined();
+    expect(mockNative.configureRunningJourneyNoticeMode).toHaveBeenCalledWith('OFF', 'bound-session');
+    mockNative.configureRunningJourneyNoticeMode.mockResolvedValueOnce({ accepted: false });
+    await expect(configureAutomaticJourneyNoticeMode('NOTIFICATIONS', 'stale-session')).rejects.toThrow('GUIDANCE_NOTICE_MODE_UNAVAILABLE');
     mockNative.configureAutomaticJourneyNoticeMode.mockResolvedValueOnce({ accepted: true });
     await expect(configureAutomaticJourneyNoticeMode('NOTIFICATIONS')).resolves.toBeUndefined();
     expect(mockNative.configureAutomaticJourneyNoticeMode).toHaveBeenCalledWith('NOTIFICATIONS');
@@ -433,4 +439,27 @@ describe("automatic server transport", () => {
                 .rejects.toThrow('INVALID_AUTOMATIC_SERVER_RESPONSE');
         }
     });
+});
+
+test('transfer prepare binds every indexed crosswalk to its matching saved transit leg', async () => {
+    const request = { requestId: binding.sessionId, clientOwnerId: binding.clientOwnerId, routeInputDigest: binding.routeInputDigest,
+        execution: 'DEVICE' as const, routeInputJSON: JSON.stringify({ legs: ['WALK','BUS','WALK','SUBWAY','WALK'].map((kind,index) => ({ index, kind })) }) };
+    const bus = { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK', busLegIndex: 1,
+        routeId: '100100185', direction: '상행', stationCount: 2, firstStopSequence: 10, lastStopSequence: 12 };
+    const train = { schemaVersion: 1, identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK', subwayLegIndex: 3,
+        providerRouteId: '1000:3', startRoutingStationId: '331', endRoutingStationId: '327', stationCount: 4 };
+    const response = { ...binding, execution: 'DEVICE', state:'ARMED', sequence:0, savedRouteValidated:true,
+        preparedAt: new Date(binding.preparedAtEpochSeconds*1000).toISOString(), expiresAt: new Date(binding.expiresAtEpochSeconds*1000).toISOString(),
+        officialBusAdmissions: [bus], officialSubwayAdmissions: [train] };
+    const prepare = (patch: Record<string, unknown>) => createAutomaticJourneyTransport(async () => ({ success:true, data:{...response,...patch} }),
+        {apiOrigin:'https://api.example.com',authMemberId:7,loginGeneration:2}).prepare(binding.scheduleId,request);
+    expect(await prepare({})).toMatchObject({officialBusAdmissions:[bus],officialSubwayAdmissions:[train]});
+    for (const patch of [{officialBusAdmissions:null, officialSubwayAdmissions:null},
+        {officialBusAdmissions:null, officialSubwayAdmissions:null, officialBusAdmission:bus},
+        {officialSubwayAdmissions:[]}, {officialBusAdmission:bus}, {officialBusAdmissions:null},
+        {officialSubwayAdmissions:[{...train, subwayLegIndex:1}]}, {officialSubwayAdmissions:[{...train, subwayLegIndex:5}]},
+        {officialBusAdmissions:[{...bus,busLegIndex:3}], officialSubwayAdmissions:[{...train,subwayLegIndex:1}]},
+        {officialBusAdmissions:[], officialSubwayAdmissions:[train,{...train,subwayLegIndex:1}]}]) {
+        await expect(prepare(patch)).rejects.toThrow('INVALID_AUTOMATIC_SERVER_RESPONSE');
+    }
 });

@@ -1,0 +1,618 @@
+{
+  "date": "2026-11-19",
+  "status": "automatic_departure_and_fixed_fence_verified_official_full_trip_not_passed",
+  "wholeGoalComplete": false,
+  "roadmapCore": "0: actual saved ODsay subway -> official station path/train -> native passenger judgment -> product detail/lock",
+  "environment": {
+    "simulator": "8858D769-7107-4032-9A90-7C58AEB96C56",
+    "apiPort": 5528,
+    "normalProductAuthentication": true,
+    "isolatedMemoryDatabase": true,
+    "injectedPassengerGPS": true,
+    "forcedPhaseTransitions": false,
+    "officialObservationTimestampsUnchanged": true,
+    "lockScreenIncluded": false,
+    "diskSpaceDuringInvestigation": "3.7GiB available during first diagnosis; now31GiB; disk cause remains unproven"
+  },
+  "capture": {
+    "provider": "LIVE_ODSAY_IOS_REQUEST",
+    "optionCount": 14,
+    "selectedLegs": [
+      "WALK",
+      "SUBWAY",
+      "WALK"
+    ],
+    "stations": [
+      "강남",
+      "역삼",
+      "선릉"
+    ],
+    "rawRoutingIds": [
+      "222",
+      "221",
+      "220"
+    ],
+    "qualityMetadata": "Production routingService decorator applied to unchanged provider leg data; no arbitrary admission relabelling"
+  },
+  "officialContract": {
+    "tests": 1,
+    "failures": 0,
+    "skipped": 0,
+    "durationSeconds": 2.764,
+    "officialPathMatched": true
+  },
+  "initialUI": {
+    "root": "/private/tmp/nolate-official-subway-product-e2e.r0oz73m8/trip-01",
+    "exit": 65,
+    "armed": false,
+    "gpsStarted": false,
+    "reason": "Test seed omitted quality/service metadata normally attached by product routingService. Walking snapshot rejected before ARMED.",
+    "coordinatorExitZeroIsNotAUIReceipt": true
+  },
+  "correction": {
+    "normalOwnedPlanUpdateHttp": 200,
+    "liveTmapWalkingSnapshotHttp": 200,
+    "walkCount": 2,
+    "productionDecorationTestExit": 0,
+    "gpsCoordinatorUses": "walkingSnapshot.walks[].points, the same authorized TMAP geometry consumed natively"
+  },
+  "focusedCompileFix": {
+    "exit": 0,
+    "tests": 111,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "currentUI": {
+    "root": "/private/tmp/nolate-official-subway-product-e2e.r0oz73m8/trip-02",
+    "status": "failed",
+    "actualMarkersObserved": [
+      "E2E_SUBWAY_SIGNAL_MATCHED",
+      "E2E_GPS_ARMED"
+    ],
+    "meaning": "Official train references reached native/UI; passenger boarding and current station remain unproven",
+    "exit": 65,
+    "tests": 1,
+    "failures": 1,
+    "durationSeconds": 1015.933,
+    "gpsCleared": true,
+    "automaticDepartureObserved": false,
+    "nativeFailure": {
+      "reason": "AUTOMATIC_CHECKPOINT_WRITE_FAILED",
+      "timestamp": "2026-11-19 23:43:39.431675+0900",
+      "processID": 87609,
+      "proof": "/private/tmp/nolate-official-subway-product-e2e.r0oz73m8/unexpected-end-proof.json",
+      "checkpointAfterFailure": "directory exists but checkpoint removed by fail-closed revocation",
+      "underlyingStageAndError": "not present in prior binary; safe stage/domain/code trace added for reproduction"
+    }
+  },
+  "artifact": {
+    "mainBinarySha256": "f6bf1cc51e1e0fdf5d29d2642cda66d98bd7d82bee1074a659962163afaabc9e",
+    "mainBundleSha256": "563f5fc9eec17661ce8d1c6d6dc3ccca6438e019f885117ef86fbab956f85521",
+    "codesignExit": 0,
+    "sourceScope": "Same immutable Release candidate that passed owned five-leg trip; not claiming later unrelated frontend edits are bundled",
+    "app": "/private/tmp/nolate-official-subway-product-e2e.r0oz73m8/frozen-app/NoLateFE.app"
+  },
+  "privateRoot": "/private/tmp/nolate-official-subway-product-e2e.r0oz73m8",
+  "limits": [
+    "Actual lock-screen validation remains required; the shared Device Hub surface changed target and UI manipulation was stopped",
+    "Does not prove actual passenger GPS, nationwide rail coverage, field arrival accuracy, APNs or voice delivery",
+    "Full roadmap0–6 remains incomplete"
+  ],
+  "sourceHashes": {
+    "backendHarness": "192108d0913f685c52ff262a2a5a2fab7f2ea2bc905c41106327044dcaf9be3f",
+    "frozenXCTest": "02e48a379f430b157f5928bba0582863a3669ab7da563e473cbf1844bb2894cb"
+  },
+  "updatedAt": "2026-11-20",
+  "offlinePersistenceReplay": {
+    "host": "macOS Swift",
+    "tests": 16,
+    "failures": 0,
+    "freshSavedFirstWalkSamples": 107,
+    "result": "checkpoint round-trip passes on host; does not reproduce iOS write failure or prove official boarding"
+  },
+  "checkpointInvestigation": {
+    "root": "/private/tmp/nolate-official-subway-product-e2e.9ixgsfzo",
+    "serverReady": true,
+    "normalProductAPI": true,
+    "nativeDiagnosticReleaseBuildExit": 0,
+    "artifact": {
+      "app": "/private/tmp/nolate-official-subway-product-e2e.9ixgsfzo/frozen-app-02/NoLateFE.app",
+      "mainBinarySha256": "3a1051116ec43362aaaa0fa73829a12080bfc3f34a7f0b7f4a969b2bc000ac59",
+      "mainBundleSha256": "563f5fc9eec17661ce8d1c6d6dc3ccca6438e019f885117ef86fbab956f85521",
+      "codesignExit": 0,
+      "scope": "Current native diagnostic including Runtime/store stage trace with prior frozen JS retained",
+      "sourceHashes": {
+        "modules/nolate-live-activity/ios/NoLateJourneyAutomaticRuntime.swift": "ec627b78922b214508d4c607abc89a1b537b7ad10689b9e62b54fa200f30ee90",
+        "modules/nolate-live-activity/ios/NoLateJourneyAutomaticStore.swift": "5c8ac4bf424347e0a4c8c13a3978a78389ee4d6d91921d63dad01c21d5979f21",
+        "e2e/ios/NoLateE2ETests.swift": "d0d65509d7421611f4effe23d06fcd46868791298f0521c1414e902ed648bde7"
+      }
+    },
+    "status": "ios_persistence_not_reproduced_stale_backend_fence_identified",
+    "underlyingCauseConfirmed": false,
+    "uiFailureNowStopsOnEndedGuidance": true,
+    "initialInstrumentedUI": {
+      "exit": 65,
+      "tests": 1,
+      "failures": 1,
+      "armed": false,
+      "gpsStarted": false,
+      "reason": "PENDING_STOP_BLOCKS_PREPARE: prior failed session left an unsent stop receipt in the reused app container while new H2 server has a fresh lifetime",
+      "acceptedAsPersistenceReproduction": false,
+      "correction": "Create a dedicated simulator with clean app data; keep pending-stop guard and preserve previous data"
+    },
+    "freshSimulator": "72E1C182-8FBA-4BAD-BC27-170AE1DF2323",
+    "traceScope": [
+      "Store encoding/payload_limit/atomic_write",
+      "Runtime checkpoint URL/parent directory/store stage; domain/code only, no userInfo or payload"
+    ],
+    "currentUI": {
+      "root": "/private/tmp/nolate-official-subway-product-e2e.9ixgsfzo/trip-02",
+      "status": "interrupted_not_passed",
+      "udid": "72E1C182-8FBA-4BAD-BC27-170AE1DF2323",
+      "locationPermissionPreset": true,
+      "forcedPhaseTransitions": false,
+      "reason": "Frozen backend has strict revision check predating current ACTIVE allowance; diagnostic GPS coordinator also mishandled409 data:null. Explicit owned xcode cancellation and GPS/app cleanup completed."
+    },
+    "persistence": {
+      "readAt": 1795102329.4009988,
+      "initialContainerUnchanged": true,
+      "state": "ACTIVE",
+      "quality": "UNCERTAIN",
+      "reason": "STALE_OBSERVATION",
+      "lastObservationSequence": 57,
+      "phase": "boarding-wait",
+      "checkpointBytes": 10376,
+      "firstActiveAt": 1795102185.605876,
+      "previousFailureNotReproduced": true,
+      "underlyingPreviousCauseStillUnconfirmed": true
+    },
+    "notificationRevisionProof": {
+      "http": 200,
+      "at": 1795102639.167613,
+      "originalRevision": 1,
+      "currentRevision": 2,
+      "fingerprintUnchanged": true,
+      "nativeDepartureAcknowledged": true,
+      "frozenFenceContainsActiveException": false,
+      "currentCompiledFenceContainsActiveException": true,
+      "meaning": "Frozen candidate rejects notification-only row revision after automatic departure; no route or ownership change observed"
+    },
+    "priorFailureUnderlyingCauseStillUnconfirmed": true
+  },
+  "fixedFenceProductRetry": {
+    "root": "/private/tmp/nolate-official-subway-product-e2e.cj8r6z8d",
+    "status": "terminal_failed_at_current_station_timeout",
+    "regression": {
+      "counts": {
+        "tests": 40,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "resultExit": 0,
+      "compiledFenceSha256": "1164797ba57cc2aabbcc6440c634a65e89f7b653e3e1bb8773d60d39e9999fb2",
+      "sourceAlreadyModifiedInSharedWorkspace": true,
+      "noOwnershipOrRouteFingerprintWeakening": true
+    },
+    "artifact": {
+      "app": "/private/tmp/nolate-official-subway-product-e2e.9ixgsfzo/frozen-app-02/NoLateFE.app",
+      "mainBinarySha256": "3a1051116ec43362aaaa0fa73829a12080bfc3f34a7f0b7f4a969b2bc000ac59",
+      "mainBundleSha256": "563f5fc9eec17661ce8d1c6d6dc3ccca6438e019f885117ef86fbab956f85521",
+      "codesignExit": 0,
+      "scope": "Current native diagnostic including Runtime/store stage trace with prior frozen JS retained",
+      "sourceHashes": {
+        "modules/nolate-live-activity/ios/NoLateJourneyAutomaticRuntime.swift": "ec627b78922b214508d4c607abc89a1b537b7ad10689b9e62b54fa200f30ee90",
+        "modules/nolate-live-activity/ios/NoLateJourneyAutomaticStore.swift": "5c8ac4bf424347e0a4c8c13a3978a78389ee4d6d91921d63dad01c21d5979f21",
+        "e2e/ios/NoLateE2ETests.swift": "d0d65509d7421611f4effe23d06fcd46868791298f0521c1414e902ed648bde7"
+      }
+    },
+    "scope": "Normal saved-route trip with current fixed JPA subway fence; previous runtime classes otherwise frozen; real official providers and unchanged clocks; native diagnostic/previous JS bundle, not a final latest-source Release receipt",
+    "lockScreenIncluded": false,
+    "forcedPhaseTransitions": false,
+    "passClaim": false,
+    "initialCompileFailure": {
+      "uiExit": 65,
+      "testsExecuted": 0,
+      "reason": "Shared current Xcode project gained an additional CarNavigationProductTests.swift input after frozen main test source; copied project/source set was incomplete",
+      "correction": "Reuse matching frozen Xcode project and main test source from prior owned run",
+      "gpsStarted": false,
+      "gpsCleared": true,
+      "backendSameFixedFence": true
+    },
+    "currentUI": {
+      "root": "/private/tmp/nolate-official-subway-product-e2e.cj8r6z8d/trip-02",
+      "status": "failed",
+      "frozenProjectMatchesFrozenTestSource": true,
+      "exit": 65,
+      "tests": 1,
+      "failures": 1,
+      "durationSeconds": 1018.305,
+      "gpsCleared": true
+    },
+    "nativePolicyRegression": {
+      "exit": 0,
+      "tests": 446,
+      "skipped": 3,
+      "failures": 0,
+      "runtimePlatform": "macOS Swift policy suite; iOS UIKit runtime covered by signed diagnostic build and separate simulator run"
+    },
+    "postDeparture": {
+      "checkedAt": 1795103188.891969,
+      "phase": "boarding-wait",
+      "elapsedSeconds": 309,
+      "nativeStatusEvents": [
+        {
+          "at": 1795102990.675236,
+          "status": "ARMED"
+        },
+        {
+          "at": 1795103045.683519,
+          "status": "ACTIVE"
+        }
+      ],
+      "allReplies": 17,
+      "afterAutomaticDeparture": 12,
+      "afterDepartureHttpCounts": {
+        "200": 12
+      },
+      "officialNativeInputs": 0,
+      "observedStatuses": {
+        "SERVICE_PATTERN_OR_FRESHNESS_MISMATCH": 17
+      },
+      "wholeTripPassed": false,
+      "noPhaseAPIUsed": true
+    },
+    "separateProviderReadOnlyDiagnostic": {
+      "http": 200,
+      "checkedAt": 1795103495.4997172,
+      "rows": 14,
+      "freshWithin30Seconds": 8,
+      "freshAtSavedSegment": [],
+      "terminalNames": {
+        "신도림": 2,
+        "성수종착": 3,
+        "삼성": 2,
+        "홍대입구": 2,
+        "을지로입구": 2,
+        "서울대입구": 2,
+        "성수지선": 1
+      },
+      "errorCode": "INFO-000"
+    },
+    "final": {
+      "uiExit": 65,
+      "tests": 1,
+      "failures": 1,
+      "durationSeconds": 1018.305,
+      "wholeTripPassed": false,
+      "reason": "900-second intermediate-station expectation timed out; no accepted live train input, no boarding/current-station proof",
+      "nativeAutomaticDeparture": true,
+      "afterDepartureHttpBeforeCleanup": {
+        "200": 75
+      },
+      "repliesBeforeCleanup": 80,
+      "acceptedOfficialTrainInputs": 0,
+      "providerStatuses": {
+        "SERVICE_PATTERN_OR_FRESHNESS_MISMATCH": 80
+      },
+      "safeNativeErrors": [],
+      "checkpointFailureReproduced": false,
+      "priorCheckpointFailureCauseStillUnconfirmed": true,
+      "initialContainerUnchanged": true,
+      "cleanup": {
+        "normalUIStopTapped": true,
+        "nativeCheckpointRevoked": true,
+        "nativeCheckpointHasValue": false,
+        "gpsCleared": true
+      },
+      "lockScreenTested": false,
+      "simulatedPassengerGPS": true,
+      "forcedPhaseAPI": false
+    }
+  },
+  "currentNext": "One-tap departure is repaired and reached native ARMED and ACTIVE in the normal simulator app. Continue the same-train and lock-screen verification against suitable fresh official platform and intermediate-station input.",
+  "platformReplay20261120": {
+    "source": "Two immutable real Seoul platform observations from the November 19 Gangnam route",
+    "originalValidityRemainingSeconds": [
+      9.564,
+      9.379
+    ],
+    "previousDriverMinimumSeconds": 14,
+    "driverOfflineTests": 15,
+    "driverFailures": 0,
+    "nativeHostReplay": {
+      "environment": "macOS arm64, production Swift ride policy; simulated platform GPS",
+      "originalSessionDigestRejected": 2,
+      "reconstructedWrapperDigestUsedForPositiveControl": true,
+      "sourceClocksAndStationTrainIdentitiesChanged": false,
+      "waitingFixes": 6,
+      "confirmedRiding": false,
+      "currentStationConfirmed": false,
+      "duplicateRowsRejected": 2,
+      "expiredRowsRejected": 2
+    },
+    "limitations": "Same-station observations only. Next-station positive control was synthetic. No live full-trip or lock-screen evidence from this replay.",
+    "receipts": [
+      "/private/tmp/nolate-official-subway-driver-K3EocZZr/proof.json",
+      "/private/tmp/nolate-official-subway-driver-K3EocZZr/swift/validation.json"
+    ]
+  },
+  "isolatedLockControl20261120": {
+    "simulator": "iOS 27, newly created dedicated simulator",
+    "tests": 1,
+    "failures": 0,
+    "seconds": 13.533,
+    "scopedInput": "Pinned AXe v2.0.4 with explicit UDID",
+    "observed": "SpringBoard coversheet, date/time and unlock gesture; after swipe, cover disappeared and Home icons returned.",
+    "productInstalledOnThisDevice": false,
+    "productLiveActivityVerified": false,
+    "proof": "/private/tmp/nolate-simlock-go_ij1uu/verified-lock-proof.json",
+    "driverHandshake": {
+      "offlineTestsIncludingGPS": 24,
+      "failures": 0,
+      "skipped": 0,
+      "frozenXCTestTypecheck": "passed on iOS Simulator SDK",
+      "proof": "/private/tmp/nolate-official-subway-driver-K3EocZZr/lock-handshake-validation.json",
+      "releaseMovementAfter": "independent cover/date/clock, exact station and alighting cue observed, then verified cover dismissal and NoLate foreground"
+    }
+  },
+  "publicLine2Preflight20261120": {
+    "transport": {
+      "checkedAt": "2026-11-20T04:58:39.240586+09:00",
+      "hostname": "swopenapi.seoul.go.kr",
+      "officialDocs": "https://data.seoul.go.kr/dataList/OA-12601/A/1/datasetView.do",
+      "privateCredentialSent": false,
+      "tls": "TimeoutError",
+      "httpStatus": 200,
+      "code": "INFO-200",
+      "rows": 0
+    },
+    "normalBackendClient": {
+      "capturedAt": "2026-11-20T05:07:46.868772+09:00",
+      "source": "SeoulTransitArrivalClient.getSubwayTrainObservations",
+      "providerQuery": "public sample / line 2 / 0 through 5",
+      "privateCredentialSent": false,
+      "status": "NO_TRAINS",
+      "returnedObservationCount": 0,
+      "rejections": 0,
+      "passengerAssociated": false,
+      "passengerPositionAvailable": false,
+      "sourceHashes": {
+        "src/main/kotlin/com/noLate/transit/infrastructure/SeoulTransitArrivalClient.kt": "7490c127f08b2ed963681fe163d46d063280a467d9f6297b389f3ae6d797c1c4",
+        "src/main/kotlin/com/noLate/transit/infrastructure/SeoulSubwayTrainObservationParser.kt": "22161c344c8bb0578d09b5eb3698f9495051d66917d494e1c0a9d5af7e6540e6",
+        "src/main/kotlin/com/noLate/transit/domain/SeoulSubwayTrainObservation.kt": "1398ea1e6b096b6bb6898f236127064214267c49534317464d798cb024814d51"
+      }
+    },
+    "limit": "The provider sample supplied no observations to this request. No passenger progression or lock-screen result can be inferred. The saved-route full live test remains open.",
+    "evidenceRoot": "/private/tmp/nolate-rail-share-h0pr1rc9/public-client",
+    "secondSample": {
+      "capturedAt": "2026-11-20T05:20:12.310806+09:00",
+      "source": "SeoulTransitArrivalClient.getSubwayTrainObservations",
+      "providerQuery": "public sample / line 2 / 0 through 5",
+      "privateCredentialSent": false,
+      "status": "NO_TRAINS",
+      "returnedObservationCount": 0,
+      "rejections": 0,
+      "passengerAssociated": false,
+      "passengerPositionAvailable": false,
+      "sourceHashes": {
+        "src/main/kotlin/com/noLate/transit/infrastructure/SeoulTransitArrivalClient.kt": "7490c127f08b2ed963681fe163d46d063280a467d9f6297b389f3ae6d797c1c4",
+        "src/main/kotlin/com/noLate/transit/infrastructure/SeoulSubwayTrainObservationParser.kt": "22161c344c8bb0578d09b5eb3698f9495051d66917d494e1c0a9d5af7e6540e6",
+        "src/main/kotlin/com/noLate/transit/domain/SeoulSubwayTrainObservation.kt": "1398ea1e6b096b6bb6898f236127064214267c49534317464d798cb024814d51"
+      }
+    },
+    "morningPublicClientSamples": [
+      {
+        "capturedAt": "2026-11-20T05:27:41.252759+09:00",
+        "status": "NO_TRAINS",
+        "returnedObservationCount": 0,
+        "privateCredentialSent": false,
+        "passengerAssociated": false,
+        "passengerPositionAvailable": false
+      },
+      {
+        "capturedAt": "2026-11-20T05:39:26.218963+09:00",
+        "status": "INCOMPLETE_PAGE",
+        "returnedObservationCount": 0,
+        "privateCredentialSent": false,
+        "passengerAssociated": false,
+        "passengerPositionAvailable": false
+      }
+    ],
+    "morningPublicClientLimit": "The official public sample changed from no train rows to an incomplete page. The product correctly withheld passenger and train associations for the partial result."
+  },
+  "officialEarlyMorningDeparture20261120": {
+    "route": "강남 → 역삼 → 선릉",
+    "officialPathContract": "The previously saved route passed the current live Seoul station-order and direction contract.",
+    "firstAttempt": "The installed railway-test JS bundle did not expose the authenticated journey departure action.",
+    "secondAttempt": {
+      "ios": "27.0",
+      "environment": "isolated H2, genuine configured Seoul source, simulated passenger location",
+      "oneTapNavigationOpened": true,
+      "nativeCheckpointStatus": "ARMED",
+      "terminalNativeCheckpointRevoked": true,
+      "observations": [
+        {
+          "status": "TRAIN_OBSERVATIONS_UNAVAILABLE",
+          "arrivalHint": true,
+          "matchedPositionAvailable": false
+        },
+        {
+          "status": "SERVICE_PATTERN_OR_FRESHNESS_MISMATCH",
+          "arrivalHint": true,
+          "matchedPositionAvailable": false
+        }
+      ],
+      "result": "The frozen UI test expected a separate preparation view on the departure path. The installed app uses the current single-tap navigation flow. No intermediate station, completed trip or lock-screen riding proof in this run.",
+      "locationCleared": true,
+      "serverStopped": true,
+      "privateEvidence": "/private/tmp/nolate-official-subway-product-e2e.7kkz3huq"
+    },
+    "currentHarnessCorrection": "Use the current one-tap app UI test and its project sources. The same independent station, freshness, GPS and lock proof gates remain in force.",
+    "currentUIRetry": {
+      "uiSource": "Current repository one-tap navigation XCTest and its project. Only the independent pinned simulator lock capture block was replaced in the private test copy.",
+      "uiTestSHA256": "ff0e6f82d6dd3bc65a8a541d1ca6b4b2e2417bdc6f7683003ccdd9b6ed38b06d",
+      "ios": "27.0",
+      "result": "failed",
+      "userFlow": "The normal departure action opened the guidance preparation view. The walking route and Seoul arrivals appeared. The screen reported a guidance preparation failure before the native session armed.",
+      "nativeSessionArmed": false,
+      "officialSameTrainPositionConfirmed": false,
+      "lockCardConfirmed": false,
+      "serverStopped": true,
+      "simulatedGPSCleared": true,
+      "evidence": "/private/tmp/nolate-official-subway-product-e2e.r18ooxn3"
+    }
+  },
+  "oneTapForegroundCheckpoint20261120": {
+    "ios": "27.0, simulator",
+    "firstReadOnlyDiagnostic": {
+      "error": "AUTOMATIC_OPERATION_PENDING",
+      "xcresult": "/private/tmp/nolate-official-subway-product-e2e.4x_ymwok/trip-gated/result.xcresult",
+      "armed": false,
+      "serverStopped": true
+    },
+    "confirmedCollision": {
+      "error": "RECONCILING_STAGE_1",
+      "xcresult": "/private/tmp/nolate-official-subway-product-e2e.rndqt9nd/trip-gated/result.xcresult",
+      "armed": false,
+      "serverStopped": true
+    },
+    "diagnosticScope": "Both runs modified only the display of bounded error codes in private copies of the same simulator bundle. No stage, position, admission, or server response was supplied by diagnostics.",
+    "cause": "A saved-route departure can reach prepare while a foreground checkpoint check is still active. The first guard mistook that check for a conflicting mutation and discarded the tap.",
+    "fix": "A live departure intent waits for the in-flight checkpoint, then checks cancellation, generation, outstanding stops and session ownership before it can arm. Competing mutations remain exclusive.",
+    "regression": {
+      "prefixedTestFailuresBeforeFix": 3,
+      "specificBeforeFailure": "AUTOMATIC_OPERATION_PENDING for continue, canceled view and retained checkpoint scenarios",
+      "suitesPassed": 9,
+      "testsPassed": 344,
+      "testsFailed": 0,
+      "typesPassed": true,
+      "lintPassed": true,
+      "cases": [
+        "continue a single deliberate departure after reconciliation",
+        "cancel if the view closes or a stop is issued",
+        "preserve a retained checkpoint",
+        "admit only one of two simultaneous departures",
+        "propagate the actual iOS permission-request cancellation signal"
+      ]
+    },
+    "privateRoot": "/private/tmp/nolate-departure-issue-h5nyy2bm",
+    "screenshots": {
+      "docs/evidence/journey-subway-departure-20261120/01-prepare-stalled.png": "86d32fb973d9e202a481067baf49912978bd7663afa9e7a6292d09ce793f1ed9",
+      "docs/evidence/journey-subway-departure-20261120/02-departure-armed.png": "da994fa3b3114b7c061eaf3ec1d648bfd775ca85061e398e276007da4c7da9c4"
+    },
+    "completeFrontendTestTask": {
+      "suites": 380,
+      "tests": 4132,
+      "failed": 0,
+      "skipped": 0,
+      "including": "Cancel after the server created the session and before iOS starts it. The coordinator stops the server session."
+    },
+    "regularRelease27": {
+      "scope": "Real one-tap departure and independent simulated passenger walking in an isolated authenticated app, real official transit responses",
+      "nativeArmed": true,
+      "nativeActive": true,
+      "departureAcknowledged": true,
+      "reachedSimulatedPlatform": true,
+      "evidence": "/private/tmp/nolate-official-subway-product-e2e.p2yo3w8g",
+      "uiResultForWholeTrip": "failed at intermediate station after 900 s; departure and walking passed",
+      "responseCounts": {
+        "TRAIN_REFERENCES_ONLY": 19,
+        "SERVICE_PATTERN_OR_FRESHNESS_MISMATCH": 49,
+        "TRAIN_OBSERVATIONS_UNAVAILABLE": 13
+      },
+      "secondsRemainingForUniquePlatformObservationAtReceipt": [
+        5.62,
+        7.1
+      ],
+      "driverGate": "Three distinct fresh native passenger fixes spanning eight seconds during the same valid candidate window at the platform.",
+      "driverSelectedTrain": false,
+      "intermediateStationProven": false,
+      "lockScreenCurrentStationProven": false,
+      "normalStopConfirmed": true,
+      "gpsCleared": true,
+      "passengerFixesDuringLaterWindow": [
+        {
+          "remainingValidSecondsAtReceipt": 7.1,
+          "freshNativeFixes": 4,
+          "spanSeconds": 5.14
+        }
+      ],
+      "interpretation": "The private driver requires all eight seconds within a fresh platform window before it moves the simulated passenger. The native core requires three qualifying platform fixes; it checks elapsed time when keeping a wait across a missing train row and again after leaving. The live attempt never started a ride. No conclusion about a carrier failure or native boarding rejection follows."
+    },
+    "swiftPolicy": {
+      "totalPassed": 453,
+      "failures": 0,
+      "skipped": 0,
+      "runtime": "macOS Swift test runner",
+      "ownedInput": "The normal saved ODsay route with TMAP walks and the iOS 27 armed checkpoint from this run supplied all three opt-in cases.",
+      "role": "Independent deterministic native policy checks, including checkpoint persistence and final walking. Physical or live passenger boarding is a separate result."
+    },
+    "backendRegression": {
+      "scope": "Current isolated backend source snapshot with all required repo inputs, H2 and non-MySQL tests",
+      "suites": 401,
+      "passed": 3019,
+      "failed": 0,
+      "skipped": 6,
+      "additionalLiveChecks": [
+        {
+          "class": "SeoulMetroShortestPathLiveTest",
+          "casePrefix": "official daytime",
+          "passed": true
+        },
+        {
+          "class": "TmapServerPedestrianProviderTest",
+          "casePrefix": "opt in live Tmap",
+          "passed": true
+        },
+        {
+          "class": "LiveOfficialSubwayServicePatternCatalogLiveTest",
+          "casePrefix": "persisted ODsay",
+          "passed": true
+        }
+      ],
+      "liveScope": "HTTPS TMAP walking, official daytime subway path, and persisted ODsay rail route against official path. Three opt-in live cases using the Seoul arrival feed were not rerun individually.",
+      "mysql": "Testcontainers requires a responding Docker engine. Its local socket ping timed out and the default run was stopped in Docker discovery. MySQL tests remain unverified."
+    },
+    "regularRelease26": {
+      "scope": "iOS 26.5 simulator, same signed code and test route, fresh isolated local backend for each run",
+      "cases": [
+        {
+          "xcresult": "/private/tmp/nolate-official-subway-product-e2e.2gasj7i9/short-26/result.xcresult",
+          "oneTapRequested": true,
+          "armed": false,
+          "status": "timed_out_at_saved_detail_starting"
+        },
+        {
+          "xcresult": "/private/tmp/nolate-official-subway-product-e2e.x3j63bok/short-26/result.xcresult",
+          "oneTapRequested": true,
+          "armed": false,
+          "status": "timed_out_at_saved_detail_starting"
+        }
+      ],
+      "investigation": "The app was showing the saved-route check during both runs. No native departure was asserted.",
+      "diagnostic": {
+        "xcresult": "/private/tmp/nolate-official-subway-product-e2e.cbvfdtn5/short-26/result.xcresult",
+        "message": "QA_STATE 11011010011100111 NONE services none compose",
+        "passiveStage": "Expo hasServicesEnabledAsync",
+        "nativeStack": "CLClientIsLocationServicesEnabled waiting for a synchronous XPC reply. Simulator locationd was waiting on a background scheduler submission.",
+        "consentStageReached": false,
+        "routeWalkingConnected": true,
+        "routeAssessed": true
+      },
+      "fix": "Time-bound a passive read of iOS location service and authorization state. Return a distinct recoverable status with explicit retry after twelve seconds. The system permission prompt retains unlimited user decision time and no failed passive check can start a session.",
+      "regression": {
+        "beforeFailingCases": 2,
+        "afterTestsPassed": 4136,
+        "suites": 381,
+        "skips": 0,
+        "typecheck": true,
+        "lintErrors": 0,
+        "lintWarnings": 1,
+        "warning": "existing no-void warning in SavedJourneyTrialControls at the automatic departure call",
+        "signedRelease": "/private/tmp/nolate-departure-issue-h5nyy2bm/product-location/proof.json"
+      }
+    }
+  }
+}

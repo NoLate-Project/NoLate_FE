@@ -276,7 +276,7 @@ export function buildFocusedLegOverlay(
 
 /** 현재 이동 수단·줌·테마 정책에 맞춰 `styleNonTransitOverlay` 선 표현을 적용합니다. */
 export function styleNonTransitOverlay(
-    route: RouteAlternativeOption,
+    route: Pick<RouteAlternativeOption, "mode">,
     overlay: Pick<TmapPathOverlay, "id" | "coords">,
     mapZoom: number,
     isDark: boolean
@@ -356,12 +356,7 @@ export function buildRouteInfoPathOverlays(
         if (!hasRenderableRouteStepGeometry(step, coords.length)) return [];
 
         const mode = routeInfoStepMode(step);
-        const overlay = styleNonTransitOverlay({
-            id: `${routeInfo.id}-${step.id}`,
-            mode,
-            minutes: step.durationMinutes,
-            source: "fallback",
-        }, {
+        const overlay = styleNonTransitOverlay({ mode }, {
             id: `saved-route-info-${step.id}-${index}`,
             coords,
         }, mapZoom, isDark);
@@ -387,12 +382,7 @@ export function buildRouteInfoPathOverlays(
         movementSteps.flatMap((step) => mapCoords(step.coordinates))
     );
     if (summaryCoords.length < 2) return [];
-    return [styleNonTransitOverlay({
-        id: routeInfo.id,
-        mode,
-        minutes: routeInfo.totalDurationMinutes,
-        source: "fallback",
-    }, {
+    return [styleNonTransitOverlay({ mode }, {
         id: "saved-route-info-summary",
         coords: summaryCoords,
     }, mapZoom, isDark)];

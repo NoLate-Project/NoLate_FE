@@ -24,6 +24,13 @@ it('matches native stage/distance copy and never advances with time', () => {
     expect(JSON.stringify(stage())).not.toContain('%');
     expect(normalizeAutomaticJourneySnapshot(snapshot()).guidanceRoute).toEqual(metadata);
 });
+it('shows the planned first walk before movement without advancing the route rail', () => {
+    const armed = (route: unknown) => ({ ...snapshot({ status: 'ARMED', phase: 'READY', quality: 'UNAVAILABLE',
+        walkProgress: null, activeLegIndex: null, observedAt: null, validUntil: 1600 }, route), status: 'ARMED' as const });
+    expect(presentSavedJourneyStage(armed(metadata), binding, input, 1020))
+        .toEqual({ title: '구로역까지 걷기', action: '첫 구간 도보 약 200m', activeLegIndex: null });
+    expect(presentSavedJourneyStage(armed({ ...metadata, generation: 2 }), binding, input, 1020)?.title).toBe('출발 대기');
+});
 it('waiting is at the boarding place but never claims a ride or next stop', () => {
     expect(stage({ phase: 'WAITING', activeLegIndex: 1, walkProgress: 1 }))
         .toEqual({ title: '구로역', action: '버스 대기 · 도착하면 탑승 준비', activeLegIndex: 1 });
@@ -40,6 +47,27 @@ it('shows only the saved and native-matched alighting stop during a confirmed bu
     const wrong = { ...route, legs: route.legs.map(leg => leg.index === 1
         ? { ...leg, alightingStopName: '다른 정류장' } : leg) };
     expect(presentSavedJourneyStage(snapshot(ride, wrong), binding, saved, 1021)?.action).toBe('버스로 이동 중');
+});
+it('keeps only the last verified bus context while the current vehicle position is stale', () => {
+    const saved = { ...input, legs: input.legs.map(leg => leg.index === 1
+        ? { ...leg, display: { lineName: '1711' } } : leg) } as JourneyRouteInput;
+    const route = { ...metadata, legs: metadata.legs.map(leg => leg.index === 1
+        ? { ...leg, lineName: '1711' } : leg) };
+    const stale = { phase: 'UNAVAILABLE', quality: 'UNCERTAIN', activeLegIndex: 1,
+        walkProgress: null, rideProgress: null, lastConfirmedBus: { legIndex: 1, confirmedAt: 1010 } };
+    expect(presentSavedJourneyStage(snapshot(stale, route), binding, saved, 1021)).toEqual({
+        title: '마지막 확인 · 1711', action: '현재 위치 재확인 중 · 방금 확인', activeLegIndex: null,
+    });
+    expect(presentSavedJourneyStage({ ...snapshot(stale, route), qualityReason: 'OFF_ROUTE' }, binding, saved, 1021)).toEqual({
+        title: '마지막 확인 · 1711', action: '현재 위치 재확인 중 · 방금 확인', activeLegIndex: null,
+    });
+    expect(presentSavedJourneyStage(snapshot(stale, route), binding, saved, 1100)?.title).toBe('위치 확인 중');
+    const wrong = { ...route, legs: route.legs.map(leg => leg.index === 1 ? { ...leg, lineName: '다른 버스' } : leg) };
+    expect(presentSavedJourneyStage(snapshot(stale, wrong), binding, saved, 1021)?.title).toBe('마지막 확인 · 버스');
+    expect(presentSavedJourneyStage(snapshot({ ...stale, lastConfirmedBus: { legIndex: 1, confirmedAt: 900 } }, route), binding, saved, 1021)?.title)
+        .toBe('위치 확인 중');
+    expect(presentSavedJourneyStage(snapshot({ ...stale, lastConfirmedBus: { legIndex: 2, confirmedAt: 1010 } }, route), binding, saved, 1021)?.title)
+        .toBe('위치 확인 중');
 });
 it.each(['sessionId', 'scheduleId', 'generation', 'routeRevision', 'routeInputDigest'])('rejects display metadata from another %s', key => {
     const foreign = { ...metadata, [key]: key === 'generation' || key === 'routeRevision' ? 2 : 'foreign' };

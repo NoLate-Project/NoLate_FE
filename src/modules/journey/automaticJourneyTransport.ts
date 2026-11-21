@@ -202,12 +202,27 @@ export function createAutomaticJourneyTransport(post: AutomaticJourneyPost, auth
                 ...(request.routeInputJSON && data.savedRouteValidated === true ? { savedRouteValidated: true, guidanceEnabled: true } : {}),
                 ...(request.routeInputJSON && data.officialBusAdmission != null ? { officialBusAdmission: data.officialBusAdmission } : {}),
                 ...(request.routeInputJSON && data.officialSubwayAdmission != null ? { officialSubwayAdmission: data.officialSubwayAdmission } : {}),
+                ...(request.routeInputJSON && data.officialBusAdmissions != null ? { officialBusAdmissions: data.officialBusAdmissions } : {}),
+                ...(request.routeInputJSON && data.officialSubwayAdmissions != null ? { officialSubwayAdmissions: data.officialSubwayAdmissions } : {}),
             });
             if (!binding || data.state !== "ARMED" || data.sequence !== 0 || binding.sessionId !== request.requestId
                 || binding.scheduleId !== scheduleId || binding.clientOwnerId !== request.clientOwnerId
                 || binding.routeInputDigest !== request.routeInputDigest || binding.execution !== request.execution
                 || request.routeInputJSON && data.savedRouteValidated !== true) {
                 throw new Error("INVALID_AUTOMATIC_SERVER_RESPONSE");
+            }
+            const legs = request.routeInputJSON ? automaticRecord(JSON.parse(request.routeInputJSON))?.legs : undefined;
+            if (Array.isArray(legs) && legs.length > 3 && (!binding.officialBusAdmissions || !binding.officialSubwayAdmissions)) {
+                throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
+            }
+            if (binding.officialSubwayAdmissions && binding.officialBusAdmissions) {
+                const buses = binding.officialBusAdmissions, trains = binding.officialSubwayAdmissions;
+                if (!Array.isArray(legs) || legs.length !== 2 * (buses.length + trains.length) + 1
+                    || legs.some((leg, index) => leg?.index !== index || (index % 2 === 0 && leg.kind !== 'WALK'))
+                    || buses.some(p => legs[p.busLegIndex]?.kind !== 'BUS')
+                    || trains.some(p => legs[p.subwayLegIndex]?.kind !== 'SUBWAY')) {
+                    throw new Error('INVALID_AUTOMATIC_SERVER_RESPONSE');
+                }
             }
             return binding;
         },

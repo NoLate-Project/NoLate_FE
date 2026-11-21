@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -59,6 +60,7 @@ type Options = {
   quickMorphPresenterRef: MutableRefObject<QuickScheduleMorphPresenter | null>;
   requestCloseLiquidPrototype: () => void;
   requireActiveCalendarWriteAccess: () => boolean;
+  reduceMotionEnabled: boolean;
   router: ReturnType<typeof useRouter>;
   scheduleCalendars: ScheduleCalendar[];
   scheduleFetchEndAt: string;
@@ -100,6 +102,7 @@ export function useScheduleIndexToolbarActions({
   quickMorphPresenterRef,
   requestCloseLiquidPrototype,
   requireActiveCalendarWriteAccess,
+  reduceMotionEnabled,
   router,
   scheduleCalendars,
   scheduleFetchEndAt,
@@ -120,6 +123,22 @@ export function useScheduleIndexToolbarActions({
   usesLiquidViewModeControl,
 }: Options) {
   const { runWithTransitionShell } = useImmediateNavigationTransition();
+  const openingFrame = useRef<number | null>(null);
+  const cancelOpeningFrame = useCallback(() => {
+    if (openingFrame.current === null) return;
+    cancelAnimationFrame(openingFrame.current);
+    openingFrame.current = null;
+  }, []);
+  useEffect(() => cancelOpeningFrame, [cancelOpeningFrame]);
+  useEffect(() => {
+    if (!reduceMotionEnabled || usesLiquidViewModeControl) return;
+    cancelOpeningFrame();
+    searchToolbarProgress.stopAnimation();
+    toolbarDropdownProgress.stopAnimation();
+    searchToolbarProgress.setValue(activeToolbarMenu === 'search' ? 1 : 0);
+    toolbarDropdownProgress.setValue(activeToolbarMenu && activeToolbarMenu !== 'search' ? 1 : 0);
+  }, [activeToolbarMenu, cancelOpeningFrame, reduceMotionEnabled,
+    searchToolbarProgress, toolbarDropdownProgress, usesLiquidViewModeControl]);
   // 새 일정 payload를 백엔드에 저장한 뒤 응답 값을 일정 저장소에 추가한다.
   const addItem = async (payload: Omit<ScheduleItem, 'id'>) => {
     // Fence an already-running range GET before the POST can advance the
@@ -168,6 +187,7 @@ export function useScheduleIndexToolbarActions({
   /** 열린 툴바 메뉴를 플랫폼별 애니메이션으로 닫고 완료 뒤 선택적 후속 작업을 실행한다. */
   const closeToolbarMenu = useCallback(
     (afterClose?: () => void) => {
+      cancelOpeningFrame();
       if (activeToolbarMenu === 'search' && usesLiquidViewModeControl) {
         setSearchQuery('');
         setToolbarMenuClosing(true);
@@ -192,6 +212,13 @@ export function useScheduleIndexToolbarActions({
           : toolbarDropdownProgress;
 
       closingProgress.stopAnimation();
+      if (reduceMotionEnabled && !usesLiquidViewModeControl) {
+        closingProgress.setValue(0);
+        setActiveToolbarMenu(null);
+        setToolbarMenuClosing(false);
+        afterClose?.();
+        return;
+      }
       Animated.timing(closingProgress, {
         toValue: 0,
         duration: closingMenu === 'search' ? 95 : 153,
@@ -210,7 +237,9 @@ export function useScheduleIndexToolbarActions({
     },
     [
       activeToolbarMenu,
+      cancelOpeningFrame,
       requestCloseLiquidPrototype,
+      reduceMotionEnabled,
       searchToolbarProgress,
       setActiveToolbarMenu,
       setSearchQuery,
@@ -223,6 +252,7 @@ export function useScheduleIndexToolbarActions({
   /** 드롭다운 닫힘을 먼저 확정한 다음 전달받은 툴바 작업을 다음 프레임에 실행한다. */
   const runToolbarAction = useCallback(
     (action: () => void) => {
+      cancelOpeningFrame();
       if (activeToolbarMenu === 'search' && usesLiquidViewModeControl) {
         requestCloseLiquidPrototype();
         setActiveToolbarMenu(null);
@@ -234,6 +264,13 @@ export function useScheduleIndexToolbarActions({
       Keyboard.dismiss();
       setToolbarMenuClosing(true);
       toolbarDropdownProgress.stopAnimation();
+      if (reduceMotionEnabled && !usesLiquidViewModeControl) {
+        toolbarDropdownProgress.setValue(0);
+        setActiveToolbarMenu(null);
+        setToolbarMenuClosing(false);
+        requestAnimationFrame(action);
+        return;
+      }
       Animated.timing(toolbarDropdownProgress, {
         toValue: 0,
         duration: 108,
@@ -247,7 +284,9 @@ export function useScheduleIndexToolbarActions({
     },
     [
       activeToolbarMenu,
+      cancelOpeningFrame,
       requestCloseLiquidPrototype,
+      reduceMotionEnabled,
       setActiveToolbarMenu,
       setToolbarMenuClosing,
       toolbarDropdownProgress,
@@ -258,6 +297,7 @@ export function useScheduleIndexToolbarActions({
   /** 기존 메뉴를 정리하고 검색 또는 일반 드롭다운에 맞는 진입 애니메이션을 시작한다. */
   const openToolbarMenu = useCallback(
     (menu: ToolbarMenu) => {
+      cancelOpeningFrame();
       if (activeToolbarMenu === menu) {
         closeToolbarMenu();
         return;
@@ -271,7 +311,14 @@ export function useScheduleIndexToolbarActions({
       searchToolbarProgress.setValue(0);
       setActiveToolbarMenu(menu);
 
-      requestAnimationFrame(() => {
+      if (reduceMotionEnabled && !usesLiquidViewModeControl) {
+        const openingProgress = menu === 'search' ? searchToolbarProgress : toolbarDropdownProgress;
+        openingProgress.setValue(1);
+        return;
+      }
+
+      openingFrame.current = requestAnimationFrame(() => {
+        openingFrame.current = null;
         if (menu === 'search') {
           Animated.timing(searchToolbarProgress, {
             toValue: 1,
@@ -292,11 +339,14 @@ export function useScheduleIndexToolbarActions({
     },
     [
       activeToolbarMenu,
+      cancelOpeningFrame,
       closeToolbarMenu,
+      reduceMotionEnabled,
       searchToolbarProgress,
       setActiveToolbarMenu,
       setToolbarMenuClosing,
       toolbarDropdownProgress,
+      usesLiquidViewModeControl,
     ],
   );
 

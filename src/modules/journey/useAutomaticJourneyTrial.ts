@@ -13,6 +13,7 @@ import {
 import { assessJourneyRouteInput, type JourneyRouteAssessmentResult } from "./journeyRouteAssessment";
 import type { JourneyRouteInput } from "./journeyRouteInput";
 import type { JourneyAuthenticationSource } from "./automaticJourneyAuthentication";
+import { ensureForegroundPermission } from "../map/currentLocation";
 
 export type AutomaticJourneyTrialScope = "LOCAL_ONLY" | "SANDBOX" | "AUTHENTICATED";
 
@@ -153,9 +154,11 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
         && scope === 'AUTHENTICATED' && snapshot?.checkpointAvailable ? checkpoint : undefined;
     const canConsentToSavedRestore = !!savedCheckpoint && snapshot?.enabled === true && !!selectedInput && !running && !pending;
     const canAssess = available && !!selectedInput && !pending;
-    const canOptIn = available && eligible && consented && !running && !pending;
-    const canPrepare = canOptIn && snapshot?.pendingDeparture !== true && (scope !== 'AUTHENTICATED' || snapshot?.checkpointAvailable !== true)
+    const canStart = available && eligible && !running && !pending;
+    const canOptIn = canStart && consented;
+    const canStartSelectedRoute = canStart && snapshot?.pendingDeparture !== true && (scope !== 'AUTHENTICATED' || snapshot?.checkpointAvailable !== true)
         && !['CHECKING', 'WAITING', 'BLOCKED'].includes(sync.checkpointState ?? 'NONE');
+    const canPrepare = canStartSelectedRoute && consented;
 
     const assess = async () => {
         if (!canAssess || busy.current || !selectedInput) return;
@@ -200,12 +203,27 @@ export function useAutomaticJourneyTrial(input: JourneyRouteInput | null, scope:
     };
 
     return {
-        snapshot, sync, assessment, consented, pending, errorCode, running, eligible, canAssess, canPrepare,
+        snapshot, sync, assessment, consented, pending, errorCode, running, eligible, canAssess, canPrepare, canStartSelectedRoute,
         savedCheckpoint, canConsentToSavedRestore,
         canRestoreSaved: canConsentToSavedRestore && consented,
         canRestore: canOptIn && snapshot?.checkpointAvailable === true,
         setConsented: (value: boolean) => { if (!pending && !running && (available || canConsentToSavedRestore)) setConsented(value); },
         assess,
+        startFromDeparture: async (signal: AbortSignal) => {
+            if (signal.aborted || !canStartSelectedRoute || scope !== 'AUTHENTICATED' || !savedScheduleId || !selectedInput) return;
+            await runNative(async () => {
+                try { await ensureForegroundPermission(); }
+                catch (error) {
+                    throw new Error(error instanceof Error && error.name === 'LocationStatusTimeoutError'
+                        ? 'LOCATION_STATUS_TIMEOUT' : 'LOCATION_PERMISSION_DENIED');
+                }
+                if (signal.aborted || !mounted.current || selectedRef.current !== selectedInput ||
+                    assessedInput.current !== selectedInput || scopeRef.current !== scope) {
+                    throw new Error('AUTOMATIC_OPERATION_CANCELLED');
+                }
+                return prepareAutomaticJourneyTrial(selectedInput, scope, savedScheduleId, authSource, signal);
+            });
+        },
         prepare: async () => {
             if (canPrepare && selectedInput) await runNative(() => prepareAutomaticJourneyTrial(selectedInput, scope, savedScheduleId, authSource));
         },

@@ -1,0 +1,21 @@
+{
+  "providerUpdatesByTrain": {
+    "90401": 27,
+    "90402": 4
+  },
+  "firstTrainEstimates": 2,
+  "noticeEventsByTrain": {
+    "90401": {
+      "selected": 1,
+      "submit_accepted": 1,
+      "speech_started": 1,
+      "speech_finished": 1
+    },
+    "90402": {
+      "selected": 1,
+      "submit_accepted": 1,
+      "speech_started": 0,
+      "speech_finished": 0
+    }
+  }
+}

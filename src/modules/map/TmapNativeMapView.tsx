@@ -144,6 +144,7 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
         mapBaseDimOpacity = 0,
         routeFocusMode = false,
         nightModeEnabled = false,
+        showCompass,
         showLocationButton = true,
         showZoomControls = true,
         onTapMap,
@@ -243,6 +244,7 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
         routeOverlayScope,
         nightModeEnabled,
         routeFocusMode,
+        showCompass,
     }), [
         camera,
         clearRouteOverlays,
@@ -258,6 +260,7 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
         pathWidth,
         routeFocusMode,
         routeOverlayScope,
+        showCompass,
     ]);
 
     useEffect(() => {
@@ -337,6 +340,7 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
             longitude,
             zoom,
             metersPerPixel: resolvedMetersPerPixel,
+            pitchDegrees: finiteNumber(payload.pitchDegrees),
         };
         onCameraChanged?.(cameraState);
         if (lastZoomRef.current === undefined || Math.abs(lastZoomRef.current - zoom) >= 0.001) {

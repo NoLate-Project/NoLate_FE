@@ -42,3 +42,13 @@ it.each([{ exact: false }, { geometryInputComplete: false }, { coordinates: [] }
     { coordinates: [null, point] }])('blocks missing final-walk geometry', patch => {
     expect(savedJourneyEntryIssue({ ...input, legs: input.legs.map(leg => leg.index === 2 ? { ...leg, ...patch } : leg) })).toContain('이동 경로');
 });
+
+it.each([['BUS','SUBWAY'],['SUBWAY','BUS'],['SUBWAY','SUBWAY']])('admits both occurrences for official recheck (%s, %s)', (first, second) => {
+    const legs = ['WALK', first, 'WALK', second, 'WALK'].map((kind, index) => ({
+        ...input.legs[kind === 'WALK' ? 0 : 1], kind, index,
+    }));
+    const mixed = { ...input, provider: 'odsay', serviceState: 'UNKNOWN', legs } as JourneyRouteInput;
+    expect(savedJourneyEntryIssue(mixed, true)).toBeNull();
+    expect(savedJourneyEntryIssue(mixed)).toContain('지하철 탑승');
+    expect(savedJourneyEntryIssue({ ...mixed, serviceState: 'not_operating' }, true)).toContain('공급자');
+});

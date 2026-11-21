@@ -238,6 +238,15 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
     sheetDepartureActionLarge: {
       alignSelf: 'stretch',
     },
+    transitDepartureActions: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 1, gap: 2,
+    },
+    transitSettingsButton: {
+      minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center',
+    },
+    transitStartButton: { minWidth: 0, marginBottom: 0, flexShrink: 1, alignSelf: 'center' },
+    departureButtonCopy: { flexShrink: 1, alignItems: 'center' },
+    transitStartCaption: { color: '#FFFFFF', fontSize: 11, fontWeight: '500', marginTop: 1, textAlign: 'center' },
     sheetDepartureActionInline: {
       alignSelf: 'center',
       marginBottom: 0,

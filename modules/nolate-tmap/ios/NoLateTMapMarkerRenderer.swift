@@ -7,6 +7,27 @@ struct NoLateTMapMarkerArtwork {
 
 @MainActor
 enum NoLateTMapMarkerRenderer {
+  static let headingImage = UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40)).image { _ in
+    let blue = UIColor(red: 0.06, green: 0.40, blue: 0.94, alpha: 1)
+    let body = UIBezierPath(ovalIn: CGRect(x: 2, y: 2, width: 36, height: 36))
+    UIColor.white.setFill()
+    body.fill()
+    blue.setStroke()
+    body.lineWidth = 2.5
+    body.stroke()
+    let arrow = UIBezierPath()
+    arrow.move(to: CGPoint(x: 20, y: 9))
+    arrow.addLine(to: CGPoint(x: 28.5, y: 27))
+    arrow.addLine(to: CGPoint(x: 20, y: 23.5))
+    arrow.addLine(to: CGPoint(x: 11.5, y: 27))
+    arrow.close()
+    blue.setFill()
+    arrow.fill()
+    arrow.lineJoinStyle = .round
+    arrow.lineWidth = 1.8
+    arrow.stroke()
+  }
+
   static func artwork(for item: [String: Any]) -> NoLateTMapMarkerArtwork {
     let displayType = NoLateTMapValue.string(item["displayType"]) ?? "pin"
     switch displayType {

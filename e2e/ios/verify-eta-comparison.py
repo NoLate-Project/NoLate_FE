@@ -8,6 +8,7 @@ import argparse
 import datetime as dt
 import json
 import math
+from statistics import median
 from pathlib import Path
 
 
@@ -65,11 +66,14 @@ def boarding_clock_kind(ride):
 
 
 def worker_boarding_clock_kind(timing):
-    if timing['basis'] in ('FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME',
-                           'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
-                           'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE'):
+    basis = timing['basis']
+    if basis in ('PLANNED_RIDE_BASELINE', 'PLANNED_RIDE_ALIGHTING_REALTIME'):
+        return 'STATION_ARRIVAL_PREDICTION' if timing.get('plannedBoardingIsStationArrival') is True else 'BOARDING'
+    if basis in ('FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME',
+                 'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING', 'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
+                 'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING', 'PLANNED_RIDE_BOARDING_REALTIME'):
         return 'STATION_ARRIVAL_PREDICTION'
-    return 'BOARDING'
+    return 'BOARDING' if basis in ('TIMETABLE', 'TRANSFER_ALIGHTING_REALTIME') else 'UNKNOWN'
 
 
 def walking_boundaries(observation, *, require_platform_coverage=True):
@@ -629,8 +633,66 @@ def report(document):
     }
 
 
+def whole_journey_walking_scopes(observation):
+    """Publicly evidenced inclusion of access, each transfer, and egress.
+
+    This describes the whole journey between the requested pins. It makes no
+    claim about how a provider allocates station-interior time between legs.
+    """
+    items = observation.get('walkingCoverageEvidence')
+    expected = ['ACCESS'] + ['TRANSFER'] * (len(observation['rides']) - 1) + ['EGRESS']
+    if not isinstance(items, list) or len(items) != len(expected):
+        return None
+    for item, scope in zip(items, expected):
+        if (not isinstance(item, dict) or item.get('scope') != scope or item.get('included') is not True
+                or not isinstance(item.get('evidence'), str) or not item['evidence'].strip()):
+            return None
+    return tuple(expected)
+
+
+def paired_route_clocks(prediction, reference):
+    """Localize a displayed gap only between events actually published by the map."""
+    rows = []
+    previous_key, previous_delta = None, None
+
+    def add(key, app_value, map_value):
+        nonlocal previous_key, previous_delta
+        app_at = instant(app_value).replace(second=0, microsecond=0) if app_value else None
+        map_at = instant(map_value) if map_value else None
+        if map_at is not None and (map_at.second or map_at.microsecond):
+            raise ValueError('A published minute clock cannot include hidden seconds')
+        delta = int((app_at - map_at).total_seconds() / 60) if app_at and map_at else None
+        rows.append({'event': key, 'appMinute': app_at.isoformat() if app_at else None,
+                     'mapMinute': map_at.isoformat() if map_at else None, 'appMinusMapMinutes': delta,
+                     'fromEvent': previous_key if delta is not None else None,
+                     'changeInGapMinutes': delta - previous_delta if delta is not None and previous_delta is not None else None})
+        if delta is not None:
+            previous_key, previous_delta = key, delta
+
+    query_minute = instant(reference['requestedDepartureAt']).replace(second=0, microsecond=0).isoformat()
+    add('QUERY_DEPARTURE', prediction['requestedDepartureAt'], query_minute)
+    def published(item, field):
+        citations = item.get('publishedClockEvidence')
+        evidence = citations.get(field) if isinstance(citations, dict) else None
+        return item.get(field) if isinstance(evidence, str) and evidence.strip() else None
+
+    add('ROUTE_DEPARTURE', prediction['departureAt'], published(reference, 'departureAt'))
+    for idx, (app, public) in enumerate(zip(prediction['rides'], reference['rides']), 1):
+        for event, field in (('BOARDING', 'boardingAt'), ('ALIGHTING', 'arrivalAt')):
+            # A duration shown in the UI cannot establish an unpublished station clock.
+            same_event = event != 'BOARDING' or boarding_clock_kind(app) == boarding_clock_kind(public) == 'BOARDING'
+            add(f'RIDE_{idx}_{event}', app.get(field) if same_event else None, published(public, field))
+    add('DESTINATION', prediction['arrivalAt'], reference['displayedArrivalEvidence']['arrivalAt'])
+    return rows
+
+
 def paired_map_report(document):
     cases = document['samples']
+    walking_scope = document.get('walkingComparisonScope', 'IDENTICAL_BOUNDARIES')
+    if walking_scope not in ('IDENTICAL_BOUNDARIES', 'WHOLE_JOURNEY'):
+        raise ValueError('Unsupported walking comparison scope')
+    walking_evidence = whole_journey_walking_scopes if walking_scope == 'WHOLE_JOURNEY' else (
+        lambda item: walking_boundaries(item, require_platform_coverage=False))
     large_error_minutes = document.get('largeErrorMinutes', 5)
     if type(large_error_minutes) is not int or large_error_minutes < 1:
         raise ValueError('Large error threshold must be a positive number of minutes')
@@ -647,12 +709,13 @@ def paired_map_report(document):
         if reference['kind'] != 'MAP_PREDICTION':
             raise ValueError('Naver reference must be a map prediction')
         reference_times = validate(reference, require_ride_clocks=False)
-        map_walk = walking_boundaries(reference, require_platform_coverage=False)
+        map_walk = walking_evidence(reference)
         row = {'id': sample_id, 'naverObservationId': reference['id']}
         for phase in ('before', 'after'):
             prediction = case[phase]
             if prediction is None:
-                row[phase] = {'exclusionReasons': ['APP_PREDICTION_MISSING'], 'appMinusNaverMinutes': None}
+                row[phase] = {'exclusionReasons': ['APP_PREDICTION_MISSING'], 'appMinusNaverMinutes': None,
+                              'routeClockComparison': None, 'routeClockDurationDifferenceMinutes': None}
                 continue
             if prediction['kind'] != 'APP_PREDICTION':
                 raise ValueError('Both phases must be app predictions')
@@ -663,17 +726,43 @@ def paired_map_report(document):
                                          comparison_input_reasons(prediction, reference, times, reference_times),
                                          use_prediction_arrival=True)
             reasons = list(display['exclusionReasons'])
-            app_walk = walking_boundaries(prediction, require_platform_coverage=False)
+            app_walk = walking_evidence(prediction)
             if app_walk is None or map_walk is None:
-                reasons.append('WALKING_BOUNDARIES_UNCONFIRMED')
+                reasons.append('WALKING_COVERAGE_UNCONFIRMED' if walking_scope == 'WHOLE_JOURNEY'
+                               else 'WALKING_BOUNDARIES_UNCONFIRMED')
             elif app_walk != map_walk:
                 reasons.append('WALKING_BOUNDARY_MISMATCH')
+            clocks = None if reasons else paired_route_clocks(prediction, reference)
+            duration_difference = None
+            if clocks:
+                departure_gap = next(c['appMinusMapMinutes'] for c in clocks if c['event'] == 'ROUTE_DEPARTURE')
+                if departure_gap is not None:
+                    # Arrival gap = door departure gap + trip duration gap, all at displayed minute precision.
+                    duration_difference = clocks[-1]['appMinusMapMinutes'] - departure_gap
             row[phase] = {'exclusionReasons': reasons, 'appMinusNaverMinutes':
-                          None if reasons else display['leftMinusRightDisplayedMinutes']}
+                          None if reasons else display['leftMinusRightDisplayedMinutes'],
+                          'routeClockComparison': clocks, 'routeClockDurationDifferenceMinutes': duration_difference}
         rows.append(row)
 
     comparable = [row for row in rows if all(row[phase]['appMinusNaverMinutes'] is not None
                                              for phase in ('before', 'after'))]
+    # Repeat captures of one future route query do not add trips to the distribution.
+    references = {case['id']: case['naver'] for case in cases}
+    distinct, repeated = {}, []
+    for row in sorted(comparable, key=lambda r: (instant(references[r['id']]['observedAt']), r['id'])):
+        public = references[row['id']]
+        key = (requested_pins(public['requestedCoordinateEvidence']), instant(public['requestedDepartureAt']),
+               tuple(topology(public)))
+        if key in distinct:
+            repeated.append(row['id'])
+        else:
+            distinct[key] = row
+    distribution = {}
+    for phase in ('before', 'after'):
+        errors = sorted(abs(row[phase]['routeClockComparison'][-1]['appMinusMapMinutes']) for row in distinct.values())
+        distribution[phase] = {'medianAbsoluteMinutes': median(errors) if errors else None,
+                               'p90AbsoluteMinutes': errors[math.ceil(len(errors) * .9) - 1] if errors else None,
+                               'maximumAbsoluteMinutes': max(errors, default=None)}
     summary = {}
     for phase in ('before', 'after'):
         magnitudes = [abs(row[phase]['appMinusNaverMinutes']) for row in comparable]
@@ -684,6 +773,11 @@ def paired_map_report(document):
         }
     return {'classification': 'PAIRED_NAVER_DISPLAY_COMPARISON', 'candidateCount': len(rows),
             'comparableCount': len(comparable), 'largeErrorMinutes': large_error_minutes,
+            'walkingComparisonScope': walking_scope,
+            'destinationMinuteDistribution': {'distinctRouteQueryCount': len(distinct), 'repeatCaptureIds': repeated,
+                                              'percentileMethod': 'NEAREST_RANK', **distribution},
+            'stationInteriorAllocationVerified': False,
+            'realWorldAccuracyVerified': False,
             **summary, 'samples': rows}
 
 

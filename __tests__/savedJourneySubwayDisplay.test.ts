@@ -45,3 +45,83 @@ it('does not attach a station position to a different saved route stop',()=>{
     const changed={...input,legs:input.legs.map(leg=>leg.index===1?{...leg,stops:leg.stops.map(s=>({...s,name:'다른 역'}))}:leg)};
     expect(presentSavedJourneyRoutePosition(snapshot(),binding,changed,1021)).toBeNull();
 });
+
+const transferInput = {
+    ...input, legs: ['WALK', 'SUBWAY', 'WALK', 'SUBWAY', 'WALK'].map((kind, index) => ({
+        index, kind, stops: (index === 1 ? ['서울역', '명동', '충무로'] : index === 3 ? ['충무로', '안국', '경복궁'] : []).map(name => ({ name })),
+        display: { lineName: index === 1 ? '4호선' : index === 3 ? '3호선' : null },
+    })),
+} as JourneyRouteInput;
+function transferSnapshot(patch: Record<string, unknown>) {
+    const s = snapshot(patch);
+    s.guidanceRoute = { ...binding, legs: transferInput.legs.map(leg => ({ index: leg.index, kind: leg.kind,
+        walkingLengthMeters: 100, lineName: leg.display?.lineName, boardingStopName: leg.stops[0]?.name })) };
+    return s;
+}
+
+it('shows the upcoming transfer on line 4, then projects the platform, train and final walk onto line 3', () => {
+    const stage = (patch: Record<string, unknown>) => presentSavedJourneyStage(transferSnapshot(patch), binding, transferInput, 1021);
+    const walking = { boardingConfirmed: false, subway: null, rideProgress: null, walkProgress: 0.5 };
+    expect(stage({ subway: { currentStopIndex: 1, totalStops: 3, currentStopName: '명동', nextStopName: '충무로' } }))
+        .toEqual({ title: '명동', action: '다음 충무로 하차 · 3호선 환승', activeLegIndex: 1 });
+    expect(stage({ ...walking, phase: 'TRANSFER_WALK', schemaVersion: 5, activeLegIndex: 2 }))
+        .toEqual({ title: '충무로 환승', action: '3호선 승차 · 환승 도보 약 50m', activeLegIndex: 2 });
+    const waiting = transferSnapshot({ ...walking, phase: 'WAITING', schemaVersion: 7, activeLegIndex: 3,
+        walkProgress: 1, arrivalStatus: 'WAITING_INFORMATION', arrival: { kind: 'SUBWAY', busLegIndex: 3,
+            providerRouteId: '1000:3', directionLabel: '대화 방면', sourceUpdatedAt: 1020, expectedAt: 1140, validUntil: 1140 } });
+    expect(presentSavedJourneyStage(waiting, binding, transferInput, 1021)).toMatchObject({ title: '충무로', action: expect.stringContaining('열차 대기'), activeLegIndex: 3 });
+    expect(presentSavedJourneyRoutePosition(waiting, binding, transferInput, 1021)).toMatchObject({ legIndex: 2, waiting: true });
+    expect(presentSavedJourneyGuidance(waiting, binding, 1021)?.arrival?.remainingSeconds).toBe(119);
+    expect(stage({ activeLegIndex: 3, subway: { currentStopIndex: 1, totalStops: 3, currentStopName: '안국', nextStopName: '경복궁' } }))
+        .toMatchObject({ title: '안국', activeLegIndex: 3 });
+    expect(stage({ ...walking, phase: 'FINAL_WALK', schemaVersion: 6, activeLegIndex: 4 }))
+        .toMatchObject({ title: '목적지까지', activeLegIndex: 4 });
+});
+
+it('keeps a stale second-line station as history without a marker and rejects a mismatched occurrence', () => {
+    const history = { schemaVersion: 1, phase: 'UNAVAILABLE', quality: 'UNCERTAIN', boardingConfirmed: false,
+        rideProgress: null, subway: null, lastConfirmedSubway: { stopIndex: 1, totalStops: 3, stopName: '안국', confirmedAt: 1020 } };
+    const second = transferSnapshot({ ...history, activeLegIndex: 3 });
+    expect(presentSavedJourneyStage(second, binding, transferInput, 1036)?.title).toBe('마지막 확인 · 안국');
+    expect(presentSavedJourneyRoutePosition(second, binding, transferInput, 1036)).toBeNull();
+    for (const index of [0, 2, 5]) {
+        expect(presentSavedJourneyStage(transferSnapshot({ ...history, activeLegIndex: index }), binding, transferInput, 1036)?.title)
+            .toBe('위치 확인 중');
+    }
+});
+
+const betweenStations = {
+    schemaVersion:9, phase:'RIDING_SEGMENT', activeLegIndex:1, quality:'GOOD', subway:null,
+    rideProgress:0.7, subwaySegment:{fromStopIndex:1,totalStops:3,fromStopName:'명동',toStopName:'충무로',
+        progress:0.4,confirmedAt:1014}, observedAt:1020, validUntil:1035,
+};
+
+it('moves within an admitted pair of adjacent stations only when a fresh GPS-backed segment changes', () => {
+    const current = transferSnapshot(betweenStations);
+    expect(presentSavedJourneyStage(current,binding,transferInput,1021)).toMatchObject({
+        title:'명동 → 충무로', action:expect.stringMatching(/다음 충무로 하차.*3호선 환승/)});
+    const anchor = presentSavedJourneyRoutePosition(current,binding,transferInput,1021)!;
+    expect(anchor.legProgress).toBeCloseTo(0.7);
+    expect(presentSavedJourneyRoutePosition(current,binding,transferInput,1034)).toEqual(anchor);
+    const moved = transferSnapshot({...betweenStations,rideProgress:0.85, observedAt:1023,validUntil:1038,
+        subwaySegment:{...betweenStations.subwaySegment,progress:0.7}});
+    expect(presentSavedJourneyRoutePosition(moved,binding,transferInput,1024)!.barFraction).toBeGreaterThan(anchor.barFraction);
+    expect(presentSavedJourneyRoutePosition(current,binding,transferInput,1035)).toBeNull();
+    expect(presentSavedJourneyStage(current,binding,transferInput,1035)?.title).toBe('마지막 확인 · 명동');
+    expect(presentSavedJourneyStage(current,binding,transferInput,1104)?.title).toBe('위치 확인 중');
+});
+
+it('requires original station confirmation, matching adjacent names, the correct leg and original evidence expiry', () => {
+    for (const patch of [
+        {subwaySegment:{...betweenStations.subwaySegment,confirmedAt:1040}},
+        {subwaySegment:{...betweenStations.subwaySegment,confirmedAt:900}},
+        {subwaySegment:{...betweenStations.subwaySegment,fromStopName:'안국'}},
+        {subwaySegment:{...betweenStations.subwaySegment,toStopName:'경복궁'}},
+        {subwaySegment:{...betweenStations.subwaySegment,unexpected:'raw'}},
+        {activeLegIndex:3}, {phase:'RIDING'}, {schemaVersion:8}, {boardingConfirmed:false},
+        {rideProgress:0.71}, {validUntil:1060}, {observedAt:1120,validUntil:1135},
+        {subway:{currentStopName:'충무로'}},
+    ]) {
+        expect(presentSavedJourneyRoutePosition(transferSnapshot({...betweenStations,...patch}),binding,transferInput,1021)).toBeNull();
+    }
+});

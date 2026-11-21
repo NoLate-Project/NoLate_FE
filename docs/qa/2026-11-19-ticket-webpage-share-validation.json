@@ -1,0 +1,1631 @@
+{
+  "date": "2026-11-19",
+  "status": "public_korail_booking_home_and_forwarded_ticket_payloads_verified_on_ios_simulators",
+  "wholeGoalComplete": false,
+  "scope": "Native iOS share extension, synthetic Safari preprocessing property list + URL. No real Korail or Kakao page used.",
+  "cause": "Existing extension accepts images/PDF/text but rejects URL-only railway shares; no Safari webpage preprocessing was registered.",
+  "changes": [
+    "Register Safari page preprocessing for official railway HTTPS origins",
+    "Read displayed page text locally before falling back to shared URL",
+    "Keep existing required ticket review and IOS_SHARE_TEXT persistence contract",
+    "Use activation dictionary version2 to permit supported alternative representations",
+    "Provide Safari/photo re-share instructions with close action for URL-only input"
+  ],
+  "verification": {
+    "releaseExtensionBuildExit": 0,
+    "signedSimulatorExtensionVerificationExit": 0,
+    "bundledJavaScript": true,
+    "swiftPolicyExit": 0,
+    "nodeTests": 4,
+    "nodeFailures": 0,
+    "changedJavaScriptLintErrors": 0,
+    "changedJavaScriptLintWarnings": 0,
+    "ui": {
+      "tests": 1,
+      "failures": 0,
+      "durationSeconds": 66.827,
+      "exit": 0,
+      "resultBundle": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi/attempt-06/result.xcresult",
+      "simulator": "8858D769-7107-4032-9A90-7C58AEB96C56",
+      "cases": [
+        "URL-only input shows explicit Safari/photo instructions and close action",
+        "URL placeholder + late NSExtensionItem supplies synthetic preprocessing property list; body wins over URL and populates exact stations/train number",
+        "Save remains disabled before user confirmation; cancel performs no schedule write",
+        "Existing detailed text still enters review with exact stations",
+        "Image OCR still enters review and ambiguous stations can be edited; unconfirmed save remains disabled"
+      ]
+    },
+    "visualReview": {
+      "result": "passed",
+      "screenshots": [
+        "evidence/ticket-webpage-share-20261119/01-synthetic-webpage-ticket-review.png",
+        "evidence/ticket-webpage-share-20261119/02-url-only-recovery.png"
+      ]
+    }
+  },
+  "privateRoot": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi",
+  "priorAttempts": [
+    {
+      "root": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi",
+      "uiExit": 65,
+      "reason": "Synthetic UIActivityItemsConfiguration exposed two providers before selection; NoLate was absent from activity list",
+      "acceptedAsWholeTest": false,
+      "durationSeconds": 121.971
+    },
+    {
+      "root": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi/attempt-02",
+      "uiExit": 65,
+      "reason": "Single provider in UIActivityItemsConfiguration still offered preprocessing output before selection; NoLate absent",
+      "acceptedAsWholeTest": false,
+      "durationSeconds": 125.88
+    },
+    {
+      "root": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi/attempt-03",
+      "uiExit": 65,
+      "reason": "Activation v2 alone did not make the up-front synthetic provider reproduce Safari",
+      "acceptedAsWholeTest": false,
+      "durationSeconds": 30.002
+    },
+    {
+      "root": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi/attempt-04",
+      "uiExit": 65,
+      "reason": "NSExtensionItem offered up front did not reproduce browser lifecycle; ordinary URL recovery passed",
+      "acceptedAsWholeTest": false,
+      "durationSeconds": 40.156
+    },
+    {
+      "root": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi/attempt-05",
+      "uiExit": 65,
+      "reason": "URL placeholder with late NSExtensionItem successfully delivered exact page fields. Only additional image OCR auto-fill assertion failed; existing product contract allows manual correction for ambiguous OCR.",
+      "acceptedAsWholeTest": false,
+      "durationSeconds": 54.965
+    }
+  ],
+  "latestAttempt": "/private/tmp/nolate-ticket-webpage-20261119.5uwi_kyi/attempt-06",
+  "limits": [
+    "Actual received-ticket URL, real Korail DOM and Kakao in-app browser page delivery remain unverified",
+    "URL-only private ticket links are not fetched",
+    "Simulator app uses documented harness substitution of only the share extension; no iPhone installation or production deployment",
+    "General journey roadmap remains incomplete"
+  ],
+  "sources": {
+    "applePreprocessing": "https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/ExtensionScenarios.html",
+    "appleActivationVersion": "https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/AppExtensionKeys.html"
+  },
+  "sourceHashes": {
+    "ios/NoLateShareExtension/ShareViewController.swift": "93312c69e1384aef61dbaa3553d621155be35faea4a0e4cccf70c42487033caf",
+    "ios/NoLateShareExtension/TrainTicketImport.swift": "ae1c7388385134896a652ec76779e6e9b375e6208ba386ab67844f3c67be5154",
+    "ios/NoLateShareExtension/TicketWebPage.js": "d31e594c314862de52ad0e889a4f735974f4fd0c743abace8ae61df133173d7e",
+    "ios/NoLateShareExtension/Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252",
+    "ios/NoLateFE.xcodeproj/project.pbxproj": "1eb5681a860edbd758243afba945d84a6a2fda266c7f1ad2494b476095dd1677",
+    "e2e/ios/TicketShareFixture.swift": "cb88789c1aeb279538ea94f950df58cef23253ce873be1485c8b0995dcdc8ea1",
+    "e2e/ios/TrainTicketImportPolicyTests.swift": "ab602feb49032f94b44ea3c6410a8d11e1f6ef17cbba169b719bbf7467d22550",
+    "e2e/ios/NoLateE2ETests.swift": "4caba27b9d2dfc3aa7fb6d9f96b68d2656ece770d03361f98f239d815b1088d3",
+    "scripts/ticket-web-page.test.cjs": "d3e644b62f066dd223a5cd2db3842e33ff1ba63e0730f07148dce7ef67dedabb"
+  },
+  "artifact": {
+    "appCodesignExit": 0,
+    "extensionCodesignExit": 0,
+    "mainBinarySha256": "9eded10158c17943ea0c6e6f87bb3d9764ae7dccc1f391e8b9e4c6aba4d877df",
+    "mainBundleSha256": "563f5fc9eec17661ce8d1c6d6dc3ccca6438e019f885117ef86fbab956f85521",
+    "extensionBinarySha256": "d580d6e93e18bf72f4b0a1d733555bdb9718dbe890fbb79c26a69d9f6c10e467",
+    "preprocessingScriptSha256": "d31e594c314862de52ad0e889a4f735974f4fd0c743abace8ae61df133173d7e",
+    "testSourceSha256": "4caba27b9d2dfc3aa7fb6d9f96b68d2656ece770d03361f98f239d815b1088d3",
+    "preprocessingRegistration": "TicketWebPage",
+    "activationDictionaryVersion": 2
+  },
+  "transportCorrection": "Synthetic browser source advertises URL placeholder for selection, then supplies NSExtensionItem with URL and preprocessing property list. Up-front property-list providers did not reproduce browser lifecycle; those failures remain recorded.",
+  "packagingRecheck20261120": {
+    "extension": "NoLateShareExtension.appex",
+    "preprocessing": "TicketWebPage",
+    "activationVersion": 2,
+    "preprocessingScriptPresent": true,
+    "scriptMatchesTestedSource": true,
+    "scope": "Packaging check only; real Korail DOM and Kakao delivery are still unverified"
+  },
+  "providedPhotoOCR20261120": {
+    "status": "not_completed_input_attachment_missing_on_current_computer",
+    "reason": "User image is visible in chat, but supplied local path no longer exists. Native command-line OCR attempts had no image input and are not app OCR failure evidence.",
+    "productionWrites": false,
+    "existingSyntheticImageShareE2EStillPassed": true
+  },
+  "smartTicketSimulator20261120": {
+    "environment": "Dedicated iPhone 17 Pro iOS 27.0 simulator, production share extension compiled in Release, isolated local H2 and synthetic signed-in account",
+    "input": "Synthetic 780x1320 smart-ticket image, browser status 4:07, date + 스마트티켓 1매 header, two unlabeled visual columns, drawn arrow, Seoul 06:43, Dongdaegu 08:32, KTX 255. No copy of user photo or ticket link used.",
+    "changes": [
+      "Match OCR words to their station and clock columns on a single recognizable smart ticket",
+      "Keep review and confirmation mandatory; ambiguous geometry stays editable",
+      "Route official railway links and the received-ticket preview title to missing-content guidance; strip official link from local ticket details"
+    ],
+    "persisted": {
+      "isolatedAccount": true,
+      "exactlyOneSavedSchedule": true,
+      "retrievedBySearchThenDetail": true,
+      "ticket": {
+        "kind": "TRAIN",
+        "source": "IOS_SHARE_IMAGE",
+        "verification": "USER_CONFIRMED",
+        "bookingStatus": "UNVERIFIED",
+        "departureName": "서울",
+        "arrivalName": "동대구",
+        "trainNumber": "255",
+        "departureAt": "2026-11-21T06:43:00+09:00",
+        "arrivalAt": "2026-11-21T08:32:00+09:00"
+      },
+      "noOriginalImageOrPrivateURLInTicket": true
+    },
+    "finalInstalledExtension": {
+      "matchesCompiledExtension": true,
+      "preprocessorInBundle": true,
+      "signedStrict": true,
+      "loopbackConfigured": true,
+      "currentProductionSourceMatchesRelease": true
+    },
+    "extensionSha256": "e7f7339036c54212316b740d6880f96386fedfcd424aeccdcc2e9c1b307f897f",
+    "extensionSourceHashes": {
+      "ios/NoLateShareExtension/ShareViewController.swift": "6f898aba151616af59b967db4599d84cd74ee5e5fd3851a01623db3980030570",
+      "ios/NoLateShareExtension/TrainTicketImport.swift": "c474d19d544203484af06621e163cb5a51b25720c0b5c47dc186aa4d047067c9",
+      "ios/NoLateShareExtension/TicketWebPage.js": "d31e594c314862de52ad0e889a4f735974f4fd0c743abace8ae61df133173d7e",
+      "ios/NoLateShareExtension/Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252"
+    },
+    "policy": "Swift ticket import policy, 4 JS preprocessing cases, plist validation and strict codesign passed",
+    "xcresults": {
+      "validated-01": {
+        "result": "Passed",
+        "totalTestCount": 3,
+        "passedTests": 3,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "cases": [
+          {
+            "case": "testSmartTicketScreenshotFromPhotos",
+            "result": "passed",
+            "seconds": 42.644
+          },
+          {
+            "case": "testSmartTicketScreenshotRecognizesBothColumns",
+            "result": "passed",
+            "seconds": 30.532
+          },
+          {
+            "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "result": "passed",
+            "seconds": 100.505
+          }
+        ]
+      },
+      "validated-02": {
+        "result": "Failed",
+        "totalTestCount": 5,
+        "passedTests": 4,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "cases": [
+          {
+            "case": "testSmartTicketScreenshotFromPhotos",
+            "result": "failed",
+            "seconds": 27.595
+          },
+          {
+            "case": "testSmartTicketScreenshotRecognizesBothColumns",
+            "result": "passed",
+            "seconds": 18.264
+          },
+          {
+            "case": "testSmartTicketUpcomingSaveAndReopen",
+            "result": "passed",
+            "seconds": 52.662
+          },
+          {
+            "case": "testTicketShareCancelAndInvalidInputs",
+            "result": "passed",
+            "seconds": 75.34
+          },
+          {
+            "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "result": "passed",
+            "seconds": 127.027
+          }
+        ]
+      },
+      "validated-03": {
+        "result": "Passed",
+        "totalTestCount": 1,
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "cases": [
+          {
+            "case": "testSmartTicketScreenshotFromPhotos",
+            "result": "passed",
+            "seconds": 32.063
+          }
+        ]
+      },
+      "validated-04": {
+        "result": "Failed",
+        "totalTestCount": 6,
+        "passedTests": 5,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "cases": [
+          {
+            "case": "testEstablishSyntheticTicketAccount",
+            "result": "passed",
+            "seconds": 52.2
+          },
+          {
+            "case": "testSmartTicketScreenshotFromPhotos",
+            "result": "passed",
+            "seconds": 32.875
+          },
+          {
+            "case": "testSmartTicketScreenshotRecognizesBothColumns",
+            "result": "passed",
+            "seconds": 19.058
+          },
+          {
+            "case": "testSmartTicketUpcomingSaveAndReopen",
+            "result": "failed",
+            "seconds": 17.219
+          },
+          {
+            "case": "testTicketShareCancelAndInvalidInputs",
+            "result": "passed",
+            "seconds": 74.965
+          },
+          {
+            "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "result": "passed",
+            "seconds": 100.766
+          }
+        ]
+      },
+      "validated-05": {
+        "result": "Failed",
+        "totalTestCount": 6,
+        "passedTests": 5,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "cases": [
+          {
+            "case": "testEstablishSyntheticTicketAccount",
+            "result": "passed",
+            "seconds": 60.042
+          },
+          {
+            "case": "testSmartTicketScreenshotFromPhotos",
+            "result": "passed",
+            "seconds": 28.704
+          },
+          {
+            "case": "testSmartTicketScreenshotRecognizesBothColumns",
+            "result": "passed",
+            "seconds": 18.545
+          },
+          {
+            "case": "testSmartTicketUpcomingSaveAndReopen",
+            "result": "passed",
+            "seconds": 52.632
+          },
+          {
+            "case": "testTicketShareCancelAndInvalidInputs",
+            "result": "passed",
+            "seconds": 113.485
+          },
+          {
+            "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "result": "failed",
+            "seconds": 153.371
+          }
+        ]
+      },
+      "validated-06": {
+        "result": "Failed",
+        "totalTestCount": 1,
+        "passedTests": 0,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "cases": [
+          {
+            "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "result": "failed",
+            "seconds": 32.691
+          }
+        ]
+      },
+      "validated-07": {
+        "result": "Passed",
+        "totalTestCount": 2,
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "cases": [
+          {
+            "case": "testEstablishSyntheticTicketAccount",
+            "result": "passed",
+            "seconds": 52.893
+          },
+          {
+            "case": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "result": "passed",
+            "seconds": 53.984
+          }
+        ]
+      }
+    },
+    "evidence": [
+      "evidence/smart-ticket-share-20261120/01-photos-review.png",
+      "evidence/smart-ticket-share-20261120/02-saved-after-relaunch.png",
+      "evidence/smart-ticket-share-20261120/03-link-only-recovery.png"
+    ],
+    "privateRoot": "/private/tmp/nolate-ticket-smart-photo.zys5q3ip",
+    "initialSetupFailure": "Initial test on a signed-out isolated fixture stopped at login. Reauthenticated through the normal app UI.",
+    "initialCaptionFailure": "The first candidate showed an empty review for a received-ticket title. A compiled host reproduction identified the keyword-only title fallback; the transport detail behind that first runtime failure is unconfirmed.",
+    "limits": [
+      "Real private Korail DOM and Kakao share payload remain unverified",
+      "Historical example was reviewed without saving. A new future synthetic ticket was used for the save and restart check.",
+      "Only the local simulator extension was installed. No iPhone, main-branch merge or deployment for these changes."
+    ],
+    "syntheticJPEGs": {
+      "NoLateSmartTicketFixture.jpg": "442bd2edd32cd7cb67085b5d6411f06dbc55e7cabdb426f3532745d2a391c4be",
+      "NoLateUpcomingSmartTicketFixture.jpg": "48f8e476909174491da6080ef0c149044819dfc5b84700689d7e395245285b5b"
+    },
+    "finalChecks": {
+      "appearance": "dark",
+      "batch": "validated-05",
+      "batchPassed": 5,
+      "batchFailed": 1,
+      "skipped": 0,
+      "focusedRerun": "validated-07",
+      "focusedPassed": 2,
+      "distinctCasesPassingAcrossRuns": 6,
+      "includesNormalLoginSetup": true,
+      "actualPhotosThroughSaveAndRelaunch": true,
+      "restoredAppearance": "light"
+    },
+    "priorUITestIssues": [
+      "Photos restored the full-screen viewer between runs. Return to the library before selecting the fixture.",
+      "Calendar navigation raced a profile tap. Use the visible calendar and verify the synthetic profile before a write.",
+      "During validated-05 XCTest timed out loading the fixture accessibility tree on its fourth launch within one case. Start the host once and wait for the share sheet to dismiss between inputs. The affected case was rerun.",
+      "validated-06 showed the extension login prompt after a separate API login. A normal fresh in-app login preceded the focused validated-07 rerun."
+    ],
+    "photosSource": "Apple Photos with two imported synthetic JPEGs. The future-dated image followed normal share, explicit review, save and reread after restart. No physical device or ticket issuer app was used."
+  },
+  "pdfFollowup20261120": {
+    "report": "2026-11-20-smart-ticket-pdf-validation.json",
+    "scope": "Real Safari PDF export to Files, train text/scanned/hybrid and bus text/scanned PDFs on simulator; older packaging and source hashes describe their original runs."
+  },
+  "renderedSmartTicketWebKit20261120": {
+    "scope": "Real WKWebView on iOS 27.0, official HTTPS base URL for in-memory HTML with external loading prohibited by CSP. The simulator-only host ran the bundled product JavaScript and delivered its actual property-list result with a synthetic URL via the system share sheet to the signed Release extension in the retained iOS 27.0 app. On iOS 26.5, the same flow ran against a new complete simulator Release of the NoLateFE workspace with the embedding performed by Xcode.",
+    "before": "The same rendered HTML reached the ticket review, but its departure field had no value. The original XCUITest failed expecting 서울.",
+    "after": "Unlabelled single-card journeys use rendered text boxes to associate each station with its clock. Explicit departure and arrival time labels work in either reading order. An incomplete card with an unrelated clock leaves both clock fields for review.",
+    "runs": {
+      "baseline": {
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testEstablishSyntheticTicketAccount",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketRenderedWebPageRecognizesBothColumns",
+            "status": "failed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/baseline/result.xcresult"
+      },
+      "repaired": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testSmartTicketRenderedWebPageRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketScreenshotRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "status": "passed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/repaired/result.xcresult"
+      },
+      "final": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testSmartTicketPartialWebPageLeavesTimesForReview",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketRenderedWebPageRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketReversedWebPageUsesVisualOrder",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketTextPDFRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "status": "passed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/final/result.xcresult"
+      },
+      "persistence": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testSmartTicketPastWebPageRejectsSave",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketUpcomingWebPageSaveAndReopen",
+            "status": "passed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/persistence/result.xcresult"
+      },
+      "acceptance": {
+        "passed": 5,
+        "failed": 5,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testEstablishSyntheticTicketAccount",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketHybridPDFRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketLabelledWebPageUsesClockLabels",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketPartialWebPageLeavesTimesForReview",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketPastWebPageRejectsSave",
+            "status": "failed"
+          },
+          {
+            "name": "testSmartTicketRenderedWebPageRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketReversedWebPageUsesVisualOrder",
+            "status": "failed"
+          },
+          {
+            "name": "testSmartTicketScreenshotRecognizesBothColumns",
+            "status": "failed"
+          },
+          {
+            "name": "testSmartTicketUpcomingWebPageSaveAndReopen",
+            "status": "failed"
+          },
+          {
+            "name": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "status": "failed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/acceptance/result.xcresult"
+      },
+      "acceptance-retry": {
+        "passed": 5,
+        "failed": 1,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testEstablishSyntheticTicketAccount",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketPastWebPageRejectsSave",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketReversedWebPageUsesVisualOrder",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketScreenshotRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketUpcomingWebPageSaveAndReopen",
+            "status": "passed"
+          },
+          {
+            "name": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "status": "failed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/acceptance-retry/result.xcresult"
+      },
+      "system-share-retry": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "status": "passed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/system-share-retry/result.xcresult"
+      },
+      "workspace-26-corrected": {
+        "passed": 5,
+        "failed": 2,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testEstablishSyntheticTicketAccount",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketLabelledWebPageUsesClockLabels",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketPartialWebPageLeavesTimesForReview",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketRenderedWebPageRecognizesBothColumns",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketReversedWebPageUsesVisualOrder",
+            "status": "failed"
+          },
+          {
+            "name": "testSmartTicketUpcomingWebPageSaveAndReopen",
+            "status": "failed"
+          },
+          {
+            "name": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "status": "passed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/workspace-26-corrected/result.xcresult"
+      },
+      "workspace-26-final": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "cases": [
+          {
+            "name": "testEstablishSyntheticTicketAccount",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketReversedWebPageUsesVisualOrder",
+            "status": "passed"
+          },
+          {
+            "name": "testSmartTicketUpcomingWebPageSaveAndReopen",
+            "status": "passed"
+          },
+          {
+            "name": "testTrainTicketWebPageShareReviewAndURLOnlyRecovery",
+            "status": "passed"
+          }
+        ],
+        "resultBundle": "/private/tmp/nolate-webkit-ticket-24dok912/workspace-26-final/result.xcresult"
+      }
+    },
+    "retryContext": "During the initial ten-case iOS 27 run one share stayed on the processing screen, three checks failed loading app accessibility, and one failed activating the app. The isolated database still had zero matching schedules. All five affected cases passed in subsequent runs. The last URL-only case initially saw only a RemotePlaceholder from SharingUIService in the host accessibility hierarchy, although its screenshot showed the NoLate share target. The test now waits for the stable target offered by the host or the running system service.",
+    "ios26Retry": "The first run against the corrected full app passed login and ordinary web review. An iOS Passwords prompt blocked the profile button, and XCTest lost the remote share cell after it changed identity. The test now dismisses the specific synthetic password prompt on reentry and taps the verified icon position in the host coordinate space. The two affected scenarios were repeated.",
+    "workspaceBuild": {
+      "hashedInstalledBundleFiles": {
+        "NoLateFE": "f6d5a84c7982dcd88dba36668ac6fcfbdda9d14791a0b0272902f76b091afacc",
+        "main.jsbundle": "9d9ac953782843842dd242254987fe862e3b956a0be237af2be052f70a638ce5",
+        "PlugIns/NoLateShareExtension.appex/NoLateShareExtension": "999c4c62a34395629c8621f67e086842f39f326cf51c3d909c3c68d9d0ffa1b9",
+        "PlugIns/NoLateShareExtension.appex/TicketWebPage.js": "6cf5c905e6bb32a7b3619c140739b8d31fd701e68d575d2a16cf38f2caae7a6a"
+      },
+      "wholeAppBuilt": true,
+      "normalWorkspace": "ios/NoLateFE.xcworkspace",
+      "configuration": "Release",
+      "extensionEmbeddedByXcode": true,
+      "loopbackApi": "http://127.0.0.1:5528",
+      "simulator": {
+        "name": "NoLate Ticket WebKit E2E 20261120",
+        "udid": "A496CD9E-C102-4103-BF7B-775B72666AE9",
+        "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+      },
+      "verifiedMetroInlinedSettings": {
+        "EXPO_PUBLIC_API_BASE_URL": "http://127.0.0.1:5528",
+        "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://127.0.0.1:5528"
+      }
+    },
+    "ios26StoredSchedule": {
+      "isolatedAccount": true,
+      "exactlyOneSavedSchedule": true,
+      "retrievedBySearchThenDetail": true,
+      "ticket": {
+        "kind": "TRAIN",
+        "source": "IOS_SHARE_TEXT",
+        "verification": "USER_CONFIRMED",
+        "bookingStatus": "UNVERIFIED",
+        "departureName": "서울",
+        "arrivalName": "동대구",
+        "trainNumber": "255",
+        "departureAt": "2026-11-21T06:43:00+09:00",
+        "arrivalAt": "2026-11-21T08:32:00+09:00"
+      },
+      "noOriginalImageOrPrivateURLInTicket": true
+    },
+    "regressions": {
+      "javascriptTests": 5,
+      "swiftPolicy": "passed",
+      "iphoneosArm64ReleaseTarget": "built without installation"
+    },
+    "latestSource": {
+      "sourceSHA256": {
+        "TicketWebPage.js": "6cf5c905e6bb32a7b3619c140739b8d31fd701e68d575d2a16cf38f2caae7a6a",
+        "TrainTicketReviewController.swift": "869c51074585efd4f119e46b9769c009dca162182f06af758959760c21effcaf",
+        "ShareViewController.swift": "314bb0ad3d726edcd5b102d73825a51932935c0b2f399117c3615913ef8152ea",
+        "TrainTicketImport.swift": "91f6fcf6f485bf6f9bc9b996a2b460341028aae1c27a55d1dbcb9910d78846de",
+        "NoLateShareExtension.entitlements": "099171b2c8b07daa9243746c19b099e01d295565fb3ac040bac766a05d1eb7cf",
+        "Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252"
+      },
+      "extensionSHA256": "e578387a0e3c5817e759f1e4d70d61ed2c94bd1fbc411fb73040774a0af88130",
+      "signed": true,
+      "installed": true,
+      "loopback": true,
+      "retainedMainApp": true
+    },
+    "publicEnvironmentCache": {
+      "initialFullWorkspaceBuild": {
+        "requestedLocalPort": 5528,
+        "inlinedValues": {
+          "EXPO_PUBLIC_API_BASE_URL": [
+            "http://127.0.0.1:5535"
+          ],
+          "EXPO_PUBLIC_LOCAL_API_BASE_URL": [
+            "http://127.0.0.1:5535"
+          ]
+        },
+        "nativeExtensionPort": 5528,
+        "initialUITestExit": 75,
+        "outcome": "The synthetic login was rejected on the first install. Stopped dependent UI tests, confirmed the account at the intended server, then inspected both settings in the actual Metro output. Seeing the expected URL somewhere in Hermes was insufficient."
+      },
+      "fix": "Hash the sorted public environment into the Metro transform cache version. The builds below use the same DerivedData and no manual cache reset or E2E namespace.",
+      "twoConsecutiveWorkspaceBuilds": {
+        "5579": {
+          "cacheNamespaceOverride": false,
+          "metroInlineValues": {
+            "EXPO_PUBLIC_API_BASE_URL": "http://127.0.0.1:5579",
+            "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://127.0.0.1:5579"
+          },
+          "extensionApiOrigin": "http://127.0.0.1:5579",
+          "signed": true,
+          "jsSHA256": "67404b34af08cd766dc9685ffda7509c3e03fc2798d3cc1f36387f7a3a30a5ab",
+          "metroConfigSHA256": "3d3772782867431e0fd8a40e892d3ca861dd906e867c8d2ab3c97027f6c568bb"
+        },
+        "5528": {
+          "cacheNamespaceOverride": false,
+          "metroInlineValues": {
+            "EXPO_PUBLIC_API_BASE_URL": "http://127.0.0.1:5528",
+            "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://127.0.0.1:5528"
+          },
+          "extensionApiOrigin": "http://127.0.0.1:5528",
+          "signed": true,
+          "jsSHA256": "9d9ac953782843842dd242254987fe862e3b956a0be237af2be052f70a638ce5",
+          "metroConfigSHA256": "3d3772782867431e0fd8a40e892d3ca861dd906e867c8d2ab3c97027f6c568bb"
+        }
+      },
+      "jest": {
+        "suites": 4,
+        "tests": 28,
+        "failed": 0
+      }
+    },
+    "storedSchedule": {
+      "isolatedAccount": true,
+      "exactlyOneSavedSchedule": true,
+      "retrievedBySearchThenDetail": true,
+      "ticket": {
+        "kind": "TRAIN",
+        "source": "IOS_SHARE_TEXT",
+        "verification": "USER_CONFIRMED",
+        "bookingStatus": "UNVERIFIED",
+        "departureName": "서울",
+        "arrivalName": "동대구",
+        "trainNumber": "255",
+        "departureAt": "2026-11-21T06:43:00+09:00",
+        "arrivalAt": "2026-11-21T08:32:00+09:00"
+      },
+      "noOriginalImageOrPrivateURLInTicket": true
+    },
+    "screenshots": [
+      "evidence/smart-ticket-share-20261120/11-webkit-review.png",
+      "evidence/smart-ticket-share-20261120/12-webkit-saved-after-relaunch.png"
+    ],
+    "wholeGoalComplete": false,
+    "limits": [
+      "No original Korail ticket URL or private page used. The WebKit host simulates the Safari extension handoff. Kakao and MobileSafari on the real issuer URL still require validation.",
+      "The iOS 27 run used the retained main app and the iOS 26.5 run used the complete rebuilt app. No physical device, purchase, production write, commit, push or merge."
+    ]
+  },
+  "labelledClocksOvernightAndMobileSafari20261120": {
+    "qaDate": "2026-11-20",
+    "baseline": "Ordinary share parsing set departure to the phone clock 04:07 on an arrival-only ticket. It also treated 시각 as a station when stop names were absent. A signed extension failed the afternoon-time review assertion before the repair. The timetable sheet component separately failed the next-day arrival display assertion.",
+    "fixed": "Text, PDF and webpage parsers respect explicit departure and arrival fields, Korean AM/PM, and explicitly dated overnight journeys. Ambiguous or missing roles stay editable. The station parser excludes clock headings. The timetable preview, selected service and route leg show the arrival date for overnight services.",
+    "scope": "iOS 27.0 retained app with rebuilt signed Release share extension, iOS 26.5 complete ordinary workspace Release. A loopback synthetic page ran the Web Share API inside the installed Apple MobileSafari, via the real system share sheet and NoLate extension. The text test checked Seoul 06:43 to Dongdaegu 08:32 KTX 255. Sharing the public Korail homepage URL with just a title showed the recovery view.",
+    "limits": [
+      "No passenger ticket, original private URL, real Kakao, carrier checkout or physical device tested.",
+      "The Safari test used page-provided share buttons. The original-page Safari toolbar payload is not established by this run.",
+      "The simulator backend was isolated loopback H2. The provider regression suite used test fixtures. Same-train live subway location and lock-screen progression remain open."
+    ],
+    "passesAfterSetup": "The first iOS 27 MobileSafari run reached the extension and showed the sign-in requirement after an independent API login. The same test passed following normal in-app sign-in. On iOS 26 the first browser run stayed on the local page after the tap, with no share target. The unchanged test passed on retry. The final test explicitly cold-starts Safari, waits for a stable web button and uses the fixture click acknowledgement. Cold runs passed on both OS versions.",
+    "runs": {
+      "baseline": {
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "exit": 65,
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testTicketLabelledTextAndPDFKeepAfternoonRideTimes": "failed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/baseline/result.xcresult"
+      },
+      "signed-27": {
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0,
+        "exit": 0,
+        "cases": {
+          "testSmartTicketHybridPDFRejectsRefundedTicket": "passed",
+          "testSmartTicketLabelledWebPageUsesClockLabels": "passed",
+          "testSmartTicketPartialWebPageLeavesTimesForReview": "passed",
+          "testSmartTicketRenderedWebPageRecognizesBothColumns": "passed",
+          "testSmartTicketScreenshotRecognizesBothColumns": "passed",
+          "testTicketLabelledOvernightBusPDFSaveAndReopen": "passed",
+          "testTicketLabelledTextAndPDFKeepAfternoonRideTimes": "passed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/signed-27/result.xcresult"
+      },
+      "safari-27": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "exit": 65,
+        "cases": {
+          "testSmartTicketFromSafariWebShare": "failed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/safari-27/result.xcresult"
+      },
+      "safari-authenticated-27": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "exit": 0,
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketFromSafariWebShare": "passed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/safari-authenticated-27/result.xcresult"
+      },
+      "full-26": {
+        "passed": 5,
+        "failed": 1,
+        "skipped": 0,
+        "exit": 65,
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketFromSafariWebShare": "failed",
+          "testSmartTicketLabelledWebPageUsesClockLabels": "passed",
+          "testSmartTicketRenderedWebPageRecognizesBothColumns": "passed",
+          "testTicketLabelledOvernightBusPDFSaveAndReopen": "passed",
+          "testTicketLabelledTextAndPDFKeepAfternoonRideTimes": "passed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/full-26/result.xcresult"
+      },
+      "safari-ready-26": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "exit": 0,
+        "cases": {
+          "testSmartTicketFromSafariWebShare": "passed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/safari-ready-26/result.xcresult"
+      },
+      "cold-safari-26": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "exit": 0,
+        "cases": {
+          "testSmartTicketFromSafariWebShare": "passed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/cold-safari-26/result.xcresult"
+      },
+      "cold-safari-27": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "exit": 0,
+        "cases": {
+          "testSmartTicketFromSafariWebShare": "passed"
+        },
+        "resultBundle": "/private/tmp/nolate-ticket-labelled-tz_b26p5/cold-safari-27/result.xcresult"
+      }
+    },
+    "storedOvernightBusByOS": {
+      "26": {
+        "verifiedByAuthenticatedSearchAndDetail": true,
+        "oneMatchingSchedule": true,
+        "normalisedTicket": {
+          "kind": "INTERCITY_BUS",
+          "source": "IOS_SHARE_PDF",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "동서울",
+          "arrivalName": "속초",
+          "grade": "우등",
+          "departureAt": "2026-11-21T23:10:00+09:00",
+          "arrivalAt": "2026-11-22T00:30:00+09:00"
+        },
+        "scheduleStartAt": "2026-11-21T15:30:00Z",
+        "allowedFieldsOnly": true
+      },
+      "27": {
+        "verifiedByAuthenticatedSearchAndDetail": true,
+        "oneMatchingSchedule": true,
+        "normalisedTicket": {
+          "kind": "INTERCITY_BUS",
+          "source": "IOS_SHARE_PDF",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "동서울",
+          "arrivalName": "속초",
+          "grade": "우등",
+          "departureAt": "2026-11-21T23:10:00+09:00",
+          "arrivalAt": "2026-11-22T00:30:00+09:00"
+        },
+        "scheduleStartAt": "2026-11-21T15:30:00Z",
+        "allowedFieldsOnly": true
+      }
+    },
+    "workspaceRelease": {
+      "normalWorkspaceRelease": true,
+      "codesignVerified": true,
+      "localOnlyApi": "http://127.0.0.1:5528",
+      "sameJsAndNativeEndpoints": true,
+      "inputHashes": {
+        "ios/NoLateShareExtension/TrainTicketImport.swift": "f38a220a0000733512dee6ab3bd337a59a3861e7f74081edd5f1d3122cc90119",
+        "ios/NoLateShareExtension/ShareViewController.swift": "314bb0ad3d726edcd5b102d73825a51932935c0b2f399117c3615913ef8152ea",
+        "ios/NoLateShareExtension/TicketWebPage.js": "6cf5c905e6bb32a7b3619c140739b8d31fd701e68d575d2a16cf38f2caae7a6a",
+        "src/modules/schedule/intercityTimetableModel.ts": "190462a4248e67f8c43a6069ea3ec1a8ad795489893539471288e0b96d9147c1",
+        "src/modules/schedule/components/route/IntercityTimetableSheet.tsx": "8c34d452eb62cf3fbf0470a6a730a82f415948f93ce5c2794ddd42edbd9bfdc9",
+        "src/modules/schedule/components/detail/ImportedTicketSummary.tsx": "699910420efde0880f3f9c882a29c7c1b6a6b6b7346bde2026a42d21037ed9a0",
+        "src/modules/schedule/routeInfo.ts": "b5c75e2fd4fc92e9b53a9a07962c51e30519016663950b4926994530a9969706",
+        "src/routeSupport/schedule/routeSelectRouteModel.ts": "c7563c449e80c6f8103284615d7868ddc97e0c23206e80611a0ef3b766ffc5d0",
+        "metro.config.js": "3d3772782867431e0fd8a40e892d3ca861dd906e867c8d2ab3c97027f6c568bb"
+      },
+      "concurrentChanges": [],
+      "installedHashes": {
+        "NoLateFE": "7cee0d386223667099cfc1870bb4bae4c63620a9fd56e12800f71e6228deb403",
+        "main.jsbundle": "6543c53d2a8ab8c0fa1f0ccf467cee3909536acb2b0a7c197edd5fbe665dffdb",
+        "PlugIns/NoLateShareExtension.appex/NoLateShareExtension": "3fd9f5047cec25271187e1608553317221aa2852418eb7deb2a5c67f54d085a0",
+        "PlugIns/NoLateShareExtension.appex/TicketWebPage.js": "6cf5c905e6bb32a7b3619c140739b8d31fd701e68d575d2a16cf38f2caae7a6a"
+      },
+      "simulator": "A496CD9E-C102-4103-BF7B-775B72666AE9"
+    },
+    "iphoneos": "Unsigned arm64 share extension Release compiled, no installation.",
+    "javascript": {
+      "jest": {
+        "jest": {
+          "suites": 5,
+          "passed": 58
+        },
+        "jest-route": {
+          "suites": 3,
+          "passed": 34
+        },
+        "jest-select": {
+          "suites": 4,
+          "passed": 48
+        }
+      },
+      "preprocessing": 5,
+      "typescript": "passed",
+      "touchedFilesLint": "zero errors, two existing inline-style warnings"
+    },
+    "swiftParser": "Native assertions passed for reordered labels, current and payment clocks, omitted and duplicate fields, explicit overnight dates, noon, midnight and visual period placement.",
+    "backend": {
+      "offline": true,
+      "sourceSnapshot": "cc73f34998640eb1002785aa20a638de3b183c4c9d917e3a37030daea5bfdc54",
+      "sameSourceAtEndOfGradle": true,
+      "casesBySuite": {
+        "TmapTransitJourneyMapperTest": 27,
+        "OdsayTransitJourneyMapperTest": 14,
+        "TransitEtaProviderWiringTest": 4,
+        "TransitRouteServiceTest": 7,
+        "IntercityTimetableServiceTest": 14,
+        "TmapTransitJourneyProviderTest": 9,
+        "IntercityJourneyValidatorTest": 11,
+        "IntercityTravelPlanPersistenceTest": 1,
+        "IntercityRouteQualityTest": 2,
+        "TmapTransitQuotaContractTest": 2
+      },
+      "failed": 0
+    },
+    "screenshots": [
+      "evidence/smart-ticket-share-20261120/13-mobile-safari-text.png",
+      "evidence/smart-ticket-share-20261120/14-mobile-safari-link.png",
+      "evidence/smart-ticket-share-20261120/15-overnight-bus-reopened.png",
+      "evidence/smart-ticket-share-20261120/16-missing-departure.png"
+    ],
+    "officialConnection": {
+      "checkedAt": "2026-11-20T04:09:17.469084+09:00",
+      "host": "swopenapi.seoul.go.kr",
+      "port": 443,
+      "httpRequest": false,
+      "credentialSent": false,
+      "tlsVerified": false,
+      "failure": "TimeoutError"
+    },
+    "wholeGoalComplete": false
+  },
+  "busWebSharing20261120": {
+    "baseline": {
+      "normalParserCalled": true,
+      "scheduleCreated": true,
+      "genericScheduleWithPublicUrlFoundBySearch": true,
+      "savedCountMatchingSearch": 1,
+      "payloadWasPublicHomeOnly": true
+    },
+    "scope": "Tested signed iOS share extensions with synthetic single-trip details and dedicated local accounts. Safari Web Share and the public Tmoney intercity booking homepage used the real simulator browser and system share sheet. The carrier-branded trip pages were in-memory WebKit fixtures. No passenger ticket, real booking, KakaoTalk app or physical phone used.",
+    "latest27": {
+      "sourceSHA256": {
+        "TicketWebPage.js": "f5bc4e25f10c41af6620800883f2e29fd6211e7743399b57219dee68ec1ac354",
+        "TrainTicketReviewController.swift": "869c51074585efd4f119e46b9769c009dca162182f06af758959760c21effcaf",
+        "ShareViewController.swift": "c23380c67da0858a428a965162a411898d05897275f707fbe38a5d6a6d4b7228",
+        "TrainTicketImport.swift": "1932f4c61a0849ada14378a0e4e7fd820c7d1d512e4c0235033b7063c1f376bf",
+        "NoLateShareExtension.entitlements": "099171b2c8b07daa9243746c19b099e01d295565fb3ac040bac766a05d1eb7cf",
+        "Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252"
+      },
+      "extensionSHA256": "4121e5315b47e6a764fb5595575bdc6306b07aa42fb530a9e3740ee70ab1cce9",
+      "signed": true,
+      "installed": true,
+      "loopback": true,
+      "retainedMainApp": true
+    },
+    "latest26": {
+      "normalWorkspaceRelease": true,
+      "codesignVerified": true,
+      "localOnlyApi": "http://127.0.0.1:5528",
+      "sameJsAndNativeEndpoints": true,
+      "inputHashes": {
+        "ios/NoLateShareExtension/TrainTicketImport.swift": "1932f4c61a0849ada14378a0e4e7fd820c7d1d512e4c0235033b7063c1f376bf",
+        "ios/NoLateShareExtension/ShareViewController.swift": "c23380c67da0858a428a965162a411898d05897275f707fbe38a5d6a6d4b7228",
+        "ios/NoLateShareExtension/TicketWebPage.js": "f5bc4e25f10c41af6620800883f2e29fd6211e7743399b57219dee68ec1ac354",
+        "ios/NoLateShareExtension/Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252",
+        "metro.config.js": "3d3772782867431e0fd8a40e892d3ca861dd906e867c8d2ab3c97027f6c568bb"
+      },
+      "concurrentChanges": [],
+      "installedHashes": {
+        "NoLateFE": "9b9da12ea56bb07a72c43055433c903dae08829f45b6584e30043a8d18df66ae",
+        "main.jsbundle": "7d77f8d229b8f667f7826d214c59ef300cdc59450bbd86dbddac36231e70bf5e",
+        "PlugIns/NoLateShareExtension.appex/NoLateShareExtension": "99c88102866e1680e04d34163c47c075e1dce33ce31fab05378448715131c1a5",
+        "PlugIns/NoLateShareExtension.appex/TicketWebPage.js": "f5bc4e25f10c41af6620800883f2e29fd6211e7743399b57219dee68ec1ac354"
+      },
+      "simulator": "A496CD9E-C102-4103-BF7B-775B72666AE9"
+    },
+    "beforeConfirmation": {
+      "scheduleParseRequests": 0,
+      "scheduleCreateRequests": 0,
+      "scheduleCreateSuccess": 0
+    },
+    "afterTwoConfirmedImports": {
+      "scheduleParseRequests": 0,
+      "scheduleCreateRequests": 2,
+      "scheduleCreateSuccess": 2
+    },
+    "readback": {
+      "26": {
+        "verifiedByAuthenticatedSearchAndDetail": true,
+        "oneMatchingSchedule": true,
+        "normalisedTicket": {
+          "kind": "INTERCITY_BUS",
+          "source": "IOS_SHARE_TEXT",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "동서울",
+          "arrivalName": "속초",
+          "grade": "우등",
+          "departureAt": "2026-11-21T23:10:00+09:00",
+          "arrivalAt": "2026-11-22T00:30:00+09:00"
+        },
+        "scheduleStartAt": "2026-11-21T15:30:00Z",
+        "allowedFieldsOnly": true
+      },
+      "27": {
+        "verifiedByAuthenticatedSearchAndDetail": true,
+        "oneMatchingSchedule": true,
+        "normalisedTicket": {
+          "kind": "INTERCITY_BUS",
+          "source": "IOS_SHARE_TEXT",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "동서울",
+          "arrivalName": "속초",
+          "grade": "우등",
+          "departureAt": "2026-11-21T23:10:00+09:00",
+          "arrivalAt": "2026-11-22T00:30:00+09:00"
+        },
+        "scheduleStartAt": "2026-11-21T15:30:00Z",
+        "allowedFieldsOnly": true
+      }
+    },
+    "runs": {
+      "baseline": {
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketBusLinksAndDetailsFromSafari": "failed"
+        },
+        "exitCode": 65,
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/baseline/result.xcresult"
+      },
+      "corrected-27": {
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketBusLinksAndDetailsFromSafari": "passed",
+          "testSmartTicketBusWebPageUsesCarrierAndRejectsBookingHome": "passed",
+          "testSmartTicketFromSafariWebShare": "failed"
+        },
+        "exitCode": 65,
+        "passed": 3,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/corrected-27/result.xcresult"
+      },
+      "final-26": {
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketBusLinksAndDetailsFromSafari": "passed",
+          "testSmartTicketBusWebPageUsesCarrierAndRejectsBookingHome": "passed",
+          "testSmartTicketCarrierAppLinksRequestTicketContent": "passed",
+          "testSmartTicketFromSafariWebShare": "passed",
+          "testSmartTicketTmoneyHomeFromSafariToolbar": "failed"
+        },
+        "exitCode": 65,
+        "passed": 5,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/final-26/result.xcresult"
+      },
+      "final-27": {
+        "cases": {
+          "testSmartTicketBusLinksAndDetailsFromSafari": "passed",
+          "testSmartTicketBusWebPageUsesCarrierAndRejectsBookingHome": "passed",
+          "testSmartTicketCarrierAppLinksRequestTicketContent": "passed",
+          "testSmartTicketFromSafariWebShare": "passed",
+          "testSmartTicketScreenshotRecognizesBothColumns": "passed",
+          "testSmartTicketTmoneyHomeFromSafariToolbar": "failed"
+        },
+        "exitCode": 65,
+        "passed": 5,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/final-27/result.xcresult"
+      },
+      "save-26": {
+        "cases": {
+          "testSmartTicketOvernightBusWebPageSaveAndReopen": "passed"
+        },
+        "exitCode": 0,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/save-26/result.xcresult"
+      },
+      "save-27": {
+        "cases": {
+          "testSmartTicketOvernightBusWebPageSaveAndReopen": "passed"
+        },
+        "exitCode": 0,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/save-27/result.xcresult"
+      },
+      "toolbar-26": {
+        "cases": {
+          "testSmartTicketTmoneyHomeFromSafariToolbar": "passed"
+        },
+        "exitCode": 0,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/toolbar-26/result.xcresult"
+      },
+      "toolbar-27": {
+        "cases": {
+          "testSmartTicketTmoneyHomeFromSafariToolbar": "passed"
+        },
+        "exitCode": 0,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-bus-webshare-gcggj6gt/toolbar-27/result.xcresult"
+      }
+    },
+    "regressions": {
+      "jestTestsPassed": 49,
+      "jestSuitesPassed": 5,
+      "webPageScriptTestsPassed": 6,
+      "nativePolicyPassed": [
+        "Train ticket policy: 11 assertions passed",
+        "Bus/PDF/cancellation policy: 8 additional assertions passed",
+        "Numeric terminal / clock ambiguity policy: 3 additional assertions passed",
+        "Cancellation instructions / actual status policy: 2 additional assertions passed",
+        "Validation field mapping: 7 assertions passed",
+        "Safari ticket page policy: 13 assertions passed",
+        "Railway URL, caption, local review and multi-ticket routing policy passed",
+        "Bus booking URL, origin, public schedule isolation and local trip review policy passed",
+        "Smart-ticket screenshot geometry, ambiguity and review policy passed",
+        "Labelled clocks, Korean AM/PM, field roles and explicitly dated overnight journeys passed",
+        "Rendered railway web page selection, geometry, cancellation and incomplete-field policy passed",
+        "Mixed PDF text layer, rendering and cancellation policy passed",
+        "Scanned bus route-arrow recognition and ambiguity controls passed"
+      ],
+      "deviceSdkCompile": true
+    },
+    "screenshots": [
+      {
+        "sourceTest": "testSmartTicketBusLinksAndDetailsFromSafari",
+        "run": "final-27",
+        "path": "docs/evidence/smart-ticket-share-20261120/17-bus-ticket-safari-review.png",
+        "sha256": "3f3ce47f3965c8a3cb6f95227003040119a99afe82d425473a36c591635b883e"
+      },
+      {
+        "sourceTest": "testSmartTicketTmoneyHomeFromSafariToolbar",
+        "run": "toolbar-27",
+        "path": "docs/evidence/smart-ticket-share-20261120/18-tmoney-home-link.png",
+        "sha256": "1627cc6db5f4c11702c640aee2f3348c70422f5650dfd95001a023da60103a12"
+      },
+      {
+        "sourceTest": "testSmartTicketOvernightBusWebPageSaveAndReopen",
+        "run": "save-27",
+        "path": "docs/evidence/smart-ticket-share-20261120/19-overnight-bus-webpage-reopened.png",
+        "sha256": "ce71aadc64e6997c6ffddf6abdc667b3b5cb5d1ae40d2ae292f8fa7e2fc7e7dc"
+      }
+    ],
+    "limits": "The generated test pages demonstrate payload handling. The contents Kakao or Safari shares from an actual private Korail page still require a device check.",
+    "retryContext": "The pre-fix bus homepage created an ordinary calendar event. The first corrected iOS 27 bus tests passed. Its separate rail browser test timed out while XCTest was starting Safari accessibility, then passed against the final signed product on both runtimes. The initial public-home assertion expected a desktop booking label, while the simulator displayed Tmoney's mobile landing page. The final toolbar test identifies the loaded official domain, records the rendered page and shares it through Safari."
+  },
+  "railBookingHomeAndForwardedSharing20261120": {
+    "before": "Sharing the real Korail public homepage from the MobileSafari toolbar opened a blank railway ticket review. Native selection also treated a customer service clock as ticket detail and an opaque forwarding URL with a separate received-ticket title as an ordinary calendar input. On the old extension iOS delivered the native titled fixture in a form already handled; a native policy probe independently reproduced the title-plus-URL representation defect.",
+    "after": "Booking controls and an isolated clock no longer qualify as a rail ticket. Host-supplied receipt titles, forwarding URLs and substantive trip details are handled independently. The generic calendar keeps its original URLs. The extension does not follow the forwarding URL.",
+    "scope": "Actual public Korail homepage shared through MobileSafari; synthetic titled-link, plain-message, URL-with-ticket-text and rendered WebKit receipt sent through the iOS system share sheet. Local simulator accounts and loopback H2. Both simulators used signed Release extensions; 26.5 reused a previously verified normal workspace Release main app, 27.0 a retained main app.",
+    "latest27": {
+      "sourceSHA256": {
+        "TicketWebPage.js": "f5bc4e25f10c41af6620800883f2e29fd6211e7743399b57219dee68ec1ac354",
+        "TrainTicketReviewController.swift": "869c51074585efd4f119e46b9769c009dca162182f06af758959760c21effcaf",
+        "ShareViewController.swift": "88e04f21a1b79a2538424f565dbe2af22ae4628d63686264a3c9c2a69ee7091b",
+        "TrainTicketImport.swift": "51b00bc3677607d8b7145999766e1816724b51b49560ce49b2f0eb3cdfb78bef",
+        "NoLateShareExtension.entitlements": "099171b2c8b07daa9243746c19b099e01d295565fb3ac040bac766a05d1eb7cf",
+        "Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252"
+      },
+      "extensionSHA256": "3e932de0682458057ee9b2f125d4262707777013edf160ffc39aa5980d945949",
+      "unchangedMainExecutable": "f23d3d879a3ee3294f62a934a11474a87c00988624b603a70f74cd83636aad7c",
+      "unchangedMainBundleSHA256": "563f5fc9eec17661ce8d1c6d6dc3ccca6438e019f885117ef86fbab956f85521",
+      "signed": true,
+      "installed": true,
+      "loopback": true,
+      "retainedMainApp": true,
+      "udid": "72E1C182-8FBA-4BAD-BC27-170AE1DF2323"
+    },
+    "latest26": {
+      "sourceSHA256": {
+        "TicketWebPage.js": "f5bc4e25f10c41af6620800883f2e29fd6211e7743399b57219dee68ec1ac354",
+        "TrainTicketReviewController.swift": "869c51074585efd4f119e46b9769c009dca162182f06af758959760c21effcaf",
+        "ShareViewController.swift": "88e04f21a1b79a2538424f565dbe2af22ae4628d63686264a3c9c2a69ee7091b",
+        "TrainTicketImport.swift": "51b00bc3677607d8b7145999766e1816724b51b49560ce49b2f0eb3cdfb78bef",
+        "NoLateShareExtension.entitlements": "099171b2c8b07daa9243746c19b099e01d295565fb3ac040bac766a05d1eb7cf",
+        "Info.plist": "88d8e3dd85bb71bbc4c19ffe418619b210ab97e2bdd27b149d12a87315e53252"
+      },
+      "extensionSHA256": "3e932de0682458057ee9b2f125d4262707777013edf160ffc39aa5980d945949",
+      "unchangedMainExecutable": "1f8644687a6d685cd899efe199558c2d2b7da1a9fe474a5cd22c54f6980fe747",
+      "unchangedMainBundleSHA256": "7d77f8d229b8f667f7826d214c59ef300cdc59450bbd86dbddac36231e70bf5e",
+      "signed": true,
+      "installed": true,
+      "loopback": true,
+      "retainedMainApp": true,
+      "udid": "A496CD9E-C102-4103-BF7B-775B72666AE9"
+    },
+    "nativeAndSDK": {
+      "nativePolicy": "passed",
+      "selectionBefore": [
+        "public railway booking form ticket-review",
+        "railway body only ticket-review",
+        "clock in preview ticket-review",
+        "wrapped URL with title calendar",
+        "combined title and link ticket-review",
+        "separate preview and URL error"
+      ],
+      "selectionAfter": [
+        "public railway booking form recovery",
+        "railway body only recovery",
+        "clock in preview recovery",
+        "wrapped URL with title recovery",
+        "combined title and link recovery",
+        "separate preview and URL recovery"
+      ],
+      "genericUrlAndTicketTextControl": "before mixed representation error, after normalized ticket detail",
+      "iphoneosRelease": "compiled unsigned"
+    },
+    "runs": {
+      "accepted-26": {
+        "passed": 3,
+        "failed": 2,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/accepted-26/result.xcresult",
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "failed",
+          "testSmartTicketCompactRailPhotoReadsPrintedRoute": "failed",
+          "testSmartTicketEditingStationRequiresConfirmationAgain": "passed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed"
+        }
+      },
+      "baseline": {
+        "passed": 2,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/baseline/result.xcresult",
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "failed"
+        }
+      },
+      "corrected-26": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/corrected-26/result.xcresult",
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed",
+          "testSmartTicketRenderedWebPageRecognizesBothColumns": "passed",
+          "testSmartTicketScreenshotRecognizesBothColumns": "passed"
+        }
+      },
+      "corrected-27": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/corrected-27/result.xcresult",
+        "cases": {
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed",
+          "testSmartTicketRenderedWebPageRecognizesBothColumns": "passed",
+          "testSmartTicketScreenshotRecognizesBothColumns": "passed",
+          "testSmartTicketTmoneyHomeFromSafariToolbar": "passed",
+          "testTrainTicketWebPageShareReviewAndURLOnlyRecovery": "passed"
+        }
+      },
+      "edit-27": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/edit-27/result.xcresult",
+        "cases": {
+          "testEstablishSyntheticTicketAccount": "passed",
+          "testSmartTicketEditingStationRequiresConfirmationAgain": "passed"
+        }
+      },
+      "final-26": {
+        "passed": 0,
+        "failed": 3,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/final-26/result.xcresult",
+        "cases": {
+          "testSmartTicketCompactRailPhotoReadsPrintedRoute": "failed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "failed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "failed"
+        }
+      },
+      "final-27": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/final-27/result.xcresult",
+        "cases": {
+          "testSmartTicketCompactRailPhotoReadsPrintedRoute": "passed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed",
+          "testTrainTicketWebPageShareReviewAndURLOnlyRecovery": "passed"
+        }
+      },
+      "latest-26": {
+        "passed": 2,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/latest-26/result.xcresult",
+        "cases": {
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "failed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed",
+          "testSmartTicketRenderedWebPageRecognizesBothColumns": "passed"
+        }
+      },
+      "latest-27": {
+        "passed": 3,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/latest-27/result.xcresult",
+        "cases": {
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed",
+          "testSmartTicketRenderedWebPageRecognizesBothColumns": "passed",
+          "testTrainTicketWebPageShareReviewAndURLOnlyRecovery": "failed"
+        }
+      },
+      "public-retry-26": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/public-retry-26/result.xcresult",
+        "cases": {
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed"
+        }
+      },
+      "release-retry-27": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/release-retry-27/result.xcresult",
+        "cases": {
+          "testSmartTicketCompactRailPhotoReadsPrintedRoute": "passed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed"
+        }
+      },
+      "save-26": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/save-26/result.xcresult",
+        "cases": {
+          "testSmartTicketUpcomingWebPageSaveAndReopen": "passed"
+        }
+      },
+      "save-27": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/save-27/result.xcresult",
+        "cases": {
+          "testSmartTicketUpcomingWebPageSaveAndReopen": "passed"
+        }
+      },
+      "shipping-26": {
+        "passed": 3,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/shipping-26/result.xcresult",
+        "cases": {
+          "testSmartTicketCompactRailPhotoReadsPrintedRoute": "passed",
+          "testSmartTicketEditingStationRequiresConfirmationAgain": "passed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "failed"
+        }
+      },
+      "shipping-27": {
+        "passed": 2,
+        "failed": 2,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/shipping-27/result.xcresult",
+        "cases": {
+          "testSmartTicketCompactRailPhotoReadsPrintedRoute": "failed",
+          "testSmartTicketEditingStationRequiresConfirmationAgain": "passed",
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "failed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed"
+        }
+      },
+      "srt-save-26": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/srt-save-26/result.xcresult",
+        "cases": {
+          "testTrainTicketImageShareSaveReopen": "passed"
+        }
+      },
+      "verified-26": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/verified-26/result.xcresult",
+        "cases": {
+          "testSmartTicketForwardedPreviewNeedsTicketDetails": "passed",
+          "testSmartTicketKorailHomeFromSafariToolbar": "passed",
+          "testSmartTicketRenderedWebPageRecognizesBothColumns": "passed"
+        }
+      },
+      "verified-27": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xcresult": "/private/tmp/nolate-rail-share-h0pr1rc9/verified-27/result.xcresult",
+        "cases": {
+          "testTrainTicketWebPageShareReviewAndURLOnlyRecovery": "failed"
+        }
+      }
+    },
+    "screenshots": [
+      {
+        "path": "docs/evidence/smart-ticket-share-20261120/20-korail-home-before.png",
+        "sha256": "27becc444513c89d21acc5338872b08ffdb57efb3b58da20d3f7f7b99ea26fec",
+        "case": "testSmartTicketKorailHomeFromSafariToolbar",
+        "run": "baseline"
+      },
+      {
+        "path": "docs/evidence/smart-ticket-share-20261120/21-korail-home-after.png",
+        "sha256": "b8dae78f56bb818650aadc2349d1076132082cf964e7bf59e0a578d5162fb3f7",
+        "case": "testSmartTicketKorailHomeFromSafariToolbar",
+        "run": "shipping-27"
+      },
+      {
+        "path": "docs/evidence/smart-ticket-share-20261120/22-forwarded-ticket-review.png",
+        "sha256": "8bf761c93a7f09ba4eadf13bea9ec29664a07d4dd5edcb13c7b0ff0f5dd2115a",
+        "case": "testSmartTicketForwardedPreviewNeedsTicketDetails",
+        "run": "release-retry-27"
+      },
+      {
+        "path": "docs/evidence/smart-ticket-share-20261120/23-compact-srt-image-review.png",
+        "sha256": "f0bc92ba920acab1df957b0a9448f29e7770cbcb5b3c2c65a6d0d207a294b9e9",
+        "case": "testSmartTicketCompactRailPhotoReadsPrintedRoute",
+        "run": "release-retry-27"
+      }
+    ],
+    "beforeConfirmation": {
+      "scheduleParseRequests": 0,
+      "scheduleCreateRequests": 0,
+      "scheduleCreateSuccess": 0
+    },
+    "afterAllConfirmedImports": {
+      "scheduleParseRequests": 0,
+      "scheduleCreateRequests": 3,
+      "scheduleCreateSuccess": 3
+    },
+    "storedTicketByRuntime": {
+      "26": {
+        "verifiedByAuthenticatedSearchAndDetail": true,
+        "oneMatchingSchedule": true,
+        "normalisedTicket": {
+          "kind": "TRAIN",
+          "source": "IOS_SHARE_TEXT",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "서울",
+          "arrivalName": "동대구",
+          "grade": "KTX",
+          "trainNumber": "255",
+          "departureAt": "2026-11-21T06:43:00+09:00",
+          "arrivalAt": "2026-11-21T08:32:00+09:00"
+        },
+        "scheduleStartAt": "2026-11-20T23:32:00Z",
+        "allowedFieldsOnly": true
+      },
+      "27": {
+        "verifiedByAuthenticatedSearchAndDetail": true,
+        "oneMatchingSchedule": true,
+        "normalisedTicket": {
+          "kind": "TRAIN",
+          "source": "IOS_SHARE_TEXT",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "서울",
+          "arrivalName": "동대구",
+          "grade": "KTX",
+          "trainNumber": "255",
+          "departureAt": "2026-11-21T06:43:00+09:00",
+          "arrivalAt": "2026-11-21T08:32:00+09:00"
+        },
+        "scheduleStartAt": "2026-11-20T23:32:00Z",
+        "allowedFieldsOnly": true
+      }
+    },
+    "regressions": {
+      "jestPassed": 49,
+      "preprocessingTestsPassed": 6
+    },
+    "limits": "No physical device, KakaoTalk app, private ticket page, live train journey or production account was used. A user-seen forwarding URL without any title or other ticket evidence has no reliable ticket identity.",
+    "finalSignedCasesByRuntime": {
+      "26": {
+        "testSmartTicketKorailHomeFromSafariToolbar": "public-retry-26",
+        "testSmartTicketCompactRailPhotoReadsPrintedRoute": "shipping-26",
+        "testSmartTicketForwardedPreviewNeedsTicketDetails": "shipping-26",
+        "testSmartTicketEditingStationRequiresConfirmationAgain": "shipping-26"
+      },
+      "27": {
+        "testSmartTicketKorailHomeFromSafariToolbar": "shipping-27",
+        "testSmartTicketCompactRailPhotoReadsPrintedRoute": "release-retry-27",
+        "testSmartTicketForwardedPreviewNeedsTicketDetails": "release-retry-27",
+        "testSmartTicketEditingStationRequiresConfirmationAgain": "shipping-27"
+      }
+    },
+    "compactRailPhoto": {
+      "observed": [
+        "기차 승차권 테스트",
+        "2026-11-21",
+        "수서 >> 공주",
+        "SRT 615",
+        "출발 12:20",
+        "도착 13:12"
+      ],
+      "source": "Simulator Vision on the same synthetic UIKit-rendered, downsampled SRT ticket using the production request options",
+      "regression": "A distinct legacy image regression reached the editable SRT review with both stations empty. A matching date, service, two times and a single standalone route row now recover the chevron in this layout; conflicting stops, navigation text and duplicate routes stay empty. Both final simulators asserted the station values without keyboard input.",
+      "vision26": [
+        "기차 승차권 테스트",
+        "2026-11-21",
+        "수서 > 공주",
+        "SRT 615",
+        "출발 12:20",
+        "도착 13:12"
+      ],
+      "confirmedImageImport26": {
+        "verifiedByAuthenticatedSearchAndDetail": true,
+        "oneMatchingSchedule": true,
+        "normalisedTicket": {
+          "kind": "TRAIN",
+          "source": "IOS_SHARE_IMAGE",
+          "verification": "USER_CONFIRMED",
+          "bookingStatus": "UNVERIFIED",
+          "departureName": "수서",
+          "arrivalName": "공주",
+          "grade": "SRT",
+          "trainNumber": "615",
+          "departureAt": "2026-11-21T12:20:00+09:00",
+          "arrivalAt": "2026-11-21T13:12:00+09:00"
+        },
+        "scheduleStartAt": "2026-11-21T04:12:00Z",
+        "allowedFieldsOnly": true
+      }
+    },
+    "persistenceScope": "Upcoming KTX web tickets were independently retrieved after saving in each runtime. The final signed extension also imported the SRT image on iOS 26.5, and the app reopened that schedule after restart. Both final runtime suites checked the compact SRT fields and editing a station after initial confirmation.",
+    "retryContext": "On iOS 26.5 the first forwarded-title check after reinstall timed out on a blank system sheet. The first system provider-load message was recorded at the end of that test. With the same installed extension and the same assertions all three final cases passed on retry. On iOS 27.0 the public homepage, forwarded details and rendered receipt passed in the final batch. A separate legacy smoke lost the simulator accessibility connection while tapping the host, before the expected extension result. That case was rerun after restarting the dedicated simulator. The iOS 26.5 app was re-signed with the updated extension: its signature bytes changed, and its unsigned main executable and JS bundle matched the prior normal workspace Release byte for byte. The legacy smoke after the accessibility restart detected a separate regression: SRT image station fields were empty, and its automated manual-correction attempt did not fill the field. A simulator Vision probe read the printed arrow as two chevrons. A later iOS 26 final-product attempt showed the expected login-required screen after the independent API readback had started another session for that test account. The accepted run used regular in-app sign-in.\nThe shipping SRT image uses the single chevron seen by iOS 26.5 Vision and the double chevron seen by iOS 27.0 Vision when supported by corroborating receipt fields. On the final 26.5 app the compact SRT OCR, station editing and forwarded items passed. The initial public-site retry timed out opening MobileSafari before sharing. On the final 27.0 app the public-site and editing checks passed. The initial compact and forwarded runs timed out while the sheet was respectively still reading or blank. The share selector now waits for the visible NoLate extension to start before the individual content assertions. Intermediate failures are included in the run list."
+  },
+  "reportedShareSheetCheck20261120": {
+    "reportedShare": "Kakao in-app browser, page title 전달받은 승차권 and the korail.com domain in the system share sheet. The displayed old failure matches the railway URL-only branch in the remote main revision.",
+    "mainRevisionChecked": "6731dc9397ad9fa245a92dc50bc2920cafcea7d4",
+    "pastTicketHandling": "The receipt can enter review after a content-bearing share. confirmedPayload requires the departure to be later than now, so this historical journey is unsuitable for a future-schedule save test.",
+    "currentLocalChange": "When ticket details are present, read the page or image and open review. When only the title or URL is supplied, explain how to share the original screen from Photos or reopen in Safari.",
+    "recheck": {
+      "nativeSwiftPolicy": "passed",
+      "webPreprocessingTestsPassed": 6,
+      "fourShareSourceHashesMatchEarlierSignedSimulatorBuild": true
+    },
+    "testScope": "Simulated received-ticket content. No validation of a private issuer URL from the physical Kakao session."
+  }
+}

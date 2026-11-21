@@ -26,7 +26,9 @@ import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotio
 import {
     getRouteStepDirectionHint,
     getRouteStepColor,
+    firstBoardingIntervalLabel,
     formatRouteDurationSeconds,
+    rideMovementDurationLabel,
     isOdsayTimetableRouteInfo,
     roundRouteArrivalMinute,
     normalizeStopName,
@@ -163,7 +165,8 @@ export default function RouteStepTimeline({
     const usesOdsayTimetable = routeInfo.provider === "odsay" && routeInfo.timeBasis === "provider_schedule" &&
         routeInfo.providerTimeBasis === "timetable";
     const hasExactTimeline = routeInfo.matchedTimeline || usesOdsayTimetable;
-    const scheduleSourceLabel = routeInfo.matchedTimeline ? "현재 보정 여정" : routeInfo.intercityJourney ? (routeInfo.intercityJourney.service.timingBasis === "TICKET" ? "승차권 입력 시각 · 앞뒤 이동 예상 · 예매 상태 미검증" : "선택 운행편 · 앞뒤 이동 예상 · 예매 미확인") : routeInfo.timeBasis === "provider_schedule"
+    const scheduleSourceLabel = routeInfo.matchedTimelineBasis === "TIMETABLE" ? "실시간 미확인 시간표"
+        : routeInfo.matchedTimelineBasis === "PLANNED" ? "계획 경로의 잠정 시각" : routeInfo.matchedTimeline ? "현재 보정 여정" : routeInfo.intercityJourney ? (routeInfo.intercityJourney.service.timingBasis === "TICKET" ? "승차권 입력 시각 · 앞뒤 이동 예상 · 예매 상태 미검증" : "선택 운행편 · 앞뒤 이동 예상 · 예매 미확인") : routeInfo.timeBasis === "provider_schedule"
         ? "운행 시간표"
         : "경로 예상 시간";
     const labelsEstimatedClocks = compact && showEstimatedClockHeading &&
@@ -325,13 +328,15 @@ export default function RouteStepTimeline({
                 const intercityLine = intercityRide
                     ? (step.lineName ?? step.badgeText)?.trim().replace(`${modeLabel} · `, "")
                     : undefined;
+                const matched = routeInfo.matchedTimeline ? step.matchedTimeline : undefined;
+                const rideDuration = rideMovementDurationLabel(step.durationMinutes, matched?.movementSeconds);
                 const rideDescription = hasBadge ? [
                     intercityLine !== modeLabel && intercityLine !== stripStopAction(step.title) && intercityLine,
                     buildRideDescription(step),
                 ].filter(Boolean).join(" · ") || undefined : undefined;
                 const stopSummaryParts = [
                     typeof step.stationCount === "number" && `${step.stationCount}${step.type === "BUS" ? "개 정류장" : "정거장"}`,
-                    typeof step.durationMinutes === "number" && `${step.durationMinutes}분`,
+                    rideDuration,
                 ].filter(Boolean);
                 const lastStopName = step.passStops?.at(-1)?.name;
                 const alightingStop = compact && inlineStationRail && hasBadge && step.alightingName
@@ -344,7 +349,7 @@ export default function RouteStepTimeline({
                 const boardingDescription = inlineStops || alightingStop
                     ? rideDescription?.split(" · ").filter(part =>
                         !isAlightingHint(part) &&
-                        (!inlineStops || !/^\d+(?:개\s*)?\s*(?:정거장|정류장|분)$/u.test(part)),
+                        (!inlineStops || (part !== rideDuration && !/^\d+(?:개\s*)?\s*(?:정거장|정류장|분)$/u.test(part))),
                     ).join(" · ")
                     : rideDescription;
                 const directionHint = hasBadge ? getRouteStepDirectionHint(step, rideDescription) : undefined;
@@ -381,10 +386,11 @@ export default function RouteStepTimeline({
                         : formatArrivalClock(routeInfo.departureTime, stepStartOffsetSeconds / 60);
                 const endOffset = stepOffsets[index].end;
                 const exactAlighting = routeInfo.matchedTimeline ? step.matchedTimeline?.endAt : step.scheduledRide?.arrivalAt;
-                const transferWaitSeconds = routeInfo.matchedTimeline ? step.matchedTimeline?.transferWaitSeconds : undefined;
-                const transferWaitLabel = typeof transferWaitSeconds === "number" &&
+                const transferWaitSeconds = matched?.transferWaitSeconds;
+                const boardingIntervalLabel = firstBoardingIntervalLabel(matched?.firstBoardingIntervalSeconds,
+                    matched?.startsWithStationArrivalPrediction) ?? (typeof transferWaitSeconds === "number" &&
                     transferWaitSeconds > 0 && Number.isSafeInteger(transferWaitSeconds)
-                    ? `환승 대기 예상 ${formatRouteDurationSeconds(transferWaitSeconds)}` : undefined;
+                    ? `환승 대기 예상 ${formatRouteDurationSeconds(transferWaitSeconds)}` : undefined);
                 const alightingClock = !alightingName ? undefined : hasExactTimeline
                     ? exactAlighting && formatArrivalClock(exactAlighting, 0)
                     : endOffset === undefined ? undefined : formatArrivalClock(routeInfo.departureTime, endOffset / 60);
@@ -425,8 +431,11 @@ export default function RouteStepTimeline({
                     step.type !== "WALK" ||
                     (index > 1 && !isLast)
                 );
-                const stationArrivalLabel = shouldShowTimelineClock && routeInfo.matchedTimeline &&
-                    step.matchedTimeline?.startsWithStationArrivalPrediction ? "열차 도착 예측" : undefined;
+                const stationArrivalLabel = shouldShowTimelineClock && routeInfo.matchedTimeline
+                    ? step.matchedTimeline?.startsWithReportedStationArrival ? "열차 도착 관측"
+                        : step.matchedTimeline?.startsWithStationArrivalPrediction ? "열차 도착 예측"
+                        : step.matchedTimeline?.provisionalPlan && step.type === "SUBWAY" ? "승차 계획" : undefined
+                    : undefined;
                 const clockAccessibilityLabel = shouldShowTimelineClock
                     ? stationArrivalLabel ? `${timelineClockText} ${stationArrivalLabel}`
                         : labelsEstimatedClocks ? `예상 ${timelineClockText}` : timelineClockText
@@ -590,7 +599,17 @@ export default function RouteStepTimeline({
                 const content = (
                     <>
                         <View style={[styles.rail, compact && styles.railCompact]}>
-                            {!walkingTransfer && <View
+                            {current ? (
+                                <View
+                                    testID={`journey-current-step-${step.id}`}
+                                    pointerEvents="none"
+                                    accessibilityElementsHidden
+                                    importantForAccessibility="no-hide-descendants"
+                                    style={[styles.dot, styles.currentLocationMarker, walkingTransfer && styles.transferLocationMarker]}
+                                >
+                                    <Ionicons accessible={false} name="navigate-outline" size={18} color="#1468D4" />
+                                </View>
+                            ) : !walkingTransfer && <View
                                 style={[
                                     styles.dot,
                                     compact && styles.dotCompact,
@@ -701,9 +720,9 @@ export default function RouteStepTimeline({
                                                     {rideDirectionLabel}
                                                 </Text>
                                             )}
-                                            {!!transferWaitLabel && (
+                                            {!!boardingIntervalLabel && (
                                                 <Text style={[styles.rideAssistText, { color: secondaryColor }]}>
-                                                    {transferWaitLabel}
+                                                    {boardingIntervalLabel}
                                                 </Text>
                                             )}
                                         </View>
@@ -901,7 +920,7 @@ export default function RouteStepTimeline({
                     </>
                 );
 
-                const selectedStyle = selected
+                const selectedStyle = selected && !current
                     ? compact
                         ? styles.itemCompactFocused
                         : {
@@ -921,7 +940,7 @@ export default function RouteStepTimeline({
                         hasBadge ? rideDescription : stepDescription,
                         clockAccessibilityLabel,
                         hasExactTimeline && alightingClock ? `${alightingClock} 예상 하차` : undefined,
-                        compact ? transferWaitLabel : undefined,
+                        compact ? boardingIntervalLabel : undefined,
                         compact && hasBadge && !arrivalPresentation.showArrivalCard ? arrivalInlineMessage : undefined,
                         arrivalPresentation.showArrivalCard ? arrivalStatusLabel : undefined,
                         arrivalPresentation.showArrivalCard ? arrivalPresentation.freshnessLabel : undefined,
@@ -953,13 +972,12 @@ export default function RouteStepTimeline({
                     >
                         {current && (
                             <View
-                                testID={`journey-current-step-${step.id}`}
                                 pointerEvents="none"
                                 accessibilityElementsHidden
                                 importantForAccessibility="no-hide-descendants"
                                 style={[styles.guidanceCurrentRow, {
-                                    borderLeftColor: isDark ? '#75A9F2' : '#2979FF',
-                                    backgroundColor: isDark ? 'rgba(117,169,242,0.16)' : 'rgba(41,121,255,0.10)',
+                                    maxHeight: Math.max(40, 32 * fontScale),
+                                    backgroundColor: isDark ? 'rgba(255,255,255,0.055)' : 'rgba(38,59,86,0.045)',
                                 }]}
                             />
                         )}

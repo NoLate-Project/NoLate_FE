@@ -56,9 +56,10 @@ type ScheduleDetailHeaderProps = {
 /** The map keeps its own camera and route sheet; this surface only changes the
  * top-level reading order when the user enters guidance. */
 function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: ScheduleDetailHeaderProps) {
+  const reduceMotion = useSystemReduceMotion();
   const {
-    colors, goBack, guidanceEndedHandoff, insets, isDark, item, navigationEnd, primaryText, secondaryText,
-    setRouteHeaderHeight, sheetBorder, sheetMode, topCardAccentText,
+    goBack, guidanceEndedHandoff, insets, isDark, item, navigationEnd, navigationReconciling, primaryText, secondaryText,
+    routeDurationLabel, setRouteHeaderHeight, sheetBorder, sheetMode, topCardAccentText,
   } = presentation;
   const input = React.useMemo(() => buildSavedJourneyInput(item.route, item.origin, item.destination),
     [item.route, item.origin, item.destination]);
@@ -74,32 +75,46 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
   const action = ended ? '저장한 경로는 계속 볼 수 있어요'
     : stage?.action ?? (active ? '위치가 확인되면 안내를 이어가요' : '안내를 준비하고 이동하면 출발을 감지해요');
   const mapProblem = mapState === 'error' || mapState === 'unavailable';
-  return <View style={styles.topOverlay} onLayout={({ nativeEvent }) =>
+  const rideCount = input?.legs.filter(leg => leg.kind === 'BUS' || leg.kind === 'SUBWAY').length ?? 0;
+  // This is the saved route's planned duration, never a live remaining-time claim.
+  const summary = [routeDurationLabel && routeDurationLabel !== '미설정' ? `예정 ${routeDurationLabel}` : '대중교통',
+    rideCount > 1 ? `환승 ${rideCount - 1}회` : rideCount === 1 ? '환승 없음' : undefined].filter(Boolean).join(' · ');
+  const surface = { backgroundColor: isDark ? '#20242C' : '#FFFFFF', borderColor: sheetBorder };
+  return <Reanimated.View entering={reduceMotion ? undefined : FadeIn.duration(220).reduceMotion(ReduceMotion.System)}
+    pointerEvents="box-none"
+    style={[styles.topOverlay, navigationHeaderStyles.overlay, { paddingTop: insets.top + 8 }]} onLayout={({ nativeEvent }) =>
     setRouteHeaderHeight(Math.ceil(nativeEvent.layout.height), 0)}>
-    <View testID="schedule-navigation-header" style={[navigationHeaderStyles.surface,
-      { backgroundColor: isDark ? '#20242C' : colors.background, borderBottomColor: sheetBorder,
-        paddingTop: insets.top + 6 }]}>
+    <View testID="schedule-navigation-header" pointerEvents="box-none">
       <View style={navigationHeaderStyles.row}>
         <Pressable onPress={goBack} accessibilityRole="button" accessibilityLabel="길안내 화면에서 돌아가기"
-          style={({ pressed }) => [navigationHeaderStyles.back, { opacity: pressed ? 0.58 : 1 }]}>
+          style={({ pressed }) => [navigationHeaderStyles.back, surface, { opacity: pressed ? 0.58 : 1 }]}>
           <Ionicons name="chevron-back-outline" size={22} color={primaryText} />
         </Pressable>
-        <View style={navigationHeaderStyles.identity}>
-          <Text style={[navigationHeaderStyles.label, { color: topCardAccentText }]}>대중교통 길안내</Text>
-          <Text testID="schedule-navigation-state" style={[navigationHeaderStyles.state, { color: secondaryText }]}>
-            {ended ? '안내 종료' : active ? '안내 중' : armed ? '출발 대기' : '안내 준비'}
-          </Text>
-        </View>
-        <Ionicons name="navigate-outline" size={20} color={topCardAccentText} accessible={false} />
+        {(!expanded || !(active || armed)) && <>
+          <View style={[navigationHeaderStyles.statePill,
+            { backgroundColor: isDark ? '#183C70' : '#E7F0FF', borderColor: sheetBorder }]}>
+            <Text testID="schedule-navigation-state" accessibilityRole="header"
+              style={[navigationHeaderStyles.state, { color: topCardAccentText }]}>
+              {ended ? '안내 종료' : navigationReconciling ? '상태 확인 중' : active ? '안내 중' : armed ? '출발 대기' : '안내 준비'}
+            </Text>
+          </View>
+          <View style={[navigationHeaderStyles.summaryPill, surface]}>
+            <Text testID="schedule-navigation-route-summary" style={[navigationHeaderStyles.summary, { color: primaryText }]}
+              accessibilityLabel={`대중교통 길안내, ${summary}`}
+              lineBreakStrategyIOS="hangul-word">{summary}</Text>
+          </View>
+        </>}
       </View>
-      {!expanded && (active || armed || ended) && <View testID="schedule-navigation-next-step" style={navigationHeaderStyles.step}
+      {!expanded && ended && <Reanimated.View key={`${title}:${action}`}
+        entering={reduceMotion ? undefined : FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
+        testID="schedule-navigation-next-step" style={[navigationHeaderStyles.step, surface]}
         accessibilityLiveRegion="polite">
         <Text accessibilityRole="header" numberOfLines={2} maxFontSizeMultiplier={2}
           style={[navigationHeaderStyles.title, { color: primaryText }]}>{title}</Text>
         <Text numberOfLines={2} maxFontSizeMultiplier={2}
           style={[navigationHeaderStyles.action, { color: secondaryText }]}>{action}</Text>
-      </View>}
-      {mapProblem && <View style={navigationHeaderStyles.mapProblem}>
+      </Reanimated.View>}
+      {mapProblem && <View style={[navigationHeaderStyles.mapProblem, surface]}>
         <Text style={[navigationHeaderStyles.action, { color: secondaryText }]}>지도를 불러오지 못했어요</Text>
         {mapState === 'error' && <Pressable accessibilityRole="button" accessibilityLabel="지도 다시 불러오기"
           onPress={onRetryMap} style={navigationHeaderStyles.retry}>
@@ -107,7 +122,7 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
         </Pressable>}
       </View>}
     </View>
-  </View>;
+  </Reanimated.View>;
 }
 
 /** 일정 제목, 공유·수정 동작과 현재 경로 요약을 상단에 표시한다. */
@@ -490,15 +505,21 @@ const styles = createScheduleDetailStyles({
 const titleRowLayout = { flex: 1, minWidth: 0 } as const;
 const titleTextLayout = { flex: 0 } as const;
 const navigationHeaderStyles = StyleSheet.create({
-  surface: { paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  row: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -8 },
-  identity: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  label: { fontSize: 13, fontWeight: '700' },
-  state: { fontSize: 12, fontWeight: '600' },
-  step: { paddingHorizontal: 4, paddingTop: 10, paddingBottom: 2, gap: 3 },
-  title: { fontSize: 21, lineHeight: 28, fontWeight: '700' },
+  overlay: { paddingHorizontal: 16, paddingBottom: 8 },
+  row: { minHeight: 44, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  back: { width: 44, height: 44, borderRadius: 22, borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center', justifyContent: 'center' },
+  statePill: { minHeight: 44, paddingHorizontal: 13, paddingVertical: 12, borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth, justifyContent: 'center', flexShrink: 1 },
+  state: { fontSize: 14, fontWeight: '700', lineHeight: 20 },
+  summaryPill: { flex: 1, minWidth: 0, minHeight: 44, paddingHorizontal: 13, paddingVertical: 12,
+    borderRadius: 22, borderWidth: StyleSheet.hairlineWidth, justifyContent: 'center' },
+  summary: { fontSize: 13, fontWeight: '600', lineHeight: 20 },
+  step: { marginTop: 8, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth, gap: 3 },
+  title: { fontSize: 19, lineHeight: 26, fontWeight: '700' },
   action: { fontSize: 14, lineHeight: 20 },
-  mapProblem: { paddingTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  mapProblem: { marginTop: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   retry: { minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' },
 });

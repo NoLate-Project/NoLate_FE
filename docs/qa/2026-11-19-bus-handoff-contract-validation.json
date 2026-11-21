@@ -1,0 +1,236 @@
+{
+  "date": "2026-11-19",
+  "scope": "버스 관측 지연의 하차→최종/환승 도보 연결 및 앱·서버 접근 안내 계약",
+  "status": "release_delayed_bus_handoff_e2e_passed",
+  "goalComplete": false,
+  "committed": false,
+  "fixes": [
+    {
+      "problem": "Bus separation emitted two-fix confirmation while the walking consumer required three fixes",
+      "change": "Share the bus minimum across producer and final/transfer walking consumers; keep subway minimum at three",
+      "preservedGuards": [
+        "same vehicle",
+        "distinct source clocks",
+        "source freshness and gap",
+        "passenger at target",
+        "continuous independent walking",
+        "no automatic arrival from separation alone"
+      ]
+    },
+    {
+      "problem": "Native/JS accepted bounded NEAR_STOP reports up to 260m but the server rejected reports over 50m",
+      "change": "Align server display-report validation with native/JS 260m range; preserve rounding, schema and upper bounds",
+      "trustBoundary": "Client display report; not a server-certified alighting event"
+    }
+  ],
+  "checks": {
+    "frontendVerify": {
+      "exit": 0,
+      "suites": 369,
+      "tests": 4008,
+      "failures": 0,
+      "lintErrors": 0,
+      "lintWarnings": 264,
+      "log": "/private/tmp/nolate-goal-current-verify-20261119.log"
+    },
+    "swiftBeforeHandoffFix": {
+      "selectedTests": 2,
+      "failedTests": 1,
+      "assertionFailures": 4,
+      "log": "/private/tmp/nolate-goal-delayed-handoff-before-20261119.log"
+    },
+    "swiftAfterHandoffFix": {
+      "tests": 439,
+      "skipped": 2,
+      "failures": 0,
+      "log": "/private/tmp/nolate-goal-delayed-handoff-final-20261119.log"
+    },
+    "serverBeforeRangeFix": {
+      "tests": 2,
+      "failures": 1,
+      "log": "/private/tmp/nolate-goal-alighting-contract-before-20261119.log"
+    },
+    "serverAfterRangeFix": {
+      "tests": 24,
+      "skipped": 0,
+      "failures": 0,
+      "includes": "update transport and durable END cleanup at 60/240/260m",
+      "log": "/private/tmp/nolate-goal-alighting-contract-final-20261119.log"
+    },
+    "swiftCurrentWorktree": {
+      "tests": 440,
+      "skipped": 2,
+      "failures": 0,
+      "log": "/private/tmp/nolate-goal-handoff-20261119/swift-current.log"
+    }
+  },
+  "releaseE2E": {
+    "status": "passed",
+    "simulator": "8858D769-7107-4032-9A90-7C58AEB96C56",
+    "runtime": "iOS 27.0",
+    "privateRoot": "/private/tmp/nolate-goal-handoff-20261119",
+    "firstBuild": {
+      "exit": 65,
+      "reason": "No space left on device"
+    },
+    "recovery": "Removed only this run generated x86_64 intermediates/module cache; retry arm64 only",
+    "artifactProof": "/private/tmp/nolate-goal-handoff-20261119/artifact-proof.json",
+    "buildExit": 0,
+    "candidateArtifactCheckExit": 0,
+    "codesignCheckExit": 0,
+    "tests": 1,
+    "failures": 0,
+    "durationSeconds": 761.151,
+    "resultBundle": "/private/tmp/nolate-goal-handoff-20261119/result.xcresult",
+    "markers": {
+      "GPS_ARMED": true,
+      "WAITING": true,
+      "ALIGHTING_NOTICE": true,
+      "NEAR_STOP": true,
+      "FINAL_WALK": true,
+      "DESTINATION_ARRIVED": true
+    },
+    "gpsCleared": true,
+    "replayFileRemoved": true,
+    "inputScope": "Saved captured ODsay 1711 WALK/BUS/WALK; official stop/shape capture and server TMAP walking; injected passenger GPS and independent delayed fixture vehicle",
+    "handoffProof": {
+      "separationEvidenceCount": 2,
+      "separationAt": "2026-11-19T20:24:26+09:00",
+      "finalWalkAt": "2026-11-19T20:24:59+09:00",
+      "automaticArrivalAt": "2026-11-19T20:26:02+09:00",
+      "manualPhaseTransition": false
+    },
+    "screenshots": [
+      "evidence/journey-bus-delayed-handoff-20261119/01-near-stop.png",
+      "evidence/journey-bus-delayed-handoff-20261119/02-final-walk.png",
+      "evidence/journey-bus-delayed-handoff-20261119/03-automatic-arrival.png"
+    ]
+  },
+  "limits": [
+    "This E2E proves one bus final-walk trip; latest composite-transfer product E2E remains separate",
+    "Injected GPS and delayed test vehicle do not prove field GPS or real vehicle-feed continuity",
+    "Actual APNs receipt, physical device, voice/silent/background delivery and Android not verified by these checks",
+    "Whole journey roadmap remains incomplete"
+  ],
+  "sourceHashes": {
+    "NoLate_FE/modules/nolate-live-activity/ios/NoLateJourneyBusRideCore.swift": "e7f6eae1c44d3344e0e3cd09259526831727a11cf442f0fa28077defc0b9ba25",
+    "NoLate_FE/modules/nolate-live-activity/ios/Tests/NoLateJourneyBusDelayedHandoffTests.swift": "9d59e64012c3436393335c195c722cc27ae24a2fbf9f441d02c5f85b410dd0de",
+    "NoLate_FE/modules/nolate-live-activity/ios/Tests/NoLateJourneyFinalWalkCoreTests.swift": "e2127292f58483ff1d3ab764889e30e86f99fb88d30ae5c4b034a17b342c92b2",
+    "NoLate_FE/modules/nolate-live-activity/ios/Tests/NoLateJourneyTransferWalkCoreTests.swift": "9e9c4737f8a74173cbafe1316ca32c913845f60f98b603f7c0987a4f729ea554",
+    "NoLate_BE/src/main/kotlin/com/noLate/journey/application/JourneyActivityContract.kt": "302dec7ce4ab5cfd6169262406e4ccb7234a83c7c6dc57a166f9cbca07d1c73e",
+    "NoLate_BE/src/test/kotlin/com/noLate/journey/automatic/JourneyActivityAlightingContractTest.kt": "23d4d461a18ca9c58b8344882252432c8ba8d5c3f3eb6fe678a00d9e3614592a",
+    "NoLate_BE/src/test/kotlin/com/noLate/journey/automatic/JourneyActivityDurabilityTest.kt": "ebc2085e6ee0cc64ac70f5f7fd12619ed3583097b66c646bfa54f88f38400781",
+    "NoLate_BE/src/main/kotlin/com/noLate/journey/application/JourneyActivityDeliveryService.kt": "e7f2800249802093e42a51120d8bbda7a713f62f420939df317ff049ea09d451",
+    "NoLate_BE/src/test/kotlin/com/noLate/journey/automatic/JourneyActivityBusHistoryContractTest.kt": "9e33bc94dbab2638a6c64f9ea761f902e8979c523e2108e3c2951f743be053d7"
+  },
+  "heads": {
+    "NoLate_FE": "edf57d24f92357540941aff0561af912200f23f6",
+    "NoLate_BE": "0f3c591547af67c1a6cfc75d283b05b81f512aaa"
+  },
+  "lockedTrip": {
+    "status": "local_release_locked_handoff_expiry_passed",
+    "firstAttempt": {
+      "frameworkTests": 1,
+      "frameworkFailures": 0,
+      "durationSeconds": 749.017,
+      "acceptedAsWholeLockedArrival": false,
+      "reason": "The card-removal assertion used a transient title absence; its captured lock screen still contains the final-walk Activity",
+      "resultBundle": "/private/tmp/nolate-goal-locked-handoff-20261119/result.xcresult",
+      "visuallyConfirmed": [
+        "Locked near-stop card behind first Live Activity permission prompt",
+        "Locked final-walk card with remaining walking distance"
+      ],
+      "screenshots": [
+        "evidence/journey-bus-locked-handoff-20261119/01-locked-near-stop-first-permission.png",
+        "evidence/journey-bus-locked-handoff-20261119/02-locked-final-walk.png",
+        "evidence/journey-bus-locked-handoff-20261119/03-first-absence-still-has-card.png"
+      ]
+    },
+    "retry": {
+      "root": "/private/tmp/nolate-goal-locked-handoff-expiry-20261119",
+      "status": "passed",
+      "policy": "Observe arrival handoff card then its configured90-second expiry, then30-second stable absence of all content",
+      "explicitDeviceScreenshots": "At normal native terminal revocation and100seconds afterwards, before foreground activation",
+      "nativeTerminalProof": {
+        "activeObserved": true,
+        "terminalRevocationObserved": true,
+        "observedAt": 1795090743.932768,
+        "beforeForegroundActivation": true,
+        "expiryScreenCaptured": true,
+        "expiryScreenshotAt": 1795090845.5883908,
+        "expiryBeforeForegroundActivation": true
+      },
+      "tests": 1,
+      "failures": 0,
+      "durationSeconds": 868.86,
+      "resultBundle": "/private/tmp/nolate-goal-locked-handoff-expiry-20261119/result.xcresult",
+      "gpsCleared": true,
+      "replayFileRemoved": true,
+      "markers": {
+        "LOCK_FINAL_WALK_VISIBLE": true,
+        "LOCK_ARRIVAL_HANDOFF_VISIBLE": true,
+        "LOCK_CARD_REMOVED": true,
+        "DESTINATION_ARRIVED": true
+      },
+      "handoffVisibleAt": "2026-11-19T21:19:04.516+09:00",
+      "stableAbsenceCompletedAt": "2026-11-19T21:21:04.891+09:00",
+      "acceptedScope": "One local Activity bus trip with injected GPS: native terminal before foreground, owned-device lock screen without card at terminal+102s, thirty-second stable absence, foreground arrived UI",
+      "screenshots": [
+        "evidence/journey-bus-locked-handoff-20261119/05-owned-simulator-handoff-expired.png",
+        "evidence/journey-bus-locked-handoff-20261119/06-arrived-after-expiry.png"
+      ],
+      "screenshotLimits": "Only explicit simctl screenshot bound to owned UDID is used as automatic-expiry image. Current xcresult handoff image clock differs from host timestamp and is not published as fresh expiry proof."
+    },
+    "stableAbsenceAttempt": {
+      "frameworkTests": 1,
+      "frameworkFailures": 0,
+      "durationSeconds": 765.382,
+      "resultBundle": "/private/tmp/nolate-goal-locked-handoff-stable-20261119/result.xcresult",
+      "acceptedScope": [
+        "Locked near-stop to final walk",
+        "Native checkpoint revoked before foreground activation",
+        "Arrival handoff card visible while locked",
+        "Foreground arrived result after lock"
+      ],
+      "acceptedAsCardExpiry": false,
+      "reason": "The configured90-second ended Activity has no route legend; it must be included in the removal assertion",
+      "nativeTerminalProof": {
+        "activeObserved": true,
+        "terminalRevocationObserved": true,
+        "observedAt": 1795089803.4514828,
+        "beforeForegroundActivation": true
+      },
+      "screenshot": "evidence/journey-bus-locked-handoff-20261119/04-native-terminal-arrival-handoff.png"
+    }
+  },
+  "busHistoryServerContract": {
+    "status": "passed",
+    "tests": 32,
+    "failures": 0,
+    "skipped": 0,
+    "freshXmlReports": true,
+    "resultRoot": "/private/tmp/nolate-bus-history-results-20261119",
+    "before": {
+      "parse": {
+        "tests": 2,
+        "failures": 1,
+        "log": "/private/tmp/nolate-bus-history-contract-before-20261119.log"
+      },
+      "endCleanup": {
+        "tests": 31,
+        "failures": 1,
+        "log": "/private/tmp/nolate-bus-history-contract-final-20261119.log"
+      }
+    },
+    "changes": [
+      "Accept optional lastConfirmedBus and the native unavailable-history instruction",
+      "Restrict history to90seconds, odd bus indices, no live position/progress, mutually exclusive subway history",
+      "Validate the index as BUS on the same server-owned saved topology",
+      "Clear bus and subway history from terminal messages"
+    ],
+    "limits": [
+      "Mock push transport; no actual APNs send",
+      "Running local-lock simulator server is preserved; this server-side change was not deployed to production"
+    ]
+  }
+}

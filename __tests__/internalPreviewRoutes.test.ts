@@ -7,6 +7,7 @@ const {readdirSync} = require('fs') as {
 test('every declared development preview has the same exact login exemption', () => {
     expect(new Set(internalPreviewRoutes).size).toBe(internalPreviewRoutes.length);
     expect(internalPreviewRoutes).not.toContain('journey-subway-observation');
+    expect(internalPreviewRoutes).not.toContain('live-activity-preview');
     for (const name of internalPreviewRoutes) {
         expect(isPublicInternalPreviewRoute(['internal', name], true)).toBe(true);
         expect(isPublicInternalPreviewRoute(['internal', name], false)).toBe(false);

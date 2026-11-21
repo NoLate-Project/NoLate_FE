@@ -110,12 +110,35 @@ class ComparisonTest(unittest.TestCase):
         self.assertEqual(report['after'], {'meanAbsoluteErrorMinutes': 1.5, 'largeErrorCount': 0,
                                            'withinTwoMinutesCount': 1})
         self.assertEqual(report['samples'][0]['after']['appMinusNaverMinutes'], -1.5)
+        self.assertIsNone(report['samples'][0]['after']['routeClockDurationDifferenceMinutes'])
+        self.assertIsNone(report['samples'][0]['after']['routeClockComparison'][2]['mapMinute'])
+        after['rides'][0]['boardingAt'] = '2026-10-05T11:05:59Z'
+        naver['rides'][0]['publishedClockEvidence'] = {'boardingAt': 'Public boarding time on map'}
+        naver['departureAt'] = '2026-10-05T11:02:00Z'
+        naver['publishedClockEvidence'] = {'departureAt': 'Displayed walking departure'}
+        phase = comparison.paired_map_report({'samples': [sample]})['samples'][0]['after']
+        self.assertEqual(phase['routeClockDurationDifferenceMinutes'], 0)
+        checkpoints = phase['routeClockComparison']
+        self.assertEqual([(c['event'], c['appMinusMapMinutes']) for c in checkpoints],
+                         [('QUERY_DEPARTURE', 0), ('ROUTE_DEPARTURE', -2), ('RIDE_1_BOARDING', 0),
+                          ('RIDE_1_ALIGHTING', None), ('DESTINATION', -2)])
+        self.assertEqual(checkpoints[2]['changeInGapMinutes'], 2)
+        self.assertEqual(checkpoints[-1]['fromEvent'], 'RIDE_1_BOARDING')
+        self.assertEqual(checkpoints[-1]['changeInGapMinutes'], -2)
+        after['rides'][0]['boardingClockKind'] = 'STATION_ARRIVAL_PREDICTION'
+        checkpoints = comparison.paired_map_report({'samples': [sample]})['samples'][0]['after']['routeClockComparison']
+        self.assertEqual(checkpoints[-1]['fromEvent'], 'ROUTE_DEPARTURE')
+        naver['rides'][0]['boardingAt'] = '2026-10-05T11:05:01Z'
+        with self.assertRaisesRegex(ValueError, 'hidden seconds'):
+            comparison.paired_map_report({'samples': [sample]})
+        naver['rides'][0]['boardingAt'] = '2026-10-05T11:05:00Z'
         after['walkingBoundaryEvidence'][1]['stationInteriorCoverage'] = 'UNKNOWN'
         report = comparison.paired_map_report({'samples': [sample]})
         self.assertEqual(report['comparableCount'], 0)
         self.assertIsNone(report['before']['meanAbsoluteErrorMinutes'])
         self.assertIsNone(report['after']['largeErrorCount'])
         self.assertIn('WALKING_BOUNDARIES_UNCONFIRMED', report['samples'][0]['after']['exclusionReasons'])
+        self.assertIsNone(report['samples'][0]['after']['routeClockComparison'])
         sample['before'] = None
         report = comparison.paired_map_report({'samples': [sample]})
         self.assertEqual(report['candidateCount'], 1)
@@ -129,6 +152,67 @@ class ComparisonTest(unittest.TestCase):
         self.assertIn('ORIGINAL_COMPARISON_DEPARTURE_MISMATCH',
                       result['displayedDestinationComparison']['exclusionReasons'])
         self.assertIsNone(result['withinTwoMinutes'])
+
+    def test_destination_minute_distribution_counts_each_future_route_query_once(self):
+        cases = []
+        for idx, error in enumerate([0, 1, 2, 3, 4, 5, 6, 7, 8, 120]):
+            before, after, naver = (copy.deepcopy(item) for item in (self.left, self.left, self.right))
+            for item in (before, after, naver):
+                item['requestedCoordinateEvidence'] = {'origin': {'lat': 37.5, 'lng': 127.0 + idx / 1000},
+                                                       'destination': {'lat': 37.6, 'lng': 127.0}, 'evidence': 'test pins'}
+            naver['id'] = f'map-{idx}'
+            naver['displayedArrivalEvidence'] = {'scope': 'REQUESTED_DESTINATION', 'arrivalAt': naver['arrivalAt'], 'evidence': 'map clock'}
+            before['arrivalAt'] = (comparison.instant(naver['arrivalAt']) + comparison.dt.timedelta(minutes=error)).isoformat()
+            cases.append({'id': f'case-{idx}', 'before': before, 'after': after, 'naver': naver})
+        repeat = copy.deepcopy(cases[-1])
+        repeat['id'], repeat['naver']['id'] = 'repeat', 'map-repeat'
+        report = comparison.paired_map_report({'samples': [repeat, *cases]})
+        distribution = report['destinationMinuteDistribution']
+        self.assertEqual(distribution['distinctRouteQueryCount'], 10)
+        self.assertEqual(distribution['repeatCaptureIds'], ['repeat'])
+        self.assertEqual(distribution['before'], {'medianAbsoluteMinutes': 4.5, 'p90AbsoluteMinutes': 8, 'maximumAbsoluteMinutes': 120})
+        self.assertEqual(distribution['after']['p90AbsoluteMinutes'], 0)
+
+    def test_whole_journey_display_comparison_requires_every_walk_and_preserves_input_checks(self):
+        before, after, naver = copy.deepcopy(self.left), copy.deepcopy(self.left), self.right
+        after['id'] = 'app-after'
+        for item in (before, after, naver):
+            item['requestedCoordinateEvidence'] = {
+                'origin': {'lat': 37.65, 'lng': 127.06},
+                'destination': {'lat': 37.48, 'lng': 126.93}, 'evidence': 'captured inputs',
+            }
+            item['displayedArrivalEvidence'] = {'scope': 'REQUESTED_DESTINATION',
+                                                'arrivalAt': item['arrivalAt'], 'evidence': 'visible clock'}
+            item['walkingCoverageEvidence'] = [
+                {'scope': scope, 'included': True, 'evidence': 'visible whole-journey legs'}
+                for scope in ('ACCESS', 'EGRESS')]
+            del item['walkingBoundaryEvidence']
+        case = {'id': 'whole-trip', 'before': before, 'after': after, 'naver': naver}
+        document = {'walkingComparisonScope': 'WHOLE_JOURNEY', 'samples': [case]}
+        result = comparison.paired_map_report(document)
+        self.assertEqual(result['comparableCount'], 1)
+        self.assertFalse(result['stationInteriorAllocationVerified'])
+        self.assertFalse(result['realWorldAccuracyVerified'])
+        self.assertEqual(comparison.paired_map_report({'samples': [case]})['comparableCount'], 0)
+
+        for change in ('missing_egress', 'unknown_inclusion', 'missing_source', 'wrong_scope', 'different_pin', 'different_time'):
+            with self.subTest(change=change):
+                changed = copy.deepcopy(document)
+                candidate = changed['samples'][0]['after']
+                coverage = candidate['walkingCoverageEvidence']
+                if change == 'missing_egress':
+                    coverage.pop()
+                elif change == 'unknown_inclusion':
+                    coverage[-1]['included'] = None
+                elif change == 'missing_source':
+                    coverage[-1]['evidence'] = ''
+                elif change == 'wrong_scope':
+                    coverage[-1]['scope'] = 'TRANSFER'
+                elif change == 'different_pin':
+                    candidate['requestedCoordinateEvidence']['destination']['lat'] += 0.01
+                else:
+                    candidate['requestedDepartureAt'] = '2026-10-05T10:59:00Z'
+                self.assertEqual(comparison.paired_map_report(changed)['comparableCount'], 0)
 
     def test_same_station_names_or_nominal_endpoints_cannot_prove_walking_equality(self):
         for mutation in ('missing', 'unknown', 'nominal', 'no_evidence', 'omitted_egress'):
@@ -484,6 +568,33 @@ class ComparisonTest(unittest.TestCase):
                 result = comparison.worker_prediction(worker, 'recorded-worker-with-arrival-event')
                 self.assertEqual([ride['boardingClockKind'] for ride in result['rides']],
                                  ['STATION_ARRIVAL_PREDICTION', 'BOARDING'])
+
+    def test_planned_station_arrival_does_not_become_a_map_boarding_difference(self):
+        worker = self.recorded_worker()
+        timing = next(segment['rideTiming'] for segment in worker['effectiveSnapshot']['effectiveTransitRoute']['segments']
+                      if segment['kind'] == 'SUBWAY')
+        reference = comparison.worker_prediction(worker, 'station-clock')
+        public = reference['rides'][0]
+        public['boardingAt'] = comparison.instant(public['boardingAt']).replace(second=0, microsecond=0).isoformat()
+        public.update(boardingClockKind='BOARDING', publishedClockEvidence={'boardingAt': 'displayed boarding'})
+        reference['displayedArrivalEvidence'] = {'arrivalAt': comparison.instant(reference['arrivalAt']).replace(
+            second=0, microsecond=0).isoformat()}
+        for basis, flag, expected in (
+            ('PLANNED_RIDE_BOARDING_REALTIME', None, 'STATION_ARRIVAL_PREDICTION'),
+            ('PLANNED_RIDE_ALIGHTING_REALTIME', True, 'STATION_ARRIVAL_PREDICTION'),
+            ('PLANNED_RIDE_BASELINE', True, 'STATION_ARRIVAL_PREDICTION'),
+            ('PLANNED_RIDE_ALIGHTING_REALTIME', False, 'BOARDING'),
+            ('PLANNED_RIDE_BASELINE', None, 'BOARDING'),
+            ('TRANSFER_ALIGHTING_REALTIME', None, 'BOARDING'),
+            ('FUTURE_UNRECOGNIZED_BASIS', None, 'UNKNOWN'),
+        ):
+            with self.subTest(basis=basis, flag=flag):
+                timing.update(basis=basis, plannedBoardingIsStationArrival=flag)
+                app = comparison.worker_prediction(worker, 'station-clock')
+                self.assertEqual(app['rides'][0]['boardingClockKind'], expected)
+                clocks = comparison.paired_route_clocks(app, reference)
+                boarding = next(clock for clock in clocks if clock['event'] == 'RIDE_1_BOARDING')
+                self.assertEqual(boarding['appMinusMapMinutes'], 0 if expected == 'BOARDING' else None)
 
     def test_worker_distinguishes_walk_wait_and_unused_slack(self):
         worker = self.recorded_worker()

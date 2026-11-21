@@ -1,6 +1,6 @@
 import {
     buildLiveActivityPreviewIdentity,
-} from "../src/modules/notification/liveActivityPreviewFixture";
+} from "./fixtures/notification/liveActivityPreviewFixture";
 
 describe("Live Activity development preview identity", () => {
     test("keeps immutable generation attributes fixed across content updates", () => {

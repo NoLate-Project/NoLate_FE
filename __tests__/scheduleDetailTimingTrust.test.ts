@@ -113,6 +113,29 @@ describe('schedule detail timing trust', () => {
     expect(presentation.routeArrivalSummary).toBeUndefined();
   });
 
+  it('keeps the actual rejected route estimate visible in compact and expanded metadata', () => {
+    // 실제 실패 당시 공개 API 응답이다. 현재 운행 정확도를 증명하는 표본으로 사용하지 않는다.
+    const captured = require('./fixtures/eta-unverified-route-20261120.json') as ScheduleDepartureStatus;
+    const presentation = detail({ departureStatus: captured });
+
+    expect(presentation.departureTimeLabel).toBe('예상 출발');
+    expect(presentation.routeArrivalSummary).toBe('운행시각 미확인 · 저장 경로 기준');
+    expect(presentation.routeDetailMeta).toBe('운행시각 미확인 · 저장 경로 기준 · 환승 1회');
+    expect(presentation.effectiveTransitRoutePresentation).toBeUndefined();
+  });
+
+  it('does not apply my failed route lookup to another participant’s saved estimate', () => {
+    const captured = require('./fixtures/eta-unverified-route-20261120.json') as ScheduleDepartureStatus;
+    const presentation = detail({
+      departureStatus: captured,
+      inspectedTravelPlan: { memberId: 297 } as ScheduleDetailController['inspectedTravelPlan'],
+    });
+
+    expect(presentation.departureTimeLabel).toBe('예상 출발');
+    expect(presentation.routeArrivalSummary).toBeUndefined();
+    expect(presentation.routeDetailMeta).toBe('환승 1회');
+  });
+
   it('keeps confirmed late-arrival diagnostics visible in the expanded route metadata', () => {
     const presentation = detail({
       departureStatus: {

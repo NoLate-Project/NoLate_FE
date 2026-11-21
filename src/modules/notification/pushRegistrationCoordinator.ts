@@ -1,3 +1,5 @@
+import { clearAcceptedPushRoute } from './acceptedPushRoute';
+
 type PushRegistrationTask = (generation: number) => Promise<void>;
 
 let generation = 0;
@@ -13,9 +15,12 @@ let inFlight: {
  * awaited boundary checks this generation before it can register a token.
  */
 export function cancelPendingPushRegistration(): void {
+    clearAcceptedPushRoute();
     generation += 1;
     inFlight = null;
 }
+
+export const getPushRegistrationGeneration = () => generation;
 
 export function isPushRegistrationGenerationCurrent(candidate: number): boolean {
     return candidate === generation;
@@ -37,6 +42,7 @@ export function runPushRegistration(
     }
 
     if (inFlight && inFlight.memberId !== memberId) {
+        clearAcceptedPushRoute();
         generation += 1;
     }
 

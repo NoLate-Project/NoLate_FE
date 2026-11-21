@@ -74,19 +74,19 @@ enum NoLateJourneyRouteNormalizer {
     func matches(_ input: Input) -> Bool {
       let span = lastStopSequence.subtractingReportingOverflow(firstStopSequence)
       guard schemaVersion == 1, identityEvidence == "OFFICIAL_STOP_SHAPE_CROSSWALK",
-        busLegIndex == 1, input.context == "SAVED_ROUTE", input.provider == "odsay",
-        input.legs.count == 3, input.legs[1].kind == "BUS",
+        (1...29).contains(busLegIndex), busLegIndex % 2 == 1, input.legs.indices.contains(busLegIndex), input.context == "SAVED_ROUTE", input.provider == "odsay",
+        input.legs[busLegIndex].kind == "BUS",
         input.serviceState == "operating" || input.serviceState == "UNKNOWN",
         routeId.range(of: "^[1-9][0-9]{8}$", options: .regularExpression) != nil,
         !direction.isEmpty, direction.utf8.count <= 128,
         !direction.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
         (1...63).contains(stationCount), firstStopSequence >= 0,
         !span.overflow, span.partialValue == stationCount,
-        input.legs[1].localRouteId == routeId,
-        input.legs[1].stops.count == stationCount + 1,
-        input.legs[1].directionName.map({ $0 == direction }) ?? true,
-        input.legs[1].declaredStationCount.map({ $0 == stationCount }) ?? true,
-        input.legs[1].serviceAvailable != false else { return false }
+        input.legs[busLegIndex].localRouteId == routeId,
+        input.legs[busLegIndex].stops.count == stationCount + 1,
+        input.legs[busLegIndex].directionName.map({ $0 == direction }) ?? true,
+        input.legs[busLegIndex].declaredStationCount.map({ $0 == stationCount }) ?? true,
+        input.legs[busLegIndex].serviceAvailable != false else { return false }
       return true
     }
   }
@@ -104,8 +104,8 @@ enum NoLateJourneyRouteNormalizer {
 
     func matches(_ input: Input) -> Bool {
       guard schemaVersion == 1, identityEvidence == "OFFICIAL_STATION_PATH_CROSSWALK",
-        subwayLegIndex == 1, input.context == "SAVED_ROUTE", input.provider == "odsay",
-        input.source == "api", input.legs.count == 3, input.legs[1].kind == "SUBWAY",
+        (1...29).contains(subwayLegIndex), subwayLegIndex % 2 == 1, input.legs.indices.contains(subwayLegIndex), input.context == "SAVED_ROUTE", input.provider == "odsay",
+        input.source == "api", input.legs[subwayLegIndex].kind == "SUBWAY",
         input.serviceState == "operating" || input.serviceState == "UNKNOWN",
         providerRouteId.range(of: "^1000:[0-9]{1,20}$", options: .regularExpression) != nil,
         providerRouteId.dropFirst(5).contains(where: { $0 != "0" }),
@@ -114,11 +114,11 @@ enum NoLateJourneyRouteNormalizer {
         startRoutingStationId.contains(where: { $0 != "0" }),
         endRoutingStationId.contains(where: { $0 != "0" }),
         startRoutingStationId != endRoutingStationId, (1...63).contains(stationCount),
-        input.legs[1].providerRouteId == providerRouteId,
-        input.legs[1].stops.count == stationCount + 1,
-        input.legs[1].stops.first?.routingStationId == startRoutingStationId,
-        input.legs[1].stops.last?.routingStationId == endRoutingStationId,
-        input.legs[1].serviceAvailable != false else { return false }
+        input.legs[subwayLegIndex].providerRouteId == providerRouteId,
+        input.legs[subwayLegIndex].stops.count == stationCount + 1,
+        input.legs[subwayLegIndex].stops.first?.routingStationId == startRoutingStationId,
+        input.legs[subwayLegIndex].stops.last?.routingStationId == endRoutingStationId,
+        input.legs[subwayLegIndex].serviceAvailable != false else { return false }
       return true
     }
   }
@@ -198,13 +198,15 @@ enum NoLateJourneyRouteNormalizer {
     let busRoute: NoLateJourneyBusApproachCore.Route?
     let busUnavailableReason: String?
     let guidanceLegs: [NoLateGuidanceRouteLeg]
+    let indoorTransferIndices: Set<Int>
   }
 
   /// Only the caller's explicit sandbox binding may exercise synthetic geometry. It stays synthetic.
   static func prepareWalkingRoute(json: String, allowSyntheticSandbox: Bool = false, allowValidatedSavedRoute: Bool = false,
-    officialBusAdmission: OfficialBusAdmission? = nil, officialSubwayAdmission: OfficialSubwayAdmission? = nil) throws -> PreparedWalkingRoute {
+    officialBusAdmission: OfficialBusAdmission? = nil, officialSubwayAdmission: OfficialSubwayAdmission? = nil, busAdmissions: [OfficialBusAdmission] = [],
+    subwayAdmissions: [OfficialSubwayAdmission] = []) throws -> PreparedWalkingRoute {
     let summary = try normalize(json: json, officialBusAdmission: officialBusAdmission,
-      officialSubwayAdmission: officialSubwayAdmission)
+      officialSubwayAdmission: officialSubwayAdmission, busAdmissions: busAdmissions, subwayAdmissions: subwayAdmissions)
     let synthetic = summary.context == "SYNTHETIC_FIXTURE" && allowSyntheticSandbox
     let unknownSingleSubway = summary.provider == "odsay" && summary.legs.count == 3
       && summary.legs[1].kind == "SUBWAY"
@@ -252,7 +254,7 @@ enum NoLateJourneyRouteNormalizer {
           durationMinutes: NoLateGuidanceRouteLayoutPolicy.number(input.legs[leg.index].display?.durationMinutes, maximum: 1440),
           distanceMeters: NoLateGuidanceRouteLayoutPolicy.number(input.legs[leg.index].display?.distanceMeters, maximum: 10_000_000),
           alightingStopName: continuous && leg.stopSequenceUsable && leg.directionExplicit ? NoLateGuidanceRouteLayoutPolicy.safeName(input.legs[leg.index].stops.last?.name) : nil)
-      }))
+      }), indoorTransferIndices:Set(input.legs.indices.filter { usesIndoorTransfer(input,legIndex:$0) }))
   }
 
   private static func prepareBusApproach(_ input: Input, summary: Summary,
@@ -278,9 +280,11 @@ enum NoLateJourneyRouteNormalizer {
   }
 
   /// Static scoped geometry only; this never grants a transfer or boarding decision.
-  static func prepareBusApproachForLeg(json:String, legIndex:Int, allowSynthetic:Bool) -> NoLateJourneyBusApproachCore.Route? {
+  static func prepareBusApproachForLeg(json:String, legIndex:Int, allowSynthetic:Bool, busAdmissions:[OfficialBusAdmission] = [],
+    subwayAdmissions:[OfficialSubwayAdmission] = []) -> NoLateJourneyBusApproachCore.Route? {
     guard legIndex >= 3, legIndex <= 29, legIndex % 2 == 1,
-      let prepared = try? prepareWalkingRoute(json:json,allowSyntheticSandbox:allowSynthetic,allowValidatedSavedRoute:true),
+      let prepared = try? prepareWalkingRoute(json:json,allowSyntheticSandbox:allowSynthetic,allowValidatedSavedRoute:true,
+        busAdmissions:busAdmissions,subwayAdmissions:subwayAdmissions),
       let input = try? JSONDecoder().decode(Input.self,from:Data(json.utf8)),
       legIndex < input.legs.count - 1, input.legs.count % 2 == 1,
       input.legs.enumerated().allSatisfy({ $0.offset % 2 == 0 ? $0.element.kind == "WALK" : ["BUS","SUBWAY"].contains($0.element.kind) }),
@@ -302,6 +306,43 @@ enum NoLateJourneyRouteNormalizer {
   private struct Projection {
     let along: Double
     let cross: Double
+    let point: Coordinate
+  }
+
+  /// Saved, confirmed geometry only. Official station correspondence does not itself prove a rail curve.
+  struct SubwayTrack: Sendable {
+    let shape: [Coordinate]
+    let stopsAlong: [Double]
+    func project(_ fix: NoLateJourneyEngineCore.Observation) -> (along: Double, point: NoLateJourneyEngineCore.Coordinate)? {
+      let point = Coordinate(latitude: fix.coordinate.latitude, longitude: fix.coordinate.longitude)
+      let choices = segmentProjections(point, onto: shape)
+      guard let best = choices.min(by: { $0.cross < $1.cross }), best.cross + fix.horizontalAccuracyMeters <= 35,
+        !choices.contains(where: { abs($0.along-best.along) > 40 && $0.cross <= best.cross + max(5,fix.horizontalAccuracyMeters) })
+        else { return nil }
+      return (best.along, .init(latitude: best.point.latitude, longitude: best.point.longitude))
+    }
+  }
+
+  static func subwayTrack(json: String, proof: OfficialSubwayAdmission?, route: NoLateJourneySubwayRideCore.Route) -> SubwayTrack? {
+    guard let proof, proof.subwayLegIndex == route.legIndex,
+      let input = try? JSONDecoder().decode(Input.self, from: Data(json.utf8)), proof.matches(input) else { return nil }
+    let leg = input.legs[route.legIndex]
+    let geometry = evaluateGeometry(leg, provider: input.provider, collapseAdjacentTransitVertices: true)
+    let stopErrors = evaluateStops(leg, geometry: geometry, provider: input.provider).filter {
+      !($0 == "STATION_COUNT_MISMATCH_OR_MISSING" && leg.declaredStationCount == nil && proof.stationCount == leg.stops.count - 1)
+    }
+    guard geometry.usable, stopErrors.isEmpty,
+      leg.stops.count == route.stations.count, geometry.coordinates.count > leg.stops.count,
+      zip(geometry.coordinates,geometry.coordinates.dropFirst()).allSatisfy({ distance($0,$1) <= 300 }) else { return nil }
+    var anchors: [Double] = []
+    for (saved, official) in zip(leg.stops,route.stations) {
+      guard let p = saved.coordinate, p.latitude == official.coordinate.latitude, p.longitude == official.coordinate.longitude,
+        saved.routingStationId == official.routingId,
+        let best = segmentProjections(p, onto: geometry.coordinates).min(by: { $0.cross < $1.cross }), best.cross <= 25,
+        anchors.last.map({ best.along - $0 >= 100 }) ?? true else { return nil }
+      anchors.append(best.along)
+    }
+    return .init(shape: geometry.coordinates, stopsAlong: anchors)
   }
 
   static let staticGeometryEndpointToleranceMeters = 75.0
@@ -309,7 +350,8 @@ enum NoLateJourneyRouteNormalizer {
   private static let earthRadius = 6_371_000.0
 
   static func normalize(json: String, officialBusAdmission: OfficialBusAdmission? = nil,
-    officialSubwayAdmission: OfficialSubwayAdmission? = nil) throws -> Summary {
+    officialSubwayAdmission: OfficialSubwayAdmission? = nil, busAdmissions: [OfficialBusAdmission] = [],
+    subwayAdmissions: [OfficialSubwayAdmission] = []) throws -> Summary {
     guard !json.isEmpty, json.utf8.count <= 1_048_576 else { throw ValidationError.payloadSize }
     let input: Input
     do { input = try JSONDecoder().decode(Input.self, from: Data(json.utf8)) }
@@ -318,15 +360,15 @@ enum NoLateJourneyRouteNormalizer {
     if let snapshot = input.walkingSnapshot { try snapshot.validate(input: input) }
     // An absent/mismatched proof is never partially applied. Read-only assessment calls
     // normalize without proof and continues to report the original ODsay gaps.
-    let official = officialBusAdmission?.matches(input) == true ? officialBusAdmission : nil
-    let officialSubway = officialSubwayAdmission?.matches(input) == true ? officialSubwayAdmission : nil
-    var routeReasons = routeReasons(input, officialBusAdmission: official, officialSubwayAdmission: officialSubway)
+    let buses = (busAdmissions + [officialBusAdmission].compactMap { $0 }).filter { $0.matches(input) }
+    let trains = (subwayAdmissions + [officialSubwayAdmission].compactMap { $0 }).filter { $0.matches(input) }
+    var routeReasons = routeReasons(input, officialBusAdmission: buses.first, officialSubwayAdmission: trains.first)
     var summaries: [LegSummary] = []
     for leg in input.legs {
-      let busProof = leg.index == 1 && leg.kind == "BUS" ? official : nil
+      let busProof = buses.first { $0.busLegIndex == leg.index }
       let geometry = evaluateGeometry(leg, provider: input.provider,
-        walkingPath: input.walkingSnapshot?.walks.first(where: { $0.legIndex == leg.index })?.coordinates,
-        collapseAdjacentBusVertices: busProof != nil)
+        walkingPath: snapshotWalkingPath(input, legIndex:leg.index),
+        collapseAdjacentTransitVertices: busProof != nil)
       var reasons = geometry.reasons
       let ride = leg.kind == "BUS" || leg.kind == "SUBWAY"
       let direction = explicit(leg.directionName) || leg.directionCode == "UP" || leg.directionCode == "DOWN" || busProof != nil
@@ -448,14 +490,45 @@ enum NoLateJourneyRouteNormalizer {
 
   /// Separate walking contract only. Saved geometrySource/provider fields are never rewritten.
   static func routeCoordinates(_ input: Input, legIndex: Int) throws -> [Coordinate?] {
-    if let snapshot = input.walkingSnapshot {
-      try snapshot.validate(input:input)
-      if let path = snapshot.walks.first(where: { $0.legIndex == legIndex }) { return path.coordinates.map(Optional.some) }
-    }
+    guard input.legs.indices.contains(legIndex) else { throw ValidationError.bounds }
+    if let snapshot = input.walkingSnapshot { try snapshot.validate(input:input) }
+    if let path = snapshotWalkingPath(input,legIndex:legIndex) { return path.map(Optional.some) }
     return input.legs[legIndex].coordinates
   }
+
+  // Street routing can leave the station and return via a different entrance. When the
+  // saved transit itinerary supplies the actual same-station footpath, keep its geometry
+  // and provenance. All other walks retain the server pedestrian snapshot when available.
+  private static func snapshotWalkingPath(_ input: Input, legIndex: Int) -> [Coordinate]? {
+    guard let fallback = input.walkingSnapshot?.walks.first(where: { $0.legIndex == legIndex }) else { return nil }
+    return usesIndoorTransfer(input,legIndex:legIndex) ? nil : fallback.coordinates
+  }
+  private static func usesIndoorTransfer(_ input: Input, legIndex: Int) -> Bool {
+    let leg = input.legs[legIndex]
+    guard input.context == "SAVED_ROUTE", input.provider == "odsay", input.source == "api",
+      legIndex > 0, legIndex + 1 < input.legs.count, legIndex % 2 == 0,
+      leg.kind == "WALK", leg.exact, leg.geometryInputComplete == true, leg.geometrySource == "WALK_STEPS_LINESTRING",
+      leg.stopEvidenceProvider == "odsay", leg.stopEvidenceVersion == 1, (2...2000).contains(leg.coordinates.count),
+      input.legs[legIndex - 1].kind == "SUBWAY", input.legs[legIndex + 1].kind == "SUBWAY",
+      let alight = input.legs[legIndex - 1].stops.last, let board = input.legs[legIndex + 1].stops.first,
+      let name = transferStationName(alight.name), name == transferStationName(board.name),
+      let from = alight.coordinate, let to = board.coordinate,
+      let start = leg.start, let end = leg.end, let first = leg.coordinates.first ?? nil, let last = leg.coordinates.last ?? nil,
+      [from,to,start,end].allSatisfy(valid),
+      distance(first,from) <= 25, distance(last,to) <= 25,
+      distance(first,start) <= 25, distance(last,end) <= 25 else { return false }
+    let raw = evaluateGeometry(leg,provider:input.provider)
+    return raw.usable && raw.length.map { (1...10_000).contains($0) } == true
+  }
+
+  private static func transferStationName(_ raw: String?) -> String? {
+    guard let name = NoLateGuidanceRouteLayoutPolicy.safeName(raw) else { return nil }
+    let compact = name.filter { !$0.isWhitespace }
+    let normalized = compact.hasSuffix("역") ? String(compact.dropLast()) : compact
+    return normalized.isEmpty ? nil : normalized
+  }
   private static func evaluateGeometry(_ leg: Leg, provider: String, walkingPath: [Coordinate]? = nil,
-    collapseAdjacentBusVertices: Bool = false) -> Geometry {
+    collapseAdjacentTransitVertices: Bool = false) -> Geometry {
     var reasons: [String] = []
     let trustedSources = leg.kind == "WALK"
       ? ["WALK_STEPS_LINESTRING", "WALK_PASS_SHAPE_LINESTRING"]
@@ -480,9 +553,9 @@ enum NoLateJourneyRouteNormalizer {
       return Geometry(coordinates: [], length: nil, reasons: reasons + ["GEOMETRY_COORDINATE_INVALID"])
     }
     let rawCoordinates = path.compactMap { $0 }
-    // The official crosswalk may certify a bus shape containing zero-length edges.
+    // A bound transit shape may repeat the shared vertex of two adjacent links.
     // Collapse adjacent repeats only; distant repeats and reversed paths stay rejected.
-    let coordinates = collapseAdjacentBusVertices && leg.kind == "BUS"
+    let coordinates = collapseAdjacentTransitVertices && ["BUS","SUBWAY"].contains(leg.kind)
       ? rawCoordinates.reduce(into: [Coordinate]()) { result, point in
           if result.last != point { result.append(point) }
         } : rawCoordinates
@@ -614,7 +687,7 @@ enum NoLateJourneyRouteNormalizer {
       let fraction = min(1, max(0, (point.0 * delta.0 + point.1 * delta.1) / squaredLength))
       let projection = Coordinate(latitude: start.latitude + (end.latitude - start.latitude) * fraction,
                                   longitude: wrap(start.longitude + wrap(end.longitude - start.longitude) * fraction))
-      result.append(Projection(along: cumulative + length * fraction, cross: distance(coordinate, projection)))
+      result.append(Projection(along: cumulative + length * fraction, cross: distance(coordinate, projection), point: projection))
     }
     return result
   }

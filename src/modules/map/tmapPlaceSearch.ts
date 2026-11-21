@@ -110,9 +110,8 @@ export function parseFullAddressGeoResults(data: any, query: string, context?: P
 
     return coordinates
         .map((item: any, index: number) => {
-            const lat = safeNumber(item?.newLat ?? item?.lat);
-            const lng = safeNumber(item?.newLon ?? item?.lon);
-            if (typeof lat !== "number" || typeof lng !== "number") return null;
+            const coord = pickFirstValidCoordinatePair([[item?.newLat, item?.newLon], [item?.lat, item?.lon]]);
+            if (!coord) return null;
 
             const address = (
                 item?.newAddressList?.newAddress?.fullAddressRoad ??
@@ -128,8 +127,7 @@ export function parseFullAddressGeoResults(data: any, query: string, context?: P
             return applySearchDistance({
                 name,
                 address: address?.trim() || query,
-                lat,
-                lng,
+                ...coord,
                 category: "주소",
                 provider: "tmap",
             } as PlaceSearchItem, context);
@@ -158,7 +156,7 @@ export async function searchViaTmapPoi(query: string, context?: PlaceSearchConte
         ? {
             centerLat: String(context.center.lat),
             centerLon: String(context.center.lng),
-            radius: String(Math.max(1, Math.min(33, context.radiusKm ?? 20))),
+            ...(context.radiusKm === undefined ? {} : { radius: String(Math.max(1, Math.min(33, context.radiusKm))) }),
         }
         : {};
     const response = await client.get("/tmap/pois", {

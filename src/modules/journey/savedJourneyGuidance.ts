@@ -1,11 +1,11 @@
 import { automaticRecord, type AutomaticJourneyBinding, type AutomaticJourneySnapshot } from "./automaticJourney";
-import { buildJourneyRouteInput } from "./journeyRouteInput";
+import { buildJourneyRouteInput, journeyDisplayName } from "./journeyRouteInput";
 
 const messages: Record<string, string> = {
     READY: "이동하면 출발을 감지합니다", WALKING_TO_STOP: "승차 정류장으로 이동 중",
     APPROACHING_STOP: "승차 정류장에 접근 중", WAITING: "정류장 대기 · 탑승 미확정",
     BOARDING_CANDIDATE: "탑승 여부 확인 필요 · 미확정", UNAVAILABLE: "현재 위치 확인 필요",
-    RIDING: "버스로 이동 중",
+    RIDING: "버스로 이동 중", RIDING_SEGMENT: "지하철 역 사이 이동 중",
     FINAL_WALK: "목적지로 도보 이동 중",
     TRANSFER_WALK: "환승 승차 지점으로 도보 이동 중",
 };
@@ -18,19 +18,47 @@ export function buildSavedJourneyInput(route: unknown, origin: unknown, destinat
     return built.ok ? built.input : null;
 }
 /** Fail closed across route/session/revision/generation and observation TTL. Never infer boarding. */
+type SubwaySegment = {fromStopIndex: number; totalStops: number; fromStopName: string; toStopName: string;
+    progress: number; confirmedAt: number};
+
+function observedSubwaySegment(raw: Record<string, unknown> | null, binding: AutomaticJourneyBinding | null): SubwaySegment | null {
+    if (raw?.schemaVersion !== 9 || raw.status !== 'ACTIVE' || raw.quality !== 'GOOD' || raw.phase !== 'RIDING_SEGMENT'
+        || raw.boardingConfirmed !== true || raw.walkProgress != null || raw.subway != null || raw.lastConfirmedSubway != null
+        || raw.lastConfirmedBus != null || raw.arrival != null || raw.alighting != null || !binding
+        || typeof raw.activeLegIndex !== 'number' || !Number.isSafeInteger(raw.activeLegIndex)
+        || raw.activeLegIndex < 1 || raw.activeLegIndex > 29 || raw.activeLegIndex % 2 !== 1) return null;
+    const value = automaticRecord(raw.subwaySegment);
+    if (!value || Object.keys(value).some(k => !['fromStopIndex','totalStops','fromStopName','toStopName','progress','confirmedAt'].includes(k))) return null;
+    const {fromStopIndex, totalStops, fromStopName, toStopName, progress, confirmedAt} = value;
+    if (typeof totalStops !== 'number' || !Number.isInteger(totalStops) || totalStops < 3 || totalStops > 64
+        || typeof fromStopIndex !== 'number' || !Number.isInteger(fromStopIndex) || fromStopIndex < 1 || fromStopIndex >= totalStops - 1
+        || typeof fromStopName !== 'string' || !fromStopName || fromStopName !== journeyDisplayName(fromStopName)
+        || typeof toStopName !== 'string' || !toStopName || toStopName !== journeyDisplayName(toStopName)
+        || typeof progress !== 'number' || !Number.isFinite(progress) || progress <= 0 || progress >= 1
+        || typeof raw.rideProgress !== 'number' || !Number.isFinite(raw.rideProgress)
+        || Math.abs(raw.rideProgress - (fromStopIndex + progress) / (totalStops - 1)) >= 0.000001
+        || typeof confirmedAt !== 'number' || !Number.isFinite(confirmedAt) || confirmedAt < binding.preparedAtEpochSeconds
+        || typeof raw.observedAt !== 'number' || !Number.isFinite(raw.observedAt) || confirmedAt > raw.observedAt
+        || typeof raw.validUntil !== 'number' || raw.validUntil <= raw.observedAt || raw.validUntil > confirmedAt + 90) return null;
+    return {fromStopIndex,totalStops,fromStopName,toStopName,progress,confirmedAt};
+}
+
 export type SavedJourneyGuidanceView = { phase: string; instruction: string; progress: number | null; fresh: boolean;
+    subwaySegment?: SubwaySegment;
     subway?: { currentStopIndex: number; totalStops: number; currentStopName: string; nextStopName: string | null; remainingStops: number };
-    lastConfirmedSubway?: { stopIndex: number; totalStops: number; stopName: string; confirmedAt: number };
+    lastConfirmedSubway?: { legIndex: number; stopIndex: number; totalStops: number; stopName: string; confirmedAt: number };
+    lastConfirmedBus?: { legIndex: number; confirmedAt: number };
     alighting?: { kind: 'ONE_STOP_BEFORE' | 'NEAR_STOP'; remainingMeters: number; action: string };
     arrival?: { kind?: 'BUS' | 'SUBWAY'; directionLabel: string; remainingSeconds: number } };
 export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot | null, binding: AutomaticJourneyBinding | null, now: number): SavedJourneyGuidanceView | null {
     const raw = automaticRecord(snapshot?.guidance);
+    const segment = observedSubwaySegment(raw, binding);
     const alighting = automaticRecord(raw?.alighting);
     const validAlighting = !!alighting && Object.keys(alighting).length === 2
         && ['ONE_STOP_BEFORE', 'NEAR_STOP'].includes(String(alighting.kind))
         && typeof alighting.remainingMeters === 'number' && Number.isFinite(alighting.remainingMeters)
         && alighting.remainingMeters >= 0 && alighting.remainingMeters <= 100_000 && alighting.remainingMeters % 10 === 0
-        && (alighting.kind !== 'NEAR_STOP' || alighting.remainingMeters <= 50);
+        && (alighting.kind !== 'NEAR_STOP' || alighting.remainingMeters <= 260);
     const index = raw?.activeLegIndex;
     const subway = automaticRecord(raw?.subway);
     const safeStationName = (name: unknown) => typeof name === 'string' && name.trim() === name && name.length > 0 && name.length <= 64
@@ -59,7 +87,7 @@ export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot |
             : ['FINAL_WALK','WALKING_TO_STOP','APPROACHING_STOP'].includes(String(raw.phase)) && index % 2 === 0
                 && (raw.phase !== 'FINAL_WALK' || index >= 4) && raw.boardingConfirmed === false && raw.rideProgress == null && raw.alighting == null);
     if (!snapshot?.enabled || !binding?.savedRouteValidated || !binding.guidanceEnabled || !["SANDBOX", "AUTHENTICATED"].includes(binding.syncScope)
-        || !raw || (raw.schemaVersion === 8 ? !validSubway : raw.subway != null || (indexedVersion ? !validIndexed : raw.phase === "TRANSFER_WALK"
+        || !raw || (raw.schemaVersion !== 9 && raw.subwaySegment != null) || (raw.schemaVersion === 9 ? !segment : raw.schemaVersion === 8 ? !validSubway : raw.subway != null || (indexedVersion ? !validIndexed : raw.phase === "TRANSFER_WALK"
             ? raw.schemaVersion !== 5 || typeof raw.activeLegIndex !== 'number' || !Number.isSafeInteger(raw.activeLegIndex)
                 || raw.activeLegIndex < 2 || raw.activeLegIndex > 28 || raw.activeLegIndex % 2 !== 0 || raw.boardingConfirmed !== false
                 || raw.rideProgress != null || raw.alighting != null || raw.arrival != null
@@ -80,7 +108,7 @@ export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot |
     if (snapshot.status === "ARMED") return raw.phase === "READY" && raw.quality === "UNAVAILABLE"
         ? { phase: "READY", instruction: messages.READY, progress: null, fresh: false } : null;
     const observation = raw.observedAt;
-    const riding = raw.phase === "RIDING";
+    const riding = raw.phase === "RIDING" || raw.phase === "RIDING_SEGMENT";
     const finalWalking = raw.phase === "FINAL_WALK" || raw.phase === "TRANSFER_WALK";
     const fresh = Number.isFinite(now) && typeof observation === "number" && Number.isFinite(observation) && observation <= now + 2
         && observation >= binding.preparedAtEpochSeconds && now < raw.validUntil
@@ -88,10 +116,16 @@ export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot |
             : raw.validUntil === Math.min(binding.expiresAtEpochSeconds, observation + 15));
     const progress = riding ? raw.rideProgress : raw.walkProgress;
     const validProgress = typeof progress === "number" && Number.isFinite(progress) && progress >= 0 && progress <= 1;
-    const known = fresh && raw.quality === "GOOD" && ["WALKING_TO_STOP", "APPROACHING_STOP", "WAITING", "RIDING", "FINAL_WALK", "TRANSFER_WALK"].includes(raw.phase)
+    const known = fresh && raw.quality === "GOOD" && ["WALKING_TO_STOP", "APPROACHING_STOP", "WAITING", "RIDING", "RIDING_SEGMENT", "FINAL_WALK", "TRANSFER_WALK"].includes(raw.phase)
         && (!(riding || finalWalking || indexedVersion) || validProgress);
     const phase = known || (fresh && raw.phase === "BOARDING_CANDIDATE" && raw.quality === "UNCERTAIN") ? raw.phase : "UNAVAILABLE";
     const result: SavedJourneyGuidanceView = { phase, instruction: messages[phase], progress: known && validProgress ? progress as number : null, fresh: known };
+    if (known && segment) result.subwaySegment = segment;
+    if (!fresh && segment && typeof index === 'number' && now >= (observation as number)
+        && now - segment.confirmedAt < 90) {
+        result.lastConfirmedSubway = {legIndex:index, stopIndex:segment.fromStopIndex, totalStops:segment.totalStops,
+            stopName:segment.fromStopName, confirmedAt:segment.confirmedAt};
+    }
     if (known && validSubway && subway) {
         result.instruction = '지하철로 이동 중';
         result.subway = { currentStopIndex:subway.currentStopIndex as number,totalStops:subway.totalStops as number,
@@ -100,14 +134,26 @@ export function presentSavedJourneyGuidance(snapshot: AutomaticJourneySnapshot |
     }
     const last = automaticRecord(raw.lastConfirmedSubway);
     if (phase === 'UNAVAILABLE' && raw.phase === 'UNAVAILABLE' && raw.schemaVersion === 1
+        && typeof index === 'number' && Number.isSafeInteger(index)
+        && (index === 0 || index >= 3 && index <= 29 && index % 2 === 1)
         && last && Object.keys(last).every(key => ['stopIndex','totalStops','stopName','confirmedAt'].includes(key))
         && Number.isSafeInteger(last.totalStops) && (last.totalStops as number) >= 2 && (last.totalStops as number) <= 500
         && Number.isSafeInteger(last.stopIndex) && (last.stopIndex as number) >= 1 && (last.stopIndex as number) < (last.totalStops as number)
         && safeStationName(last.stopName) && typeof last.confirmedAt === 'number' && Number.isFinite(last.confirmedAt)
         && last.confirmedAt >= binding.preparedAtEpochSeconds && last.confirmedAt <= now
         && now - last.confirmedAt < 90) {
-        result.lastConfirmedSubway = {stopIndex:last.stopIndex as number,totalStops:last.totalStops as number,
+        result.lastConfirmedSubway = {legIndex:index === 0 ? 1 : index,stopIndex:last.stopIndex as number,totalStops:last.totalStops as number,
             stopName:last.stopName as string,confirmedAt:last.confirmedAt as number};
+    }
+    const lastBus = automaticRecord(raw.lastConfirmedBus);
+    if (phase === 'UNAVAILABLE' && raw.phase === 'UNAVAILABLE' && raw.schemaVersion === 1
+        && lastBus && Object.keys(lastBus).length === 2
+        && Number.isSafeInteger(lastBus.legIndex) && (lastBus.legIndex as number) >= 1
+        && (lastBus.legIndex as number) <= 29 && (lastBus.legIndex as number) % 2 === 1
+        && typeof lastBus.confirmedAt === 'number' && Number.isFinite(lastBus.confirmedAt)
+        && lastBus.confirmedAt >= binding.preparedAtEpochSeconds && lastBus.confirmedAt <= now
+        && now - lastBus.confirmedAt < 90) {
+        result.lastConfirmedBus = {legIndex:lastBus.legIndex as number, confirmedAt:lastBus.confirmedAt as number};
     }
     if (known && riding && [3,6].includes(Number(raw.schemaVersion)) && validAlighting) result.alighting = {
         kind: alighting.kind as 'ONE_STOP_BEFORE' | 'NEAR_STOP', remainingMeters: alighting.remainingMeters as number,

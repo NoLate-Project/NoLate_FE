@@ -12,6 +12,8 @@ import {
     registerPushAfterLogin,
     subscribePushRegistrationSuccess,
 } from "../src/modules/notification/pushRegistration";
+import { acceptedPushRouteToken, clearAcceptedPushRoute } from '../src/modules/notification/acceptedPushRoute';
+import { getAPNSToken, setAPNSToken } from '@react-native-firebase/messaging';
 import { requestPushNotificationPermission } from "../src/modules/notification/pushPermission";
 import {
     isPushRegistrationGenerationCurrent,
@@ -26,7 +28,9 @@ jest.mock("expo-constants", () => ({
     },
 }));
 
-jest.mock("expo-device", () => ({ isDevice: false }));
+jest.mock("expo-device", () => ({ isDevice: false, supportedCpuArchitectures: ['arm64e'] }));
+jest.mock('../src/api/api', () => ({ API_BASE_URL: 'https://api.example.test' }));
+jest.mock('../src/modules/auth/authStorage', () => ({ getAuthCredentialRevision: () => 1 }));
 
 jest.mock("@react-native-firebase/messaging", () => ({
     AuthorizationStatus: { AUTHORIZED: 1, PROVISIONAL: 2 },
@@ -69,6 +73,7 @@ jest.mock("../src/modules/notification/pushDeviceIdentity", () => ({
 
 jest.mock("../src/modules/notification/pushRegistrationCoordinator", () => ({
     cancelPendingPushRegistration: jest.fn(),
+    getPushRegistrationGeneration: jest.fn(() => 1),
     isPushRegistrationGenerationCurrent: jest.fn(() => true),
     runPushRegistration: jest.fn((_memberId: number, task: (generation: number) => Promise<void>) =>
         task(1)),
@@ -83,6 +88,7 @@ describe("push registration native account ordering", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        clearAcceptedPushRoute();
         Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
         Object.defineProperty(Platform, "Version", { configurable: true, value: 32 });
         jest.mocked(activateDepartureReminderAccountForAuthenticatedSession)
@@ -183,5 +189,18 @@ describe("push registration native account ordering", () => {
 
         expect(requestPermission).toHaveBeenCalledTimes(1);
         expect(registerPushToken).not.toHaveBeenCalled();
+    });
+
+    it('registers a supported Release simulator as Sandbox and exposes only the server-accepted route', async () => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        Object.defineProperty(Platform, 'Version', { configurable: true, value: '27.0' });
+        jest.mocked(requestPermission).mockResolvedValue(AuthorizationStatus.AUTHORIZED);
+        jest.mocked(getAPNSToken).mockResolvedValue('sandbox-apns-token');
+        await registerPushAfterLogin(7);
+        expect(setAPNSToken).toHaveBeenCalledWith(expect.anything(), 'sandbox-apns-token', 'sandbox');
+        expect(acceptedPushRouteToken({ memberId: 7, apiOrigin: 'https://api.example.test', credentialRevision: 1,
+            registrationGeneration: 1 })).toBe('fcm-token-41');
+        expect(acceptedPushRouteToken({ memberId: 8, apiOrigin: 'https://api.example.test', credentialRevision: 1,
+            registrationGeneration: 1 })).toBeNull();
     });
 });

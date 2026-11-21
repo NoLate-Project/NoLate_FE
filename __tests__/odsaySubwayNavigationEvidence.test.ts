@@ -73,3 +73,21 @@ test('bus input does not acquire subway identity or station ID namespace', () =>
     expect(parse(leg)?.navigationEvidence?.subwayIdentifiers).toBeUndefined();
     expect(parse(leg)?.navigationEvidence?.stopOccurrences.every(s => s.routingStationID === undefined)).toBe(true);
 });
+
+test('admits only a complete ordered walk between two rail rides, including original endpoint connectors', () => {
+    const point = (n: number) => ({ x: 127 + n / 100000, y: 37.5 });
+    const links = [{ rseq: 1, xyInfos: [point(1), point(2)], crossXYInfos: [point(0), point(1)] },
+        { rseq: 2, xyInfos: [point(2), point(3)], crossXYInfos: [point(3), point(4)] }];
+    const walk = (routes: unknown, next = 1) => parseTransitOptionsFromOdsay({ result: { paths: [{ pathType: 2, totalTime: 12,
+        rps: [rawLeg(), { trafficType: 3, duration: 1, routes }, { ...rawLeg(), trafficType: next }] }] } })[0]?.transitLegs?.[1];
+    expect(walk(links)?.navigationEvidence?.geometryInputComplete).toBe(true);
+    expect(walk(links)?.pathCoords).toHaveLength(5);
+    expect(walk(links, 2)?.navigationEvidence?.geometryInputComplete).toBe(false);
+    for (const incomplete of [
+        [links[1], links[0]],
+        [links[0], { ...links[1], rseq: 4 }],
+        [links[0], { ...links[1], xyInfos: [point(20), point(3)] }],
+        [links[0], { ...links[1], xyInfos: [point(2), { x: null, y: 37.5 }, point(3)] }],
+        [links[0], { ...links[1], crossXYInfos: [point(30), point(4)] }],
+    ]) expect(walk(incomplete)?.navigationEvidence?.geometryInputComplete).toBe(false);
+});

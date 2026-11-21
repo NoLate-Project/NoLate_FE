@@ -141,7 +141,6 @@ type NativeLiveActivityModule = {
     end?(input: LiveActivityEndInput): Promise<unknown>;
     endAll?(): Promise<unknown>;
     getActiveActivities?(): Promise<unknown>;
-    debugSimulate?(): Promise<unknown>;
     addListener?(
         eventName: "onLiveActivityPushToken" | "onLiveActivityStateChange",
         listener: (event: unknown) => void,
@@ -291,13 +290,6 @@ export async function endAllLiveActivities(): Promise<LiveActivityMutationResult
     const module = getNativeModule();
     if (!module?.endAll) return unsupportedMutation();
     return parseMutationResult(await module.endAll(), "endedAll");
-}
-
-export async function debugSimulateLiveActivity(): Promise<LiveActivityMutationResult> {
-    if (!__DEV__) return unsupportedMutation("DEVELOPMENT_BUILD_REQUIRED");
-    const module = getNativeModule();
-    if (!module?.debugSimulate) return unsupportedMutation();
-    return parseMutationResult(await module.debugSimulate(), "updated");
 }
 
 function parseActiveLiveActivity(value: unknown): ActiveLiveActivity | undefined {

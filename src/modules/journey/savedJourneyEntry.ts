@@ -1,23 +1,25 @@
 import type { JourneyRouteCoordinate, JourneyRouteInput } from './journeyRouteInput';
 import {composeServerWalkingInput} from './serverWalkingSnapshot';
 
+export function supportsSavedTransitLegs(legs: JourneyRouteInput['legs'], includeSubway: boolean): boolean {
+    return legs.length >= 3 && legs.length <= 31 && legs.length % 2 === 1 && legs.every((leg, index) =>
+        leg.index === index && (index % 2 === 0 ? leg.kind === 'WALK' : leg.kind === 'BUS' || includeSubway && leg.kind === 'SUBWAY'));
+}
+
 /** Product-entry preflight only, never provider or boarding authority. */
 export function savedJourneyEntryIssue(input: JourneyRouteInput | null, subwayTrial=false): string | null {
     if (!input) return '저장된 대중교통 경로를 확인할 수 없어 위치 안내를 준비할 수 없어요.';
-    if (input.legs.length < 3 || input.legs.length > 31 || input.legs.length % 2 !== 1 || input.legs.some((leg, index) => leg.index !== index
-        || (index % 2 === 0 ? leg.kind !== 'WALK' : leg.kind !== 'BUS' && !(subwayTrial && input.legs.length===3 && leg.kind==='SUBWAY')))) {
+    if (!supportsSavedTransitLegs(input.legs, subwayTrial)) {
         return subwayTrial
-            ? '위치 안내는 도보와 대중교통이 이어진 경로 중 버스 구간 또는 지하철 단일 구간을 지원해요. 지하철 환승 경로는 아직 지원하지 않아요.'
+            ? '승차·환승·하차 지점 사이의 도보 경로를 확인할 수 없어요.'
             : '위치 안내는 도보와 버스가 번갈아 이어지는 경로를 지원해요. 지하철 탑승 안내는 아직 지원하지 않아요.';
     }
     const valid = (point: JourneyRouteCoordinate | null) => !!point && Number.isFinite(point.latitude)
         && Number.isFinite(point.longitude) && Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180;
     if (!valid(input.origin) || !valid(input.destination)) return '출발지와 도착지 좌표가 필요해요. 경로를 다시 저장해 주세요.';
     // ODsay can provide an exact saved path without a verified departure. Admit
-    // only a single bus/subway leg to assessment; server official data and native
-    // runtime evidence still decide whether navigation can actually prepare.
-    const officialTransitRecheck = input.provider === 'odsay' && input.serviceState === 'UNKNOWN'
-        && input.legs.length === 3 && (input.legs[1].kind === 'BUS' || subwayTrial && input.legs[1].kind === 'SUBWAY');
+    // it to assessment; every transit leg still needs its own proof to guide.
+    const officialTransitRecheck = input.provider === 'odsay' && input.serviceState === 'UNKNOWN';
     if (input.source !== 'api' || !['tmap', 'odsay'].includes(input.provider)
         || input.plausibility !== 'normal' || input.serviceState !== 'operating' && !officialTransitRecheck) {
         return '공급자 경로와 운행 상태를 확인할 수 없어 위치 안내를 준비할 수 없어요.';

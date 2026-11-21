@@ -21,4 +21,19 @@ final class NoLateJourneyOffRouteMapPolicyTests: XCTestCase {
     XCTAssertFalse(Policy.usable(.init(latitude: .nan, longitude: 126.99, accuracyMeters: 5, observedAt: 1_006),
       now: 1_006, armedAt: 1_000, expiresAt: 1_600))
   }
+
+  func testRecentlyConfirmedTransitDoesNotBecomeAnOffRouteRerouteDuringProviderGap() {
+    XCTAssertTrue(Policy.transitStillCorrelated(busPhase:"RIDING",busConfirmedAt:nil,
+      subwayPhase:nil,subwayConfirmedAt:nil,now:1_100))
+    XCTAssertTrue(Policy.transitStillCorrelated(busPhase:"UNAVAILABLE",busConfirmedAt:1_010,
+      subwayPhase:nil,subwayConfirmedAt:nil,now:1_099))
+    XCTAssertTrue(Policy.transitStillCorrelated(busPhase:nil,busConfirmedAt:nil,
+      subwayPhase:"UNAVAILABLE",subwayConfirmedAt:1_010,now:1_099))
+    XCTAssertFalse(Policy.transitStillCorrelated(busPhase:"UNAVAILABLE",busConfirmedAt:1_010,
+      subwayPhase:nil,subwayConfirmedAt:nil,now:1_100))
+    XCTAssertFalse(Policy.transitStillCorrelated(busPhase:"UNAVAILABLE",busConfirmedAt:1_101,
+      subwayPhase:nil,subwayConfirmedAt:nil,now:1_100))
+    XCTAssertFalse(Policy.transitStillCorrelated(busPhase:nil,busConfirmedAt:nil,
+      subwayPhase:nil,subwayConfirmedAt:nil,now:1_100))
+  }
 }

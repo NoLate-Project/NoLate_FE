@@ -208,7 +208,8 @@ it('timeline current step follows GPS, not map selection, and disappears on stal
         selectedStepId="leg-2" onStepPress={onStepPress} currentGuidanceRowRef={currentRow} compact />,
         { createNodeMock: () => ({}) }); });
     expect(view.root.findAllByProps({ testID: 'journey-current-step-leg-0' }).length).toBeGreaterThan(0);
-    expect(StyleSheet.flatten(view.root.findByProps({ testID: 'journey-current-step-leg-0' }).props.style).position).toBe('absolute');
+    const marker = view.root.findByProps({ testID: 'journey-current-step-leg-0' });
+    expect(marker.findByProps({ name: 'navigate-outline' }).props.accessible).toBe(false);
     expect(view.root.findByProps({ testID: 'route-step-row-leg-0' }).props.accessibilityLabel).toContain('현재 구간');
     expect(view.root.findByProps({ testID: 'route-step-row-leg-0' }).props.accessibilityLabel).not.toContain('도보 약 100m');
     expect(currentRow.current).not.toBeNull();

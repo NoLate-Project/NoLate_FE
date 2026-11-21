@@ -291,6 +291,7 @@ export type RouteAlternativeOption = {
     taxiFareWon?: number;
     stepSummary?: string;
     guideSteps?: RouteGuideStep[];
+    drivingGeometryComplete?: boolean;
     trafficSections?: RouteTrafficSection[];
     providerRouteOption?: string;
     transitModeSummary?: string;
@@ -335,6 +336,7 @@ export type ParsedRoadRoute = {
     taxiFareWon?: number;
     pathCoords?: RoutePathCoord[];
     guideSteps?: RouteGuideStep[];
+    drivingGeometryComplete?: boolean;
     trafficSections?: RouteTrafficSection[];
 };
 
@@ -425,6 +427,7 @@ export function distanceBetweenCoordsMeters(a: RoutePathCoord, b: RoutePathCoord
 export function pickFirstValidCoordinatePair(pairs: Array<[unknown, unknown]>): RoutePathCoord | undefined {
     for (let index = 0; index < pairs.length; index += 1) {
         const [rawLat, rawLng] = pairs[index];
+        if ((typeof rawLat === "string" && !rawLat.trim()) || (typeof rawLng === "string" && !rawLng.trim())) continue;
         const lat = safeNumber(rawLat);
         const lng = safeNumber(rawLng);
         if (typeof lat === "number" && typeof lng === "number" && isWgs84Coordinate(lat, lng)) {

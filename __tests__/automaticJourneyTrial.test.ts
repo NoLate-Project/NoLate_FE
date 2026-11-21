@@ -56,7 +56,8 @@ jest.mock("../src/modules/journey/automaticJourney", () => ({
     subscribeAutomaticJourney: (listener: typeof mockNativeEvent) => { mockNativeEvent = listener; return mockDetach; },
 }));
 jest.mock("../src/modules/journey/journeyRouteAssessment", () => ({ assessJourneyRouteInput: (input: JourneyRouteInput) => mockAssess(input) }));
-jest.mock("../src/modules/auth/authStorage", () => ({ subscribeAuthInvalidation: (listener: typeof mockAuth) => { mockAuth = listener; return jest.fn(); } }));
+jest.mock("../src/modules/auth/authStorage", () => ({ getAuthCredentialRevision: () => 0,
+    subscribeAuthInvalidation: (listener: typeof mockAuth) => { mockAuth = listener; return jest.fn(); } }));
 jest.mock("expo-crypto", () => ({
     CryptoDigestAlgorithm: { SHA256: "SHA256" },
     digestStringAsync: async () => "a".repeat(64),
@@ -708,7 +709,7 @@ it.each(['SNAPSHOT_REPLACED','SNAPSHOT_NOT_FOUND','EXPIRED','REVISION_CHANGED'])
     expect(getAutomaticJourneySyncState()).toMatchObject({status:'BLOCKED',errorCode:'AUTOMATIC_SERVER_REJECTED'});
     expect(serverDepartures).toBe(0);
 });
-it.each([false,true])('retained walking resume uses persisted preparation validation after admission expiry; revoked=%s',async revoked=>{
+it.each(['current','revoked','recovered'])('retained walking resume validates after admission expiry; outcome=%s',async outcome=>{
     const now=Date.now(),snapshot={schemaVersion:3 as const,snapshotId:'12345678-1234-1234-1234-123456789abc',memberId:7,scheduleId:9001,
         loginGeneration:2,routeRevision:1,routeFingerprint:'a'.repeat(64),issuedAtMs:now,expiresAtMs:now+300000,navigationExpiresAtMs:now+900000,
         transitProvider:'odsay' as const,walkProvider:'tmap' as const,navigationReady:false as const,reason:'TRANSIT_ADMISSION_PENDING' as const,
@@ -724,12 +725,29 @@ it.each([false,true])('retained walking resume uses persisted preparation valida
     await prepareAutomaticJourneyTrial(saved,'AUTHENTICATED','9001',async()=>auth);
     await flush();const persisted=stored;fetchMock.mockClear();mockAuthenticatedPost.mockClear();mockStop.mockClear();
     jest.setSystemTime(now+301000);
-    if(revoked)mockAuthenticatedPost.mockRejectedValue(new Error('AUTOMATIC_SERVER_REJECTED'));
+    if (outcome === 'recovered') {
+        queueDeparture();
+        await retryAutomaticJourneySync();
+        expect(getAutomaticJourneySyncState().status).toBe('ACKNOWLEDGED');
+        mockAuthenticatedPost.mockRejectedValueOnce(new Error('AUTOMATIC_SERVER_UNAVAILABLE'));
+        await retryAutomaticJourneySync();
+        const retry = {status: 'RETRY_WAIT', errorCode: 'SAVED_ROUTE_VALIDATION_UNAVAILABLE'};
+        expect(getAutomaticJourneySyncState()).toMatchObject(retry);
+        // The outbox is already empty. A successful validation for the wrong active
+        // revision cannot clear this session's retry or report a departure receipt.
+        const native = {...ready, status: 'ACTIVE' as const, sessionId: binding.sessionId, departureAcknowledged: true};
+        mockGet.mockResolvedValueOnce({...native, routeRevision: binding.routeRevision + 1});
+        await retryAutomaticJourneySync();
+        expect(getAutomaticJourneySyncState()).toMatchObject(retry);
+        mockGet.mockResolvedValueOnce({...native, routeRevision: binding.routeRevision});
+    }
+    if(outcome === 'revoked')mockAuthenticatedPost.mockRejectedValue(new Error('AUTOMATIC_SERVER_REJECTED'));
     await retryAutomaticJourneySync();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockAuthenticatedPost.mock.calls.some(call=>String(call[1]).endsWith('/validate'))).toBe(true);
-    expect(mockArm).toHaveBeenCalledTimes(1);expect(serverDepartures).toBe(0);
-    if(revoked){expect(mockStop).toHaveBeenCalled();expect(getAutomaticJourneySyncState().status).toBe('BLOCKED');}
+    expect(mockArm).toHaveBeenCalledTimes(1);expect(serverDepartures).toBe(outcome === 'recovered' ? 1 : 0);
+    if (outcome === 'recovered') expect(getAutomaticJourneySyncState()).toMatchObject({status: 'ACKNOWLEDGED', errorCode: null});
+    if(outcome === 'revoked'){expect(mockStop).toHaveBeenCalled();expect(getAutomaticJourneySyncState().status).toBe('BLOCKED');}
     else {expect(mockStop).not.toHaveBeenCalled();expect(stored).toBe(persisted);}
 });
 it("same-account refresh adopts the token without rearming or extending persisted session", async () => {
@@ -1191,6 +1209,60 @@ it('logout cancels a late terminal receipt before native cleanup', async () => {
     await mockAuth(); wait.resolve({ success: true, data }); await check;
     expect(mockTerminalCleanup).not.toHaveBeenCalled();
 });
+it.each(['continue', 'leave', 'stop', 'checkpoint'] as const)('settles the foreground checkpoint before a departure tap can arm: %s', async outcome => {
+    const read = deferred<AutomaticJourneySnapshot>();
+    mockGet.mockReturnValueOnce(read.promise);
+    const checking = reconcileAutomaticJourneyCheckpoint();
+    const intent = new AbortController();
+    const result = prepareAutomaticJourneyTrial(input, 'SANDBOX', undefined, undefined, intent.signal)
+        .then(value => value.status, (error: Error) => error.message);
+    await flush();
+    expect(mockArm).not.toHaveBeenCalled();
+    if (outcome === 'leave') intent.abort();
+    if (outcome === 'stop') await stopAutomaticJourneyTrial();
+    const snapshot = { ...ready, checkpointAvailable: outcome === 'checkpoint' };
+    mockGet.mockResolvedValue(snapshot);
+    read.resolve(snapshot);
+    await checking;
+    expect(await result).toBe({ continue: 'ARMED', leave: 'AUTOMATIC_OPERATION_CANCELLED', stop: 'AUTOMATIC_OPERATION_CANCELLED',
+        checkpoint: 'CHECKPOINT_RESTORE_OR_STOP_REQUIRED' }[outcome]);
+    expect(mockArm).toHaveBeenCalledTimes(outcome === 'continue' ? 1 : 0);
+});
+
+it('grants only one departure when two taps wait for the same foreground check', async () => {
+    const read = deferred<AutomaticJourneySnapshot>();
+    mockGet.mockReturnValueOnce(read.promise);
+    const checking = reconcileAutomaticJourneyCheckpoint();
+    const depart = () => prepareAutomaticJourneyTrial(input, 'SANDBOX', undefined, undefined, new AbortController().signal);
+    const results = Promise.allSettled([depart(), depart()]);
+    read.resolve(ready);
+    await checking;
+    expect((await results).map(result => result.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(mockArm).toHaveBeenCalledTimes(1);
+});
+
+it('stops the prepared server session if the user leaves before native guidance starts', async () => {
+    const prepared = deferred<void>();
+    const deliver = deferred<void>();
+    fetchMock.mockImplementation(async (url, init) => {
+        const reply = await server(url, init);
+        if (url.endsWith('/prepare')) {
+            prepared.resolve();
+            await deliver.promise;
+        }
+        return reply;
+    });
+    const intent = new AbortController();
+    const departure = prepareAutomaticJourneyTrial(input, 'SANDBOX', undefined, undefined, intent.signal);
+    await prepared.promise;
+    intent.abort();
+    deliver.resolve();
+    await expect(departure).rejects.toThrow('AUTOMATIC_OPERATION_CANCELLED');
+    expect(mockArm).not.toHaveBeenCalled();
+    expect(stored).toBeNull();
+    expect(calls.map(call => call.path.split('/').pop())).toEqual(['prepare', 'stop']);
+});
+
 it('concurrent reconciliation single-flights and prevents a new prepare while checking', async () => {
     const { source, data } = coldAuthenticatedCheckpoint(); const wait = deferred<unknown>();
     mockAuthenticatedPost.mockReturnValueOnce(wait.promise);

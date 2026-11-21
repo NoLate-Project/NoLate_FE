@@ -16,6 +16,7 @@ import { getAuthMember } from "../auth/authStorage";
 import {
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
+    localGuidanceNoticeTarget,
 } from "./pushNavigation";
 import {
     createPushActionFailureGate,
@@ -201,7 +202,7 @@ export async function configureForegroundPush(): Promise<() => void> {
 }
 
 export async function configurePushNavigation(
-    openSchedule: (scheduleId: string) => void,
+    openSchedule: (scheduleId: string, guidanceSession?: string) => void,
     openShareInbox: () => void,
     onActionFailure?: (failure: PushActionFailure) => void,
     openCustomAlarm?: (
@@ -531,6 +532,18 @@ export async function configurePushNavigation(
 
     const handleNotificationResponse = async (response: NotificationResponse): Promise<boolean> => {
         const request = response.notification.request;
+        const guidance = localGuidanceNoticeTarget(request);
+        if (guidance) {
+            if (lastOpenedMessageId !== request.identifier) {
+                lastOpenedMessageId = request.identifier;
+                openSchedule(guidance.scheduleId, guidance.guidanceSession);
+            }
+            const local = Notifications ?? CustomAlarmNotifications;
+            if (local?.getLastNotificationResponse?.()?.notification.request.identifier === request.identifier) {
+                local.clearLastNotificationResponse?.();
+            }
+            return true;
+        }
         const customAlarmTarget = customAlarmTargetFromRequest(
             request,
             response.actionIdentifier,
@@ -633,9 +646,9 @@ export async function configurePushNavigation(
         try {
             localCustomAlarmResponseSubscription =
                 CustomAlarmNotifications.addNotificationResponseReceivedListener?.((response) => {
-                const request = response.notification.request;
-                if (!customAlarmTargetFromRequest(request, response.actionIdentifier)) return;
-                handleNotificationResponse(response).catch(() => undefined);
+                    const request = response.notification.request;
+                    if (!localGuidanceNoticeTarget(request) && !customAlarmTargetFromRequest(request, response.actionIdentifier)) return;
+                    handleNotificationResponse(response).catch(() => undefined);
                 });
         } catch (error) {
             logPushDevelopment("warn", "[custom-alarm] response listener setup failed", error);
@@ -718,9 +731,10 @@ export async function configurePushNavigation(
         try {
             const initialCustomAlarmResponse =
                 CustomAlarmNotifications.getLastNotificationResponse?.();
-            if (initialCustomAlarmResponse && customAlarmTargetFromRequest(
-                initialCustomAlarmResponse.notification.request,
-                initialCustomAlarmResponse.actionIdentifier,
+            const initialRequest = initialCustomAlarmResponse?.notification.request;
+            if (initialCustomAlarmResponse && initialRequest && (
+                localGuidanceNoticeTarget(initialRequest) ||
+                customAlarmTargetFromRequest(initialRequest, initialCustomAlarmResponse.actionIdentifier)
             )) {
                 const shouldClear = await handleNotificationResponse(initialCustomAlarmResponse)
                     .catch(() => false);

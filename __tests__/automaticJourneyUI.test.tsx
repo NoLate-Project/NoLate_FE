@@ -3,7 +3,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { AppState, Platform, type AppStateStatus } from "react-native";
 
 import JourneyAutomaticRoute from "./fixtures/journey/journey-automatic";
-import { JourneyAutomaticTrialPanel, JourneySelectedRouteTrial } from "../src/modules/journey/JourneySelectedRouteTrial";
+import { JourneyAutomaticTrialPanel, JourneySelectedRouteTrial } from "./fixtures/journey/JourneySelectedRouteTrial";
 import {
     canPrepareAutomaticJourneyAssessment, useAutomaticJourneyTrial, type AutomaticJourneyTrialScope,
 } from "../src/modules/journey/useAutomaticJourneyTrial";
@@ -13,6 +13,10 @@ import type { JourneyRouteInput } from "../src/modules/journey/journeyRouteInput
 import type { RouteAlternativeOption } from "../src/modules/map/routingService";
 
 const mockGet = jest.fn();
+const mockLocationPermission = jest.fn();
+jest.mock("../src/modules/map/currentLocation", () => ({
+    ensureForegroundPermission: () => mockLocationPermission(),
+}));
 const mockSubscribe = jest.fn();
 const mockPrepare = jest.fn();
 const mockRestore = jest.fn();
@@ -34,7 +38,7 @@ jest.mock("../src/modules/journey/automaticJourney", () => ({
     subscribeAutomaticJourney: (listener: (snapshot: AutomaticJourneySnapshot) => void) => mockSubscribe(listener),
 }), { virtual: true });
 jest.mock("../src/modules/journey/automaticJourneyTrial", () => ({
-    prepareAutomaticJourneyTrial: (input: JourneyRouteInput, scope: AutomaticJourneyTrialScope) => mockPrepare(input, scope),
+    prepareAutomaticJourneyTrial: (...args: Parameters<typeof import("../src/modules/journey/automaticJourneyTrial").prepareAutomaticJourneyTrial>) => mockPrepare(...args),
     restoreAutomaticJourneyTrial: (input: JourneyRouteInput) => mockRestore(input),
     stopAutomaticJourneyTrial: () => mockStop(),
     retryAutomaticJourneySync: () => mockRetry(),
@@ -103,8 +107,8 @@ describe("P1-3 explicit automatic preparation UI", () => {
     let invalidateAuth: () => Promise<void>;
     let appState: (state: AppStateStatus) => void;
     const removeAppState = jest.fn();
-    function Probe({ input, scope = "SANDBOX", blocked = false }: { input: JourneyRouteInput; scope?: AutomaticJourneyTrialScope; blocked?: boolean }) {
-        current = useAutomaticJourneyTrial(input, scope, blocked);
+    function Probe({ input, scope = "SANDBOX", blocked = false, savedScheduleId }: { input: JourneyRouteInput; scope?: AutomaticJourneyTrialScope; blocked?: boolean; savedScheduleId?: string }) {
+        current = useAutomaticJourneyTrial(input, scope, blocked, savedScheduleId);
         return null;
     }
     beforeAll(() => { (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });
@@ -144,6 +148,38 @@ describe("P1-3 explicit automatic preparation UI", () => {
         await act(async () => current.assess());
         await act(async () => current.setConsented(true));
     };
+
+    it.each(["allow", "deny", "leave", "timeout"] as const)("handles %s during the saved-route departure permission request", async outcome => {
+        const input = mockInput("SAVED_ROUTE");
+        const assessment = assessmentFor(input);
+        if (!assessment.available) throw new Error("Invalid saved-route fixture");
+        assessment.summary.reasonCodes = ["SAVED_ROUTE_REVALIDATION_REQUIRED"];
+        mockAssess.mockResolvedValue(assessment);
+        mockGet.mockResolvedValue({ ...ready, checkpointAvailable: false });
+        const intent = new AbortController();
+        mockLocationPermission.mockImplementationOnce(async () => {
+            if (outcome === "deny") throw new Error("permission denied");
+            if (outcome === "timeout") throw Object.assign(new Error(), { name: "LocationStatusTimeoutError" });
+            if (outcome === "leave") intent.abort();
+        });
+        await render(<Probe input={input} scope="AUTHENTICATED" savedScheduleId="41" />);
+        await act(async () => current.assess());
+        expect(current.canStartSelectedRoute).toBe(true);
+        expect(mockLocationPermission).not.toHaveBeenCalled();
+        expect(mockPrepare).not.toHaveBeenCalled();
+        await act(async () => current.startFromDeparture(intent.signal));
+        expect(mockLocationPermission).toHaveBeenCalledTimes(1);
+        expect(mockPrepare).toHaveBeenCalledTimes(outcome === "allow" ? 1 : 0);
+        if (outcome === "timeout") {
+            expect(current.errorCode).toBe("LOCATION_STATUS_TIMEOUT");
+            expect(current.canStartSelectedRoute).toBe(true);
+        }
+        if (outcome === "allow") {
+            expect(mockPrepare).toHaveBeenCalledWith(input, "AUTHENTICATED", "41", undefined, intent.signal);
+            expect(current.snapshot?.status).toBe("ARMED");
+            expect(current.snapshot?.departureCount).toBe(0);
+        }
+    });
 
     it('authenticated cold mount reconciles automatically without consent prepare or restore', async () => {
         mockReconcile.mockImplementation(async () => { mockGet.mockResolvedValue({ ...ready, checkpointAvailable: false }); });
@@ -239,7 +275,7 @@ describe("P1-3 explicit automatic preparation UI", () => {
         expect(current.canPrepare).toBe(false);
         await act(async () => current.setConsented(true));
         await act(async () => current.prepare());
-        expect(mockPrepare).toHaveBeenCalledWith(input, "SANDBOX");
+        expect(mockPrepare).toHaveBeenCalledWith(input, "SANDBOX", undefined, undefined);
         expect(current.snapshot?.status).toBe("ARMED");
         expect(current.snapshot?.departureCount).toBe(0);
     });
@@ -249,7 +285,7 @@ describe("P1-3 explicit automatic preparation UI", () => {
         await render(<Probe input={input} scope="LOCAL_ONLY" />);
         await consentAndAssess();
         await act(async () => current.prepare());
-        expect(mockPrepare).toHaveBeenCalledWith(input, "LOCAL_ONLY");
+        expect(mockPrepare).toHaveBeenCalledWith(input, "LOCAL_ONLY", undefined, undefined);
         expect(current.snapshot?.syncScope).toBe("LOCAL_ONLY");
     });
 

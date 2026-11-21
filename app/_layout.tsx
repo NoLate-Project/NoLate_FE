@@ -130,6 +130,11 @@ export default function RootLayout() {
     const navigateToPushTarget = useCallback((target: PushNavigationTarget) => {
         InteractionManager.runAfterInteractions(() => {
             if (target.kind === "scheduleDetail") {
+                if (target.guidanceSession) {
+                    router.navigate({ pathname: "/schedule/[id]", params: { id: target.scheduleId,
+                        entrySource: "guidance-activity", guidanceSession: target.guidanceSession } });
+                    return;
+                }
                 router.push(createScheduleDetailRoute(target.scheduleId));
                 return;
             }
@@ -239,8 +244,8 @@ export default function RootLayout() {
 
             try {
                 const listener = await configurePushNavigation(
-                    (scheduleId) => {
-                        openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId });
+                    (scheduleId, guidanceSession) => {
+                        openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId, guidanceSession });
                     },
                     () => {
                         openOrDeferPushTarget({ kind: "shareInbox" });

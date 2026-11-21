@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Animated } from 'react-native';
-import { useReducedMotion } from 'react-native-reanimated';
 import type { Dispatch, SetStateAction } from 'react';
 
+import { useSystemReduceMotion } from '../../../performance/useSystemReduceMotion';
 import {
   isDateType,
   pickerTargetH,
@@ -14,35 +14,32 @@ type Params = {
   setDisplayPicker: Dispatch<SetStateAction<PickerType | null>>;
 };
 
-/**
- * 날짜·시간 피커가 열리고 닫히거나 종류가 바뀔 때 높이와 투명도 전환을 관리합니다.
- * 실제 선택 상태와 애니메이션 중 표시 상태를 분리해 콘텐츠가 중간 프레임에서 바뀌지 않게 합니다.
- */
+/** 날짜·시간 피커를 전환하며 중단된 전환이 이전 콘텐츠를 복원하지 않도록 관리합니다. */
 export function useScheduleAddPickerAnimation({
   picker,
   setDisplayPicker,
 }: Params) {
-  const reduceMotion = useReducedMotion();
-  // 날짜/시간 피커의 높이와 투명도 전환을 관리한다.
+  const reduceMotion = useSystemReduceMotion();
   const heightAnim = useRef(new Animated.Value(0)).current;
   const outerOpacity = useRef(new Animated.Value(0)).current;
   const contentFade = useRef(new Animated.Value(1)).current;
-  const prevPickerRef = useRef<PickerType | null>(null);
+  const displayedPickerRef = useRef<PickerType | null>(null);
 
   useEffect(() => {
-    const prev = prevPickerRef.current;
-    prevPickerRef.current = picker;
-    if (reduceMotion) {
-      heightAnim.setValue(picker ? pickerTargetH(picker) : 0);
-      outerOpacity.setValue(picker ? 1 : 0);
-      contentFade.setValue(1);
-      setDisplayPicker(picker);
-      return;
-    }
-
-    if (picker !== null && prev === null) {
-      // 피커를 처음 열 때 높이와 투명도를 함께 올린다.
-      setDisplayPicker(picker);
+    let cancelled = false;
+    const showPicker = (next: PickerType | null) => {
+      displayedPickerRef.current = next;
+      setDisplayPicker(next);
+    };
+    const stopTransition = () => {
+      cancelled = true;
+      heightAnim.stopAnimation();
+      outerOpacity.stopAnimation();
+      contentFade.stopAnimation();
+    };
+    const revealPicker = () => {
+      if (cancelled || picker === null) return;
+      showPicker(picker);
       Animated.parallel([
         Animated.spring(heightAnim, {
           toValue: pickerTargetH(picker),
@@ -56,9 +53,23 @@ export function useScheduleAddPickerAnimation({
           duration: 200,
           useNativeDriver: false,
         }),
+        Animated.timing(contentFade, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: false,
+        }),
       ]).start();
-    } else if (picker === null && prev !== null) {
-      // 피커를 닫을 때 컨테이너 높이를 접는다.
+    };
+
+    if (reduceMotion || (picker === null && displayedPickerRef.current === null)) {
+      heightAnim.setValue(picker ? pickerTargetH(picker) : 0);
+      outerOpacity.setValue(picker ? 1 : 0);
+      contentFade.setValue(1);
+      showPicker(picker);
+      return stopTransition;
+    }
+
+    if (picker === null) {
       Animated.parallel([
         Animated.timing(heightAnim, {
           toValue: 0,
@@ -71,38 +82,27 @@ export function useScheduleAddPickerAnimation({
           useNativeDriver: false,
         }),
       ]).start(({ finished }) => {
-        if (finished) setDisplayPicker(null);
+        if (finished && !cancelled) {
+          showPicker(null);
+          contentFade.setValue(1);
+        }
       });
-    } else if (picker !== null && prev !== null) {
-      if (isDateType(picker) !== isDateType(prev)) {
-        // 날짜 피커와 시간 피커가 바뀔 때 콘텐츠를 페이드 전환한다.
-        Animated.timing(contentFade, {
-          toValue: 0,
-          duration: 120,
-          useNativeDriver: false,
-        }).start(({ finished }) => {
-          if (!finished) return;
-          setDisplayPicker(picker);
-          Animated.parallel([
-            Animated.spring(heightAnim, {
-              toValue: pickerTargetH(picker),
-              useNativeDriver: false,
-              damping: 18,
-              stiffness: 160,
-              mass: 0.8,
-            }),
-            Animated.timing(contentFade, {
-              toValue: 1,
-              duration: 220,
-              useNativeDriver: false,
-            }),
-          ]).start();
-        });
-      } else {
-        // 시작/종료처럼 같은 타입끼리는 내용만 교체한다.
-        setDisplayPicker(picker);
-      }
+    } else if (displayedPickerRef.current !== null &&
+      isDateType(picker) !== isDateType(displayedPickerRef.current)) {
+      Animated.timing(contentFade, {
+        toValue: 0,
+        duration: 120,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (finished) revealPicker();
+      });
+    } else {
+      contentFade.setValue(1);
+      revealPicker();
     }
+
+    return stopTransition;
   }, [picker, contentFade, heightAnim, outerOpacity, reduceMotion, setDisplayPicker]);
+
   return { contentFade, heightAnim, outerOpacity };
 }

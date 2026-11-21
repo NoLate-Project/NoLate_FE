@@ -8,7 +8,6 @@ struct NoLateLiveActivityMutationResult: Sendable {
   let activityId: String?
   let reason: String?
   let endedCount: Int?
-  let simulation: Bool
 
   init(
     supported: Bool = true,
@@ -16,8 +15,7 @@ struct NoLateLiveActivityMutationResult: Sendable {
     operation: String,
     activityId: String? = nil,
     reason: String? = nil,
-    endedCount: Int? = nil,
-    simulation: Bool = false
+    endedCount: Int? = nil
   ) {
     self.supported = supported
     self.applied = applied
@@ -25,7 +23,6 @@ struct NoLateLiveActivityMutationResult: Sendable {
     self.activityId = activityId
     self.reason = reason
     self.endedCount = endedCount
-    self.simulation = simulation
   }
 
   func bridgeMap() -> [String: Any?] {
@@ -35,8 +32,7 @@ struct NoLateLiveActivityMutationResult: Sendable {
       "operation": operation,
       "activityId": activityId,
       "reason": reason,
-      "endedCount": endedCount,
-      "simulation": simulation ? true : nil
+      "endedCount": endedCount
     ]
   }
 }
@@ -104,8 +100,7 @@ actor NoLateLiveActivityCoordinator {
       "enabled": enabled,
       "canDisplay": enabled,
       "canUpdate": enabled,
-      // Production starts are APNs-owned. The only local caller is the
-      // development preview, so 16.1-17.1 must not advertise a usable start path.
+      // Scheduled departure notifications start through APNs on supported systems.
       "canStartLocally": false,
       "canStartRemotely": false,
       "pushToStartSupported": false,
@@ -375,54 +370,6 @@ actor NoLateLiveActivityCoordinator {
     }
   }
 
-  func debugSimulate(
-    appearance: NoLateLiveActivityAppearance = .light
-  ) async throws -> NoLateLiveActivityMutationResult {
-    let now = Int64(Date().timeIntervalSince1970.rounded())
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let state = NoLateDepartureContentState(
-      revision: now,
-      travelMinutes: 36,
-      firstWaitMinutes: 6,
-      predictedArrivalEpochSeconds: now + 36 * 60,
-      recommendedDepartureEpochSeconds: now + 4 * 60,
-      updatedAtEpochSeconds: now,
-      actionExpiresAtEpochSeconds: now + 2 * 60 * 60,
-      status: .preparing,
-      routeSegments: [
-        NoLateRouteSegment(kind: .walk, label: "도보", colorHex: "#9CA3AF"),
-        NoLateRouteSegment(kind: .bus, label: "버스", colorHex: "#2979FF"),
-        NoLateRouteSegment(kind: .subway, label: "지하철", colorHex: "#22C55E"),
-        NoLateRouteSegment(kind: .destination, label: "도착", colorHex: "#FF4D4F")
-      ],
-      appearance: appearance
-    )
-    let result = try await startOrUpdate(NoLateDepartureStartOrUpdateCommand(
-      scheduleId: "900000001",
-      recipientMemberId: 1,
-      generation: 0,
-      scheduleTitle: "강남역 약속",
-      destinationName: "강남역",
-      scheduleStartAt: formatter.string(
-        from: Date(timeIntervalSince1970: TimeInterval(now + 40 * 60))
-      ),
-      actionEventKey: "key:" + String(repeating: "a", count: 64),
-      logicalEventKey: "debug-live-activity",
-      staleAtEpochSeconds: now + 10 * 60,
-      contentState: state
-    ))
-    return NoLateLiveActivityMutationResult(
-      supported: result.supported,
-      applied: result.applied,
-      operation: result.operation,
-      activityId: result.activityId,
-      reason: result.reason,
-      endedCount: result.endedCount,
-      simulation: true
-    )
-  }
-
   private func matchingActivities(
     scheduleId: String,
     recipientMemberId: Int64
@@ -598,35 +545,6 @@ actor NoLateLiveActivityCoordinator {
     ])
   }
 }
-
-#if DEBUG
-/// Process-argument entry point used by simulator E2E runs. Release builds do
-/// not contain this symbol or the preview behavior.
-@objc(NoLateLiveActivityDebugBridge)
-public final class NoLateLiveActivityDebugBridge: NSObject {
-  @objc
-  public static func resetAndStartPreview() {
-    guard #available(iOS 16.1, *) else { return }
-    let appearance: NoLateLiveActivityAppearance = ProcessInfo.processInfo.arguments
-      .contains("-NoLateLiveActivityPreviewDark") ? .dark : .light
-    Task {
-      _ = await NoLateLiveActivityCoordinator.shared.endAll()
-      // ActivityKit removes an immediately dismissed instance
-      // asynchronously. Wait until it leaves the active collection so the
-      // replacement preview cannot be rejected as an attribute conflict.
-      for _ in 0..<20 {
-        guard !Activity<NoLateDepartureAttributes>.activities.isEmpty else {
-          break
-        }
-        try? await Task.sleep(nanoseconds: 100_000_000)
-      }
-      _ = try? await NoLateLiveActivityCoordinator.shared.debugSimulate(
-        appearance: appearance
-      )
-    }
-  }
-}
-#endif
 
 private extension Data {
   var noLateHexString: String {

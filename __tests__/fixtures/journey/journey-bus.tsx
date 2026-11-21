@@ -3,7 +3,7 @@ import React, { useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { JourneyAutomaticTrialPanel } from "../../../src/modules/journey/JourneySelectedRouteTrial";
+import { JourneyAutomaticTrialPanel } from "./JourneySelectedRouteTrial";
 import { journeyBusFixtures } from "../../../src/modules/journey/journeyBusFixtures";
 import { syntheticBusMappingRoute } from "../../../src/modules/journey/journeyBusMappingFixture";
 import { resolveJourneyBusRouteMapping } from "../../../src/modules/journey/journeyBusRouteBinding";

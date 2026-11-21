@@ -17,12 +17,6 @@ const detailSource = [
 ]
   .map(path => readFileSync(path, 'utf8'))
   .join('\n');
-const detailStyleSource = [
-  'src/routeSupport/schedule/schedule-detail.styles.ts',
-  'src/routeSupport/schedule/scheduleDetailStyles/improved.ts',
-]
-  .map(path => readFileSync(path, 'utf8'))
-  .join('\n');
 
 describe('schedule route sheet controls', () => {
   test('the sheet handle offers expand and collapse in both entry points', () => {
@@ -56,12 +50,4 @@ describe('schedule route sheet controls', () => {
     expect(detailSource).toContain('renderRouteCompanions(revealFirstCompanion,');
   });
 
-  test('compact sheet keeps the safe area while removing forced body slack', () => {
-    expect(detailSource).toContain(
-      'const IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT = 196;',
-    );
-    expect(detailStyleSource).toContain('minHeight: 120,');
-    expect(detailSource).toContain('IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT * Math.max(1, fontScale)');
-    expect(detailSource).toContain(') + bottomInset');
-  });
 });

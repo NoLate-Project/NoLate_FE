@@ -185,8 +185,9 @@ public enum NoLateGuidancePresentationPolicy {
         return .init(title: "마지막 확인 · \(line)", action: "현재 위치 재확인 중 · \(ageText)",
           symbol: "location.slash", compact: "버스 위치 확인 중")
       }
-      if content.status == "ACTIVE", content.phase == "UNAVAILABLE", content.schemaVersion == 1,
-        legs.count > 1, legs[1].kind == "SUBWAY", let last = content.lastConfirmedSubway,
+      if content.status == "ACTIVE", (content.phase == "UNAVAILABLE" && content.schemaVersion == 1 || content.validSegment != nil),
+        legs.indices.contains(content.activeLegIndex == 0 ? 1 : content.activeLegIndex),
+        legs[content.activeLegIndex == 0 ? 1 : content.activeLegIndex].kind == "SUBWAY", let last = content.lastConfirmedSubway ?? content.validSegment?.anchor,
         last.valid(now: now) {
         let age = Int((now - last.confirmedAt) / 60)
         let ageText = age < 1 ? "방금 확인" : "\(age)분 전 확인"
@@ -194,6 +195,17 @@ public enum NoLateGuidancePresentationPolicy {
           symbol: "location.slash", compact: "역 확인 중")
       }
       return .init(title: "위치 확인 중", action: "앱에서 현재 경로를 확인해 주세요", symbol: "location.slash", compact: "확인 중")
+    }
+    if let segment = content.validSegment {
+      var action = "다음 \(segment.toStopName)"
+      if segment.fromStopIndex + 1 == segment.totalStops - 1 {
+        action += " 하차"
+        let transfer = position.legIndex + 2
+        if legs.indices.contains(transfer), legs[transfer-1].kind == "WALK", ["SUBWAY","BUS"].contains(legs[transfer].kind) {
+          action += " · \(NoLateGuidanceRouteLayoutPolicy.legendLabel(legs[transfer])) 환승"
+        }
+      }
+      return .init(title:"\(segment.fromStopName) → \(segment.toStopName)",action:action,symbol:"tram.fill",compact:"다음 \(segment.toStopName)")
     }
     if content.phase == "RIDING" {
       if let subway = content.subway, subway.valid {
@@ -290,6 +302,12 @@ public enum NoLateGuidanceRoutePositionPolicy {
       !legs.isEmpty, legs.count <= 32, legs.first?.kind == "WALK",
       legs.enumerated().allSatisfy({ $0.offset == $0.element.index && ["WALK", "BUS", "SUBWAY", "ETC", "UNKNOWN"].contains($0.element.kind) }) else { return nil }
     let layout = NoLateGuidanceRouteLayoutPolicy.layout(legs)
+    if content.schemaVersion == 9 {
+      let index = content.activeLegIndex
+      guard let segment = content.validSegment, legs.indices.contains(index), legs[index].kind == "SUBWAY" else { return nil }
+      return .init(legIndex:index,legProgress:segment.legProgress,barFraction:layout.start(index)+segment.legProgress*layout.fractions[index])
+    }
+    guard content.subwaySegment == nil else { return nil }
     if content.schemaVersion == 8 {
       let i = content.activeLegIndex
       guard content.phase == "RIDING", i >= 1, i < legs.count, i % 2 == 1, legs[i].kind == "SUBWAY",
@@ -304,7 +322,7 @@ public enum NoLateGuidanceRoutePositionPolicy {
       guard legs.count >= 5, legs.count <= 31, legs.count % 2 == 1, i >= 2, i < legs.count,
         legs.enumerated().allSatisfy({ $0.offset % 2 == 0 ? $0.element.kind == "WALK" : ["BUS","SUBWAY"].contains($0.element.kind) }),
         content.schemaVersion == 6 ? content.arrival == nil :
-          ["WAITING","APPROACHING_STOP"].contains(content.phase) && content.arrivalStatus == "WAITING_INFORMATION"
+          (["WAITING","APPROACHING_STOP"].contains(content.phase) || content.phase == "WALKING_TO_STOP" && content.arrival?.kind == "SUBWAY" && (content.walkProgress ?? 0) >= 0.9) && content.arrivalStatus == "WAITING_INFORMATION"
           && content.arrival?.busLegIndex == (content.phase == "WAITING" ? i : i + 1) else { return nil }
       if content.phase == "RIDING" {
         guard i % 2 == 1, legs[i].kind == "BUS", content.boardingConfirmed, content.walkProgress == nil,
@@ -316,11 +334,11 @@ public enum NoLateGuidanceRoutePositionPolicy {
         let p = content.walkProgress, p.isFinite, (0...1).contains(p) else { return nil }
       let walkIndex: Int
       if content.phase == "WAITING" {
-        guard i % 2 == 1, legs[i].kind == "BUS", p == 1 else { return nil }; walkIndex = i - 1
+        guard i % 2 == 1, ["BUS","SUBWAY"].contains(legs[i].kind), p == 1 else { return nil }; walkIndex = i - 1
       } else if content.phase == "FINAL_WALK" {
-        guard i == legs.count - 1, i % 2 == 0, legs[i - 1].kind == "BUS" else { return nil }; walkIndex = i
+        guard i == legs.count - 1, i % 2 == 0, ["BUS","SUBWAY"].contains(legs[i - 1].kind) else { return nil }; walkIndex = i
       } else if ["WALKING_TO_STOP","APPROACHING_STOP"].contains(content.phase) {
-        guard i % 2 == 0, i < legs.count - 1, legs[i + 1].kind == "BUS" else { return nil }; walkIndex = i
+        guard i % 2 == 0, i < legs.count - 1, ["BUS","SUBWAY"].contains(legs[i + 1].kind) else { return nil }; walkIndex = i
       } else { return nil }
       guard let length = legs[walkIndex].walkingLengthMeters, length.isFinite,
         (content.phase == "FINAL_WALK" ? 70.0 : 1.0)...10_000 ~= length else { return nil }
@@ -329,7 +347,7 @@ public enum NoLateGuidanceRoutePositionPolicy {
     if content.phase == "TRANSFER_WALK" {
       let i = content.activeLegIndex
       guard content.schemaVersion == 5, legs.count >= 5, legs.count % 2 == 1,
-        i >= 2, i % 2 == 0, i + 1 < legs.count - 1, legs[i - 1].kind == "BUS",
+        i >= 2, i % 2 == 0, i + 1 < legs.count - 1, ["BUS","SUBWAY"].contains(legs[i - 1].kind),
         legs.enumerated().allSatisfy({ $0.offset % 2 == 0 ? $0.element.kind == "WALK" : ["BUS","SUBWAY"].contains($0.element.kind) }),
         !content.boardingConfirmed, content.rideProgress == nil, content.alighting == nil, content.arrival == nil,
         let length = legs[i].walkingLengthMeters, length.isFinite, (1...10_000).contains(length),
@@ -387,7 +405,7 @@ public struct NoLateGuidanceAlighting: Codable, Hashable, Sendable {
   public var valid: Bool {
     ["ONE_STOP_BEFORE", "NEAR_STOP"].contains(kind) && remainingMeters.isFinite
       && (0...100_000).contains(remainingMeters) && remainingMeters.truncatingRemainder(dividingBy: 10) == 0
-      && (kind != "NEAR_STOP" || remainingMeters <= 50)
+      && (kind != "NEAR_STOP" || remainingMeters <= 260)
   }
   public var action: String {
     guard valid else { return "하차 정보 확인 필요" }
@@ -408,6 +426,28 @@ public struct NoLateGuidanceSubway: Codable, Hashable, Sendable {
       && NoLateGuidanceRouteLayoutPolicy.safeName(currentStopName) == currentStopName
       && (remainingStops == 0 ? nextStopName == nil : nextStopName != nil
         && NoLateGuidanceRouteLayoutPolicy.safeName(nextStopName) == nextStopName)
+  }
+}
+
+/// Metadata-only measured position between a confirmed station and its adjacent saved stop.
+public struct NoLateGuidanceSubwaySegment: Codable, Hashable, Sendable {
+  public let fromStopIndex: Int
+  public let totalStops: Int
+  public let fromStopName: String
+  public let toStopName: String
+  public let progress: Double
+  public let confirmedAt: Double
+  public var legProgress: Double { (Double(fromStopIndex) + progress) / Double(totalStops-1) }
+  public var anchor: NoLateGuidanceLastSubway {
+    .init(stopIndex:fromStopIndex,totalStops:totalStops,stopName:fromStopName,confirmedAt:confirmedAt)
+  }
+  public func valid(observedAt: Double, validUntil: Double) -> Bool {
+    (3...64).contains(totalStops) && fromStopIndex >= 1 && fromStopIndex < totalStops - 1 &&
+      NoLateGuidanceRouteLayoutPolicy.safeName(fromStopName) == fromStopName &&
+      NoLateGuidanceRouteLayoutPolicy.safeName(toStopName) == toStopName &&
+      progress.isFinite && progress > 0 && progress < 1 && observedAt.isFinite && confirmedAt.isFinite &&
+      confirmedAt > 0 && confirmedAt <= observedAt && observedAt - confirmedAt < 90 &&
+      validUntil.isFinite && validUntil > observedAt && validUntil <= min(observedAt+15,confirmedAt+90)
   }
 }
 
@@ -458,14 +498,15 @@ public struct NoLateGuidanceContent: Codable, Hashable, Sendable {
   public let subway: NoLateGuidanceSubway?
   public let lastConfirmedSubway: NoLateGuidanceLastSubway?
   public let lastConfirmedBus: NoLateGuidanceLastBus?
+  public let subwaySegment: NoLateGuidanceSubwaySegment?
 
   public init(sessionId: String, scheduleId: String, generation: Int64, routeRevision: Int64, routeInputDigest: String,
     sequence: Int64, status: String, phase: String, quality: String, instruction: String, activeLegIndex: Int,
     walkProgress: Double?, observedAt: Double?, validUntil: Double, arrivalStatus: String? = nil, arrival: NoLateGuidanceArrival? = nil,
     rideProgress: Double? = nil, boardingConfirmed: Bool = false, alighting: NoLateGuidanceAlighting? = nil,
     subway: NoLateGuidanceSubway? = nil, lastConfirmedSubway: NoLateGuidanceLastSubway? = nil,
-    lastConfirmedBus: NoLateGuidanceLastBus? = nil) {
-    schemaVersion = subway != nil ? 8 : activeLegIndex > 1 && arrival != nil && (["WAITING","APPROACHING_STOP"].contains(phase) || phase == "WALKING_TO_STOP" && arrival?.kind == "SUBWAY") ? 7 : phase == "TRANSFER_WALK" ? 5 : activeLegIndex > 1 && !(phase == "FINAL_WALK" && activeLegIndex == 2) && ["RIDING","FINAL_WALK","WAITING","WALKING_TO_STOP","APPROACHING_STOP","BOARDING_CANDIDATE"].contains(phase) ? 6 : phase == "FINAL_WALK" ? 4 : phase == "RIDING" ? (alighting == nil ? 2 : 3) : 1; self.sessionId = sessionId; self.scheduleId = scheduleId; self.generation = generation
+    lastConfirmedBus: NoLateGuidanceLastBus? = nil, subwaySegment: NoLateGuidanceSubwaySegment? = nil) {
+    schemaVersion = subwaySegment != nil ? 9 : subway != nil ? 8 : activeLegIndex > 1 && arrival != nil && (["WAITING","APPROACHING_STOP"].contains(phase) || phase == "WALKING_TO_STOP" && arrival?.kind == "SUBWAY") ? 7 : phase == "TRANSFER_WALK" ? 5 : activeLegIndex > 1 && !(phase == "FINAL_WALK" && activeLegIndex == 2) && ["RIDING","FINAL_WALK","WAITING","WALKING_TO_STOP","APPROACHING_STOP","BOARDING_CANDIDATE"].contains(phase) ? 6 : phase == "FINAL_WALK" ? 4 : phase == "RIDING" ? (alighting == nil ? 2 : 3) : 1; self.sessionId = sessionId; self.scheduleId = scheduleId; self.generation = generation
     self.routeRevision = routeRevision; self.routeInputDigest = routeInputDigest; self.sequence = sequence
     self.status = status; self.phase = phase; self.quality = quality; self.instruction = instruction
     self.activeLegIndex = activeLegIndex; self.walkProgress = walkProgress; self.observedAt = observedAt
@@ -475,6 +516,16 @@ public struct NoLateGuidanceContent: Codable, Hashable, Sendable {
     self.subway = subway
     self.lastConfirmedSubway = lastConfirmedSubway
     self.lastConfirmedBus = lastConfirmedBus
+    self.subwaySegment = subwaySegment
+  }
+
+  var validSegment: NoLateGuidanceSubwaySegment? {
+    guard schemaVersion == 9, status == "ACTIVE", phase == "RIDING_SEGMENT", quality == "GOOD",
+      (1...29).contains(activeLegIndex), activeLegIndex % 2 == 1, boardingConfirmed, walkProgress == nil,
+      subway == nil, arrival == nil, alighting == nil, lastConfirmedSubway == nil, lastConfirmedBus == nil,
+      let observedAt, let segment = subwaySegment, segment.valid(observedAt:observedAt,validUntil:validUntil),
+      let rideProgress, rideProgress.isFinite, abs(rideProgress-segment.legProgress) < 0.000001 else { return nil }
+    return segment
   }
 
   var locationObservationDeadline: Double? {
@@ -485,11 +536,96 @@ public struct NoLateGuidanceContent: Codable, Hashable, Sendable {
 
   func expiringLocation(at now: Double) -> Self? {
     guard let deadline = locationObservationDeadline, now.isFinite, deadline <= now else { return nil }
+    let history = (lastConfirmedSubway ?? validSegment?.anchor).flatMap { $0.valid(now:now) ? $0 : nil }
     return .init(sessionId: sessionId, scheduleId: scheduleId, generation: generation,
       routeRevision: routeRevision, routeInputDigest: routeInputDigest, sequence: sequence,
       status: status, phase: "UNAVAILABLE", quality: "UNCERTAIN", instruction: "현재 위치 확인 필요",
-      activeLegIndex: 0, walkProgress: nil, observedAt: observedAt, validUntil: deadline,
-      lastConfirmedSubway: lastConfirmedSubway.flatMap { $0.valid(now: now) ? $0 : nil },
+      activeLegIndex: history != nil && activeLegIndex > 1 ? activeLegIndex : 0, walkProgress: nil, observedAt: observedAt, validUntil: deadline,
+      lastConfirmedSubway: history,
       lastConfirmedBus: lastConfirmedBus.flatMap { $0.valid(now: now) ? $0 : nil })
+  }
+}
+
+/// The driving matcher sends only matched provider maneuver copy. This model is shared by the app and widget.
+struct NoLateDrivingContent: Codable, Hashable, Sendable {
+  struct Turn: Codable, Hashable, Sendable {
+    let title: String
+    let road: String
+    let type: String
+    let index: Int
+    let meters: Int
+
+    var valid: Bool {
+      (0..<4000).contains(index) && (0...5_000_000).contains(meters) && !title.isEmpty &&
+        title.utf8.count <= 512 && road.utf8.count <= 512 &&
+        !type.isEmpty && type.count <= 4 && type.utf8.allSatisfy { (48...57).contains($0) } &&
+        !title.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) &&
+        !road.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+    }
+  }
+
+  let status: String
+  var validUntilMs: Double? = nil
+  var remainingMeters: Int? = nil
+  var remainingSeconds: Int? = nil
+  var next: Turn? = nil
+  var following: Turn? = nil
+
+  var staleDate: Date? { validUntilMs.map { Date(timeIntervalSince1970: $0 / 1000) } }
+
+  func visible(now: Date, isStale: Bool = false) -> Self {
+    guard status == "GUIDING" else {
+      if status == "OFF_ROUTE" {
+        guard !isStale, let limit = staleDate, limit > now, limit.timeIntervalSince(now) <= 12.001 else {
+          return Self(status: "UNCERTAIN")
+        }
+        return Self(status: status, validUntilMs: validUntilMs)
+      }
+      return Self(status: ["ACQUIRING", "ARRIVED"].contains(status) ? status : "UNCERTAIN")
+    }
+    guard !isStale, let limit = staleDate, limit > now, limit.timeIntervalSince(now) <= 12.001,
+      let remainingMeters, (0...5_000_000).contains(remainingMeters),
+      remainingSeconds.map({ (0...604800).contains($0) }) ?? true,
+      next?.valid != false, following?.valid != false,
+      following == nil || (next != nil && following?.index == (next?.index ?? -2) + 1) else {
+      return Self(status: "UNCERTAIN")
+    }
+    return self
+  }
+
+  var statusText: String {
+    switch status {
+    case "OFF_ROUTE": return "경로를 벗어났어요"
+    case "GUIDING": return next?.title ?? "목적지까지 이동"
+    case "ARRIVED": return "목적지에 도착했어요"
+    default: return "현재 위치를 확인하는 중"
+    }
+  }
+
+  static func distance(_ meters: Int) -> String {
+    meters < 1000 ? "\(meters)m" : String(format: "%.1fkm", Double(meters) / 1000)
+  }
+}
+
+/// A turn can be announced at two approach distances. No coordinate or location history is needed.
+struct NoLateDrivingSpeechCue: Equatable {
+  let index: Int
+  let stage: Int
+  /// Only add the road to short turn labels. Some provider instructions already
+  /// contain a whole sentence, the road name and a second distance.
+  static func instruction(for turn: NoLateDrivingContent.Turn) -> String {
+    let approach = turn.meters <= 10 ? "잠시 후" : "약 \(turn.meters)미터 앞"
+    let shortTurns = ["11", "12", "13", "14", "16", "17", "18", "19", "117", "118"]
+    if shortTurns.contains(turn.type), !turn.road.isEmpty, !turn.title.contains(turn.road) {
+      return "\(approach), \(turn.road) 방면 \(turn.title)."
+    }
+    return "\(approach), \(turn.title)."
+  }
+
+  init?(_ content: NoLateDrivingContent, after previous: Self?, now: Date) {
+    guard let turn = content.visible(now: now).next, turn.meters <= 250 else { return nil }
+    index = turn.index
+    stage = turn.meters <= 60 ? 2 : 1
+    if let previous, previous.index == index && previous.stage >= stage { return nil }
   }
 }
