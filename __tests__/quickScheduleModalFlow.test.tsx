@@ -162,7 +162,7 @@ describe("QuickScheduleModal flow", () => {
             renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" }).props.onPress();
             await Promise.resolve();
         });
-        expect(renderer!.root.findAllByProps({ settleOnly: true })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ testID: "quick-schedule-loading" })).toHaveLength(0);
 
         return async (nextCategories?: ScheduleCategory[]) => {
             if (nextCategories) renderedCategories = nextCategories;
@@ -1409,7 +1409,7 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findAllByProps({ testID: "quick-schedule-loading" })).toHaveLength(0);
         await act(async () => jest.advanceTimersByTime(1));
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "빠른 일정 문장" })).toHaveLength(0);
-        expect(renderer!.root.findByProps({ settleOnly: true, settleDelayMs: 90, settleDurationMs: 320 })).toBeDefined();
+        expect(renderer!.root.findByProps({ size: 82, delayMs: 90, durationMs: 320 })).toBeDefined();
         const waitingCardFrame = renderer!.root.findByType(QuickScheduleModalShell).props.cardMotionStyle.__mockFactory();
         await act(async () => {
             resolveAnalysis(parsed());
@@ -1506,7 +1506,7 @@ describe("QuickScheduleModal flow", () => {
         expect(onSave).toHaveBeenCalledTimes(1);
         const saving = renderer!.root.findAllByProps({ testID: "quick-schedule-loading" })[0];
         expect(saving.props.accessibilityLabel).toBe("일정 저장 중. 서울역 약속");
-        expect(saving.findByProps({ settleOnly: true, settleDurationMs: 320 })).toBeDefined();
+        expect(saving.findByProps({ size: 82, delayMs: 0, durationMs: 320 })).toBeDefined();
         await act(async () => {
             resolveSave();
             await Promise.resolve();

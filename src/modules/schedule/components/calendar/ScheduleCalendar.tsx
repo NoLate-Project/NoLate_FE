@@ -354,7 +354,7 @@ export default function ScheduleCalendar({
                 <View style={styles.detailMonthGridRow}>
                     {selectedWeekDays.map(date => (
                         <DetailMonthGridCell key={date.dateString} model={model} date={date}
-                            geometry={geometry} cellHeight={AGENDA_WEEK_HEIGHT}
+                            geometry={geometry} cellHeight={AGENDA_WEEK_HEIGHT} showEventTitles={false}
                             marking={calendarEventMarkings[date.dateString]} metadata={calendarDaysByDate[date.dateString]}
                             todayDateString={todayDateString} colorMode={mode}
                             textPrimary={colors.textPrimary} textSecondary={colors.textSecondary}

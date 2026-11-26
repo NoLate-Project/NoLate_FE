@@ -40,6 +40,7 @@ export type DetailMonthGridCellProps = {
     metadata?: CalendarDayMetadata;
     todayDateString: string;
     isSelected?: boolean;
+    showEventTitles?: boolean;
     selectionFill?: string;
     selectionInk?: string;
     textPrimary: string;
@@ -58,6 +59,7 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
     metadata,
     todayDateString,
     isSelected = false,
+    showEventTitles = true,
     selectionFill,
     selectionInk,
     textPrimary,
@@ -106,7 +108,7 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
             + (hasHoliday ? geometry.holidayLineHeight + 2 : 3)
     );
     const labelSlots = Math.min(2, Math.floor((cellHeight - markerTop) / 14));
-    const visibleTitles = events.slice(0, Math.max(0, labelSlots));
+    const visibleTitles = showEventTitles ? events.slice(0, Math.max(0, labelSlots)) : [];
     const hiddenTitles = events.length - visibleTitles.length;
     const accessibilityLabel = [
         `${date.year}년 ${date.month}월 ${date.day}일`,

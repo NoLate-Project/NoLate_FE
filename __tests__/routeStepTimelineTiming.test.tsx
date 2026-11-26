@@ -2,7 +2,7 @@ import React from "react";
 import { Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
-import { getSubwayArrivals } from "../src/api/transitArrivals";
+import { getBusArrivals, getSubwayArrivals } from "../src/api/transitArrivals";
 import RouteStepTimeline from "../src/modules/schedule/components/route/RouteStepTimeline";
 import { getArrivalClockText, getArrivalWaitText } from "../src/modules/schedule/components/route/RouteStepTimeline.helpers";
 import type { RouteInfo, RouteStep } from "../src/modules/schedule/routeInfo";
@@ -53,6 +53,27 @@ function buildRouteInfo(durations: StepDuration[]): RouteInfo {
 }
 
 describe("RouteStepTimeline timing", () => {
+    it("shows each bus status once and retains a separately reported direction", async () => {
+        const route = buildRouteInfo([{ durationMinutes: 12 }]);
+        route.steps[1] = { ...route.steps[1], type: "BUS", lineName: "N37", boardingBusArrival: {
+            arsId: "01001", cityCode: "1000", cityCodeNamespace: "ODSAY_CID", providerCode: "4", stationName: "승차 정류장",
+        } };
+        jest.mocked(getBusArrivals).mockResolvedValueOnce([
+            { provider: "seoul-bus", kind: "BUS", arrivalStatus: "UNKNOWN", arrivalMessage: "출발대기" },
+            { provider: "seoul-bus", kind: "BUS", arrivalStatus: "APPROACHING", arrivalMessage: "곧 도착", direction: "진관동 방면" },
+        ]);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact />);
+        });
+        const row = renderer!.root.findByProps({ testID: "route-step-row-leg-0" });
+        const texts = row.findAllByType(Text).map(node => node.props.children);
+        expect(texts.filter(text => text === "출발대기")).toHaveLength(1);
+        expect(texts.filter(text => text === "곧 도착")).toHaveLength(1);
+        expect(texts).toContain("진관동 방면");
+        expect(getBusArrivals).toHaveBeenCalledWith(expect.objectContaining({ cityCode: "1000", cityCodeNamespace: "ODSAY_CID" }));
+    });
+
     it("keeps the intercity mode badge and service grade readable on separate lines", async () => {
         const route = buildRouteInfo([]);
         route.steps.splice(1, 0, {

@@ -348,25 +348,6 @@ export function ScheduleDetailHeader({
                   isPlainSchedule && styles.plainTopHeaderTitleRow,
                 ]}
               >
-                {!isPlainSchedule ? (
-                  <View style={styles.topHeaderKindBadge}>
-                    <Ionicons
-                      name="calendar-clear-outline"
-                      size={13}
-                      color={topCardAccentText}
-                    />
-                    <Text
-                      allowFontScaling={!largeRouteHeader}
-                      style={[
-                        styles.topHeaderKindText,
-                        largeRouteHeader && styles.topHeaderKindTextLarge,
-                        { color: topCardAccentText },
-                      ]}
-                    >
-                      일정
-                    </Text>
-                  </View>
-                ) : null}
                 {!largeRouteHeader && title}
               </View>
             </View>

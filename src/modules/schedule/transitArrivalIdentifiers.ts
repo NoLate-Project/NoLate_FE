@@ -1,3 +1,5 @@
+import type { TransitLegDetail } from "../map/routingService";
+
 export type TransitPassStopIdentifier = {
     code?: string;
 };
@@ -5,10 +7,29 @@ export type TransitPassStopIdentifier = {
 export type BusArrivalStationIdentifiers = {
     arsId?: string;
     cityCode?: string;
+    cityCodeNamespace?: "ODSAY_CID";
+    providerCode?: string;
     nodeId?: string;
     stationName?: string;
 };
 
+export function getOdsayBoardingBusIdentifiers(
+    leg: TransitLegDetail,
+    boardingName: string | undefined
+): BusArrivalStationIdentifiers {
+    // An alighting or intermediate stop cannot identify the station used for boarding.
+    const firstStop = leg.passStops?.[0];
+    const boardingStop = firstStop && firstStop.name?.trim() === leg.startName?.trim() ? firstStop : undefined;
+    const fallback = getBusArrivalStationIdentifiers(boardingStop ? [boardingStop] : undefined, boardingName);
+    const rawArs = leg.startArsID?.trim().replace(/-/g, "");
+    return {
+        arsId: rawArs && /^\d{5}$/.test(rawArs) ? rawArs : fallback.arsId,
+        cityCode: leg.startStationCityCode?.trim() || fallback.cityCode,
+        cityCodeNamespace: "ODSAY_CID",
+        providerCode: leg.startStationProviderCode?.trim() || undefined,
+        stationName: fallback.stationName,
+    };
+}
 /** 서로 다른 공급자의 정류장 ID 체계를 도착 API 요청 필드로 분리한다. */
 export function getBusArrivalStationIdentifiers(
     passStops: TransitPassStopIdentifier[] | undefined,

@@ -11,7 +11,7 @@ export function isCalendarViewModePreference(
     return value === "stack" || value === "detail" || value === "list";
 }
 
-export const AGENDA_WEEK_HEIGHT = 66;
+export const AGENDA_WEEK_HEIGHT = 56;
 
 export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
     // 휴일이 있는 날의 두 일정 lane과 overflow까지 유지하면서 남는 세로 공간만 줄인다.

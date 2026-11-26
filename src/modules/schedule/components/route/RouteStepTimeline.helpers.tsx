@@ -9,7 +9,7 @@ import {
   type RouteStep,
   type RouteStepType,
 } from '../../routeInfo';
-import { getBusArrivalStationIdentifiers } from '../../transitArrivalIdentifiers';
+import { getBusArrivalStationIdentifiers, type BusArrivalStationIdentifiers } from '../../transitArrivalIdentifiers';
 import { formatTransferBoardingTarget, isTransitRideKind } from '../../../map/transitModes';
 import styles from './RouteStepTimeline.styles';
 import type { BusBoardingScroll } from './RouteBusBoardingContext';
@@ -127,14 +127,10 @@ export type ArrivalRequest =
       directionName?: string;
       directionCode?: 'UP' | 'DOWN';
     }
-  | {
+  | (BusArrivalStationIdentifiers & {
       kind: 'BUS';
-      arsId?: string;
-      cityCode?: string;
-      nodeId?: string;
-      stationName?: string;
       routeName?: string;
-    };
+    });
 
 /** 경로 단계 종류와 환승 여부에 맞는 Ionicons 이름을 선택합니다. */
 function getStepIcon(type: RouteStepType): IoniconName {
@@ -329,13 +325,8 @@ function getTransitLineLabel(step: RouteStep): string | undefined {
 }
 
 /** 버스 도착 조회에 사용할 정류장 식별자 후보를 우선순위대로 선택합니다. */
-function pickBusStationIdentifiers(
-  step: RouteStep,
-): Pick<
-  Extract<ArrivalRequest, { kind: 'BUS' }>,
-  'arsId' | 'cityCode' | 'nodeId' | 'stationName'
-> {
-  return getBusArrivalStationIdentifiers(step.passStops, buildStepTitle(step));
+function pickBusStationIdentifiers(step: RouteStep): BusArrivalStationIdentifiers {
+  return step.boardingBusArrival ?? getBusArrivalStationIdentifiers(step.passStops, buildStepTitle(step));
 }
 
 /** 경로 단계가 실시간 도착 조회를 지원할 때 API 요청 파라미터를 구성합니다. */
@@ -377,8 +368,9 @@ export function buildArrivalLookupKey(steps: RouteStep[]): string {
           request.lineName ?? ''
         }:${request.directionName ?? ''}:${request.directionCode ?? ''}`;
       }
-      return `${step.id}:bus:${request.arsId ?? ''}:${request.cityCode ?? ''}:${
-        request.nodeId ?? ''
+      return `${step.id}:bus:${request.arsId ?? ''}:${request.cityCodeNamespace ?? ''}:${request.cityCode ?? ''}:${
+        request.providerCode ?? ''
+      }:${request.nodeId ?? ''
       }:${request.stationName ?? ''}:${request.routeName ?? ''}`;
     })
     .join('|');
@@ -418,7 +410,7 @@ export function getArrivalWaitText(arrival: TransitArrivalInfo, now = Date.now()
   if (arrival.arrivalStatus === 'DEPARTED') return '출발';
   const expected = getExpectedArrivalTime(arrival);
   if (expected !== undefined && expected < now) return '예정 시각 지남';
-  if (arrival.arrivalStatus === 'APPROACHING') return '곧';
+  if (arrival.arrivalStatus === 'APPROACHING') return arrival.kind === 'BUS' ? '곧 도착' : '곧';
   const waitSeconds = expected === undefined ? getReportedWaitSeconds(arrival) : (expected - now) / 1000;
   if (waitSeconds !== undefined) {
     const minutes = Math.ceil(waitSeconds / 60);
@@ -438,10 +430,7 @@ export function getArrivalClockText(arrival: TransitArrivalInfo): string | undef
 }
 
 /** 도착 정보의 방면·종점 데이터를 중복 없이 조합한 안내 문구로 만듭니다. */
-export function getArrivalDirectionText(
-  arrival: TransitArrivalInfo,
-  fallback?: string,
-): string {
+export function getArrivalDetailsText(arrival: TransitArrivalInfo): string {
   const chunks: string[] = [];
   const destinationName = arrival.destinationName?.trim();
   if (destinationName) chunks.push(`${destinationName}행`);
@@ -472,8 +461,11 @@ export function getArrivalDirectionText(
         (vehicleType.includes('급행') || vehicleType.includes('특급'))));
   if (vehicleType && !vehicleTypeAlreadyBadged) chunks.push(vehicleType);
 
-  if (chunks.length > 0) return Array.from(new Set(chunks)).join(' · ');
-  return arrival.arrivalMessage?.trim() || fallback || '도착 예정';
+  return Array.from(new Set(chunks)).join(' · ');
+}
+
+export function getArrivalDirectionText(arrival: TransitArrivalInfo, fallback?: string): string {
+  return getArrivalDetailsText(arrival) || arrival.arrivalMessage?.trim() || fallback || '도착 예정';
 }
 
 /** 도착 정보 응답 목록에서 가장 최근 갱신 시각을 찾아 반환합니다. */

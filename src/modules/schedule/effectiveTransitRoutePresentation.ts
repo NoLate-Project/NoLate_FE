@@ -51,18 +51,20 @@ export function buildPlannedJourneyArrivalPresentation(
         !/^[0-9a-f]{64}$/.test(prediction.routeIdentity)) return undefined;
     const arrival = parseDate(prediction.predictedArrivalAt);
     const presented = parseDate(prediction.presentedAt);
-    const maxDisplayAgeMs = prediction.basis === "LAST_ACCEPTED_PLAN" ? 300_000 : 120_000;
+    const busObserved = prediction.basis === "MATCHED_BUS_REALTIME";
+    const freshnessMs = busObserved ? 45_000 : 120_000;
+    const maxDisplayAgeMs = prediction.basis === "LAST_ACCEPTED_PLAN" ? 300_000 : freshnessMs;
     if (!arrival || !presented || arrival.getTime() <= nowMs ||
         presented.getTime() > nowMs + 5_000 || nowMs - presented.getTime() > maxDisplayAgeMs) return undefined;
     if (prediction.basis !== "LAST_ACCEPTED_PLAN") {
         const source = parseDate(prediction.sourceUpdatedAt);
-        if (!source || source.getTime() > nowMs + 5_000 || nowMs - source.getTime() > 120_000) return undefined;
+        if (!source || source.getTime() > nowMs + 5_000 || nowMs - source.getTime() > freshnessMs) return undefined;
     }
     const arrivalClock = formatClock(prediction.predictedArrivalAt, status.timeZone);
     if (!arrivalClock) return undefined;
     const observed = prediction.basis === "MATCHED_TRAIN_REALTIME";
     const selectedService = prediction.basis === "OBSERVED_SERVICE_CONNECTION";
-    const updated = prediction.basis === "MATCHED_RIDE_AND_ONWARD_TIMETABLE" || selectedService;
+    const updated = prediction.basis === "MATCHED_RIDE_AND_ONWARD_TIMETABLE" || selectedService || busObserved;
     const route = prediction.effectiveTransitRoute;
     const hasRoute = Boolean(getDisplayedPlannedTransitRoute(status, nowMs));
     if (route && !hasRoute) return undefined;
@@ -97,12 +99,30 @@ export function getDisplayedPlannedTransitRoute(
     const departure = parseDate(route.departureAt);
     const arrival = parseDate(route.arrivalAt);
     const baseline = prediction.basis === "LAST_ACCEPTED_PLAN";
+    const busObserved = prediction.basis === "MATCHED_BUS_REALTIME";
+    const freshnessMs = busObserved ? 45_000 : 120_000;
     if (!presented || !departure || !arrival || (!baseline && (!source || source.getTime() > nowMs + 5_000 ||
-        nowMs - source.getTime() > 120_000)) || presented.getTime() > nowMs + 5_000 ||
-        nowMs - presented.getTime() > (baseline ? 300_000 : 120_000) || departure.getTime() > nowMs + 5_000 ||
+        nowMs - source.getTime() > freshnessMs)) || presented.getTime() > nowMs + 5_000 ||
+        nowMs - presented.getTime() > (baseline ? 300_000 : freshnessMs) || departure.getTime() > nowMs + 5_000 ||
         arrival.getTime() <= nowMs || arrival.getTime() !== parseDate(prediction.predictedArrivalAt)?.getTime() ||
         !isPositiveMinute(route.totalMinutes) || !Array.isArray(route.segments) || !route.segments.length) return undefined;
     const rides = route.segments.filter(segment => segment.kind !== "WALK");
+    if (rides.length && rides.every(segment => segment.kind === "BUS")) {
+        if (route.provider !== "odsay" || (!baseline && !busObserved) || (baseline && prediction.sourceUpdatedAt != null)) {
+            return undefined;
+        }
+        let directForecast = false;
+        for (const segment of rides) {
+            if (!rideTimingLabel(segment, status.timeZone)) return undefined;
+            const bus = segment.busRidePrediction!;
+            if (bus.alightingObservationSourceUpdatedAt == null) continue;
+            const observed = parseDate(bus.alightingObservationSourceUpdatedAt);
+            if (baseline || !source || !observed || observed < source || observed.getTime() > nowMs + 5_000) return undefined;
+            directForecast = true;
+        }
+        return baseline || directForecast ? route : undefined;
+    }
+    if (busObserved) return undefined;
     for (const segment of rides) {
         const timing = segment.rideTiming;
         const reported = timing?.reportedBoarding;
@@ -330,8 +350,14 @@ function rideTimingLabel(segment: EffectiveTransitRouteSegment, timeZone?: strin
         const boarding = parseDate(bus.boardingAt);
         const alighting = parseDate(bus.alightingAt);
         const updated = parseDate(bus.sourceUpdatedAt);
+        const direct = parseDate(bus.alightingObservationSourceUpdatedAt);
         if (boarding && alighting && updated && updated <= boarding && boarding < alighting) {
-            return `${formatClock(bus.boardingAt, timeZone, true)} 승차 → ${formatClock(bus.alightingAt, timeZone, true)} 하차 예측`;
+            if (bus.alightingObservationSourceUpdatedAt != null && (!direct || direct < boarding || direct > alighting)) {
+                return undefined;
+            }
+            const boardingLabel = direct ? "승차 계획" : "승차";
+            const alightingLabel = direct ? "같은 버스 하차 예보" : "하차 예측";
+            return `${formatClock(bus.boardingAt, timeZone, true)} ${boardingLabel} → ${formatClock(bus.alightingAt, timeZone, true)} ${alightingLabel}`;
         }
     }
     const timing = segment.rideTiming;

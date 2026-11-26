@@ -140,6 +140,7 @@ export type EffectiveTransitRouteSegment = {
         boardingAt: string;
         alightingAt: string;
         sourceUpdatedAt: string;
+        alightingObservationSourceUpdatedAt?: string | null;
     } | null;
     walkingScope?: "ACCESS" | "TRANSFER" | "EGRESS" | "UNKNOWN" | null;
     /** Original WALK seconds, not inferred from rounded minutes. */
@@ -236,7 +237,8 @@ export type ScheduleDepartureStatus = {
         predictedArrivalAt: string;
         presentedAt: string;
         routeIdentity: string;
-        basis: "LAST_ACCEPTED_PLAN" | "MATCHED_TRAIN_REALTIME" | "MATCHED_RIDE_AND_ONWARD_TIMETABLE" | "OBSERVED_SERVICE_CONNECTION";
+        basis: "LAST_ACCEPTED_PLAN" | "MATCHED_TRAIN_REALTIME" | "MATCHED_BUS_REALTIME" |
+            "MATCHED_RIDE_AND_ONWARD_TIMETABLE" | "OBSERVED_SERVICE_CONNECTION";
         effectiveTransitRoute?: EffectiveTransitRoute | null;
         sourceUpdatedAt?: string | null;
     } | null;

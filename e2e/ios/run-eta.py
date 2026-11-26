@@ -58,6 +58,7 @@ METHODS += ('testSaveUnlocatedDestinationRoute',)
 METHODS += ('testVerifyUnlocatedDestinationRouteReopened',)
 METHODS += ('testVerifyIncidentCalendarDeparture',)
 METHODS += ('testVerifyIncidentStationBoard',)
+METHODS += ('testVerifyIsolatedBusArrivalReplay',)
 METHODS += ('testInspectIsolatedNativeAlarm', 'testObserveIsolatedNativeAlarmDelivery', 'testVerifyIsolatedNativeAlarmState')
 SAVE_METHODS += ('testSaveIsolatedEtaTarget',)
 SAVE_METHODS += ('testCreateIsolatedEtaJourney',)
@@ -709,6 +710,10 @@ if args.expected_diagnostic is not None and args.only not in ('testVerifyTimetab
     parser.error('Expected diagnostic is only valid for its scoped UI assertion')
 if args.device != APPROVED_DEVICE:
     parser.error('This recovery run is restricted to the approved dedicated simulator')
+if args.only == 'testVerifyIsolatedBusArrivalReplay' and (
+        args.api_base != PRIVATE_API_BASE or args.title != 'ETA E2E bus arrival replay' or args.allow_save
+        or args.real_isolated):
+    parser.error('Bus arrival replay requires the private read-only H2 fixture')
 if not args.title.startswith('ETA E2E '):
     parser.error('Only synthetic ETA E2E titles are supported')
 target = dt.datetime.fromisoformat(args.target_arrival)

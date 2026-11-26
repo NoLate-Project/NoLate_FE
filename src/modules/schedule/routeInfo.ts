@@ -13,6 +13,7 @@ import { getTransitBoardingDirectionHint } from "../map/transitStopLabelPresenta
 import { validTotalDurationSeconds } from "../map/routeDuration";
 import { hasTransitLegLineGeometry, isRailKind, lacksIntermediateRailGeometry } from "../map/transitRouteGeometry";
 import type { Place, TravelMode } from "./types";
+import { getOdsayBoardingBusIdentifiers, type BusArrivalStationIdentifiers } from "./transitArrivalIdentifiers";
 
 export type RouteStepType =
     | "ORIGIN"
@@ -78,6 +79,7 @@ export interface RouteStep {
     recommendedBoardingPosition?: string;
     recommendedTransferPosition?: string;
     passStops?: RoutePassStop[];
+    boardingBusArrival?: BusArrivalStationIdentifiers;
     coordinates?: RouteCoordinate[];
     /** The rail coordinates were checked against their source transit leg. */
     railGeometryVerified?: true;
@@ -464,7 +466,12 @@ function buildWalkStep(leg: TransitLegDetail, index: number, timetableSeconds?: 
     };
 }
 
-function buildRideStep(leg: TransitLegDetail, index: number, scheduledRide?: RouteStep["scheduledRide"]): RouteStep {
+function buildRideStep(
+    leg: TransitLegDetail,
+    index: number,
+    scheduledRide?: RouteStep["scheduledRide"],
+    odsayRoute = false
+): RouteStep {
     const type = isTransitRideKind(leg.kind) ? leg.kind : "UNKNOWN";
     const hasLineGeometry = hasTransitLegLineGeometry(leg);
     const lineName = type === "SUBWAY"
@@ -515,6 +522,9 @@ function buildRideStep(leg: TransitLegDetail, index: number, scheduledRide?: Rou
         recommendedBoardingPosition: leg.recommendedBoardingPosition,
         recommendedTransferPosition: leg.recommendedTransferPosition,
         passStops,
+        ...(type === "BUS" && (odsayRoute || leg.navigationEvidence?.provider === "odsay") && {
+            boardingBusArrival: getOdsayBoardingBusIdentifiers(leg, startName),
+        }),
         coordinates: hasLineGeometry
             ? pathToRouteCoordinates(leg.pathCoords)
             : undefined,
@@ -610,14 +620,14 @@ function buildRouteSteps(
                     const wait = (Date.parse(bus.boardingAt) - Date.parse(bus.departureAt)) / 1000 - bus.accessSeconds;
                     const seconds = (Date.parse(bus.transfer?.firstAlightingAt ?? bus.alightingAt) - Date.parse(bus.boardingAt)) / 1000 + wait;
                     steps.push(buildRideStep({ ...leg, durationSeconds: seconds, durationMinutes: Math.ceil(seconds / 60),
-                        waitingMinutes: Math.ceil(wait / 60) }, index));
+                        waitingMinutes: Math.ceil(wait / 60) }, index, undefined, option.provider === "odsay"));
                 } else if (bus?.transfer && index === lastBusIndex) {
                     const ready = Date.parse(bus.transfer.firstAlightingAt) + bus.transfer.walkingSeconds * 1000;
                     const wait = (Date.parse(bus.transfer.secondBoardingAt) - ready) / 1000;
                     const seconds = (Date.parse(bus.alightingAt) - ready) / 1000;
                     steps.push(buildRideStep({ ...leg, durationSeconds: seconds, durationMinutes: Math.ceil(seconds / 60),
-                        waitingMinutes: Math.ceil(wait / 60) }, index));
-                } else steps.push(buildRideStep(leg, index, timetable?.rides?.[rideIndex]));
+                        waitingMinutes: Math.ceil(wait / 60) }, index, undefined, option.provider === "odsay"));
+                } else steps.push(buildRideStep(leg, index, timetable?.rides?.[rideIndex], option.provider === "odsay"));
                 rideIndex++;
             } else {
                 steps.push({

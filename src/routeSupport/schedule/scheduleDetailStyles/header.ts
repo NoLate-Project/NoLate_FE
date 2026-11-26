@@ -69,23 +69,6 @@ export function createHeaderStyles(options: ScheduleDetailStylesOptions) {
         width: "100%",
         justifyContent: "center",
     },
-        topHeaderKindBadge: {
-        minHeight: 18,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 4,
-        flexShrink: 0,
-    },
-        topHeaderKindText: {
-        fontSize: 10,
-        fontWeight: "800",
-        letterSpacing: 0,
-    },
-        topHeaderKindTextLarge: {
-        fontSize: 17,
-        lineHeight: 23,
-    },
         topHeaderTitle: {
         flex: 1,
         minWidth: 0,

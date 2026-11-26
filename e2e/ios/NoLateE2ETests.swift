@@ -1,4 +1,5 @@
 import XCTest
+import CoreLocation
 
 /// Runs against the installed app; the server and app build are managed separately.
 final class NoLateE2ETests: XCTestCase {
@@ -605,6 +606,7 @@ final class NoLateE2ETests: XCTestCase {
         NSLog("E2E_SUBWAY_TRANSFER_COMPLETE")
     }
 
+    @MainActor
     func testIsolatedSavedRouteNavigationEntry() throws {
         func remoteControl(_ action: String, method: String = "GET") throws -> [String: Any] {
             let environment = ProcessInfo.processInfo.environment
@@ -710,6 +712,26 @@ final class NoLateE2ETests: XCTestCase {
         XCTAssertTrue(["지금 출발", "길안내 보기"].contains(depart.label),
                       "A reopened saved route may preserve its navigation entry label")
         XCTAssertTrue(depart.isEnabled, "The saved-route departure action must be tappable")
+        let bongcheonFirstWalk = environment["E2E_BONGCHEON_FIRST_WALK"] == "1"
+        struct WalkingFix: Decodable { let latitude: Double; let longitude: Double }
+        var walkingFixes: [WalkingFix] = []
+        let device = XCUIDevice.shared
+        func simulatePosition(_ point: WalkingFix) {
+            let location = CLLocation(coordinate: .init(latitude: point.latitude, longitude: point.longitude),
+                                      altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date())
+            device.location = XCUILocation(location: location)
+        }
+        defer { if bongcheonFirstWalk { device.location = nil } }
+        if bongcheonFirstWalk {
+            XCTAssertEqual(environment["E2E_SCHEDULE_ID"], "563")
+            let replay = try XCTUnwrap(environment["E2E_FIRST_WALK_FIXES"])
+            walkingFixes = try JSONDecoder().decode([WalkingFix].self, from: Data(replay.utf8))
+            simulatePosition(try XCTUnwrap(walkingFixes.first))
+            let routeTitle = app.descendants(matching: .any).matching(
+                NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "봉천동", "강남역")).firstMatch
+            XCTAssertTrue(routeTitle.waitForExistence(timeout: 10))
+            capture("bongcheon-saved-route")
+        }
         let needsSettings = ["E2E_CLEAR_PENDING_GUIDANCE", "E2E_NOTICE_PERSISTENCE", "E2E_LOCKED_DEPARTURE_NOTICE",
                              "E2E_SUBWAY_PLATFORM_NOTICE", "E2E_BUS_REMOTE_ACTIVITY_END"].contains { environment[$0] == "1" }
         if needsSettings {
@@ -850,7 +872,15 @@ final class NoLateE2ETests: XCTestCase {
             depart.tap()
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             let handle = app.buttons["schedule-route-sheet-handle"]
+            let walkingRetry = app.buttons["saved-detail-connect-walking"]
+            var retriedWalking = false
             let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                if bongcheonFirstWalk && !retriedWalking && walkingRetry.isHittable
+                    && walkingRetry.label == "도보 경로 다시 시도" {
+                    self.capture("bongcheon-walking-request")
+                    retriedWalking = true
+                    walkingRetry.tap()
+                }
                 let location = springboard.alerts.firstMatch
                 for label in ["앱을 사용하는 동안 허용", "앱 사용 중에만 허용", "Allow While Using App"] {
                     if location.buttons[label].exists { location.buttons[label].tap(); break }
@@ -878,6 +908,35 @@ final class NoLateE2ETests: XCTestCase {
                 let allow = guidanceLocationAlert.buttons[label]
                 if allow.exists { allow.tap(); break }
             }
+        }
+        if bongcheonFirstWalk {
+            let instruction = app.staticTexts["saved-journey-instruction"]
+            let state = app.staticTexts["schedule-navigation-state"]
+            XCTAssertTrue(instruction.waitForExistence(timeout: 20))
+            XCTAssertTrue(instruction.label.contains("봉천"))
+            XCTAssertEqual(state.label, "출발 대기")
+            capture("bongcheon-ready-to-walk")
+            NSLog("E2E_BONGCHEON_ARMED")
+            // Replay the first walking leg only, with fixes spaced 9 m and 6 s apart.
+            simulatePosition(try XCTUnwrap(walkingFixes.first))
+            for fix in walkingFixes.dropFirst() {
+                RunLoop.current.run(until: Date().addingTimeInterval(6))
+                simulatePosition(fix)
+                if state.label == "안내 중" { break }
+            }
+            let walking = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                state.label == "안내 중" && instruction.label.contains("봉천") &&
+                    self.app.staticTexts["saved-journey-progress"].label.contains("도보")
+            }, object: app)
+            XCTAssertEqual(XCTWaiter.wait(for: [walking], timeout: 120), .completed)
+            capture("bongcheon-walking-active")
+            activeSheetHandle.tap()
+            XCTAssertFalse(state.exists)
+            XCTAssertFalse(app.staticTexts["schedule-navigation-route-summary"].exists)
+            XCTAssertFalse(app.staticTexts["미래 시간표 예측 · 실시간 미확인"].exists)
+            capture("bongcheon-guidance-expanded")
+            try stopSavedNavigation()
+            return
         }
         if environment["E2E_SUBWAY_WALKING_HEADING_ONLY"] == "1" {
             let camera = app.buttons["지도에서 내 현재 위치 보기"]
@@ -6278,6 +6337,32 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     "Station board reused fresh-looking receipt time or the original wait")
         capture("incident-station-board-delayed-observation")
         print("ETA_INCIDENT_STATION_BOARD_UI_VERIFIED")
+    }
+
+    func testVerifyIsolatedBusArrivalReplay() throws {
+        let fixture = try configuration()
+        try require(fixture.title == "ETA E2E bus arrival replay", "Expected the isolated bus replay")
+        try testVerifySavedEtaJourney()
+        let summary = buttonBeginning("일정 상세 시트 펼치기,")
+        if summary.exists && summary.isHittable { try tap(summary) }
+        let row = app.descendants(matching: .any)["route-step-row-leg-0"].firstMatch
+        let pending = app.staticTexts.matching(NSPredicate(format: "label == %@", "출발대기"))
+        let approaching = app.staticTexts.matching(NSPredicate(format: "label == %@", "곧 도착"))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            row.exists && (row.label.contains("출발대기") || pending.firstMatch.exists) &&
+                (row.label.contains("곧 도착") || approaching.firstMatch.exists)
+        }, object: nil)
+        try require(XCTWaiter.wait(for: [ready], timeout: 25) == .completed,
+                    "The station board must show departure waiting and the approaching bus separately")
+        // React Native exposes nested text accessibility nodes at the same rendered frame.
+        let pendingFrames = Set(pending.allElementsBoundByIndex.map { NSCoder.string(for: $0.frame) })
+        let approachingFrames = Set(approaching.allElementsBoundByIndex.map { NSCoder.string(for: $0.frame) })
+        try require(pendingFrames.count <= 1 && approachingFrames.count <= 1 &&
+                    row.label.components(separatedBy: "출발대기").count <= 2 &&
+                    row.label.components(separatedBy: "곧 도착").count <= 2,
+                    "Read each bus status once")
+        capture("isolated-n37-station-board")
+        print("ETA_N37_STATION_BOARD_UI_VERIFIED")
     }
 
     func testVerifySavedEtaJourney() throws {

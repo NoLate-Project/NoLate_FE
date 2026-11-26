@@ -44,6 +44,7 @@ import {
     formatArrivalClock,
     getArrivalClockText,
     getArrivalDirectionText,
+    getArrivalDetailsText,
     getArrivalRequest,
     getArrivalUpdatedAt,
     getArrivalWaitText,
@@ -74,6 +75,8 @@ async function loadArrivals(requests: ArrivalLookup[]) {
                 ? await getBusArrivals({
                     arsId: request.arsId,
                     cityCode: request.cityCode,
+                    cityCodeNamespace: request.cityCodeNamespace,
+                    providerCode: request.providerCode,
                     nodeId: request.nodeId,
                     stationName: request.stationName,
                     routeName: request.routeName,
@@ -772,17 +775,17 @@ export default function RouteStepTimeline({
                                             <>
                                                 {realtimeArrivals.slice(0, 2).map((arrival, arrivalIndex) => {
                                                     const attributeLabels = getTransitArrivalAttributeLabels(arrival);
+                                                    const details = getArrivalDetailsText(arrival);
                                                     return (
                                                         <View key={`${step.id}-bus-arrival-${arrivalIndex}`} style={[styles.busArrivalRow, stackTimelineText && styles.arrivalRowExpanded]}>
                                                             <Text style={[styles.arrivalWaitText, { color: arrivalWaitColor }]}>
                                                                 {getArrivalWaitText(arrival, arrivalNow)}
                                                             </Text>
-                                                            <Text numberOfLines={stackTimelineText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.arrivalMutedText, stackTimelineText && styles.arrivalDirectionExpanded, { color: secondaryColor }]}>
-                                                                {getArrivalDirectionText(
-                                                                    arrival,
-                                                                    typeof step.stationCount === "number" ? `${step.stationCount}정류장` : undefined
-                                                                )}
-                                                            </Text>
+                                                            {details ? (
+                                                                <Text numberOfLines={stackTimelineText ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.arrivalMutedText, stackTimelineText && styles.arrivalDirectionExpanded, { color: secondaryColor }]}>
+                                                                    {details}
+                                                                </Text>
+                                                            ) : null}
                                                             {attributeLabels.length > 0 && (
                                                                 <View style={styles.arrivalAttributeList}>
                                                                     {attributeLabels.map((label) => (
@@ -947,7 +950,7 @@ export default function RouteStepTimeline({
                         ...(arrivalPresentation.showArrivalCard
                             ? realtimeArrivals.slice(0, step.type === "BUS" ? 2 : 3).map(arrival => [
                                 getArrivalWaitText(arrival, arrivalNow),
-                                getArrivalDirectionText(arrival),
+                                step.type === "BUS" ? getArrivalDetailsText(arrival) : getArrivalDirectionText(arrival),
                                 ...getTransitArrivalAttributeLabels(arrival),
                             ].filter(Boolean).join(" · "))
                             : []),

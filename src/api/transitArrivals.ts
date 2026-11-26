@@ -42,6 +42,8 @@ export async function getSubwayArrivals(params: {
 export async function getBusArrivals(params: {
     arsId?: string;
     cityCode?: string;
+    cityCodeNamespace?: "ODSAY_CID";
+    providerCode?: string;
     nodeId?: string;
     stationName?: string;
     routeName?: string;

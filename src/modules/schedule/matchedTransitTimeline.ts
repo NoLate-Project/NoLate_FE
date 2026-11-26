@@ -41,7 +41,7 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
     if (!movements.length || segments.length !== movements.length || !Number.isFinite(start) || !Number.isFinite(end) || end <= start ||
         (basis === "TIMETABLE" && Math.ceil((end - start) / 60_000) !== route.totalMinutes) ||
         (!basis && (end !== Date.parse(status.predictedArrivalAt ?? "") || route.totalMinutes !== status.travelMinutes)) ||
-        !segments.some(segment => segment.kind === "SUBWAY")) return info;
+        !segments.some(segment => segment.kind === "SUBWAY" || segment.kind === "BUS" && segment.busRidePrediction)) return info;
 
     const times = new Map<string, NonNullable<RouteStep["matchedTimeline"]>>();
     const firstInterval = firstSubwayBoardingInterval(route);
@@ -53,10 +53,22 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
         let transferWaitSeconds: number | undefined;
         let startsWithStationArrivalPrediction = false;
         let startsWithReportedStationArrival = false;
+        let busBoardingWaitSeconds: number | undefined;
         if (segment.kind === "WALK") {
             const seconds = segment.walkingTiming?.movementSeconds ?? segment.durationSeconds ?? segment.durationMinutes * 60;
             if (!Number.isSafeInteger(seconds) || seconds < 0) return info;
             cursor += seconds * 1000;
+        } else if (segment.kind === "BUS") {
+            const bus = segment.busRidePrediction;
+            if (!bus || !sameLine(segment.lineName, step.lineName) || !sameStop(step.title, segment.fromName) ||
+                !sameStop(savedAlightingName(step, info.provider), segment.toName)) return info;
+            from = Date.parse(bus.boardingAt);
+            const alight = Date.parse(bus.alightingAt);
+            if (!Number.isFinite(from) || !Number.isFinite(alight) || from < cursor || alight <= from) return info;
+            const wait = (from - cursor) / 1000;
+            if (segment.transferTiming) transferWaitSeconds = wait;
+            else if (movements.slice(0, index).every(movement => movement.type === "WALK")) busBoardingWaitSeconds = wait;
+            cursor = alight;
         } else {
             const timing = segment.rideTiming;
             const lastStop = savedAlightingName(step, info.provider);
@@ -78,6 +90,7 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
             movementSeconds: (cursor - from) / 1000,
             ...(firstInterval?.sequence === index && firstInterval.seconds > 0
                 ? { firstBoardingIntervalSeconds: firstInterval.seconds } : {}),
+            ...(busBoardingWaitSeconds && { firstBoardingIntervalSeconds: busBoardingWaitSeconds }),
             ...(transferWaitSeconds !== undefined && transferWaitSeconds > 0 ? { transferWaitSeconds } : {}),
             ...(startsWithStationArrivalPrediction ? { startsWithStationArrivalPrediction: true } : {}),
             ...(startsWithReportedStationArrival ? { startsWithReportedStationArrival: true } : {}),
