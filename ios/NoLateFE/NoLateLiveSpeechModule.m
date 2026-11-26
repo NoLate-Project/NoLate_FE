@@ -5,6 +5,7 @@
 #import <React/RCTEventEmitter.h>
 #import <React/RCTLog.h>
 #import <Speech/Speech.h>
+#import <UIKit/UIKit.h>
 #import <TargetConditionals.h>
 #import <math.h>
 #import <stdatomic.h>
@@ -442,21 +443,41 @@ RCT_EXPORT_MODULE();
   }
 }
 
+- (void)completePermissionsWhenActive:(void (^)(NSString *message))completion attempt:(NSUInteger)attempt
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive) {
+      completion(nil);
+    } else if (attempt < 20) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self completePermissionsWhenActive:completion attempt:attempt + 1];
+      });
+    } else {
+      completion(@"앱이 활성화된 상태에서 음성 입력을 다시 시작해 주세요.");
+    }
+  });
+}
+
 - (void)requestPermissions:(void (^)(NSString *message))completion
 {
+  // 음성 인식 권한 창도 앱을 잠시 비활성화한다. 승인 콜백 직후 오디오를 켜지 않는다.
+  void (^completeWhenReady)(NSString *) = ^(NSString *message) {
+    if (message.length > 0) completion(message);
+    else [self completePermissionsWhenActive:completion attempt:0];
+  };
   void (^requestMicrophone)(void) = ^{
     AVAudioSession *session = AVAudioSession.sharedInstance;
     AVAudioSessionRecordPermission permission = session.recordPermission;
     if (permission == AVAudioSessionRecordPermissionGranted) {
-      completion(nil);
+      completeWhenReady(nil);
       return;
     }
     if (permission == AVAudioSessionRecordPermissionDenied) {
-      completion(@"마이크 권한이 꺼져 있습니다. 설정에서 마이크 권한을 허용해 주세요.");
+      completeWhenReady(@"마이크 권한이 꺼져 있습니다. 설정에서 마이크 권한을 허용해 주세요.");
       return;
     }
     [session requestRecordPermission:^(BOOL granted) {
-      completion(granted
+      completeWhenReady(granted
         ? nil
         : @"마이크 권한이 필요합니다. 설정에서 마이크 권한을 허용해 주세요.");
     }];

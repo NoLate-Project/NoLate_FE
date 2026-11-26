@@ -76,6 +76,7 @@ export function useQuickScheduleVoiceController({
   const liveSpeechBaseDurationMillisRef = useRef(0);
   const liveSpeechCaptureActiveRef = useRef(false);
   const liveSpeechCaptureStartedAtRef = useRef(0);
+  const liveSpeechRecoveryAttemptsRef = useRef(0);
   const liveSpeechRequiresOnDeviceRecognitionRef = useRef(true);
   const beginLiveSpeechCaptureRef = useRef<((requiresOnDeviceRecognition: boolean, startMode: LiveSpeechCaptureStartMode) => Promise<void>) | null>(null);
   const voiceTranscriptRef = useRef("");
@@ -221,14 +222,17 @@ export function useQuickScheduleVoiceController({
         setIsVoiceRecording(false); setIsVoiceFinalizing(true); setVoiceStatusMessage("마지막 문장을 정리하고 있어요."); return;
       }
       if (event.state === "finished" || event.state === "cancelled" || event.state === "failed") {
-        const shouldRollover = event.state === "finished" && liveSpeechCaptureActiveRef.current && !liveSpeechStopInFlightRef.current && mountedRef.current && visibleRef.current && !closingRef.current;
+        // 시작 실패는 시작 Promise가 처리한다. 듣는 중의 중단만 같은 인식 방식으로 한 번 복구한다.
+        const shouldRecover = event.state === "failed" && !liveSpeechStartingRef.current && liveSpeechRecoveryAttemptsRef.current < 1;
+        const shouldRollover = (event.state === "finished" || shouldRecover) && liveSpeechCaptureActiveRef.current && !liveSpeechStopInFlightRef.current && mountedRef.current && visibleRef.current && !closingRef.current;
         liveSpeechSessionIdRef.current = null;
         liveSpeechStartingRef.current = false;
         const wallTime = liveSpeechCaptureStartedAtRef.current > 0 ? Date.now() - liveSpeechCaptureStartedAtRef.current : 0;
         const remaining = LIVE_SPEECH_TOTAL_DURATION_MILLIS - Math.max(voiceDurationMillisRef.current, wallTime);
         const restartCapture = beginLiveSpeechCaptureRef.current;
         if (shouldRollover && remaining >= LIVE_SPEECH_MIN_SESSION_DURATION_MILLIS && restartCapture) {
-          setIsVoiceRecording(true); setIsVoiceFinalizing(true); setVoiceStatusMessage("계속 듣고 있어요.");
+          if (shouldRecover) liveSpeechRecoveryAttemptsRef.current += 1;
+          setIsVoiceRecording(true); setIsVoiceFinalizing(true); setVoiceStatusMessage(shouldRecover ? "말씀하신 내용을 유지하고 다시 연결하고 있어요." : "계속 듣고 있어요.");
           restartCapture(liveSpeechRequiresOnDeviceRecognitionRef.current, "rollover").catch(() => undefined);
           return;
         }
@@ -246,6 +250,7 @@ export function useQuickScheduleVoiceController({
     if (!mountedRef.current || !visibleRef.current || closingRef.current || liveSpeechSessionIdRef.current || liveSpeechStartingRef.current || liveSpeechStopInFlightRef.current) return;
     if (startMode === "rollover" && !liveSpeechCaptureActiveRef.current) return;
     if (startMode === "fresh") {
+      liveSpeechRecoveryAttemptsRef.current = 0;
       liveSpeechCaptureActiveRef.current = true;
       liveSpeechCaptureStartedAtRef.current = Date.now();
       voiceDurationMillisRef.current = 0; voiceTranscriptRef.current = ""; liveSpeechBaseDurationMillisRef.current = 0;
@@ -270,6 +275,9 @@ export function useQuickScheduleVoiceController({
     setIsVoiceFinalizing(true);
     setVoiceStatusMessage(requiresOnDeviceRecognition ? "오프라인 음성 입력을 시작하고 있어요." : "인터넷 음성 입력을 시작하고 있어요.");
     try {
+      // 권한 창을 닫은 직후에는 아직 앱이 inactive일 수 있다. 녹음 폴백과 같은 조건으로 기다린다.
+      if (AppState.currentState === "inactive" || AppState.currentState === "background") await waitForAudioForegroundReady();
+      if (liveSpeechOperationRef.current !== operation || liveSpeechSessionIdRef.current !== requestedSessionId || !visibleRef.current || closingRef.current || !liveSpeechCaptureActiveRef.current) return;
       const sessionId = await startLiveSpeechRecognition({
         sessionId: requestedSessionId,
         localeIdentifier: "ko-KR",
@@ -421,7 +429,7 @@ export function useQuickScheduleVoiceController({
       try {
         const result = await stopLiveSpeechRecognition(sessionId);
         if (liveSpeechStopInFlightRef.current !== stopOperation || liveSpeechOperationRef.current !== operation || !mountedRef.current || !visibleRef.current || closingRef.current) return;
-        const snapshot = accumulateLiveSpeechTranscript(liveSpeechTranscriptBufferRef.current, result);
+        const snapshot = accumulateLiveSpeechTranscript(liveSpeechTranscriptBufferRef.current, { ...result, isFinal: true });
         liveSpeechTranscriptBufferRef.current = snapshot.buffer;
         const limited = limitRecognizedText(snapshot.text);
         voiceTranscriptRef.current = limited.text; setVoiceTranscript(limited.text); setVoiceTranscriptTruncated(limited.truncated);
