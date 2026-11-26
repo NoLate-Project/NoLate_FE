@@ -15,6 +15,7 @@ import {
 } from "../src/modules/schedule/quickScheduleDraft";
 import type { RouteInfo } from "../src/modules/schedule/routeInfo";
 import type { ScheduleParseResult } from "../src/modules/schedule/types";
+import { buildPlainScheduleDetailPresentation } from "../src/modules/schedule/plainScheduleDetailPresentation";
 
 const category = { id: "1", title: "업무", color: "#f00" };
 const origin = { name: "집", lat: 37.501, lng: 127.001 };
@@ -89,6 +90,24 @@ function completeDraft(
 }
 
 describe("quick schedule draft", () => {
+    test("공유한 오후 5시는 UTC 저장과 상세 표시를 거쳐도 오후 5시로 유지된다", () => {
+        const source = "예약자: 테스트가\n날짜: 26.11.28\n시간: 오후 5시\n연락처: 010 0000 0001";
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "테스트가 본식 촬영",
+            date: "2026-11-28",
+            time: "17:00",
+            startAt: "2026-11-28T08:00:00Z",
+            notes: source,
+            destination,
+        }), source, "2026-11-26");
+        expect(draft.date).toBe("2026-11-28");
+        expect(draft.time).toBe("17:00");
+        const payload = buildQuickSchedulePayload(draft, category);
+        expect(payload.startAt).toBe("2026-11-28T08:00:00.000Z");
+        expect(payload.notes).toBe(source);
+        expect(buildPlainScheduleDetailPresentation({ id: "shared-reservation", ...payload }).timeRangeLabel)
+            .toBe("오후 5:00");
+    });
     test("제목이 없으면 도착시간과 장소 순서로 기본 제목을 만든다", () => {
         const draft = buildQuickSchedulePreviewDraft(parseResult({
             date: "2026-08-07",
