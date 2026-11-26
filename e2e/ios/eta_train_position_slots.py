@@ -49,7 +49,12 @@ class JourneyPositionSlots:
             route = snapshot.get(source) if accepted else verified_timetable_plan(worker)
             if route is None:
                 return
-            self.deadline = now + dt.timedelta(minutes=90)
+            departure = _instant(route['departureAt'])
+            if departure > now + dt.timedelta(hours=1):
+                raise ValueError('Journey departure exceeds isolated waiting horizon')
+            # A fixed public-map comparison can start well before the journey.
+            # Count the travel observation window from departure in that case.
+            self.deadline = max(now, departure) + dt.timedelta(minutes=90)
         else:
             if not self.identity:
                 return

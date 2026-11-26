@@ -28,7 +28,7 @@ export function savedJourneyEntryIssue(input: JourneyRouteInput | null, subwayTr
     if (input.legs.some(leg => (!input.walkingSnapshot||leg.kind!=='WALK') && (!leg.exact || !leg.geometryInputComplete || leg.coordinates.length < 2
         || leg.coordinates.some(point => !valid(point)) || !valid(leg.start) || !valid(leg.end)
         || leg.geometrySource !== (leg.kind === 'WALK' ? 'WALK_STEPS_LINESTRING' : 'TRANSIT_PASS_SHAPE_LINESTRING')))) {
-        return '도보·대중교통의 실제 이동 경로가 부족해요. 지도 표시용 연결선만으로는 안내하지 않아요.';
+        return '일부 구간의 경로를 확인할 수 없어요. 길찾기에서 경로를 다시 선택해 주세요.';
     }
     return null;
 }

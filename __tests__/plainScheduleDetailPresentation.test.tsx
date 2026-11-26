@@ -253,6 +253,22 @@ describe("PlainScheduleDetailView", () => {
         expect(indicator()).toHaveLength(0);
     });
 
+    test("출발 전 시트를 펼치면 지도 위의 안내와 소요 시간은 숨기고 뒤로 가기는 유지한다", async () => {
+        const render = (sheetMode: 'expanded' | 'compact') => <ThemeProvider><ScheduleDetailHeader
+            presentation={{
+                item: makeSchedule({ id: "journey-1" }), navigationMode: true, sheetMode,
+                insets: { top: 0 }, colors: { background: "#FFFFFF" }, setRouteHeaderHeight: jest.fn(), goBack: jest.fn(),
+            } as unknown as ScheduleDetailPresentation}
+            mapState="ready" onRetryMap={jest.fn()} /></ThemeProvider>;
+        await act(async () => { renderer = TestRenderer.create(render('expanded')); });
+        for (const id of ['schedule-navigation-state', 'schedule-navigation-route-summary']) {
+            expect(renderer!.root.findAllByProps({testID: id})).toHaveLength(0);
+        }
+        expect(renderer!.root.findAllByProps({accessibilityLabel: '길안내 화면에서 돌아가기'}).length).toBeGreaterThan(0);
+        await act(async () => renderer!.update(render('compact')));
+        expect(renderer!.root.findByProps({testID: 'schedule-navigation-state'}).props.children).toBe('안내 준비');
+    });
+
     test("길안내 종료 후 상단 안내도 도착 상태를 표시한다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(<ThemeProvider><ScheduleDetailHeader

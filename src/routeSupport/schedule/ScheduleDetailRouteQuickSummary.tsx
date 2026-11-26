@@ -56,6 +56,7 @@ export function ScheduleDetailRouteQuickSummary({
     recommendedDepartureTimeLabel,
     routeArrivalSummary,
     routeFactLabels,
+    compactRouteFactLabels,
     routeIdentityTitle,
     routeProgressSegments,
     focusedLegIndex,
@@ -252,6 +253,11 @@ export function ScheduleDetailRouteQuickSummary({
             importantForAccessibility="no-hide-descendants"
             onPress={largeRouteHeader ? undefined : () => snapSheet('expanded')}
           >
+          {focusedRouteContext && (
+            <Text maxFontSizeMultiplier={1.65} style={[styles.improvedArrivalSummary, { color: topCardAccentText }]}>
+              {focusedRouteContext}
+            </Text>
+          )}
           {!largeRouteHeader && arrivalSummary}
           {!effectiveTransitRoutePresentation ? (
             <>
@@ -286,7 +292,7 @@ export function ScheduleDetailRouteQuickSummary({
             </View>
           ) : (
             <ScheduleRouteFacts
-              labels={routeFactLabels}
+              labels={routeDetailInfo ? compactRouteFactLabels : routeFactLabels}
               color={secondaryText}
               borderColor={sheetBorder}
               largeText={largeRouteHeader}

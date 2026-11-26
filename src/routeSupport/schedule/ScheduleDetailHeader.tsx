@@ -90,7 +90,7 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
           style={({ pressed }) => [navigationHeaderStyles.back, surface, { opacity: pressed ? 0.58 : 1 }]}>
           <Ionicons name="chevron-back-outline" size={22} color={primaryText} />
         </Pressable>
-        {(!expanded || !(active || armed)) && <>
+        {!expanded && <>
           <View style={[navigationHeaderStyles.statePill,
             { backgroundColor: isDark ? '#183C70' : '#E7F0FF', borderColor: sheetBorder }]}>
             <Text testID="schedule-navigation-state" accessibilityRole="header"

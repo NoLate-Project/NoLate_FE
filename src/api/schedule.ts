@@ -496,7 +496,10 @@ export async function getScheduleDepartureStatus(
 }
 
 export async function createSchedule(payload: SchedulePayload): Promise<ScheduleItem> {
-    const response = await apiPost<ApiEnvelope<ScheduleDto>, SchedulePayload>("/api/schedules", payload);
+    // ALARM 생성 응답에는 일정 저장과 출발 알람 작업 등록이 함께 포함된다.
+    // 저장 중 공통 10초 제한에 걸리면 서버가 생성한 일정도 사용자에게 실패로 보인다.
+    const config = payload.notificationEnabled && payload.alertMode === "ALARM" ? { timeout: 30_000 } : undefined;
+    const response = await apiPost<ApiEnvelope<ScheduleDto>, SchedulePayload>("/api/schedules", payload, config);
     const item = normalizeSchedule(unwrapApiResponse(response));
     const cachedItem = { ...item, route: item.route ?? payload.route };
     upsertCalendarScheduleCacheItem(cachedItem);

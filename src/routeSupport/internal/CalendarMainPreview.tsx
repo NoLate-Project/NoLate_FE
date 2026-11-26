@@ -14,6 +14,7 @@ import LiquidCalendarMenuPrototype from '../../modules/schedule/components/calen
 import LiquidGlassIconButton from '../../modules/schedule/components/calendar/LiquidGlassIconButton';
 import { type DetailMonthPageLayouts } from '../../modules/schedule/components/calendar/ScheduleCalendar';
 import {
+  AGENDA_WEEK_HEIGHT,
   getPrimaryPillWeekdayGap,
   usesMonthInPrimaryPill,
   type CalendarViewModePreference,
@@ -149,6 +150,7 @@ export default function CalendarMainPreview({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState(initialMode);
+  const [weekExpanded, setWeekExpanded] = useState(false);
   const [selectedDay, setSelectedDay] = useState(DAY);
   const [visibleMonth, setVisibleMonth] = useState(DAY);
   const fixtureItems = useMemo(
@@ -289,7 +291,7 @@ export default function CalendarMainPreview({
         </>
       ) : viewMode === 'detail' ? (
         <>
-          <View style={{ height: layout.calendarHeight }}>
+          <View style={{ height: weekExpanded ? headerOffset + AGENDA_WEEK_HEIGHT : layout.calendarHeight }}>
             <CalendarWrapper
               selectedDay={selectedDay}
               focusedMonth={selectedDay}
@@ -298,6 +300,7 @@ export default function CalendarMainPreview({
                 scenario === 'dense' ? denseCalendarDays : undefined
               }
               viewMode="detail"
+              agendaWeekOnly={weekExpanded}
               firstDay={0}
               scrollRequest={0}
               onSelectDay={setSelectedDay}
@@ -309,7 +312,7 @@ export default function CalendarMainPreview({
               detailMonthPageLayouts={detailMonthPageLayouts}
             />
           </View>
-          <SelectedDayAgendaPanel {...agendaProps} selectedDay={selectedDay} />
+          <SelectedDayAgendaPanel {...agendaProps} selectedDay={selectedDay} weekDisclosure={{ expanded: weekExpanded, onChange: setWeekExpanded }} />
           <View
             pointerEvents="none"
             style={[styles.weekdays, { top: headerOffset - 18 }]}

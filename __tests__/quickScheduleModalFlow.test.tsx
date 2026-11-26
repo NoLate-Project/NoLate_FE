@@ -32,7 +32,7 @@ jest.mock("expo-av", () => ({
         setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
     },
 }));
-jest.mock("../src/modules/schedule/components/form/QuickScheduleLogoLoader", () => "QuickScheduleLogoLoader");
+jest.mock("../src/ui/NoLateLoadingMark", () => "NoLateLoadingMark");
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
 jest.mock("../src/api/api", () => ({ __esModule: true, default: { post: jest.fn() } }));
 

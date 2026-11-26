@@ -5,7 +5,7 @@ import Reanimated, { ReduceMotion, withTiming } from "react-native-reanimated";
 
 import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotion";
 import LoadingIndicator from "../../../../ui/LoadingIndicator";
-import QuickScheduleLogoLoader from "./QuickScheduleLogoLoader";
+import NoLateLoadingMark from "../../../../ui/NoLateLoadingMark";
 import { createQuickScheduleModalStyles } from "./QuickScheduleModal.styles";
 import {
   BLUE,
@@ -45,14 +45,7 @@ export function QuickScheduleLoadingStep({
       testID="quick-schedule-loading"
       style={styles.centerFlow}
     >
-      <QuickScheduleLogoLoader
-        accessibilityLabel={label}
-        settleOnly
-        settleDelayMs={isAnalyzing ? logoDelayMs : undefined}
-        settleDurationMs={logoSettleMs}
-        hideBeforeSettle={isAnalyzing}
-        useAppLogoFace={isAnalyzing}
-      />
+      <NoLateLoadingMark size={82} delayMs={isAnalyzing ? logoDelayMs : 0} durationMs={logoSettleMs} />
       {description ? (
         <Text
           lineBreakStrategyIOS="hangul-word"

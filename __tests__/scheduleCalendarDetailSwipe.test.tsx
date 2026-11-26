@@ -1648,10 +1648,10 @@ describe("ScheduleCalendar detail month swipe motion", () => {
             .props.children).toBe("음 6.7");
         expect(cell.findByProps({ testID: "calendar-holiday-name" })
             .props.children).toBe("테스트 공휴일");
-        expect(cell.findByProps({ testID: "detail-event-markers" }))
+        expect(cell.findByProps({ testID: "detail-event-labels" }))
             .toBeDefined();
         expect(cell.findByProps({ testID: "detail-event-overflow" })
-            .props.children.join("")).toBe("+1개");
+            .props.children.join("")).toBe("+3");
         expect(getDetailMonthSelectionText("current")).toBe("20");
         expect(getDetailMonthSelectionLunarText("current")).toBe("음 6.7");
 

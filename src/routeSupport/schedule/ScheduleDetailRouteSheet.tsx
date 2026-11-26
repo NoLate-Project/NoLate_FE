@@ -561,9 +561,6 @@ export function ScheduleDetailRouteSheet({
                 <Text style={[navigationStyles.readyNext, { color: topCardAccentText }]}>
                   {endedGuidance ? '저장한 경로는 계속 볼 수 있어요' : nextPlannedStep}
                 </Text>
-                {expanded && !endedGuidance && <Text style={[navigationStyles.readyHint, { color: secondaryText }]}>
-                  안내를 준비하면 이동 중 위치로 출발을 확인해요
-                </Text>}
               </View>
             </View>
           )}
@@ -1203,5 +1200,4 @@ const navigationStyles = StyleSheet.create({
   readyCopy: { gap: 2 },
   readyTitle: { fontSize: 18, fontWeight: '700' },
   readyNext: { fontSize: 14, fontWeight: '600' },
-  readyHint: { fontSize: 12, lineHeight: 18, marginTop: 3 },
 });

@@ -2,7 +2,7 @@ import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import * as ImagePicker from "expo-image-picker";
 import { Audio } from "expo-av";
-import { ActionSheetIOS, Alert, Linking } from "react-native";
+import { ActionSheetIOS, Alert, AppState, Linking, type AppStateStatus } from "react-native";
 
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
@@ -90,7 +90,7 @@ jest.mock("../src/modules/schedule/liveSpeechRecognition", () => ({
         return { remove: jest.fn() };
     },
 }));
-jest.mock("../src/modules/schedule/components/form/QuickScheduleLogoLoader", () => "QuickScheduleLogoLoader");
+jest.mock("../src/ui/NoLateLoadingMark", () => "NoLateLoadingMark");
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
 
 const parseResult: ScheduleParseResult = {
@@ -157,6 +157,76 @@ describe("QuickScheduleModal live speech", () => {
         jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
+    });
+
+    async function openVoiceInput(onAnalyze = jest.fn().mockResolvedValue(parseResult)) {
+        await act(async () => {
+            renderer = TestRenderer.create(<ThemeProvider><QuickScheduleModal visible defaultDay="2026-07-23" onAnalyze={onAnalyze} onSave={jest.fn()} onClose={jest.fn()} /></ThemeProvider>);
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" }).props.onPress();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 시작" }).props.onPress();
+            await Promise.resolve();
+        });
+    }
+
+    test("듣는 중 한 번 끊기면 받아쓴 문장을 유지하고 재연결하며 반복 실패는 멈춘다", async () => {
+        mockCreateLiveSpeechSessionId.mockReturnValueOnce("speech-a").mockReturnValueOnce("speech-b");
+        await openVoiceInput();
+        await act(async () => {
+            mockTranscriptListener?.({ sessionId: "speech-a", text: "내일 오후 두 시", isFinal: false });
+            mockStateListener?.({ sessionId: "speech-a", state: "failed", message: "일시적 중단" });
+            await Promise.resolve();
+        });
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(2);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value).toBe("내일 오후 두 시");
+        await act(async () => {
+            mockStateListener?.({ sessionId: "speech-b", state: "failed", message: "반복 중단" });
+            await Promise.resolve();
+        });
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(2);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value).toBe("내일 오후 두 시");
+    });
+
+    test("권한 창 이후 앱이 활성화되기 전에는 마이크를 시작하지 않는다", async () => {
+        const stateDescriptor = Object.getOwnPropertyDescriptor(AppState, "currentState")!;
+        Object.defineProperty(AppState, "currentState", { configurable: true, value: "inactive" });
+        const foregroundListeners: Array<(state: AppStateStatus) => void> = [];
+        jest.spyOn(AppState, "addEventListener").mockImplementation((_event, listener) => {
+            foregroundListeners.push(listener);
+            return { remove: jest.fn() };
+        });
+        try {
+            await openVoiceInput();
+            expect(mockStartLiveSpeechRecognition).not.toHaveBeenCalled();
+            await act(async () => {
+                foregroundListeners.forEach(listener => listener("active"));
+                await jest.advanceTimersByTimeAsync(350);
+            });
+            expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(1);
+        } finally {
+            Object.defineProperty(AppState, "currentState", stateDescriptor);
+        }
+    });
+
+    test("정지할 때 더 짧아진 최종 시각을 그대로 일정 분석에 전달한다", async () => {
+        const onAnalyze = jest.fn().mockResolvedValue(parseResult);
+        mockStopLiveSpeechRecognition.mockResolvedValueOnce({ sessionId: "speech-session-1", text: "내일 오후 두 시 강남역 회의" });
+        await openVoiceInput(onAnalyze);
+        await act(async () => {
+            mockTranscriptListener?.({ sessionId: "speech-session-1", text: "내일 오후 열두 시 강남역 회의", isFinal: false });
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 중지" }).props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" }).props.onPress();
+            await Promise.resolve();
+        });
+        expect(onAnalyze).toHaveBeenCalledWith("내일 오후 두 시 강남역 회의", expect.objectContaining({ voiceTranscript: "내일 오후 두 시 강남역 회의" }));
     });
 
     test("마이크 권한을 거절하면 음성 탭에서 직접 입력하고 설정을 열 수 있다", async () => {

@@ -91,7 +91,10 @@ def verify_automatic(value, previous=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', required=True)
-    parser.add_argument('--copied-input', type=Path, required=True)
+    fixture = parser.add_mutually_exclusive_group(required=True)
+    fixture.add_argument('--copied-input', type=Path)
+    fixture.add_argument('--public-nowon-sillim', action='store_true',
+                         help='Create the route in the app from fixed public station coordinates in isolated H2')
     parser.add_argument('--journey-provider', choices=('odsay', 'tmap'), default='odsay')
     parser.add_argument('--target-lead-minutes', type=int, choices=(75, 80, 90), default=75)
     parser.add_argument('--arm-delay-seconds', type=int, default=0)
@@ -101,8 +104,14 @@ def main():
     args = parser.parse_args()
     assert 0 <= args.arm_delay_seconds <= 900
     assert not args.verify_postdeparture_cadence or args.arm_delay_seconds == 0
-    copied = args.copied_input.resolve(strict=True)
-    assert str(copied).startswith('/private/tmp/nolate-real-naver-requery-04-')
+    if args.public_nowon_sillim:
+        if args.journey_provider != 'odsay':
+            parser.error('The public station fixture uses ODsay')
+        fixture_input = '--public-nowon-sillim'
+    else:
+        copied = args.copied_input.resolve(strict=True)
+        assert str(copied).startswith('/private/tmp/nolate-real-naver-requery-04-')
+        fixture_input = str(copied)
     build_be = BE
     source_hashes = {}
     if args.backend_snapshot:
@@ -216,12 +225,19 @@ def main():
         with log('server.log') as output:
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.real-isolated=true',
                 '-Dnolate.eta.real-automatic-delivery=true', '-classpath', (root / 'classpath.txt').read_text(),
-                'com.noLate.eta.simulator.EtaRealProviderSimulatorServer', str(root), str(copied), args.journey_provider,
+                'com.noLate.eta.simulator.EtaRealProviderSimulatorServer', str(root), fixture_input, args.journey_provider,
                 str(args.target_lead_minutes)],
                 # Runtime settings stay in the authorized BE directory; compile classes remain frozen.
                 cwd=BE, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        prepared = wait(lambda: read('prepared.json'))
+        # Cold Spring/H2 startup can finish just after the normal observation wait.
+        # This allowance applies only before any UI action or scheduled work is armed.
+        try:
+            prepared = wait(lambda: read('prepared.json'), timeout=240)
+        except TimeoutError as error:
+            raise TimeoutError('OwnedServerStartupTimedOut') from error
         assert prepared['automaticScheduling'] and prepared['scheduleCountBeforeUi'] == prepared['jobCountBeforeUi'] == 0
+        if args.public_nowon_sillim:
+            assert prepared['publicStationFixture'] is True and prepared['copiedFromScheduleId'] is None
         target = dt.datetime.fromisoformat(prepared['targetArrivalAt']).astimezone(SEOUL).isoformat()
         env = dict(os.environ, EXPO_PUBLIC_LOCAL_API_BASE_URL=BASE, EXPO_PUBLIC_TRANSIT_PROVIDER=args.journey_provider,
                    NOLATE_E2E_METRO_CACHE_NAMESPACE=root.name,

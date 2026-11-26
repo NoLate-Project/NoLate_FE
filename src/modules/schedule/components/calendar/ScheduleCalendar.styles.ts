@@ -93,6 +93,10 @@ export function createScheduleCalendarStyles({
         letterSpacing: -0.25,
         textAlign: "center",
     },
+    eventLabels: { position: "absolute", left: 2, right: 2, gap: 1 },
+    eventLabel: { height: 13, borderLeftWidth: 2, borderRadius: 2, paddingHorizontal: 2, flexDirection: "row", alignItems: "center" },
+    eventLabelText: { flex: 1, fontSize: 10, lineHeight: 13, fontWeight: "500" },
+    eventCount: { fontSize: 9, lineHeight: 13, fontVariant: ["tabular-nums"] },
     detailMonthGridMarkers: {
         position: "absolute",
         left: 2,

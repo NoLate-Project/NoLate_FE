@@ -174,11 +174,11 @@ export function getDetailMonthCellGeometry(
         )
     );
     return {
-        circleSize: 16 + 24 * progress,
-        circleTop: 1 + 7 * progress,
-        dayFontSize: 10 + 8 * progress,
-        dayLineHeight: 10 + 10 * progress,
-        lunarMaxWidth: 14 + 24 * progress,
+        circleSize: 16 + 14 * progress,
+        circleTop: 1 + 3 * progress,
+        dayFontSize: 10 + 5 * progress,
+        dayLineHeight: 11 + 7 * progress,
+        lunarMaxWidth: 14 + 16 * progress,
         lunarFontSize: 4.5 + 3.5 * progress,
         lunarLineHeight: 5 + 4 * progress,
         holidayFontSize: 5.5 + 3 * progress,

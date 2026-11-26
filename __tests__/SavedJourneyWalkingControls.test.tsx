@@ -26,6 +26,31 @@ beforeEach(()=>{jest.clearAllMocks();mockBinding.mockReturnValue(null);mockConte
 const schedule={scheduleId:'9001',memberId:7};
 const ownedBinding={scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',
     savedRouteValidated:true,guidanceEnabled:true,authMemberId:7};
+test.each([false, true])('walking retry resumes only an outstanding explicit departure (cancelled=%s)', async cancelled => {
+    const fixture = setup();
+    mockIssue.mockRejectedValueOnce(new Error('PROVIDER_BUSY')).mockResolvedValueOnce(fixture.snapshot);
+    const startFromDeparture = jest.fn();
+    mockTrial.mockReturnValue({snapshot: {status: 'IDLE', enabled: true}, sync: {}, running: false,
+        eligible: true, assessment: {}, canStartSelectedRoute: true, startFromDeparture});
+    const controller = new AbortController();
+    const request = {scope: 'saved', signal: controller.signal, claimed: false};
+    let view!: ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<SavedJourneyTrialControls
+        input={fixture.input} savedRoute={fixture.route} authenticatedSchedule={schedule}
+        autoPrepareRoute departureRequest={request} />); });
+    const output = JSON.stringify(view.toJSON());
+    expect(output).toContain('도보 경로를 불러오지 못했어요.');
+    expect(output).not.toContain('이동하면 출발을 감지');
+    expect(view.root.findAllByProps({testID: 'saved-detail-unsupported'})).toHaveLength(0);
+    expect(startFromDeparture).not.toHaveBeenCalled();
+    if (cancelled) controller.abort();
+    const retry = view.root.findByProps({testID: 'saved-detail-connect-walking'});
+    expect(retry.props.accessibilityLabel).toBe('도보 경로 다시 시도');
+    await act(async () => { retry.props.onPress(); });
+    expect(mockIssue).toHaveBeenCalledTimes(2);
+    expect(startFromDeparture).toHaveBeenCalledTimes(cancelled ? 0 : 1);
+    act(() => view.unmount());
+});
 test('a confirmed transfer drops a recovered network warning, preserves current failures and isolates diagnostics', async () => {
     const f = setup();
     const now = Math.floor(Date.now() / 1000);

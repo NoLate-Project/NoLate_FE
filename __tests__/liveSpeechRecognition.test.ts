@@ -231,6 +231,33 @@ describe("live speech recognition bridge", () => {
 });
 
 describe("live speech transcript accumulation", () => {
+    test("최종 인식이 더 짧게 시간을 정정하면 이전 가설 대신 최종 시각을 사용한다", () => {
+        const partial = accumulateLiveSpeechTranscript(createLiveSpeechTranscriptBuffer(), {
+            text: "내일 오후 열두 시 강남역 회의",
+        });
+        const final = accumulateLiveSpeechTranscript(partial.buffer, {
+            text: "내일 오후 두 시 강남역 회의",
+            isFinal: true,
+        });
+        expect(final.text).toBe("내일 오후 두 시 강남역 회의");
+    });
+
+    test("앞선 세션은 보존하면서 현재 세션의 최종 장소 정정을 반영한다", () => {
+        const partial = accumulateLiveSpeechTranscript(createLiveSpeechTranscriptBuffer("내일 오후 두 시"), {
+            text: "강남역 회의실에서 회의",
+        });
+        const final = accumulateLiveSpeechTranscript(partial.buffer, {
+            text: "서울역 회의",
+            isFinal: true,
+        });
+        expect(final.text).toBe("내일 오후 두 시 서울역 회의");
+    });
+
+    test("빈 최종 결과는 마지막으로 인식한 문장을 지우지 않는다", () => {
+        const partial = accumulateLiveSpeechTranscript(createLiveSpeechTranscriptBuffer(), { text: "내일 오후 두 시 강남역 회의" });
+        expect(accumulateLiveSpeechTranscript(partial.buffer, { text: "", isFinal: true }).text)
+            .toBe("내일 오후 두 시 강남역 회의");
+    });
     test("짧게 되돌아간 부분 가설보다 기존의 완전한 문장을 보존한다", () => {
         expect(
             mergeLiveSpeechHypothesis(

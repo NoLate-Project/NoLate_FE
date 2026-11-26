@@ -71,7 +71,7 @@ jest.mock("../src/modules/schedule/liveSpeechRecognition", () => ({
     startLiveSpeechRecognition: jest.fn(),
     stopLiveSpeechRecognition: jest.fn(),
 }));
-jest.mock("../src/modules/schedule/components/form/QuickScheduleLogoLoader", () => "QuickScheduleLogoLoader");
+jest.mock("../src/ui/NoLateLoadingMark", () => "NoLateLoadingMark");
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
 
 const parseResult: ScheduleParseResult = {

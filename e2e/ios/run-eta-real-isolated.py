@@ -194,7 +194,10 @@ def main():
     parser.add_argument('--backend-snapshot', type=Path,
                         help='Owned matching source copy with separate Gradle outputs')
     parser.add_argument('--api-port', type=int, choices=(5523, 5527, *DATED_TIMETABLE_PORTS), default=5523)
-    parser.add_argument('--copied-input', type=Path, required=True, help='Existing approved read-only 296/367 snapshot')
+    fixture = parser.add_mutually_exclusive_group(required=True)
+    fixture.add_argument('--copied-input', type=Path, help='Existing approved read-only 296/367 snapshot')
+    fixture.add_argument('--public-nowon-sillim', action='store_true',
+                         help='Use the public Nowon–Sillim coordinates for a fixed-departure ODsay comparison')
     parser.add_argument('--max-evaluations', type=int, choices=(1, 2, 3), default=3,
                         help='Bound actual provider calls; fewer than two accepted UI cases remains PARTIAL')
     parser.add_argument('--journey-provider', choices=('odsay', 'tmap'), default='odsay',
@@ -348,9 +351,20 @@ def main():
         now = dt.datetime.now(dt.timezone.utc)
         if evaluation_not_before.tzinfo is None or not now < evaluation_not_before < now + dt.timedelta(minutes=10):
             parser.error('Evaluation wait must be timezone-qualified and within ten minutes')
-    copied = args.copied_input.resolve(strict=True)
-    if not str(copied).startswith('/private/tmp/nolate-real-naver-requery-04-'):
-        parser.error('Only the previously scoped saved test input is supported')
+    if args.public_nowon_sillim:
+        if (args.journey_provider != 'odsay' or args.api_port != 5523 or not departure or not target_arrival_at
+                or args.verify_short_first_ride or args.verify_odsay_timetable_selection):
+            parser.error('The public station fixture requires ODsay, port 5523, and explicit departure and target clocks')
+        try:
+            require_public_comparison_departure(departure.astimezone(SEOUL).isoformat())
+        except ValueError as error:
+            parser.error(str(error))
+        fixture_input = '--public-nowon-sillim'
+    else:
+        copied = args.copied_input.resolve(strict=True)
+        if not str(copied).startswith('/private/tmp/nolate-real-naver-requery-04-'):
+            parser.error('Only the previously scoped saved test input is supported')
+        fixture_input = str(copied)
     build_be = BE
     source_hashes = None
     if args.backend_snapshot:
@@ -392,6 +406,7 @@ def main():
               'physicalIphone': 'DEFERRED_BY_USER', 'fcmDeliveryVerified': False,
               'mapAccuracyWithinTwoMinutesVerified': False, 'actualTripAccuracyVerified': False}
     report['journeyProvider'] = args.journey_provider
+    report['publicStationFixture'] = args.public_nowon_sillim
     report['apiBase'] = base
     report['targetLeadMinutes'] = args.target_lead_minutes
     report['comparisonRequestedDepartureAt'] = args.planned_departure_at
@@ -558,15 +573,22 @@ def main():
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.real-isolated=true',
                 f'-Dnolate.eta.real-isolated.port={args.api_port}'] + dated_option + ['-classpath',
                 (root / 'classpath.txt').read_text(), 'com.noLate.eta.simulator.EtaRealProviderSimulatorServer',
-                str(root), str(copied), args.journey_provider, str(args.target_lead_minutes)] +
+                str(root), fixture_input, args.journey_provider, str(args.target_lead_minutes)] +
                 ([args.planned_departure_at] if args.planned_departure_at else []) +
                 ([target_arrival_at] if target_arrival_at else []), cwd=BE, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
                 text=True, start_new_session=True)
-        wait(ready, server)
+        # Bound cold Spring/H2 startup separately from provider evaluation waits.
+        wait(ready, server, seconds=240)
         prepared = wait_for_phase_snapshot(root / 'prepared.json', -1, server)
         assert prepared['providersMocked'] is False and prepared['database'] == 'H2_MEMORY_ONLY'
         assert prepared['alertMode'] == 'STANDARD' and prepared['nativeAlarmDeliveryTest'] is False
         assert prepared['journeyProvider'] == args.journey_provider
+        if args.public_nowon_sillim:
+            assert prepared['publicStationFixture'] is True and prepared['copiedFromScheduleId'] is None
+            assert prepared['requestedCoordinates'] == {
+                'origin': {'lat': 37.65636195, 'lng': 127.06342739},
+                'destination': {'lat': 37.48426844, 'lng': 126.92977778},
+            }
         if args.journey_provider == 'odsay' and args.planned_departure_at:
             seed = json.loads((root / 'odsay-seed-journey.json').read_text())
             report['odsaySeedRequestedDepartureAt'] = verify_odsay_departure_input(args.planned_departure_at, prepared, seed)

@@ -54,7 +54,7 @@ const styles = StyleSheet.create({
     },
     selectedDayGroupDivider: {
         height: StyleSheet.hairlineWidth,
-        marginLeft: 26,
+        marginLeft: 85,
         marginRight: 14,
     },
     agendaFilterBar: {
@@ -168,8 +168,8 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         flexShrink: 0,
-        fontSize: 14,
-        lineHeight: 20,
+        fontSize: 17,
+        lineHeight: 23,
         fontWeight: "700",
         letterSpacing: 0,
     },

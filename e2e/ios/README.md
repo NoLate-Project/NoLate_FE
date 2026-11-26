@@ -148,6 +148,12 @@ python3 e2e/ios/run-eta-automatic-delivery.py \
 진단 검사는 `readOnly=1`이며 `sync.fetched=false, inspectionOnly=true`를 요구한다.
 수동 Worker 호출·시계 변경·진단 replay·알림 이벤트 주입으로 연결을 복구하지 않는다.
 
+운영 일정 복사본 없이 자동 재조회를 검사하려면 `--copied-input` 대신 `--public-nowon-sillim`
+및 `--journey-provider odsay`를 사용한다. 실행기는 격리 DB에 공개 역 좌표만 최근 장소로
+등록한다. 지정 시뮬레이터가 이 좌표로 실제 경로를 조회해 일정을 저장한다. 운행일은 KASI로
+확인하며, 이 모드는 운영 DB 연결 없이 초기화한다. 출발 후 실제 재조회와 앱 표시를 확인하려면
+현재 BE 소스와 일치하는 `--backend-snapshot`을 `--verify-postdeparture-cadence`와 함께 쓴다.
+
 2026-10-13 최종 실행은 정상 ETA1/1, API/설치 앱 표시, native/OS generation1, 실제
 14:00:14 예약에14:00:15 OS 관측, 터치·끄기·취소 정리까지 통과했다. 증거는
 `e2e/evidence/2026-10-13-automatic-delivery/final-report.json`이며 원래 실패 회차도 보존한다.
@@ -310,6 +316,12 @@ BE 테스트 클래스 `EtaRealProviderSimulatorServer`는 명시적인
 저장하고, 서울 시간표·실시간 도착과 실제 시계로 평가한다. 기존 Tmap 저장 경로 검증에는
 `--journey-provider tmap`을 명시한다. 푸시 ACK만 모의이므로 FCM 수신 성공으로 표현하지 않는다.
 기존 모의 공급자 서버와 readiness 헤더도 구분한다.
+
+네이버 공개 화면과 출발 조건을 맞추는 실행에는 `--copied-input` 대신 `--public-nowon-sillim`을
+쓸 수 있다. `--planned-departure-at`에 한국 시각 10분 단위의 미래 출발, `--target-arrival-at`에
+별도의 목표 도착을 명시한다. 이 모드는 운영 DB를 읽지 않고 공개 좌표에서 새 ODsay 응답을
+받아 H2에만 저장한다. 입력 시각이 같아도 계산된 출발, 환승 경로 또는 도보 범위가 다르면
+동일 조건의 정확도 표본에서 제외한다. 자동 Worker와 OS 전달은 별도 실행기로 확인한다.
 
 `run-eta.py --only testVerifyIsolatedRealProviderEta --real-isolated
 --real-isolated-evidence <evaluation-N.json>`는 같은 실행의 채택된 Worker 결과를 요구한다.

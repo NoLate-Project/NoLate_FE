@@ -7,6 +7,7 @@ import {
     formatLunarCalendarDay,
     type CalendarDayMetadata,
 } from "../../calendarMetadata";
+import { getStackEventBackground } from "./stackCalendarAppearance";
 import { getCalendarTodayAccent } from "./calendarTodayAccent";
 import { useCalendarYearDateTarget } from "./CalendarYearDateHandoff";
 import {
@@ -39,6 +40,8 @@ export type DetailMonthGridCellProps = {
     metadata?: CalendarDayMetadata;
     todayDateString: string;
     isSelected?: boolean;
+    selectionFill?: string;
+    selectionInk?: string;
     textPrimary: string;
     textSecondary: string;
     colorMode: "dark" | "light";
@@ -55,6 +58,8 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
     metadata,
     todayDateString,
     isSelected = false,
+    selectionFill,
+    selectionInk,
     textPrimary,
     textSecondary,
     colorMode,
@@ -100,6 +105,9 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
             + geometry.circleSize
             + (hasHoliday ? geometry.holidayLineHeight + 2 : 3)
     );
+    const labelSlots = Math.min(2, Math.floor((cellHeight - markerTop) / 14));
+    const visibleTitles = events.slice(0, Math.max(0, labelSlots));
+    const hiddenTitles = events.length - visibleTitles.length;
     const accessibilityLabel = [
         `${date.year}년 ${date.month}월 ${date.day}일`,
         isToday ? "오늘" : undefined,
@@ -137,7 +145,7 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
                             marginTop: geometry.circleTop,
                             backgroundColor: isToday
                                 ? todayAccent
-                                : "transparent",
+                                : selectionFill ?? "transparent",
                         },
                     ]}
                 >
@@ -146,7 +154,7 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
                         style={[
                             styles.detailMonthGridDayText,
                             {
-                                color: dateTextColor,
+                                color: selectionInk ?? dateTextColor,
                                 fontSize: geometry.dayFontSize,
                                 lineHeight: geometry.dayLineHeight,
                                 fontWeight: isToday ? "700" : "600",
@@ -164,9 +172,9 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
                             style={[
                                 styles.detailMonthGridLunarText,
                                 {
-                                    color: hasHoliday || isSunday
+                                    color: selectionInk ?? (hasHoliday || isSunday
                                         ? isToday ? "#ffffff" : holidayAccent
-                                        : isToday ? "#ffffff" : textSecondary,
+                                        : isToday ? "#ffffff" : textSecondary),
                                     maxWidth: geometry.lunarMaxWidth,
                                     fontSize: geometry.lunarFontSize,
                                     lineHeight: geometry.lunarLineHeight,
@@ -200,7 +208,23 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
                     </Text>
                 ) : null}
 
-                {events.length > 0 ? (
+                {visibleTitles.length > 0 ? (
+                    <View testID="detail-event-labels" style={[styles.eventLabels, { top: markerTop }]}>
+                        {visibleTitles.map((event, index) => (
+                            <View key={event.id} style={[styles.eventLabel, {
+                                borderLeftColor: event.color,
+                                backgroundColor: getStackEventBackground(event.color, true, colorMode),
+                            }]}>
+                                <Text numberOfLines={1} allowFontScaling={false} style={[styles.eventLabelText, { color: textPrimary }]}>
+                                    {event.title}
+                                </Text>
+                                {index === visibleTitles.length - 1 && hiddenTitles > 0 && (
+                                    <Text testID="detail-event-overflow" allowFontScaling={false} style={[styles.eventCount, { color: textSecondary }]}>+{hiddenTitles}</Text>
+                                )}
+                            </View>
+                        ))}
+                    </View>
+                ) : events.length > 0 ? (
                     <View
                         testID="detail-event-markers"
                         style={[

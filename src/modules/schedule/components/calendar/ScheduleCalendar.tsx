@@ -16,6 +16,7 @@ import type { CalendarDayMetadata } from "../../calendarMetadata";
 import type { DetailMonthSwipeDirection } from "../../calendarMotion";
 import CustomDay from "./CustomDay";
 import {
+    AGENDA_WEEK_HEIGHT,
     CALENDAR_DAY_HEIGHTS,
     isContinuousMonthViewMode,
     type CalendarViewMode,
@@ -29,6 +30,7 @@ type Props = {
     onSelectDay: (day: string) => void;
     onOpenDay: (day: string) => void;
     viewMode: CalendarViewMode;
+    agendaWeekOnly?: boolean;
     firstDay: 0 | 1;
     scrollRequest: number;
     onVisibleMonthChange: (month: string) => void;
@@ -76,8 +78,8 @@ import {
 
 import { DetailMonthPagerPageFrame } from "./DetailMonthPagerPageFrame";
 
-import { DetailMonthPagerGrid } from "./DetailMonthPagerGrid";
-import { DetailMonthPagerSelectionLayer } from "./DetailMonthPagerSelection";
+import { DetailMonthGridCell, DetailMonthPagerGrid } from "./DetailMonthPagerGrid";
+import { DetailMonthPagerSelectionLayer, getDetailMonthPageModel, getDetailMonthCellGeometry } from "./DetailMonthPagerSelection";
 import { useScheduleCalendarState } from "./useScheduleCalendarState";
 import { useDetailMonthCommitController } from "./useDetailMonthCommitController";
 import { useDetailMonthAnimationController } from "./useDetailMonthAnimationController";
@@ -104,6 +106,7 @@ export default function ScheduleCalendar({
     onSelectDay,
     onOpenDay,
     viewMode,
+    agendaWeekOnly,
     firstDay,
     scrollRequest,
     onVisibleMonthChange,
@@ -342,6 +345,29 @@ export default function ScheduleCalendar({
         () => formatWeekTitle(selectedWeekDays),
         [selectedWeekDays]
     );
+
+    if (agendaWeekOnly && viewMode === "detail") {
+        const model = getDetailMonthPageModel(selectedDay, firstDay);
+        const geometry = getDetailMonthCellGeometry(AGENDA_WEEK_HEIGHT);
+        return (
+            <View testID="agenda-selected-week" style={{ paddingTop: headerOffset, paddingHorizontal: DETAIL_MONTH_GRID_HORIZONTAL_PADDING }}>
+                <View style={styles.detailMonthGridRow}>
+                    {selectedWeekDays.map(date => (
+                        <DetailMonthGridCell key={date.dateString} model={model} date={date}
+                            geometry={geometry} cellHeight={AGENDA_WEEK_HEIGHT}
+                            marking={calendarEventMarkings[date.dateString]} metadata={calendarDaysByDate[date.dateString]}
+                            todayDateString={todayDateString} colorMode={mode}
+                            textPrimary={colors.textPrimary} textSecondary={colors.textSecondary}
+                            isSelected={date.dateString === selectedDay}
+                            selectionFill={date.dateString === selectedDay ? colors.selectedDayBg : undefined}
+                            selectionInk={date.dateString === selectedDay && date.dateString !== todayDateString ? colors.selectedDayText : undefined}
+                            onPress={day => onSelectDay(day.dateString)}
+                        />
+                    ))}
+                </View>
+            </View>
+        );
+    }
 
     if (isContinuousMonthViewMode(viewMode)) {
         return (

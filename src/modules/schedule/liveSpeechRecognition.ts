@@ -312,9 +312,11 @@ export function createLiveSpeechTranscriptBuffer(
  */
 export function accumulateLiveSpeechTranscript(
     buffer: LiveSpeechTranscriptBuffer,
-    transcript: Pick<LiveSpeechTranscript, "text" | "confidence" | "alternatives">
+    transcript: Pick<LiveSpeechTranscript, "text" | "confidence" | "alternatives"> & { isFinal?: boolean }
 ): LiveSpeechTranscriptSnapshot {
-    const volatileText = mergeLiveSpeechHypothesis(buffer.volatileText, transcript.text);
+    // 최종 결과는 길이가 줄어도 시간·장소 정정일 수 있다. 부분 가설에만 유실 방지를 적용한다.
+    const finalText = transcript.isFinal ? normalizeSpeechText(transcript.text) : "";
+    const volatileText = finalText || mergeLiveSpeechHypothesis(buffer.volatileText, transcript.text);
     const nextBuffer = {
         stableText: normalizeSpeechText(buffer.stableText),
         volatileText,

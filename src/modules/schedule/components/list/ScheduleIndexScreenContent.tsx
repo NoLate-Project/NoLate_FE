@@ -1,5 +1,6 @@
 import { createScheduleIndexStyles } from '../../../../routeSupport/schedule/index.styles';
 import React from 'react';
+import { AGENDA_WEEK_HEIGHT } from '../calendar/viewMode';
 import { Animated, StatusBar, type Text, View, useWindowDimensions } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import CalendarWrapper from '../calendar/CalendarWrapper';
@@ -234,6 +235,12 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     renderMonthAgendaPanelContent,
   } = controller;
   const { fontScale } = useWindowDimensions();
+  const [weekExpanded, setWeekExpanded] = React.useState(false);
+  const showAgendaWeek = weekExpanded && calendarViewMode === 'detail' && calendarDepth === 'month';
+  const weekHeight = calendarHeaderOffset + AGENDA_WEEK_HEIGHT;
+  React.useEffect(() => {
+    if (calendarViewMode !== 'detail' || calendarDepth !== 'month') setWeekExpanded(false);
+  }, [calendarViewMode, calendarDepth]);
   const yearDateTargets = React.useRef(new Map<string, View | Text>()).current;
   const yearHandoffMonthLayer = React.useRef<View>(null);
   const [yearHandoff, setYearHandoff] = React.useState<{ day: string; from: CalendarDatePoint } | null>(null);
@@ -358,12 +365,12 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
           >
             <Reanimated.View
               collapsable={false}
-              style={[styles.monthCalendarFrame, monthCalendarAnimatedStyle]}
+              style={[styles.monthCalendarFrame, showAgendaWeek ? { height: weekHeight } : monthCalendarAnimatedStyle]}
             >
               <Reanimated.View
                 style={[
                   styles.monthCalendarIncomingLayer,
-                  monthCalendarTargetLayerStyle,
+                  showAgendaWeek ? { height: weekHeight } : monthCalendarTargetLayerStyle,
                 ]}
               >
                 <View
@@ -381,6 +388,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
                     onSelectDay={handleSelectDay}
                     onOpenDay={handleOpenDay}
                     viewMode={calendarViewMode}
+                    agendaWeekOnly={showAgendaWeek}
                     firstDay={firstDay}
                     scrollRequest={calendarScrollRequest}
                     savedDateTarget={savedAgendaTarget}
@@ -413,7 +421,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
             {(monthAgendaIsOpen || isMonthViewTransitionActive) && (
               <Reanimated.View
                 collapsable={false}
-                style={[styles.monthAgendaSlot, monthAgendaSlotAnimatedStyle]}
+                style={[styles.monthAgendaSlot, showAgendaWeek ? { top: weekHeight } : monthAgendaSlotAnimatedStyle]}
               >
                 <Animated.View
                   pointerEvents={
@@ -455,7 +463,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
                         : null,
                     ]}
                   >
-                    {renderMonthAgendaPanelContent(retainedMonthAgendaPanelKind)}
+                    {renderMonthAgendaPanelContent(retainedMonthAgendaPanelKind, { expanded: showAgendaWeek, onChange: setWeekExpanded })}
                   </Animated.View>
                 </Animated.View>
               </Reanimated.View>

@@ -1,7 +1,7 @@
 import type { EffectiveTransitRideTiming, ScheduleDepartureStatus } from "../src/api/schedule";
 import {
     buildEffectiveTransitRoutePresentation,
-    buildFutureTimetablePredictionPresentation,
+    getFutureTimetableArrivalSummary,
     buildPlannedJourneyArrivalPresentation,
     getFreshDepartureTiming,
     resolveAcceptedDepartureStatus,
@@ -132,22 +132,21 @@ describe("effective transit route presentation", () => {
         ] };
         const status = departureStatus({ source: "TIMETABLE_PROVIDER", stale: true,
             failureReason: "TRANSIT_TRAIN_NOT_YET_OBSERVED: safe", effectiveTransitRoute: null,
-            futureTimetablePrediction: route });
+            futureTimetablePrediction: route, futureTimetableRouteProvenance: "SELECTED_ROUTE_PRESERVED" });
         const departureMs = Date.parse(route.departureAt);
-        const preview = buildFutureTimetablePredictionPresentation(status, departureMs)!;
-        expect(preview.guidanceTitle).toBe("미래 시간표 예측 · 실시간 미확인");
-        expect(preview.itinerary).toContain("2012열차 · 시간표");
-        expect(preview.waitMeta).toContain("출발 알람은 뒤로 미루지 않아요");
+        expect(getFutureTimetableArrivalSummary(status, departureMs)).toBe("10:08 도착 예상 · 시간표 기준");
+        expect(getFutureTimetableArrivalSummary({ ...status, futureTimetableRouteProvenance: "ODSAY_ALTERNATIVE_ROUTE" }, departureMs))
+            .toBe("대안 경로 10:08 도착 예상 · 시간표 기준");
         const staleStatus = { ...status, failureReason: "TRANSIT_ARRIVAL_SOURCE_STALE: safe" };
-        expect(buildFutureTimetablePredictionPresentation(staleStatus, departureMs - 1)?.waitMeta).toContain("실시간 도착정보가 오래되어");
+        expect(getFutureTimetableArrivalSummary(staleStatus, departureMs - 1)).toBe("10:08 도착 예상 · 시간표 기준");
         expect(getFreshDepartureTiming(staleStatus)).toBeUndefined();
         expect(getFreshDepartureTiming(status)).toBeUndefined();
         expect(buildEffectiveTransitRoutePresentation(status)).toBeUndefined();
-        expect(buildFutureTimetablePredictionPresentation({ ...status, failureReason: "TRANSIT_ARRIVAL_API_ERROR: safe" }, departureMs)).toBeUndefined();
-        expect(buildFutureTimetablePredictionPresentation({ ...status, futureTimetablePrediction: {
+        expect(getFutureTimetableArrivalSummary({ ...status, failureReason: "TRANSIT_ARRIVAL_API_ERROR: safe" }, departureMs)).toBeUndefined();
+        expect(getFutureTimetableArrivalSummary({ ...status, futureTimetablePrediction: {
             ...route, segments: [{ ...route.segments[0], rideTiming: null }],
         } }, departureMs)).toBeUndefined();
-        expect(buildFutureTimetablePredictionPresentation(status, departureMs + 1)).toBeUndefined();
+        expect(getFutureTimetableArrivalSummary(status, departureMs + 1)).toBeUndefined();
     });
     const rideTiming = (): EffectiveTransitRideTiming => ({
         timetable: {

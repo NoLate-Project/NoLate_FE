@@ -40,12 +40,21 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     const noticeBusy=useRef(false);
     const noticePendingChanged=useCallback((pending:boolean)=>{noticeBusy.current=pending;setNoticePending(pending);},[]);
     const connectionRevision=useRef(0); const connectionBusy=useRef(false);
+    const autoConnectionKey = useRef<string | null>(null);
     // A schedule refresh creates a new input object even when its saved route
     // is byte-for-byte unchanged. Keep the owned walking snapshot for that same
     // route; invalidate it only when the actual saved input or owner changes.
     const baseRouteIdentity=useMemo(()=>baseInput?savedWalkingBaseJSON(baseInput):null,[baseInput]);
-    useEffect(()=>{const revision=connectionRevision;++revision.current;setConnected(null);setConnectionError(false);setConnecting(false);
-        return ()=>{++revision.current;};},[baseRouteIdentity,authenticatedSchedule?.scheduleId,authenticatedSchedule?.memberId]);
+    useEffect(() => {
+        const revision = connectionRevision;
+        ++revision.current;
+        connectionBusy.current = false;
+        autoConnectionKey.current = null;
+        setConnected(null);
+        setConnectionError(false);
+        setConnecting(false);
+        return () => { ++revision.current; };
+    }, [baseRouteIdentity, authenticatedSchedule?.scheduleId, authenticatedSchedule?.memberId]);
     const input=connected&&baseInput&&savedWalkingBaseJSON(connected)===baseRouteIdentity?connected:baseInput;
     const memberId = authenticatedSchedule?.memberId;
     const source = useCallback(async (requiredUntilEpochSeconds?: number) => {
@@ -59,6 +68,7 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     const issue = preflight.issue;
     const scheduleId = authenticatedSchedule?.scheduleId ?? '9001';
     const ownedSchedule = !!authenticatedSchedule;
+    const canConnectWalking = ownedSchedule && baseInput?.provider === 'odsay' && supportsSavedTransitLegs(baseInput.legs, subwayTrial);
     const scope = authenticatedSchedule ? 'AUTHENTICATED' : 'SANDBOX';
     const trial = useAutomaticJourneyTrial(input, scope, !!issue, scheduleId, authenticatedSchedule ? source : undefined, memberId);
     const rejectedSession=useRef<string|null>(null);
@@ -103,17 +113,21 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
             const prepared=composeServerWalkingInput(baseInput,value);
             if(revision===connectionRevision.current)setConnected(prepared);
         } catch {if(revision===connectionRevision.current)setConnectionError(true);}
-        finally{connectionBusy.current=false;if(revision===connectionRevision.current)setConnecting(false);}
+        finally {
+            if (revision === connectionRevision.current) {
+                connectionBusy.current = false;
+                setConnecting(false);
+            }
+        }
     },[baseInput,ownedSchedule,scheduleId,source,trial.running,trial.pending,checkingCheckpoint]);
-    const autoConnectionKey = useRef<string | null>(null);
     useEffect(() => {
-        if (!autoPrepareRoute || !ownedSchedule || !baseInput || connected || connecting || connectionError
+        if (!autoPrepareRoute || !canConnectWalking || !baseInput || connected || connecting || connectionError
             || trial.running || trial.pending || checkingCheckpoint || !baseRouteIdentity) return;
         const key = `${scheduleId}:${memberId}:${baseRouteIdentity}`;
         if (autoConnectionKey.current === key) return;
         autoConnectionKey.current = key;
         connectWalking().catch(() => undefined);
-    }, [autoPrepareRoute, ownedSchedule, scheduleId, memberId, baseInput, baseRouteIdentity, connected, connecting, connectionError, trial.running, trial.pending, checkingCheckpoint, connectWalking]);
+    }, [autoPrepareRoute, canConnectWalking, scheduleId, memberId, baseInput, baseRouteIdentity, connected, connecting, connectionError, trial.running, trial.pending, checkingCheckpoint, connectWalking]);
     const autoAssessmentKey = useRef<string | null>(null);
     useEffect(() => {
         const snapshotId = connected?.walkingSnapshot?.snapshotId;
@@ -125,12 +139,12 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     }, [autoPrepareRoute, connected, issue, scheduleId, trial]);
     useEffect(() => {
         if (!departureRequest || departureRequest.claimed || departureRequest.signal.aborted) return;
-        if (trial.running || snapshot?.checkpointAvailable || connectionError || trial.errorCode ||
+        if (trial.running || snapshot?.checkpointAvailable || trial.errorCode ||
             checkpointState === 'CURRENT' || checkpointState === 'BLOCKED') {
             departureRequest.claimed = true;
             return;
         }
-        if (!autoPrepareRoute || !ownedSchedule || !connected || issue || checkingCheckpoint ||
+        if (!autoPrepareRoute || !ownedSchedule || !connected || connectionError || issue || checkingCheckpoint ||
             !trial.canStartSelectedRoute || noticeBusy.current) return;
         departureRequest.claimed = true;
         void trial.startFromDeparture(departureRequest.signal);
@@ -206,6 +220,14 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
                 () => trial.startFromDeparture(departureRequest.signal))}
         </View>;
     }
+    if (!showDiagnostics && canConnectWalking && !trial.running && !connected && (autoPrepareRoute && connecting || connectionError)) {
+        return <View testID="saved-detail-controls" style={styles.root}>
+            <Text accessibilityLiveRegion="polite" style={descriptionStyle}>
+                {connecting ? '도보 경로를 불러오는 중이에요.' : issueMessage ?? '도보 경로를 불러오지 못했어요.'}
+            </Text>
+            {!connecting && action('connect-walking', '도보 경로 다시 시도', trial.pending, connectWalking)}
+        </View>;
+    }
     if (departureRequest && !departureRequest.signal.aborted && !trial.running && !connectionError && !trial.errorCode
         && snapshot?.enabled && (!trial.assessment || trial.eligible) && (!departureRequest.claimed || trial.pending)
         && (!issue || connecting || !connected && !autoConnectionKey.current)) {
@@ -214,15 +236,14 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         </View>;
     }
     return <View testID="saved-detail-controls" style={ownRunning && navigationMenu && statusShownInRouteHeader ? styles.inlineControls : styles.root}>
-        {!(statusShownInRouteHeader && ownRunning) && <Animated.View key={heading} entering={headingEntrance}>
+        {!(statusShownInRouteHeader && ownRunning) && (trial.running || !autoPrepareRoute) && <Animated.View key={heading} entering={headingEntrance}>
             <Text testID="saved-detail-guidance-heading" accessibilityRole="header" accessibilityLiveRegion="polite"
                 style={[styles.heading, isDark && styles.headingDark]}>{heading}</Text>
         </Animated.View>}
-        {!trial.running && <Text style={descriptionStyle}>
-            {endedHere ? '저장한 경로는 계속 볼 수 있어요.' : '이동하면 출발을 감지하고 다음 구간을 알려드려요.'}
+        {!trial.running && !autoPrepareRoute && <Text style={descriptionStyle}>
+            이동하면 출발을 감지하고 다음 구간을 알려드려요.
         </Text>}
-        {!trial.running&&(!autoPrepareRoute||!connected)&&authenticatedSchedule&&baseInput?.provider==='odsay'
-            &&supportsSavedTransitLegs(baseInput.legs, subwayTrial)&&
+        {!trial.running&&(!autoPrepareRoute||!connected)&&canConnectWalking&&
             action('connect-walking',connecting?'도보 경로 준비 중':'도보 경로 준비',connecting||trial.pending,connectWalking)}
         {connected&&!(statusShownInRouteHeader&&ownRunning)&&<Text testID="saved-detail-walking-connected" style={descriptionStyle}>{ownRunning?'도보 경로로 안내 중이에요':'도보 경로 준비 완료'}</Text>}
         {connected&&!ownRunning&&<Text style={descriptionStyle}>{connected.walkingSnapshot?.schemaVersion===4

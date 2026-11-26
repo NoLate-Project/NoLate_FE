@@ -26,7 +26,7 @@ const status = (override: Partial<ScheduleDepartureStatus> = {}): ScheduleDepart
 describe('transit ETA trust presentation', () => {
   it.each([
     ['TRANSIT_TRANSFER_TIMING_UNKNOWN', '환승 가능 여부 미확인 · 저장 경로 기준'],
-    ['TRANSIT_TRAIN_NOT_YET_OBSERVED', '미래 열차 실시간 미확인 · 시간표 예측 단계'],
+    ['TRANSIT_TRAIN_NOT_YET_OBSERVED', '열차의 실시간 도착 정보가 없어요'],
     ['TRANSIT_ARRIVAL_SOURCE_STALE', '차량 관측정보 오래됨 · 저장 경로 기준'],
     ['TRANSIT_ARRIVAL_SOURCE_UNVERIFIED', '차량 관측시각 검증 불가 · 저장 경로 기준'],
     ['TRANSIT_ARRIVAL_API_ERROR', '도착정보 API 오류 · 저장 경로 기준'],

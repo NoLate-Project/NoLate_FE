@@ -59,7 +59,7 @@ export function getTransitEtaTrustPresentation({
       : unsupported
       ? '재조회 미지원 · 경로 재선택 필요'
       : notObserved
-      ? '미래 열차 실시간 미확인 · 시간표 예측 단계'
+      ? '열차의 실시간 도착 정보가 없어요'
       : sourceStale
       ? '차량 관측정보 오래됨 · 저장 경로 기준'
       : sourceUnverified

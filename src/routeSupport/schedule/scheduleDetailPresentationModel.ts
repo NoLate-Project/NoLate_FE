@@ -23,6 +23,7 @@ import {
 } from './scheduleDetailModel';
 import type { ScheduleDetailController } from './useScheduleDetailController';
 import { getTransitEtaTrustPresentation, SAVED_TRANSIT_ESTIMATE_WARNING } from '../../modules/schedule/transitEtaTrustPresentation';
+import { getFutureTimetableArrivalSummary } from '../../modules/schedule/effectiveTransitRoutePresentation';
 import { formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from '../../modules/schedule/transitRouteProgress';
 
 function formatRouteHeaderPlaceName(name: string): string {
@@ -214,11 +215,13 @@ export function buildScheduleDetailPresentation(
   const repeatsHeaderDuration = showTopRouteBar && hasDetailedRoute &&
     !effectiveTransitRoutePresentation && Boolean(savedDisplayTravelMinutes) &&
     currentRouteDurationLabel === routeDurationLabel;
+  const timetableArrival = displayTravelMode === 'TRANSIT' && !inspectedTravelPlan && !effectiveTransitRoutePresentation
+    ? getFutureTimetableArrivalSummary(controller.departureStatus, nowMs) : undefined;
   const routeArrivalSummary = !hasRouteSummary
     ? scheduleRangeLabel
     : isSavedRouteEstimate
     ? undefined
-    : etaTrust.warning ?? (repeatsHeaderDuration
+    : timetableArrival ?? etaTrust.warning ?? (repeatsHeaderDuration
       ? `일정 ${arrivalTimeLabel}`
       : `일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`);
   const effectiveRouteAccessibilityLabel = effectiveTransitRoutePresentation
@@ -249,7 +252,7 @@ export function buildScheduleDetailPresentation(
           : total,
       0,
     ) ?? 0;
-  const routeFactLabels = effectiveTransitRoutePresentation
+  const compactRouteFactLabels = effectiveTransitRoutePresentation
     ? []
     : [
         typeof routeDetailInfo?.transferCount === 'number'
@@ -258,12 +261,11 @@ export function buildScheduleDetailPresentation(
           ? `환승 ${routeOption.transferCount}회`
           : undefined,
         formatTransitWalkingSummary(routeWalkingMinutes),
-        typeof routeDetailInfo?.fare === 'number'
-          ? `${routeDetailInfo.fare.toLocaleString()}원`
-          : typeof routeOption?.fareWon === 'number'
-          ? `${routeOption.fareWon.toLocaleString()}원`
-          : undefined,
       ].filter((label): label is string => Boolean(label));
+  const fare = routeDetailInfo?.fare ?? routeOption?.fareWon;
+  const routeFactLabels = !effectiveTransitRoutePresentation && typeof fare === 'number'
+    ? [...compactRouteFactLabels, `${fare.toLocaleString()}원`]
+    : compactRouteFactLabels;
 
   return {
     ...controller,
@@ -307,6 +309,7 @@ export function buildScheduleDetailPresentation(
     routeArrivalSummary,
     effectiveRouteAccessibilityLabel,
     routeWalkingMinutes,
+    compactRouteFactLabels,
     routeFactLabels,
   };
 }

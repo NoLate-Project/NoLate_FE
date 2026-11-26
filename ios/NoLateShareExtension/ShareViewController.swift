@@ -57,6 +57,7 @@ private struct ParseResult: Decodable {
   let startAt: String?
   let endAt: String?
   let hasExplicitEndTime: Bool?
+  let needsReview: Bool?
   let destination: SharedPlace?
 }
 
@@ -670,12 +671,18 @@ final class ShareViewController: UIViewController {
       async let categoryValues: [ScheduleCategory] = api.get("api/schedule-categories")
       let (parsed, categories) = try await (parsedValue, categoryValues)
       try Task.checkCancellation()
+      // 오전·오후 추정이나 상충하는 날짜·시각은 앱에서 확인한 뒤 저장해야 한다.
+      guard parsed.needsReview != true else {
+        throw ShareAPIError.server("일정의 날짜·시간·장소를 확인해야 해요. 앱에서 공유 내용을 확인한 뒤 일정을 추가해 주세요.")
+      }
       guard let category = categories.first(where: \.canWrite) else {
         throw ShareAPIError.server("앱에서 일정을 저장할 수 있는 카테고리를 먼저 만들어 주세요.")
       }
 
       let formatter = ISO8601DateFormatter()
-      let startAt = parseAPIDate(parsed.startAt) ?? Date()
+      guard let startAt = parseAPIDate(parsed.startAt) else {
+        throw ShareAPIError.server("날짜와 시간을 확인하지 못했어요. 앱에서 내용을 확인해 일정을 추가해 주세요.")
+      }
       let explicitEndAt = parsed.hasExplicitEndTime == true
         ? parseAPIDate(parsed.endAt).flatMap { $0 > startAt ? $0 : nil }
         : nil
@@ -699,7 +706,7 @@ final class ShareViewController: UIViewController {
         "destination": destination,
         "locationName": normalizedText(parsed.destination?.name) ?? normalizedText(parsed.destination?.address),
         "category": ["id": category.id, "title": category.title, "color": category.color],
-        "notes": parsed.notes ?? sharedText,
+        "notes": sharedText,
         "notificationEnabled": false,
         "routeSetupRequired": true,
       ])

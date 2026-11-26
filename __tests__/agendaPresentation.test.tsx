@@ -452,7 +452,7 @@ describe("schedule agenda presentation", () => {
 
         const text = renderedText(renderer!);
         expect(text).toContain("7월 14일 화요일");
-        expect(text).toMatch(/2\s*개의 일정/);
+        expect(text).not.toMatch(/2\s*개의 일정/);
         expect(text.indexOf("오전 일정")).toBeLessThan(text.indexOf("오후 일정"));
         expect(text).not.toContain("다른 날 일정");
         const detailCards = renderer!.root.findAllByType(ScheduleAgendaCard);
@@ -552,7 +552,7 @@ describe("schedule agenda presentation", () => {
         expect(text).toContain("7/16 오전 11:00");
         expect(text).not.toContain("9:00 - 11:00");
         expect(text).not.toContain("→");
-        expect(text).toContain("오전 8:17 출발 · 43분");
+        expect(text).toContain("오전 8:17 출발");
         expect(text).not.toContain("대중교통");
         expect(text).not.toContain("경로 준비됨");
         expect(renderer!.root.findByProps({
@@ -576,13 +576,13 @@ describe("schedule agenda presentation", () => {
             && node.props.minimumFontScale === undefined
         ))).toBe(true);
         expect(renderedNodeText(contextRow)).toContain("인천역");
-        expect(renderedNodeText(contextRow)).toContain("오전 8:17 출발 · 43분");
+        expect(renderedNodeText(contextRow)).toContain("오전 8:17 출발");
         expect(titleRow.findByType(Text).props.numberOfLines).toBe(2);
         const locationRow = renderer!.root.findByProps({ testID: "agenda-card-location-row" });
         const departureRow = renderer!.root.findByProps({ testID: "agenda-card-departure-row" });
         expect(locationRow).not.toBe(departureRow);
         expect(renderedNodeText(locationRow)).toBe("인천역");
-        expect(renderedNodeText(departureRow)).toBe("오전 8:17 출발 · 43분");
+        expect(renderedNodeText(departureRow)).toBe("오전 8:17 출발");
         const card = renderer!.root.findByType(ScheduleAgendaCard);
         expect(card.props.showMultiDaySummary).toBe(true);
         const pressable = renderer!.root.find((node) => (
@@ -594,7 +594,7 @@ describe("schedule agenda presentation", () => {
             .toContain("7월 14일 오전 9:00 → 7월 16일 오전 11:00");
         expect(pressable.props.accessibilityLabel).toContain("대중교통 이동");
         expect(pressable.props.accessibilityLabel).toContain("오전 8:17 출발 · 43분");
-        expect(renderer!.root.findAllByProps({ name: "bus-outline" })).toHaveLength(1);
+        expect(renderer!.root.findAllByProps({ name: "bus-outline" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ name: "chevron-forward-outline" })).toHaveLength(0);
     });
 

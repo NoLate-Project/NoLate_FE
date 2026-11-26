@@ -91,7 +91,10 @@ type AgendaStateProps = {
 
 export type AgendaFocusTarget = { id: string; run: string };
 
+export type AgendaWeekDisclosure = { expanded: boolean; onChange: (expanded: boolean) => void };
+
 type SelectedDayAgendaPanelProps = AgendaStateProps & {
+    weekDisclosure?: AgendaWeekDisclosure;
     selectedDay: string;
     onRequestViewMode: (mode: MonthAgendaSteppedTarget) => void;
     savedItemId?: string;
@@ -313,9 +316,11 @@ function RouteSetupInlineNotice({
 
 function MonthAgendaPanelGestureHandle({
     panelKind,
+    weekDisclosure,
     onRequestViewMode,
 }: {
     panelKind: MonthAgendaPanelKind;
+    weekDisclosure?: AgendaWeekDisclosure;
     onRequestViewMode: (mode: MonthAgendaSteppedTarget) => void;
 }) {
     const { mode } = useTheme();
@@ -417,12 +422,14 @@ function MonthAgendaPanelGestureHandle({
                     gestureState.vy
                 );
                 settleHandle();
-                if (target) onRequestViewMode(target);
+                if (target && weekDisclosure && (target === "list" || weekDisclosure.expanded)) {
+                    weekDisclosure.onChange(target === "list");
+                } else if (target) onRequestViewMode(target);
             },
             onPanResponderTerminate: cancelGesture,
             onPanResponderTerminationRequest: () => false,
         });
-    }, [handleDragY, onRequestViewMode, panelKind]);
+    }, [handleDragY, onRequestViewMode, panelKind, weekDisclosure]);
 
     const isDetail = panelKind === "detail";
     const accessibilityActions = isDetail
@@ -455,7 +462,19 @@ function MonthAgendaPanelGestureHandle({
             {...handlePanResponder.panHandlers}
             style={styles.panelGestureHandle}
         >
-            <Animated.View
+            {weekDisclosure ? (
+                <Pressable
+                    testID="agenda-week-toggle"
+                    accessibilityRole="button"
+                    accessibilityLabel={weekDisclosure.expanded ? "월 달력 보기" : "선택한 주와 하루 일정 보기"}
+                    accessibilityState={{ expanded: weekDisclosure.expanded }}
+                    style={[styles.panelHandleHitArea, { minHeight: 44 }]}
+                    onPress={() => weekDisclosure.onChange(!weekDisclosure.expanded)}
+                >
+                    <Animated.View style={[styles.panelHandle, mode === "dark" ? styles.panelHandleDark : styles.panelHandleLight,
+                        { transform: [{ translateY: handleDragY }] }]} />
+                </Pressable>
+            ) : <Animated.View
                 testID="month-agenda-panel-handle"
                 accessible
                 accessibilityRole="adjustable"
@@ -482,13 +501,14 @@ function MonthAgendaPanelGestureHandle({
                             : styles.panelHandleLight,
                     ]}
                 />
-            </Animated.View>
+            </Animated.View>}
         </View>
     );
 }
 
 /** 월간 상세형 하단에 표시되는 선택일 일정 패널. */
 export function SelectedDayAgendaPanel({
+    weekDisclosure,
     selectedDay,
     items,
     loading,
@@ -537,6 +557,7 @@ export function SelectedDayAgendaPanel({
         >
             <MonthAgendaPanelGestureHandle
                 panelKind="detail"
+                weekDisclosure={weekDisclosure}
                 onRequestViewMode={onRequestViewMode}
             />
             <View testID="selected-day-agenda-heading" style={styles.selectedDayHeading}>
@@ -548,11 +569,6 @@ export function SelectedDayAgendaPanel({
                         {selectedLabels.weekdayLabel}
                     </Text>
                 </View>
-                {!loading && !error ? (
-                    <Text maxFontSizeMultiplier={1.6} style={[styles.sectionCount, { color: colors.textSecondary }]}>
-                        {selectedItems.length}개의 일정
-                    </Text>
-                ) : null}
             </View>
 
             <ScrollView
@@ -576,7 +592,7 @@ export function SelectedDayAgendaPanel({
                     <AgendaInlineState
                         loading={loading}
                         error={error}
-                        emptyText="선택한 날짜에 등록된 일정이 없어요"
+                        emptyText="일정이 없어요"
                         onPressRetry={onPressRetry}
                     />
                 ) : (

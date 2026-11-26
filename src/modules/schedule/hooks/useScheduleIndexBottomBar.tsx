@@ -18,7 +18,7 @@ import type { CalendarViewMode } from '../components/calendar/viewMode';
 import type { MonthAgendaPanelKind } from '../calendarMotion';
 import { sanitizeCalendarTransitionError } from './scheduleIndexControllerModel';
 import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
-import type { AgendaFocusTarget } from '../components/list/ScheduleAgendaViews';
+import type { AgendaFocusTarget, AgendaWeekDisclosure } from '../components/list/ScheduleAgendaViews';
 
 const MemoizedSelectedDayAgendaPanel = React.memo(SelectedDayAgendaPanel);
 const MemoizedMonthAgendaList = React.memo(MonthAgendaList);
@@ -208,9 +208,10 @@ export function useScheduleIndexBottomBar({
    * 두 패널에 동일한 오류 정제·재시도·경로 설정 동작을 전달해 표시 방식만 달라진다.
    */
   const renderMonthAgendaPanelContent = useCallback(
-    (panelKind: MonthAgendaPanelKind) =>
+    (panelKind: MonthAgendaPanelKind, weekDisclosure?: AgendaWeekDisclosure) =>
       panelKind === 'detail' ? (
         <MemoizedSelectedDayAgendaPanel
+          weekDisclosure={weekDisclosure}
           selectedDay={monthDisplaySelectedDay}
           savedItemId={savedEntry?.itemId}
           focusTarget={guidanceEntry}

@@ -548,21 +548,16 @@ export function getDisplayedFutureTimetableRoute(
     return route;
 }
 
-export function buildFutureTimetablePredictionPresentation(
+export function getFutureTimetableArrivalSummary(
     status: ScheduleDepartureStatus | null | undefined,
     nowMs = Date.now(),
-): EffectiveTransitRoutePresentation | undefined {
+): string | undefined {
     const route = getDisplayedFutureTimetableRoute(status, nowMs);
-    if (!route || !status) return undefined;
-    const staleObservation = status.failureReason?.startsWith("TRANSIT_ARRIVAL_SOURCE_STALE:") === true;
-    return {
-        guidanceTitle: "미래 시간표 예측 · 실시간 미확인",
-        summary: `${formatClock(route.departureAt, status.timeZone)} 출발 예측 · ${formatClock(route.arrivalAt, status.timeZone)} 도착 예측 · 총 ${Math.ceil(route.totalMinutes)}분`,
-        itinerary: itineraryLabel(route, true, status.timeZone),
-        waitMeta: (staleObservation ? "실시간 도착정보가 오래되어 시간표를 보여드려요." :
-            "선택 열차는 아직 실시간 목록에서 확인되지 않았어요.") + " 출발 알람은 뒤로 미루지 않아요",
-        mapNote: MAP_SAVED_ROUTE_NOTE,
-    };
+    const arrival = route && formatClock(route.arrivalAt, status?.timeZone);
+    if (!arrival) return undefined;
+    const routeLabel = status?.futureTimetableRouteProvenance === "SELECTED_ROUTE_PRESERVED" ? ""
+        : status?.futureTimetableRouteProvenance === "ODSAY_ALTERNATIVE_ROUTE" ? "대안 경로 " : "조회 경로 ";
+    return `${routeLabel}${arrival} 도착 예상 · 시간표 기준`;
 }
 
 /** Fresh timing applies to unchanged routes too; neither timing case replaces saved geometry. */

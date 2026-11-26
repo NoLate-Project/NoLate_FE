@@ -5824,7 +5824,9 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         try require(summary.waitForExistence(timeout: 20) && summary.isHittable,
                     "Rejected ODsay ETA must retain the saved departure, not claim a live recommendation")
         let warning = try XCTUnwrap(environment["E2E_REAL_DIAGNOSTIC_WARNING"])
-        try require(summary.label.contains(warning) && !summary.label.contains("현재 보정 여정") &&
+        let timetable = environment["E2E_REAL_FUTURE_SUMMARY"]
+        try require((summary.label.contains(warning) || timetable.map { summary.label.contains($0) } == true) &&
+                    !summary.label.contains("현재 보정 여정") &&
                     !summary.label.contains("첫 승차 실시간 반영"), "Rejected route must not look like successful realtime ETA")
         let verifiedSummary = summary.label
         if let excluded = environment["E2E_REAL_FUTURE_WITHHELD"] {
@@ -5833,37 +5835,30 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         }
         if environment["E2E_REAL_FUTURE_WITHHELD"] != nil ||
             environment["E2E_REAL_FORBID_FUTURE_PREVIEW"] == "1" {
-            try require(!verifiedSummary.contains("출발 예측 ·") &&
-                        !verifiedSummary.contains("미래 시간표 예측 · 실시간 미확인"),
+            try require(!verifiedSummary.contains("도착 예상 · 시간표 기준"),
                         "A departed or late timetable preview must remain hidden")
             try tap(summary)
-            let expired = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@",
-                "미래 시간표 예측 · 실시간 미확인,")).firstMatch
+            let expired = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "도착 예상 · 시간표 기준")).firstMatch
             try require(!expired.exists, "Expanded sheet must not resurrect an ineligible timetable preview")
         }
-        if let futureSummary = environment["E2E_REAL_FUTURE_SUMMARY"] {
-            let rideData = try XCTUnwrap(environment["E2E_REAL_FUTURE_RIDE_TEXT"]?.data(using: .utf8))
-            let rides = try XCTUnwrap(try JSONSerialization.jsonObject(with: rideData) as? [String])
+        if let futureSummary = timetable {
             let departureText = try XCTUnwrap(environment["E2E_REAL_FUTURE_DEPARTURE_AT"])
             let departure = try XCTUnwrap(ISO8601DateFormatter().date(from: departureText))
             if !summary.label.contains(futureSummary) && Date() > departure {
                 // Xcode 기동 중 미래 출발이 지나면 공개 API가 예측을 숨긴다.
                 // 실제 API read-window도 사후 감사하므로 시각 불일치를 임의 허용하지 않는다.
-                try require(!summary.label.contains("출발 예측 ·") &&
-                            !summary.label.contains("미래 시간표 예측 · 실시간 미확인"),
-                            "Expired preview must be absent, not replaced by different train clocks")
+                try require(!summary.label.contains("도착 예상 · 시간표 기준"),
+                            "Expired preview must be absent")
                 capture("eta-real-timetable-expired-during-ui-launch")
                 print("ETA_REAL_DIAGNOSTIC_UI_VERIFIED: " + verifiedSummary)
                 return
             }
-            try require(rides.count == 2 && summary.label.contains(futureSummary) &&
-                        rides.allSatisfy { summary.label.contains($0) }, "Future timetable clocks must match the actual Worker")
+            try require(summary.label.contains(futureSummary) && !summary.label.contains("열차 · 시간표 ·"),
+                        "The summary must show the Worker arrival only once, rounded to minutes")
             try tap(summary)
-            let future = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@",
-                "미래 시간표 예측 · 실시간 미확인,")).firstMatch
-            try require(waitForVisibleRealRouteText(future) && future.label.contains(futureSummary) &&
-                        rides.allSatisfy { future.label.contains($0) }, "Expanded future timetable must preserve both train clocks")
-            try verifyRideIntervals(in: future.label)
+            let arrival = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", futureSummary)).firstMatch
+            try require(waitForVisibleRealRouteText(arrival),
+                        "Expanded sheet must label the timetable arrival")
             if let data = environment["E2E_REAL_FUTURE_RAIL"]?.data(using: .utf8) {
                 try verifyRealRideRail(data)
                 print("ETA_REAL_FUTURE_TIMETABLE_RAIL_VERIFIED")
@@ -5971,22 +5966,18 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         } else {
             let quality = environment["E2E_ARRIVAL_QUALITY_SCENARIO"] ?? ""
             let timetablePreview = ["quality-unobserved", "quality-departed", "quality-stale"].contains(quality)
-            let warnings = ["quality-unobserved": "미래 열차 실시간 미확인 · 시간표 예측 단계",
-                            "quality-departed": "미래 열차 실시간 미확인 · 시간표 예측 단계",
-                            "quality-stale": "차량 관측정보 오래됨", "quality-unverified": "차량 관측시각 검증 불가",
+            let warnings = ["quality-unverified": "차량 관측시각 검증 불가",
                             "quality-error": "도착정보 API 오류", "quality-timeout": "도착정보 API 응답 지연",
                             "quota-arrival": "도착정보 API 한도 초과"]
-            if let warning = warnings[quality] {
+            if !timetablePreview, let warning = warnings[quality] {
                 try require(label.contains(warning), "Arrival failure must retain its own diagnostic stage")
             }
             if timetablePreview {
-                try require(label.contains("미래 시간표 예측 · 실시간 미확인") && label.contains("4012열차 · 시간표") &&
-                            label.contains("2012열차 · 시간표") && !label.contains("첫 승차 실시간 반영"),
-                            "The future train must show only separate timetable predictions")
+                try require(label.contains("도착 예상 · 시간표 기준") && !label.contains("열차 · 시간표 ·") &&
+                            !label.contains("첫 승차 실시간 반영"), "A timetable estimate must stay concise and distinct from live data")
                 try tap(try XCTUnwrap(visible))
-                let preview = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "미래 시간표 예측 · 실시간 미확인,")).firstMatch
-                try require(waitForVisibleRealRouteText(preview) &&
-                            preview.label.contains("출발 알람은 뒤로 미루지 않아요"), "Expanded timetable preview must explain alarm protection")
+                let preview = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "도착 예상 · 시간표 기준")).firstMatch
+                try require(waitForVisibleRealRouteText(preview), "Expanded sheet must show the timetable arrival")
                 print("ETA_FUTURE_TIMETABLE_SYNTHETIC_UI_VERIFIED: separate-preview-not-live")
             }
             try require((label.contains("저장 경로 기준") || timetablePreview) && !label.contains("현재 보정 여정"),

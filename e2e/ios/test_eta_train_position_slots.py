@@ -53,6 +53,18 @@ class PositionSlotsTest(unittest.TestCase):
         self.assertFalse(self.slots.pending)
         self.assertEqual(len(self.slots.log), 16)
 
+    def test_fixed_future_departure_does_not_lose_the_final_alighting_window(self):
+        early_evaluation = NOW - dt.timedelta(minutes=18)
+        self.worker['evaluatedAt'] = early_evaluation.isoformat()
+        for leg in self.route['segments']:
+            leg['rideTiming']['timetable']['fetchedAt'] = early_evaluation.isoformat()
+        slots = JourneyPositionSlots()
+        slots.apply_evaluation(1, self.worker, early_evaluation)
+        final = [s['at'] for s in slots.pending.values() if s['event'] == 'ALIGHTING' and s['line'] == 'LINE_2']
+        self.assertGreater(max(final), early_evaluation + dt.timedelta(minutes=90))
+        self.assertLessEqual(max(final), dt.datetime.fromisoformat(self.route['departureAt']) + dt.timedelta(minutes=90))
+        self.assertEqual(len(slots.pending), MAX_READS)
+
     def test_reconnected_train_only_changes_unspent_future_windows(self):
         old = sorted(self.slots.pending.values(), key=lambda s: s['at'])
         for slot in old[:5]:

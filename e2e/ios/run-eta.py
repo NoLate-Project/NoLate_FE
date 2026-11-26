@@ -301,18 +301,11 @@ if args.real_isolated:
             # Test that absence; never weaken production freshness/visibility to display it.
             real_expected['TEST_RUNNER_E2E_REAL_FUTURE_WITHHELD'] = withheld_future
         elif timetable_preview:
-            def seoul_clock(value, seconds=False):
-                return dt.datetime.fromisoformat(value).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S' if seconds else '%H:%M')
-            real_expected['TEST_RUNNER_E2E_REAL_FUTURE_SUMMARY'] = (
-                seoul_clock(future['departureAt']) + ' 출발 예측 · ' + seoul_clock(future['arrivalAt']) +
-                ' 도착 예측 · 총 ' + str(future['totalMinutes']) + '분')
+            def seoul_clock(value):
+                return dt.datetime.fromisoformat(value).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')
+            real_expected['TEST_RUNNER_E2E_REAL_FUTURE_SUMMARY'] = seoul_clock(future['arrivalAt']) + ' 도착 예상 · 시간표 기준'
             real_expected['TEST_RUNNER_E2E_REAL_FUTURE_DEPARTURE_AT'] = future['departureAt']
             set_real_ride_intervals(real_expected, future)
-            real_expected['TEST_RUNNER_E2E_REAL_FUTURE_RIDE_TEXT'] = json.dumps([
-                s['rideTiming']['timetable']['trainNumber'] + '열차 · 시간표 · ' +
-                seoul_clock(s['rideTiming']['predictedBoardingAt'], True) + ' 승차 → ' +
-                seoul_clock(s['rideTiming']['predictedArrivalAt'], True) + ' 하차 예측'
-                for s in future['segments'] if s['kind'] == 'SUBWAY'], ensure_ascii=False)
             if diagnostic['effectiveSnapshot'].get('transitRouteProvenance') == 'SELECTED_ROUTE_PRESERVED':
                 saved = json.loads((diagnostic_path.parent / 'selected-route.json').read_text())['routeInfo']
                 steps = [s for s in saved['steps'] if s['type'] not in ('ORIGIN', 'DESTINATION')]

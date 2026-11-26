@@ -14,11 +14,11 @@ import {
   getAgendaMultiDaySummary,
 } from '../../agendaLayout';
 import { getTravelModeLabel } from '../../travelMode';
-import type { ScheduleItem, TravelMode } from '../../types';
+import type { ScheduleItem } from '../../types';
 import ScheduleSwipeActions, {
   type ScheduleSwipeActionCallbacks,
 } from '../ScheduleSwipeActions';
-import ScheduleIcon, { type ScheduleIconName } from '../shared/ScheduleIcon';
+import ScheduleIcon from '../shared/ScheduleIcon';
 
 export type ScheduleAgendaCardProps = {
   item: ScheduleItem;
@@ -31,21 +31,6 @@ export type ScheduleAgendaCardProps = {
   returnHighlightOpacity?: Animated.Value;
   cardRef?: React.RefObject<View | null>;
 };
-
-function travelIcon(mode?: TravelMode): ScheduleIconName {
-  switch (mode) {
-    case 'TRANSIT':
-      return 'transit';
-    case 'CAR':
-      return 'car';
-    case 'WALK':
-      return 'walk';
-    case 'BIKE':
-      return 'bike';
-    default:
-      return 'departure';
-  }
-}
 
 /** Flow layout shared by the selected-day agenda and month list. */
 export default function ScheduleAgendaCard({
@@ -82,6 +67,7 @@ export default function ScheduleAgendaCard({
       ]
         .filter(Boolean)
         .join(' · ');
+  const travelCue = departureText ? `${departureText} 출발` : travelText;
   const sharePermission =
     item.sharePermission ?? item.category?.sharePermission;
   const isShared = item.category?.shared === true || Boolean(sharePermission);
@@ -95,7 +81,7 @@ export default function ScheduleAgendaCard({
   const hasContext = Boolean(
     metadata.location || travelText || item.routeSetupRequired,
   );
-  const departureColor = mode === 'dark' ? '#4B9DFF' : '#2979FF';
+  const departureColor = mode === 'dark' ? '#74B5FF' : '#205FC5';
   const routeStatusColor = mode === 'dark' ? '#FF9F0A' : '#B85F00';
   const availableSwipeActionText = [
     swipeActions?.onEdit ? '수정' : '',
@@ -224,6 +210,7 @@ export default function ScheduleAgendaCard({
             style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.textPrimary, opacity: returnHighlightOpacity }]}
           />
         ) : null}
+        {useFullWidthTime ? null : scheduleTimes}
         <View
           testID={isDetailCard ? 'selected-day-agenda-card-rail' : undefined}
           style={[styles.categoryRail, { backgroundColor: categoryColor }]}
@@ -233,12 +220,6 @@ export default function ScheduleAgendaCard({
           style={styles.content}
         >
           <View testID="agenda-card-title-row" style={styles.titleRow}>
-            {metadata.isTravel ? (
-              <ScheduleIcon
-                name={travelIcon(metadata.travelMode)}
-                color={colors.textSecondary}
-              />
-            ) : null}
             <Text
               testID="agenda-card-title"
               maxFontSizeMultiplier={1.5}
@@ -256,7 +237,6 @@ export default function ScheduleAgendaCard({
                   testID="agenda-card-location-row"
                   style={styles.metadataRow}
                 >
-                  <ScheduleIcon name="location" color={colors.textSecondary} />
                   <Text
                     maxFontSizeMultiplier={1.5}
                     numberOfLines={1}
@@ -300,7 +280,7 @@ export default function ScheduleAgendaCard({
                       { color: departureColor },
                     ]}
                   >
-                    {travelText}
+                    {travelCue}
                   </Text>
                 </View>
               ) : null}
@@ -336,7 +316,6 @@ export default function ScheduleAgendaCard({
             </View>
           ) : null}
         </View>
-        {useFullWidthTime ? null : scheduleTimes}
         {!groupRow ? (
           <View style={styles.chevronColumn}>
             <ScheduleIcon name="forward" color={colors.textSecondary} />

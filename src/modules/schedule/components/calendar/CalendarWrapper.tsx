@@ -22,6 +22,7 @@ type Props = {
     onSelectDay: (day: string) => void;
     onOpenDay: (day: string) => void;
     viewMode: CalendarViewMode;
+    agendaWeekOnly?: boolean;
     firstDay: 0 | 1;
     scrollRequest: number;
     onVisibleMonthChange: (month: string) => void;
@@ -58,6 +59,7 @@ function CalendarWrapper({
     onSelectDay,
     onOpenDay,
     viewMode,
+    agendaWeekOnly,
     firstDay,
     scrollRequest,
     onVisibleMonthChange,
@@ -93,6 +95,7 @@ function CalendarWrapper({
                 onSelectDay={onSelectDay}
                 onOpenDay={onOpenDay}
                 viewMode={viewMode}
+                agendaWeekOnly={agendaWeekOnly}
                 firstDay={firstDay}
                 scrollRequest={scrollRequest}
                 onVisibleMonthChange={onVisibleMonthChange}

@@ -54,7 +54,6 @@ import { runAfterScreenTransition } from '../../modules/performance/runAfterScre
 import { useImmediateNavigationTransition } from '../../modules/performance/ImmediateNavigationTransition';
 import {
   buildEffectiveTransitRoutePresentation,
-  buildFutureTimetablePredictionPresentation,
   buildPlannedJourneyArrivalPresentation,
   resolveScheduleDetailDepartureTiming,
 } from '../../modules/schedule/effectiveTransitRoutePresentation';
@@ -405,8 +404,7 @@ export function useScheduleDetailController({
   const effectiveTransitRoutePresentation = inspectedTravelPlan
     ? undefined
     : buildPlannedJourneyArrivalPresentation(departureStatus, nowMs) ??
-      buildEffectiveTransitRoutePresentation(departureStatus) ??
-      buildFutureTimetablePredictionPresentation(departureStatus, nowMs);
+      buildEffectiveTransitRoutePresentation(departureStatus);
   const departureDisplayState: DepartureDisplayState = item
     ? getDepartureDisplayState(
         recommendedDepartureAt,

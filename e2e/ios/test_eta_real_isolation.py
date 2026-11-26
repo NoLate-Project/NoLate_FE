@@ -222,7 +222,7 @@ class RealIsolationVerifierTest(unittest.TestCase):
             'TRANSIT_ON_TIME_ARRIVAL_UNAVAILABLE': '현재 확인된 경로로 정시 도착 불가',
             'TRANSIT_TRANSFER_MISSED': '환승 불가 · 경로 재확인 필요',
             'TRANSIT_ITINERARY_REFRESH_UNSUPPORTED': '재조회 미지원 · 경로 재선택 필요',
-            'TRANSIT_TRAIN_NOT_YET_OBSERVED': '미래 열차 실시간 미확인 · 시간표 예측 단계',
+            'TRANSIT_TRAIN_NOT_YET_OBSERVED': '열차의 실시간 도착 정보가 없어요',
         }
         for code, warning in expected.items():
             with self.subTest(code=code):
