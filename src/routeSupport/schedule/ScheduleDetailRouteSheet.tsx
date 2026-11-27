@@ -179,7 +179,7 @@ export function ScheduleDetailRouteSheet({
   const departureFailed = departureSubmissionStatus === 'failed' && !departureCompleted && !journeyGuidanceAvailable;
   const departureActionDisabled = departureActionPending || routeSavePending;
   const sharedDeparture = companionCount > 1;
-  const departureActionLabel = departureCompleted ? '길안내 보기' : onStartDriving ? '지금 출발' : '안내 시작';
+  const departureActionLabel = departureCompleted ? '길안내 보기' : onStartDriving ? '지금 출발' : '길안내 시작';
   const routeSaveSucceeded = routeSaveConfirmed && !routeSavePending && !canRetryRouteSave;
   const expanded = sheetMode === 'expanded';
   const { value: guidanceValue, stage: guidanceStage, position: guidancePosition, layout: guidanceLayout } = guidance;
@@ -224,6 +224,19 @@ export function ScheduleDetailRouteSheet({
     && firstWalkMeters > 0 && firstWalkMeters <= 100_000 ? ` · 도보 약 ${Math.ceil(firstWalkMeters / 10) * 10}m` : '';
   const nextPlannedStep = firstBoardingName ? `${firstBoardingName}까지${plannedWalk}` : '첫 승차 지점까지 이동할 경로를 확인해요';
   const showNavigationDock = navigationMode && authenticatedGuidanceEntry && automaticGuidanceActive && !!displayedGuidanceInput;
+  const estimate = presentation.currentTransitEstimate;
+  const estimateArrival = estimate?.providerArrivalAt ? new Date(estimate.providerArrivalAt) : null;
+  const estimateDeparture = estimate?.providerDepartureAt ? Date.parse(estimate.providerDepartureAt) : NaN;
+  const now = presentation.nowMs ?? Date.now();
+  const departureArrivalLabel = estimateArrival && estimateArrival.getTime() > now
+    && Number.isFinite(estimateDeparture) && estimateDeparture <= now + 60_000
+      ? `${hhmmText(estimateArrival)} 도착 예상` : undefined;
+  const navigationArrivalLabel = effectiveTransitRoutePresentation?.compactSummary ?? departureArrivalLabel;
+  const navigationSummary = <Text testID="journey-navigation-arrival"
+    accessibilityLabel={navigationArrivalLabel ? `출발 시점 경로 기준, ${navigationArrivalLabel}` : `계획 이동 시간 ${routeDurationLabel}`}
+    style={[navigationStyles.arrivalSummary, { color: topCardAccentText }]}>
+    {navigationArrivalLabel ?? `예정 ${routeDurationLabel}`}
+  </Text>;
   const [optionsKey, setOptionsKey] = useState<string | null>(null);
   const activeMenuKey = showNavigationDock && guidance.snapshot?.sessionId === guidanceSessionId && guidanceSessionId
     ? JSON.stringify([departureScope, guidanceSessionId, guidanceBinding?.generation]) : null;
@@ -513,7 +526,7 @@ export function ScheduleDetailRouteSheet({
   ) : null;
 
   const showDepartureInBody = !navigationHeroActive && !showDepartureInHeader;
-  const showExpandedStatus = !browseRoute && (showDepartureInBody || showRouteIdentityInSheet ||
+  const showExpandedStatus = !browseRoute && !showNavigationDock && (showDepartureInBody || showRouteIdentityInSheet ||
     Boolean(arrivalSummary || (!sharedDeparture && manualDeparture)));
   const departureContext = (
     <View style={styles.expandedDepartureContext}>
@@ -579,7 +592,7 @@ export function ScheduleDetailRouteSheet({
           >
             <Pressable
               testID="schedule-route-sheet-handle"
-              style={({ pressed }) => [styles.sheetHandleButton, automaticGuidanceActive && styles.guidanceSheetHandle,
+              style={({ pressed }) => [styles.sheetHandleButton, automaticGuidanceActive && navigationStyles.activeHandle,
                 { opacity: pressed ? 0.62 : 1 }]}
               accessibilityRole="button"
               accessibilityLabel={automaticGuidanceActive ? (expanded ? '저장 경로 접기' : '저장 경로 보기')
@@ -587,18 +600,13 @@ export function ScheduleDetailRouteSheet({
               accessibilityState={{ expanded }}
               onPress={() => snapSheet(expanded ? 'compact' : 'expanded')}
             >
-              {automaticGuidanceActive && (
-                <Text maxFontSizeMultiplier={2} style={[styles.guidanceSheetLabel, { color: topCardAccentText }]}>
-                  {expanded ? '저장 경로 접기' : '저장 경로 보기'}
-                </Text>
-              )}
               <Animated.View style={sheetHandleAnimatedStyle} pointerEvents="none">
-                <Ionicons
+                {automaticGuidanceActive ? <View style={[navigationStyles.grabber, { backgroundColor: secondaryText }]} /> : <Ionicons
                   name={sheetHandleAnimatedStyle ? 'chevron-up-outline' :
                     expanded ? 'chevron-down-outline' : 'chevron-up-outline'}
                   size={20}
                   color={secondaryText}
-                />
+                />}
               </Animated.View>
             </Pressable>
           </View>
@@ -685,6 +693,10 @@ export function ScheduleDetailRouteSheet({
               <Ionicons name="chevron-up-outline" size={15} color={secondaryText} />
             </Pressable>
           )}
+          {showNavigationDock && expanded && <View testID="journey-navigation-expanded-summary" style={navigationStyles.activeOverview}>
+            <Text style={[navigationStyles.activeState, { color: topCardAccentText }]}>{guidance.snapshot?.status === 'ARMED' ? '출발 대기' : '안내 중'}</Text>
+            {navigationSummary}
+          </View>}
           {browseRoute && expanded && overview}
           {!browseRoute && (showDepartureInHeader ? (
             <View style={[styles.expandedDepartureHeader, largeRouteHeader && styles.expandedDepartureHeaderLarge]}>
@@ -953,7 +965,7 @@ export function ScheduleDetailRouteSheet({
             ) : null}
 
             <>
-              {!browseRoute && <View
+              {!browseRoute && !showNavigationDock && <View
                 collapsable={false}
                 style={[
                   styles.sheetRouteSummary,
@@ -1224,9 +1236,7 @@ export function ScheduleDetailRouteSheet({
           <View style={navigationStyles.dockRail}>
             <SavedJourneyRouteBar input={displayedGuidanceInput} position={guidancePosition}
               layout={guidanceLayout ?? plannedGuidanceLayout} compact navigation docked isDark={isDark} showCopy={false}
-              dockCaption={expanded && guidanceStage && guidanceValue
-                ? <SavedJourneyInstruction stage={guidanceStage} value={guidanceValue} isDark={isDark} reduceMotion={reduceMotion} inFooter />
-                : undefined}
+              dockCaption={navigationSummary}
               recovery={positionRecovered} />
           </View>
           <Pressable testID="journey-navigation-menu" accessibilityRole="button" accessibilityLabel="길안내 옵션 열기"
@@ -1283,11 +1293,16 @@ const navigationStyles = StyleSheet.create({
   browseDeparture: { flex: 1.6, alignItems: 'stretch' },
   browseSettingsButton: { flex: 1, minHeight: 48, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   browseButtonLabel: { fontSize: 15, fontWeight: '600', flexShrink: 1, textAlign: 'center' },
-  browseStartButton: { alignSelf: 'stretch', minHeight: 48, marginBottom: 0, borderRadius: 12 },
+  browseStartButton: { alignSelf: 'stretch', maxWidth: '100%', minHeight: 48, marginBottom: 0, borderRadius: 12 },
   dock: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 29, borderTopWidth: StyleSheet.hairlineWidth },
-  dockRow: { minHeight: 52, paddingHorizontal: 12, paddingVertical: 3, flexDirection: 'row', alignItems: 'center' },
+  dockRow: { minHeight: 64, paddingLeft: 8, paddingRight: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  activeHandle: { justifyContent: 'center', paddingHorizontal: 0 },
+  grabber: { width: 36, height: 4, borderRadius: 2, opacity: 0.5 },
+  activeOverview: { paddingBottom: 8, gap: 6 },
+  activeState: { fontSize: 13, fontWeight: '600' },
+  arrivalSummary: { fontSize: 14, lineHeight: 20, fontWeight: '600', paddingHorizontal: 12 },
   dockRail: { flex: 1, minWidth: 0 },
-  menuButton: { width: 52, minHeight: 44, borderLeftWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
+  menuButton: { width: 52, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   ready: { paddingHorizontal: 16, paddingVertical: 5 },
   readyCopy: { gap: 2 },
   readyTitle: { fontSize: 18, fontWeight: '700' },

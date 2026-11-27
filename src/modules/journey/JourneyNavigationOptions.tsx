@@ -1,16 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSystemReduceMotion } from '../performance/useSystemReduceMotion';
 import { requestPushNotificationPermission } from '../notification/pushPermission';
 import { configureAutomaticJourneyNoticeMode, getAutomaticJourneySnapshot } from './automaticJourney';
-
-const channels = [
-    { mode: 'VOICE_AND_NOTIFICATIONS', name: '음성 및 알림', icon: 'volume-high-outline' },
-    { mode: 'NOTIFICATIONS', name: '알림만', icon: 'notifications-outline' },
-    { mode: 'OFF', name: '끄기', icon: 'notifications-off-outline' },
-] as const;
 
 type Props = {
     dark: boolean;
@@ -58,37 +52,49 @@ export function JourneyNavigationOptions({ dark, onClose, sessionId, onStop, onP
     const border = dark ? '#343D49' : '#DFE5EC';
     const denied = permission?.startsWith('DENIED_') || permission?.includes('_LOCK_OFF');
     const authorized = permission?.includes('_LOCK_ON') || permission === 'GRANTED';
-    return <Modal visible transparent presentationStyle="overFullScreen" animationType={reduceMotion ? 'none' : 'fade'}
+    return <Modal visible transparent presentationStyle="overFullScreen" animationType={reduceMotion ? 'none' : 'slide'}
         onRequestClose={close} supportedOrientations={['portrait', 'landscape']}>
         <View style={styles.overlay}>
             <Pressable accessible={false} importantForAccessibility="no" style={StyleSheet.absoluteFill} onPress={close}/>
             <View accessibilityViewIsModal onAccessibilityEscape={close} style={[styles.sheet, {
                 backgroundColor: dark ? '#1A1F27' : '#FFFFFF', paddingBottom: Math.max(bottom, 16),
             }]}>
+                <View accessible={false} style={[styles.grabber, { backgroundColor: muted }]} />
                 <View style={styles.header}>
-                    <Text accessibilityRole="header" style={[styles.title, {color: ink}]}>길안내 옵션</Text>
-                    <Pressable testID="journey-options-close" accessibilityRole="button" accessibilityLabel="길안내 옵션 닫기"
+                    <Text accessibilityRole="header" style={[styles.title, {color: ink}]}>길안내 설정</Text>
+                    <Pressable testID="journey-options-close" accessibilityRole="button" accessibilityLabel="길안내 설정 닫기"
                         onPress={close} disabled={busy} style={styles.iconButton}>
                         <Ionicons name="close-outline" size={24} color={muted}/>
                     </Pressable>
                 </View>
                 <ScrollView bounces={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-                    <Text style={[styles.section, {color: muted}]}>안내 방식</Text>
-                    {channels.map(channel => {
-                        const selected = mode === channel.mode;
-                        return <Pressable key={channel.mode} testID={'journey-option-' + channel.mode}
-                            accessibilityRole="radio" accessibilityState={{checked: selected, selected, disabled: busy || !mode}}
-                            disabled={busy || !mode} onPress={() => { if (!selected) void act(async () => {
-                                await configureAutomaticJourneyNoticeMode(channel.mode, sessionId);
-                                if (mounted.current) setMode(channel.mode);
-                            }); }}
-                            style={({pressed}) => [styles.row, { backgroundColor: selected
-                                ? dark ? '#24364F' : '#EAF2FF' : 'transparent', opacity: pressed ? 0.65 : 1 }]}>
-                            <Ionicons name={channel.icon} color={selected ? accent : muted} size={22}/>
-                            <Text style={[styles.rowText, {color: selected ? accent : ink}]}>{channel.name}</Text>
-                            {selected && <Ionicons accessible={false} name="checkmark-outline" color={accent} size={22}/>}
-                        </Pressable>;
-                    })}
+                    <View style={[styles.settingRow, { borderBottomColor: border }]}>
+                        <View style={styles.settingCopy}>
+                            <Text style={[styles.rowText, { color: ink }]}>음성 안내</Text>
+                            <Text style={[styles.description, { color: muted }]}>앱을 보고 있을 때 음성으로 알려드려요</Text>
+                        </View>
+                        <Switch testID="journey-option-voice" accessibilityLabel="음성 안내"
+                            disabled={busy || !mode} value={mode === 'VOICE_AND_NOTIFICATIONS'}
+                            trackColor={{ false: dark ? '#454C57' : '#D0D6DF', true: '#2979FF' }}
+                            onValueChange={enabled => void act(async () => {
+                                const next = enabled ? 'VOICE_AND_NOTIFICATIONS' : 'NOTIFICATIONS';
+                                await configureAutomaticJourneyNoticeMode(next, sessionId);
+                                if (mounted.current) setMode(next);
+                            })} />
+                    </View>
+                    <View style={[styles.settingRow, { borderBottomColor: border }]}>
+                        <View style={styles.settingCopy}>
+                            <Text style={[styles.rowText, { color: ink }]}>길안내 알림</Text>
+                        </View>
+                        <Switch testID="journey-option-notifications" accessibilityLabel="길안내 알림"
+                            disabled={busy || !mode} value={!!mode && mode !== 'OFF'}
+                            trackColor={{ false: dark ? '#454C57' : '#D0D6DF', true: '#2979FF' }}
+                            onValueChange={enabled => void act(async () => {
+                                const next = enabled ? 'NOTIFICATIONS' : 'OFF';
+                                await configureAutomaticJourneyNoticeMode(next, sessionId);
+                                if (mounted.current) setMode(next);
+                            })} />
+                    </View>
                     {mode && mode !== 'OFF' && !authorized && <Pressable testID="journey-option-permission" accessibilityRole="button"
                         disabled={busy} onPress={() => void act(async () => {
                             if (denied) { await Linking.openSettings(); return; }
@@ -105,9 +111,9 @@ export function JourneyNavigationOptions({ dark, onClose, sessionId, onStop, onP
                     {(onStop || onPrepare || onChangeRoute) && <View style={[styles.bottom, {borderTopColor: border}]}>
                         {onStop ? <Pressable testID="saved-detail-stop" accessibilityRole="button" accessibilityLabel="길안내 종료"
                             disabled={busy} onPress={() => void act(onStop)}
-                            style={({pressed}) => [styles.action, {backgroundColor: dark ? '#322528' : '#FFF1F0', opacity: pressed ? 0.7 : 1}]}>
-                            <Ionicons name="stop-circle-outline" color={dark ? '#FFAAA6' : '#A42A24'} size={20}/>
-                            <Text style={[styles.actionText, {color: dark ? '#FFAAA6' : '#A42A24'}]}>길안내 종료</Text>
+                            style={({pressed}) => [styles.action, {backgroundColor: '#2979FF', opacity: pressed ? 0.7 : 1}]}>
+                            <Ionicons name="stop-circle-outline" color="#FFFFFF" size={20}/>
+                            <Text style={[styles.actionText, {color: '#FFFFFF'}]}>길안내 종료</Text>
                         </Pressable> : onChangeRoute ? <Pressable testID="journey-options-change-route" accessibilityRole="button"
                             accessibilityLabel="다른 경로 찾기" disabled={busy} onPress={onChangeRoute}
                             style={[styles.action, {backgroundColor: dark ? '#283442' : '#F1F4F8'}]}>
@@ -130,7 +136,11 @@ const styles = StyleSheet.create({
     overlay: {flex: 1, justifyContent: 'flex-end', alignItems: 'center', backgroundColor: 'rgba(9,16,26,0.38)'},
     sheet: {width: '100%', maxWidth: 600, maxHeight: '90%', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingTop: 12},
     header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 24, paddingRight: 12},
-    title: {fontSize: 22, fontWeight: '700'}, iconButton: {minWidth: 48, minHeight: 48, justifyContent: 'center', alignItems: 'center'},
+    grabber: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 4, opacity: 0.45 },
+    settingRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, gap: 16 },
+    settingCopy: { flex: 1, gap: 6 },
+    description: { fontSize: 13, lineHeight: 19 },
+    title: {fontSize: 18, fontWeight: '700'}, iconButton: {minWidth: 48, minHeight: 48, justifyContent: 'center', alignItems: 'center'},
     content: {paddingHorizontal: 16, paddingBottom: 6}, section: {fontSize: 13, fontWeight: '600', marginHorizontal: 10, marginTop: 10, marginBottom: 6},
     row: {minHeight: 50, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 12},
     rowText: {flex: 1, fontSize: 17, fontWeight: '600'}, link: {flex: 1, fontSize: 15},

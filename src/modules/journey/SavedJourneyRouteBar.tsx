@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
     navigationRoot: { paddingTop: 0, paddingBottom: 4, gap: 4 },
     dockLines: { paddingHorizontal: 12, fontSize: 14, fontWeight: '700', color: '#314158' },
     dockTrack: { marginTop: 5, marginBottom: 6 },
-    navigationTrack: { height: 7, marginTop: 12, marginBottom: 10 },
+    navigationTrack: { height: 7.7, marginTop: 12, marginBottom: 10 },
     modeBadge: { position: 'absolute', top: -7, marginLeft: -10, width: 21, height: 21, borderRadius: 11,
         borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
     track: { flexDirection: 'row', height: 8, marginVertical: 13, marginHorizontal: 15,

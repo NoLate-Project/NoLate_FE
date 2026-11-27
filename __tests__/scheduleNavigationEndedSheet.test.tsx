@@ -5,9 +5,11 @@ import type { ScheduleDetailPresentation } from '../src/routeSupport/schedule/sc
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('../src/modules/journey/journeyFeature', () => ({ isAutomaticJourneyEntryEnabled: () => true }));
-jest.mock('../src/modules/journey/useSavedJourneyGuidanceView', () => ({ useSavedJourneyGuidanceView: () => ({}) }));
+let mockGuidance: Record<string, unknown> = {};
+afterEach(() => { mockGuidance = {}; });
+jest.mock('../src/modules/journey/useSavedJourneyGuidanceView', () => ({ useSavedJourneyGuidanceView: () => mockGuidance }));
 jest.mock('../src/modules/journey/SavedJourneyTrialControls', () => ({
-    SavedJourneyTrialControls: () => require('react').createElement('GuidancePreparation', { testID: 'guidance-preparation' }),
+    SavedJourneyTrialControls: (props: unknown) => require('react').createElement('GuidancePreparation', { ...props as object, testID: 'guidance-preparation' }),
 }));
 jest.mock('../src/modules/journey/JourneyNavigationOptions', () => ({ JourneyNavigationOptions: (props: unknown) => require('react').createElement('JourneyOptions', props) }));
 jest.mock('../src/modules/journey/SavedJourneyRouteTimeline', () => ({ SavedJourneyRouteTimeline: () => null }));
@@ -64,7 +66,7 @@ test('transit route summary keeps its single departure action in the bottom dock
     expect(JSON.stringify(view.toJSON())).toContain('3시간 8분');
     expect(JSON.stringify(view.toJSON())).not.toContain('저장한 경로');
     expect(JSON.stringify(view.toJSON())).not.toContain('위치 사용 · 최대 2시간');
-    expect(dock.findByProps({ testID: 'schedule-route-departure-action' }).props.accessibilityLabel).toBe('안내 시작');
+    expect(dock.findByProps({ testID: 'schedule-route-departure-action' }).props.accessibilityLabel).toBe('길안내 시작');
     const action = dock.findByProps({ testID: 'schedule-route-departure-action' });
     expect(JSON.stringify(view.toJSON()).match(/"testID":"schedule-route-departure-action"/g)).toHaveLength(1);
     const overview = view.root.findByProps({ testID: 'route-sheet-overview' });
@@ -103,5 +105,25 @@ test('coordinator cleanup waits for the owned terminal snapshot without offering
         companionCount={1} renderRouteCompanions={() => null} />); });
     expect(view.root.findAllByProps({ testID: 'schedule-route-guidance-entry' })).toHaveLength(0);
     expect(JSON.stringify(view.toJSON())).toContain('안내 상태를 확인 중이에요');
+    act(() => view.unmount());
+});
+
+test('the active footer retains the route bar and opens its owned hamburger settings in both sheet modes', () => {
+    const input = { legs: ['WALK', 'BUS', 'WALK'].map((kind, index) => ({ kind, index, stops: [] })) };
+    mockGuidance = { input, snapshot: { status: 'ACTIVE', sessionId: 'owned' },
+        binding: { scheduleId: '363', sessionId: 'owned', generation: 1 },
+        layout: { legs: input.legs.map(leg => ({ ...leg, fraction: 1 / 3, color: '#2979FF', durationMinutes: 4, label: leg.kind })) } };
+    const base = { ...presentation(), scheduleScreenVisible: true, insets: { bottom: 0 }, routeProgressSegments: [],
+        routeDurationLabel: '12분', hasDetailedRoute: true } as unknown as ScheduleDetailPresentation;
+    let view!: ReactTestRenderer;
+    act(() => { view = TestRenderer.create(<ScheduleDetailRouteSheet presentation={base} companionCount={1} renderRouteCompanions={() => null} />); });
+    expect(view.root.findByProps({ testID: 'journey-navigation-footer' })).toBeDefined();
+    expect(JSON.stringify(view.toJSON())).toContain('예정 12분');
+    act(() => view.root.findByProps({ testID: 'journey-navigation-menu' }).props.onPress());
+    expect(view.root.findByType('GuidancePreparation' as never).props.navigationMenu.open).toBe(true);
+    act(() => view.update(<ScheduleDetailRouteSheet presentation={{ ...base, sheetMode: 'expanded' }} companionCount={1} renderRouteCompanions={() => null} />));
+    expect(view.root.findByProps({ testID: 'journey-navigation-footer' })).toBeDefined();
+    expect(view.root.findByProps({ testID: 'journey-navigation-expanded-summary' })).toBeDefined();
+    expect(view.root.findByType('GuidancePreparation' as never).props.navigationMenu.open).toBe(true);
     act(() => view.unmount());
 });

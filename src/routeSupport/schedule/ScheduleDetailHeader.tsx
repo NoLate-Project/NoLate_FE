@@ -77,7 +77,7 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
   const mapProblem = mapState === 'error' || mapState === 'unavailable';
   const rideCount = input?.legs.filter(leg => leg.kind === 'BUS' || leg.kind === 'SUBWAY').length ?? 0;
   // This is the saved route's planned duration, never a live remaining-time claim.
-  const summary = [(!ended && presentation.currentTransitClock) || (routeDurationLabel && routeDurationLabel !== '미설정' ? `예정 ${routeDurationLabel}` : '대중교통'),
+  const summary = [presentation.routeProgressSegments?.filter(segment => segment.isRide).map(segment => segment.lineLabel).filter(Boolean).join(' → '), (routeDurationLabel && routeDurationLabel !== '미설정' ? `예정 ${routeDurationLabel}` : '대중교통'),
     rideCount > 1 ? `환승 ${rideCount - 1}회` : undefined].filter(Boolean).join(' · ');
   const surface = { backgroundColor: isDark ? '#20242C' : '#FFFFFF', borderColor: sheetBorder };
   return <Reanimated.View entering={reduceMotion ? undefined : FadeIn.duration(220).reduceMotion(ReduceMotion.System)}
@@ -90,7 +90,7 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
           style={({ pressed }) => [navigationHeaderStyles.back, surface, { opacity: pressed ? 0.58 : 1 }]}>
           <Ionicons name="chevron-back-outline" size={22} color={primaryText} />
         </Pressable>
-        {!expanded && <>
+        {<>
           <View style={[navigationHeaderStyles.statePill,
             { backgroundColor: isDark ? '#183C70' : '#E7F0FF', borderColor: sheetBorder }]}>
             <Text testID="schedule-navigation-state" accessibilityRole="header"
