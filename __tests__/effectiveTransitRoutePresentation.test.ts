@@ -81,6 +81,40 @@ test("shows that a deferred bus transfer is pending without showing the original
 });
 
 describe("effective transit route presentation", () => {
+    it("keeps the last bus's confirmed stop report and the remaining walk separate from a live forecast", () => {
+        const reportedAt = "2026-08-10T09:43:30+09:00";
+        const arrivalAt = "2026-08-10T09:46:30+09:00";
+        const nowMs = Date.parse("2026-08-10T09:45:00+09:00");
+        const route = { provider: "odsay", identity: "a".repeat(64), departureAt: "2026-08-10T09:10:00+09:00",
+            arrivalAt, totalMinutes: 37, segments: [
+                { sequence: 0, kind: "WALK" as const, durationMinutes: 4, durationSeconds: 240 },
+                { sequence: 1, kind: "BUS" as const, lineName: "461", fromName: "승차 정류장", toName: "하차 정류장",
+                    durationMinutes: 30, busRidePrediction: { boardingAt: "2026-08-10T09:16:00+09:00",
+                        alightingAt: reportedAt, reportedAlightingAt: reportedAt, sourceUpdatedAt: "2026-08-10T09:10:00+09:00" } },
+                { sequence: 2, kind: "WALK" as const, durationMinutes: 3, durationSeconds: 180, walkingScope: "EGRESS" as const },
+            ] };
+        const prediction = { predictedArrivalAt: arrivalAt, routeIdentity: route.identity,
+            presentedAt: "2026-08-10T09:44:55+09:00", sourceUpdatedAt: reportedAt,
+            basis: "FINAL_BUS_ALIGHTING_REPORTED" as const, effectiveTransitRoute: route };
+        const status = departureStatus({ stale: true, source: null, travelMinutes: null, predictedArrivalAt: null,
+            effectiveTransitRoute: null, plannedJourneyArrivalPrediction: prediction });
+        const shown = buildPlannedJourneyArrivalPresentation(status, nowMs);
+        expect(shown?.summary).toBe("09:46 도착 예상 · 총 37분");
+        expect(shown?.itinerary).toContain("09:43:30 하차 정류장 도착 보고");
+        expect(shown?.itinerary).toContain("도착 도보 · 약 3분");
+        expect(shown?.waitMeta).toContain("실제 탑승·환승 여부는 확인하지 못했어요");
+        expect(resolveScheduleDetailDepartureTiming({ status, isInspectingTravelPlan: false }).recommendedDepartureAt)
+            .toEqual(new Date(status.recommendedDepartureAt!));
+        expect(buildPlannedJourneyArrivalPresentation(status, Date.parse(arrivalAt))).toBeUndefined();
+        expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
+            ...prediction, sourceUpdatedAt: "2026-08-10T09:43:29+09:00",
+        } }, nowMs)).toBeUndefined();
+        expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
+            ...prediction, effectiveTransitRoute: { ...route, segments: [...route.segments.slice(0, 2),
+                { ...route.segments[2], durationSeconds: 120, durationMinutes: 2 }] },
+        } }, nowMs)).toBeUndefined();
+    });
+
     it("shows paired bus times only on accepted timing and preserves exact seconds", () => {
         const status = departureStatus();
         const ride = status.effectiveTransitRoute!.segments.find(segment => segment.kind === "BUS")!;
@@ -97,12 +131,12 @@ describe("effective transit route presentation", () => {
         expect(buildEffectiveTransitRoutePresentation(status)?.itinerary).not.toContain("하차 정류장 도착 예측");
     });
 
-    it("keeps an in-progress planned arrival provisional and separate from departure timing", () => {
+    it.each([true, false])("keeps an in-progress arrival provisional with an origin search of %s", (originSearchPerformed) => {
         const nowMs = Date.parse("2026-08-10T09:45:00+09:00");
         const status = departureStatus({ stale: true, travelMinutes: null, source: null, failureReason: null,
             predictedArrivalAt: null, effectiveTransitRoute: null,
-            originReplanDiagnostic: { travelMinutes: 63, source: "TIMETABLE_PROVIDER", stale: true,
-                failureReason: "TRANSIT_TRAIN_NOT_YET_OBSERVED: safe", providerFetchedAt: null },
+            originReplanDiagnostic: originSearchPerformed ? { travelMinutes: 63, source: "TIMETABLE_PROVIDER", stale: true,
+                failureReason: "TRANSIT_TRAIN_NOT_YET_OBSERVED: safe", providerFetchedAt: null } : null,
             plannedJourneyArrivalPrediction: {
                 predictedArrivalAt: "2026-08-10T10:08:00+09:00",
                 presentedAt: "2026-08-10T09:44:30+09:00",

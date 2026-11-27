@@ -4,6 +4,8 @@ import math
 from eta_observed_service import observed_service, selected_train_number, reported_boarding_evidence
 from copy import deepcopy
 
+SAVED_ROUTE_TRACKING_CODE = 'TRANSIT_TRACKING_SAVED_ROUTE'
+
 
 def _time(value):
     if not isinstance(value, str):
@@ -370,7 +372,10 @@ def verify_expired_plan_status(worker, public):
     assert prediction['basis'] == 'LAST_ACCEPTED_PLAN' and prediction.get('sourceUpdatedAt') is None
     assert prediction['routeIdentity'] == plan['identity']
     assert _time(prediction['predictedArrivalAt']) == _time(plan['arrivalAt'])
-    assert (public.get('originReplanDiagnostic') or {}).get('failureReason', '').startswith('ETA_SNAPSHOT_EXPIRED:')
+    if (worker.get('failureReason') or '').split(':')[0] == SAVED_ROUTE_TRACKING_CODE:
+        assert public.get('originReplanDiagnostic') is None
+    else:
+        assert (public.get('originReplanDiagnostic') or {}).get('failureReason', '').startswith('ETA_SNAPSHOT_EXPIRED:')
     route = prediction['effectiveTransitRoute']
     assert route['identity'] == plan['identity'] and route['provider'] == plan['provider']
     assert _time(route['departureAt']) == _time(plan['departureAt'])

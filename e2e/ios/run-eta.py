@@ -10,8 +10,9 @@ import urllib.request
 from eta_fixture_scope import DATED_TIMETABLE_API_BASES, INCIDENT_API_BASE, PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE, REAL_ALTERNATE_API_BASE, require_memory_fixture_api
 from eta_timetable_preview import preview_exclusion
 from eta_diagnostic_warning import diagnostic_warning
-from eta_planned_route_evidence import accepted_departure_plan, accepted_ride_labels, first_ride_intervals, transfer_ride_labels, qualifying_planned_observation, verified_timetable_plan
+from eta_planned_route_evidence import _duration, accepted_departure_plan, accepted_ride_labels, first_ride_intervals, transfer_ride_labels, qualifying_planned_observation, verified_timetable_plan
 from eta_observed_service import selected_train_number
+from eta_mixed_postdeparture import qualifying_mixed_observation
 
 def set_real_ride_intervals(expected, route):
     if intervals := first_ride_intervals(route):
@@ -156,6 +157,7 @@ if quota_ui:
 elif args.quota_evidence is not None:
     parser.error('Quota evidence is valid only for the explicit synthetic UI method')
 real_expected = {}
+mixed = False
 if args.real_automatic and not args.real_isolated:
     parser.error('Automatic real delivery requires explicit real isolation')
 if args.api_base == REAL_ALTERNATE_API_BASE and (not args.real_isolated or args.real_automatic):
@@ -183,7 +185,8 @@ if args.real_isolated:
         else:
             plan = snapshot.get('inProgressPlannedRoute') or {}
             prior_route = accepted_departure_plan(original_snapshot) if original_snapshot.get('accepted') else verified_timetable_plan(previous)
-        observation = qualifying_planned_observation(current) or {}
+        mixed = current.get('mixedRouteOrder') in ('bus-rail', 'rail-bus')
+        observation = (qualifying_mixed_observation(current) if mixed else qualifying_planned_observation(current)) or {}
         evaluated = dt.datetime.fromisoformat(current['evaluatedAt'])
         source = dt.datetime.fromisoformat(observation['sourceUpdatedAt']) if observation.get('sourceUpdatedAt') else None
         same_train_mode = args.only == 'testVerifyIsolatedRealProviderPlannedArrival'
@@ -200,7 +203,7 @@ if args.real_isolated:
         predicted = observation.get('predictedArrivalAt') if same_train_mode else preserved_plan.get('arrivalAt')
         read_at = dt.datetime.now(dt.timezone.utc)
         observation_is_valid = (observation.get('routeIdentity') == plan.get('identity') and
-                                source is not None and 0 <= (evaluated - source).total_seconds() <= 120)
+                                source is not None and 0 <= (evaluated - source).total_seconds() <= observation.get('maxAgeSeconds', 120))
         if (any(row.get('classification') != 'REAL_PROVIDER_ISOLATED_WORKER' or
                 row.get('database') != 'H2_MEMORY_ONLY' or row.get('providersMocked') is not False or
                 row.get('clockMode') != 'SYSTEM_WALL_CLOCK' or row.get('memberId') != 296 or
@@ -214,6 +217,7 @@ if args.real_isolated:
                 current['recommendedDepartureAt'] != previous['recommendedDepartureAt'] or
                 dt.datetime.fromisoformat(current['targetArrivalAt']) != dt.datetime.fromisoformat(args.target_arrival) or
                 (same_train_mode and abs((read_at - evaluated).total_seconds()) > 180) or
+                (mixed and same_train_mode and (read_at - source).total_seconds() > observation['maxAgeSeconds']) or
                 not predicted or read_at >= dt.datetime.fromisoformat(predicted)):
             parser.error('A scoped real post-departure plan and frozen departure are required')
         real_expected = {'TEST_RUNNER_E2E_REAL_ISOLATED': '1',
@@ -229,6 +233,23 @@ if args.real_isolated:
         set_real_ride_intervals(real_expected, shown_route)
         if shown_route and all(s.get('rideTiming') for s in shown_route['segments'] if s['kind'] == 'SUBWAY'):
             clock = lambda value, fmt: dt.datetime.fromisoformat(value).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime(fmt)
+            if mixed:
+                bus, = (s for s in shown_route['segments'] if s['kind'] == 'BUS')
+                times = bus['busRidePrediction']
+                if times.get('reportedAlightingAt'):
+                    boarding_label, alighting_label = '승차 계획', '하차 정류장 도착 보고'
+                elif same_train_mode and times.get('alightingObservationSourceUpdatedAt'):
+                    boarding_label, alighting_label = '승차 계획', '같은 버스 하차 예보'
+                else:
+                    boarding_label, alighting_label = '승차 정류장 도착 예측', '하차 정류장 도착 예측'
+                real_expected['TEST_RUNNER_E2E_REAL_PROVISIONAL_BUS'] = (
+                    f"{clock(times['boardingAt'], '%H:%M:%S')} {boarding_label} → "
+                    f"{clock(times['alightingAt'], '%H:%M:%S')} {alighting_label}"
+                )
+                real_expected['TEST_RUNNER_E2E_REAL_MIXED_ORDER'] = current['mixedRouteOrder']
+                transfer = shown_route['segments'][2]
+                if transfer.get('durationSeconds'):
+                    real_expected['TEST_RUNNER_E2E_REAL_MIXED_WALK'] = f"환승 도보 · 약 {_duration(transfer['durationSeconds'])}"
             provider = shown_route['provider']
             if provider not in ('odsay', 'tmap'):
                 parser.error('Expected a saved ODsay or Tmap rail for the planned journey')
@@ -825,6 +846,7 @@ if args.fixture_phase or private_target_save or natural_ui or quota_ui:
 elif args.real_isolated and (
         (args.only == 'testVerifyIsolatedOdsayTimetableSelection'
          and env.get('TEST_RUNNER_E2E_SEOLLEUNG_ACCESS') == '1')
+        or (mixed and args.only in PLANNED_REAL_METHODS)
         or (args.real_automatic and args.only == 'testVerifyIsolatedRealProviderEta')):
     # An accepted observation has a short lifetime. Open the normal detail route
     # without relying on the calendar mode or scrolling to the synthetic event.

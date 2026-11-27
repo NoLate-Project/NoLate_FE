@@ -27,6 +27,7 @@ export type EffectiveTransitRoutePresentation = {
 };
 
 const MAP_SAVED_ROUTE_NOTE = "지도에는 저장한 경로가 표시돼요";
+const MAX_REPORTED_BUS_ARRIVAL_AGE_MS = 20 * 60_000;
 
 export function isPendingTransitTransfer(status: ScheduleDepartureStatus | null | undefined): boolean {
     return status?.plannedJourneyTimingFailureReason === "TRANSFER_FORECAST_PENDING";
@@ -65,19 +66,21 @@ export function buildPlannedJourneyArrivalPresentation(
     const arrival = parseDate(prediction.predictedArrivalAt);
     const presented = parseDate(prediction.presentedAt);
     const busObserved = prediction.basis === "MATCHED_BUS_REALTIME" || prediction.basis === "MATCHED_TRAIN_AND_BUS_REALTIME";
+    const finalBusReported = prediction.basis === "FINAL_BUS_ALIGHTING_REPORTED";
     const freshnessMs = busObserved ? 45_000 : 120_000;
     const maxDisplayAgeMs = prediction.basis === "LAST_ACCEPTED_PLAN" ? 300_000 : freshnessMs;
     if (!arrival || !presented || arrival.getTime() <= nowMs ||
         presented.getTime() > nowMs + 5_000 || nowMs - presented.getTime() > maxDisplayAgeMs) return undefined;
     if (prediction.basis !== "LAST_ACCEPTED_PLAN") {
         const source = parseDate(prediction.sourceUpdatedAt);
-        if (!source || source.getTime() > nowMs + 5_000 || nowMs - source.getTime() > freshnessMs) return undefined;
+        const sourceMaxAgeMs = finalBusReported ? MAX_REPORTED_BUS_ARRIVAL_AGE_MS : freshnessMs;
+        if (!source || source.getTime() > nowMs + 5_000 || nowMs - source.getTime() > sourceMaxAgeMs) return undefined;
     }
     const arrivalClock = formatClock(prediction.predictedArrivalAt, status.timeZone);
     if (!arrivalClock) return undefined;
     const observed = prediction.basis === "MATCHED_TRAIN_REALTIME";
     const selectedService = prediction.basis === "OBSERVED_SERVICE_CONNECTION";
-    const updated = prediction.basis === "MATCHED_RIDE_AND_ONWARD_TIMETABLE" || selectedService || busObserved;
+    const updated = prediction.basis === "MATCHED_RIDE_AND_ONWARD_TIMETABLE" || selectedService || busObserved || finalBusReported;
     const route = prediction.effectiveTransitRoute;
     const hasRoute = Boolean(getDisplayedPlannedTransitRoute(status, nowMs));
     if (route && !hasRoute) return undefined;
@@ -90,7 +93,8 @@ export function buildPlannedJourneyArrivalPresentation(
         itinerary: hasRoute && route ? itineraryLabel(route, true, status.timeZone) : observed
             ? "같은 환승 열차의 신선한 관측을 반영했어요. 다른 구간은 계획 시각이에요"
             : "마지막으로 확인한 경로의 계획 도착시각이에요",
-        waitMeta: (updated && route?.segments.some(segment => segment.transferTiming) ? "환승 도보와 승차 여유를 반영했어요. " :
+        waitMeta: (finalBusReported ? "하차 정류장 도착 보고와 남은 도보를 반영했어요. " :
+            updated && route?.segments.some(segment => segment.transferTiming) ? "환승 도보와 승차 여유를 반영했어요. " :
             prediction.basis === "LAST_ACCEPTED_PLAN" && hasRoute ? "도착시각은 이전 계획을 기준으로 해요. " : "") +
             "실제 탑승·환승 여부는 확인하지 못했어요. 출발 알림 시각은 바뀌지 않아요",
         mapNote: MAP_SAVED_ROUTE_NOTE,
@@ -113,14 +117,15 @@ export function getDisplayedPlannedTransitRoute(
     const arrival = parseDate(route.arrivalAt);
     const baseline = prediction.basis === "LAST_ACCEPTED_PLAN";
     const busObserved = prediction.basis === "MATCHED_BUS_REALTIME";
+    const finalBusReported = prediction.basis === "FINAL_BUS_ALIGHTING_REPORTED";
     const railBusConnection = prediction.basis === "MATCHED_TRAIN_AND_BUS_REALTIME";
     const freshnessMs = busObserved || railBusConnection ? 45_000 : 120_000;
     if (!presented || !departure || !arrival || (!baseline && (!source || source.getTime() > nowMs + 5_000 ||
-        nowMs - source.getTime() > freshnessMs)) || presented.getTime() > nowMs + 5_000 ||
+        nowMs - source.getTime() > (finalBusReported ? MAX_REPORTED_BUS_ARRIVAL_AGE_MS : freshnessMs))) || presented.getTime() > nowMs + 5_000 ||
         nowMs - presented.getTime() > (baseline ? 300_000 : freshnessMs) || departure.getTime() > nowMs + 5_000 ||
         arrival.getTime() <= nowMs || arrival.getTime() !== parseDate(prediction.predictedArrivalAt)?.getTime() ||
         !isPositiveMinute(route.totalMinutes) || !Array.isArray(route.segments) || !route.segments.length) return undefined;
-    const rides = route.segments.filter(segment => segment.kind !== "WALK");
+    const rides = route.segments.filter(segment => segment.kind !== "WALK").sort((a, b) => a.sequence - b.sequence);
     if (rides.some(({ rideTiming }, index) => rideTiming?.reportedAlightingAt != null &&
         (index === rides.length - 1 || (parseDate(rideTiming.reportedAlightingAt)?.getTime() ?? Infinity) > nowMs))) {
         return undefined;
@@ -132,7 +137,7 @@ export function getDisplayedPlannedTransitRoute(
         const busFirst = rides[0]?.kind === "BUS";
         const busLast = rides.at(-1)?.kind === "BUS";
         const lastTrainObserved = mixed && busFirst && prediction.basis === "MATCHED_TRAIN_REALTIME";
-        if (route.provider !== "odsay" || (!baseline && !busObserved && !lastTrainObserved && !railBusConnection) ||
+        if (route.provider !== "odsay" || (!baseline && !busObserved && !lastTrainObserved && !railBusConnection && !finalBusReported) ||
             (baseline && prediction.sourceUpdatedAt != null) || (railBusConnection && (!mixed || !busLast)) ||
             (mixed && (buses.length !== 1 || trains.length > 2 || (!busFirst && !busLast) ||
                 trains.some(segment => segment.kind !== "SUBWAY")))) {
@@ -142,8 +147,11 @@ export function getDisplayedPlannedTransitRoute(
         for (const segment of buses) {
             if (!rideTimingLabel(segment, status.timeZone)) return undefined;
             const bus = segment.busRidePrediction!;
-            if (bus.reportedAlightingAt != null && (!mixed || !busFirst ||
-                (parseDate(bus.reportedAlightingAt)?.getTime() ?? Infinity) > nowMs)) return undefined;
+            if (bus.reportedAlightingAt != null) {
+                const terminalReport = finalBusReported && segment === rides.at(-1);
+                if ((!terminalReport && (!mixed || !busFirst)) ||
+                    (parseDate(bus.reportedAlightingAt)?.getTime() ?? Infinity) > nowMs) return undefined;
+            }
             if (bus.alightingObservationSourceUpdatedAt == null) continue;
             const observed = parseDate(bus.alightingObservationSourceUpdatedAt);
             if (!busObserved || !source || !observed || observed < source || observed.getTime() > nowMs + 5_000) return undefined;
@@ -157,8 +165,20 @@ export function getDisplayedPlannedTransitRoute(
                 if (timing.basis !== "PLANNED_RIDE_ALIGHTING_REALTIME" || !source || !observed ||
                     observed.getTime() !== source.getTime()) return undefined;
             } else if (!railBusConnection && timing.basis !== "TIMETABLE" &&
-                !((baseline || (busLast && busObserved)) && timing.basis === "PLANNED_RIDE_BASELINE" &&
+                !((baseline || (busLast && (busObserved || finalBusReported))) && timing.basis === "PLANNED_RIDE_BASELINE" &&
                     timing.observationSourceUpdatedAt == null)) return undefined;
+        }
+        if (finalBusReported) {
+            const final = rides.at(-1);
+            const reported = parseDate(final?.busRidePrediction?.reportedAlightingAt);
+            if (final?.kind !== "BUS" || !reported || reported.getTime() !== source?.getTime()) return undefined;
+            const remaining = route.segments.filter(segment => segment.sequence > final.sequence);
+            const walking = remaining.map(leg => leg.durationSeconds ?? leg.durationMinutes * 60);
+            if (!remaining.every(leg => leg.kind === "WALK") || walking.some(seconds => !Number.isSafeInteger(seconds) || seconds < 0)) {
+                return undefined;
+            }
+            const walkingSeconds = walking.reduce((sum, seconds) => sum + seconds, 0);
+            return reported.getTime() + walkingSeconds * 1000 === arrival.getTime() ? route : undefined;
         }
         if (railBusConnection) {
             const bus = buses[0];
@@ -184,7 +204,7 @@ export function getDisplayedPlannedTransitRoute(
         }
         return baseline || directForecast || lastTrainObserved ? route : undefined;
     }
-    if (busObserved) return undefined;
+    if (busObserved || finalBusReported) return undefined;
     for (const segment of rides) {
         const timing = segment.rideTiming;
         const reported = timing?.reportedBoarding;
@@ -315,12 +335,12 @@ export function resolveScheduleDetailDepartureTiming({
     }
 
     const fresh = getFreshDepartureTiming(status);
+    const trackingPlan = status?.plannedJourneyArrivalPrediction || status?.plannedJourneyTimingFailureReason;
     const protectedDeparture = !fresh && status?.stale &&
-        (status.failureReason || status.originReplanDiagnostic)
+        (status.failureReason || status.originReplanDiagnostic || trackingPlan)
         ? parseDate(status.recommendedDepartureAt) : undefined;
     // The provisional arrival refers to the already accepted plan and its original departure.
-    const inProgressDeparture = status?.originReplanDiagnostic && status.plannedJourneyArrivalPrediction
-        ? protectedDeparture : undefined;
+    const inProgressDeparture = trackingPlan ? protectedDeparture : undefined;
     const savedDeparture = (status?.stale ? parseDate(status.savedRouteEstimatedDepartureAt) : undefined)
         ?? savedRecommendedDepartureAt;
     // The backend validates schedule/route ownership and returns the protected job time.

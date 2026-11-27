@@ -138,6 +138,21 @@ class RealIsolationVerifierTest(unittest.TestCase):
         missing_diagnostic['originReplanDiagnostic'] = None
         with self.assertRaises(RuntimeError):
             runner.verify_postdeparture_status_split(worker, missing_diagnostic)
+        tracking_worker = dict(worker, source='SELECTED_ROUTE', providerFetchedAt=None,
+                               failureReason='TRANSIT_TRACKING_SAVED_ROUTE: tracking')
+        runner.verify_postdeparture_status_split(tracking_worker, missing_diagnostic)
+        with self.assertRaises(RuntimeError):
+            runner.verify_postdeparture_status_split(tracking_worker, public)
+        with self.assertRaises(RuntimeError):
+            runner.verify_postdeparture_status_split(dict(tracking_worker, providerFetchedAt='2026-11-27T12:00:00Z'), missing_diagnostic)
+        route = {'provider': 'odsay_route', 'count': 1}
+        before = {'journeyAdapterCalls': [route]}
+        after = dict(tracking_worker, journeyAdapterCalls=[route, {'provider': 'seoul_subway', 'count': 4}])
+        self.assertEqual(runner.verify_no_postdeparture_origin_search(before, after), 0)
+        with self.assertRaises(RuntimeError):
+            runner.verify_no_postdeparture_origin_search(before, dict(after, journeyAdapterCalls=[dict(route, count=2)]))
+        with self.assertRaises(RuntimeError):
+            runner.verify_no_postdeparture_origin_search({'journeyAdapterCalls': []}, after)
 
     def test_planned_timing_warning_requires_this_worker_read_without_a_cached_arrival(self):
         spec = importlib.util.spec_from_file_location('warning_runner', Path(__file__).with_name('run-eta-real-isolated.py'))

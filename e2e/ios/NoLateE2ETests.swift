@@ -5724,8 +5724,12 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         try openRealIsolatedDetail(allowElapsedAutomaticAlarmRoute: true)
         let departure = try XCTUnwrap(environment["E2E_REAL_DEPARTURE_CLOCK"])
         let arrival = try XCTUnwrap(environment["E2E_REAL_PROVISIONAL_CLOCK"])
+        let plannedBus = environment["E2E_REAL_PROVISIONAL_BUS"]
+        if plannedBus != nil { try collapseRealRouteSheetIfExpanded() }
         let summary = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "계획 경로 기준 · 잠정 도착")).firstMatch
-        if summary.waitForExistence(timeout: 20) && summary.isHittable {
+        let summaryVisible = summary.waitForExistence(timeout: 20) && summary.isHittable
+        if plannedBus != nil { try require(summaryVisible, "Verify the preserved departure on the mixed-route summary") }
+        if summaryVisible {
             try require(summary.label.contains("기존 출발 안내 " + departure) &&
                         summary.label.contains(arrival + " 도착 예상") &&
                         !summary.label.contains("현재 보정 여정"),
@@ -5739,6 +5743,15 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     guidance.label.contains("실제 탑승·환승 여부는 확인하지 못했어요") &&
                     guidance.label.contains("출발 알림 시각은 바뀌지 않아요"),
                     "The installed app must label the observed arrival as provisional")
+        let steps = guidance.label.components(separatedBy: "  →  ")
+        if let plannedBus {
+            try require(steps.contains(where: { $0.contains(plannedBus) }),
+                        "The same bus stop clocks and forecast labels must be visible in one route step")
+            if let walkingLabel = environment["E2E_REAL_MIXED_WALK"] {
+                try require(steps.contains(where: { $0.contains(walkingLabel) }), "Show transfer walking separately")
+            }
+            try verifyRideIntervals(in: guidance.label)
+        }
         if let encoded = environment["E2E_REAL_PROVISIONAL_RIDES"], let data = encoded.data(using: .utf8) {
             let rides = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [[String: String]])
             try require(!rides.isEmpty, "Refreshed route must contain independently expected rides")
@@ -5750,10 +5763,20 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                 let board = try XCTUnwrap(ride["board"])
                 let alight = try XCTUnwrap(ride["alight"])
                 let firstWait = index == 0 ? environment["E2E_REAL_FIRST_WAIT"] : nil
-                if index == 0 { try verifyRideIntervals(in: guidance.label) }
+                if index == 0 && plannedBus == nil { try verifyRideIntervals(in: guidance.label) }
                 try require(guidance.label.contains(train + "열차") &&
                             guidance.label.contains(boardSeconds) && guidance.label.contains(alightSeconds),
                             "Real route card must show each Worker's updated train and clocks")
+                if let plannedBus {
+                    let trainPosition = try XCTUnwrap(steps.firstIndex { step in
+                        step.contains(train + "열차") && step.contains(boardSeconds) && step.contains(alightSeconds)
+                    })
+                    let busPosition = try XCTUnwrap(steps.firstIndex { $0.contains(plannedBus) })
+                    let busFirst = environment["E2E_REAL_MIXED_ORDER"] == "bus-rail"
+                    try require(busFirst ? busPosition < trainPosition : trainPosition < busPosition,
+                                "Preserve the planned train and bus order")
+                    continue
+                }
                 let row = app.descendants(matching: .any)[rowIdentifier].firstMatch
                 try revealRouteElement(row)
                 if let firstWait {

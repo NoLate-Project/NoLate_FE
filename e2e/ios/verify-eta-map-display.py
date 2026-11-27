@@ -6,9 +6,18 @@ models are a diagnostic here, not a reason to silently skip the visible ETA gap.
 """
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import math
+import re
 from pathlib import Path
+
+comparison_spec = importlib.util.spec_from_file_location('eta_comparison', Path(__file__).with_name('verify-eta-comparison.py'))
+comparison = importlib.util.module_from_spec(comparison_spec)
+comparison_spec.loader.exec_module(comparison)
+SEOUL = dt.timezone(dt.timedelta(hours=9))
+DISPLAY_DURATION = r'(?:\d+시간(?:\s*\d+분)?|\d+분)'
+ROUTE_COMPONENT = re.compile(rf'(도보|[^\s]+지하철|[^\s]+버스)\s+({DISPLAY_DURATION})(?!\S)')
 
 
 def instant(value):
@@ -42,8 +51,11 @@ def compare(worker, public, map_display):
         raise ValueError('A current accepted real-provider Worker result is required')
     route = worker['effectiveSnapshot']['effectiveTransitRoute']
     if (public.get('source') != 'LIVE_PROVIDER' or public.get('stale') is not False
-            or public.get('failureReason') is not None or public.get('confidence') != 'HIGH'
+            or public.get('failureReason') is not None or public.get('confidence') not in ('MEDIUM', 'HIGH')
             or public.get('scheduleId') != worker['scheduleId']
+            or instant(public['evaluatedAt']) != instant(worker['evaluatedAt'])
+            or public.get('transitTimingBasis') != worker['effectiveSnapshot'].get('transitTimingBasis')
+            or instant(worker['predictedArrivalAt']) != instant(route['arrivalAt'])
             or public.get('effectiveTransitRoute') != route
             or public.get('predictedArrivalAt') != route['arrivalAt']):
         raise ValueError('The app API must still expose the same accepted prediction')
@@ -76,6 +88,8 @@ def compare_timetable_preview(worker, public, map_display):
     for segment in route['segments']:
         if segment['kind'] == 'WALK':
             continue
+        if segment['kind'] != 'SUBWAY':
+            raise ValueError('A timetable-only preview must contain subway rides')
         timing = segment['rideTiming']
         table = timing['timetable']
         if (timing['basis'] != 'TIMETABLE' or table['provider'] != 'seoul-timetable'
@@ -87,6 +101,32 @@ def compare_timetable_preview(worker, public, map_display):
                   result='TIMETABLE_DISPLAY_COMPARED' if result['result'] == 'DISPLAY_COMPARED' else result['result'],
                   acceptedRealtimeEtaVerified=False, futureTimetableDisplayOnly=True)
     return result
+
+
+def visible_mixed_components(map_display):
+    """Read the selected card's component durations. Unpublished gaps stay unknown."""
+    card = map_display.get('routeEvidenceLabel') or ''
+    def minutes(value):
+        parts = dict((unit, int(number)) for number, unit in re.findall(r'(\d+)(시간|분)', value))
+        return 60 * parts.get('시간', 0) + parts.get('분', 0)
+
+    components = ROUTE_COMPONENT.findall(card)
+    ride_modes = ['SUBWAY' if label.endswith('지하철') else 'BUS' for label, _ in components if label != '도보']
+    if ride_modes != [ride['kind'] for ride in map_display['rides']]:
+        return None
+    walks = [None] * (len(ride_modes) + 1)
+    rides = []
+    for label, duration in components:
+        if label == '도보':
+            walks[len(rides)] = (walks[len(rides)] or 0) + minutes(duration)
+        else:
+            rides.append(minutes(duration))
+    header = re.match(rf'(?:최적\s+)?({DISPLAY_DURATION})(?!\S)', card)
+    total = minutes(header[1]) if header else None
+    return {'visibleTotalMinutes': total, 'visibleRideMinutes': rides,
+            'visibleWalkingMinutes': {'access': walks[0], 'transfers': walks[1:-1], 'egress': walks[-1]},
+            'unallocatedDisplayedMinutes': total - sum(rides) - sum(walks)
+            if total is not None and all(walk is not None for walk in walks) else None}
 
 
 def compare_inputs(worker, route, map_display):
@@ -102,10 +142,37 @@ def compare_inputs(worker, route, map_display):
     if not map_observed < map_query <= map_departure < map_arrival:
         raise ValueError('The map must have been captured before its requested future departure')
     rides = [s for s in route['segments'] if s['kind'] != 'WALK']
-    topology = [(s['kind'], s['rideTiming']['timetable']['line'], s['fromName'], s['toName']) for s in rides]
-    map_topology = [(s['kind'], s['line'], s['fromName'], s['toName']) for s in map_display['rides']]
+    bus_legs = [leg for leg in rides if leg['kind'] == 'BUS']
+    services = comparison.worker_bus_services(worker['effectiveSnapshot'], route, [leg['sequence'] for leg in bus_legs]) if bus_legs else {}
+    app_buses = []
+    app_trains = []
+    topology = []
+    for leg in rides:
+        kind = leg['kind']
+        if kind == 'SUBWAY':
+            timing = leg['rideTiming']
+            line = timing['timetable']['line']
+            app_trains.append({'number': timing['timetable']['trainNumber'], 'boardingAt': timing['predictedBoardingAt'],
+                               'arrivalAt': timing['predictedArrivalAt']})
+        elif kind == 'BUS':
+            line = leg['lineName']
+            service = services[leg['sequence']]
+            bus = comparison.worker_bus_ride(leg, service)
+            comparison.validate_bus_topology(bus)
+            app_buses.append({'line': line, 'routeId': service['routeId'], 'fromName': leg['fromName'], 'toName': leg['toName'],
+                              'fromArs': service['boarding']['arsId'], 'toArs': service['alighting']['arsId'],
+                              'boardingStopArrivalForecastAt': bus['boardingAt'], 'alightingStopArrivalForecastAt': bus['arrivalAt']})
+        else:
+            raise ValueError('Unsupported Worker ride type in map display comparison')
+        topology.append((kind, line, leg['fromName'], leg['toName']))
+    map_rides = map_display['rides']
+    map_topology = [(s['kind'], s['line'], s['fromName'], s['toName']) for s in map_rides]
+    map_buses = [ride for ride in map_rides if ride['kind'] == 'BUS']
+    contains_bus = bool(bus_legs or map_buses)
     cursor = map_departure
-    for ride in map_display['rides']:
+    for ride in map_rides:
+        if contains_bus and ride.get('displayedBoardingAt') is None:
+            continue  # Public route summaries do not always publish every stop clock.
         boarding = instant(ride['displayedBoardingAt'])
         if boarding < cursor or boarding >= map_arrival or boarding.second or boarding.microsecond:
             raise ValueError('Ordered visible minute boarding clocks required')
@@ -113,6 +180,9 @@ def compare_inputs(worker, route, map_display):
     exclusions = []
     if app_departure != map_query:
         exclusions.append('COMPUTED_DEPARTURE_MISMATCH')
+    original_departure = worker.get('comparisonRequestedDepartureAt')
+    if original_departure and instant(original_departure) != map_query:
+        exclusions.append('ORIGINAL_COMPARISON_DEPARTURE_MISMATCH')
     if app_observed >= app_departure:
         exclusions.append('APP_NOT_CAPTURED_BEFORE_FUTURE_DEPARTURE')
     if abs((app_observed - map_observed).total_seconds()) > 300:
@@ -121,9 +191,13 @@ def compare_inputs(worker, route, map_display):
         exclusions.append('REQUEST_COORDINATES_MISMATCH')
     if topology != map_topology:
         exclusions.append('VISIBLE_ROUTE_MISMATCH')
+    ars_matches = [shown.get(field) == saved[field] if shown.get(field) else None
+                   for saved, shown in zip(app_buses, map_buses) for field in ('fromArs', 'toArs')]
+    if topology == map_topology and False in ars_matches:
+        exclusions.append('VISIBLE_BUS_STOP_ARS_MISMATCH')
     delta = (instant(route['arrivalAt']) - map_arrival).total_seconds()
     comparable = not exclusions
-    return {
+    result = {
         'classification': 'DISPLAYED_DOOR_TO_DOOR_PREDICTION_DIAGNOSTIC',
         'result': 'DISPLAY_COMPARED' if comparable else 'INPUTS_NOT_MATCHED',
         'exclusionReasons': exclusions,
@@ -133,10 +207,11 @@ def compare_inputs(worker, route, map_display):
         'appArrivalAt': route['arrivalAt'], 'naverDisplayedArrivalAt': map_display['displayedArrivalAt'],
         'nominalArrivalDeltaSeconds': delta,
         'nominalDisplayGapWithinTwoMinutes': abs(delta) <= 120 if comparable else None,
-        'appTrains': [{'number': s['rideTiming']['timetable']['trainNumber'],
-                       'boardingAt': s['rideTiming']['predictedBoardingAt'],
-                       'arrivalAt': s['rideTiming']['predictedArrivalAt']} for s in rides],
-        'naverVisibleBoardingClocks': [s['displayedBoardingAt'] for s in map_display['rides']],
+        'appTrains': app_trains,
+        'appBusRides': app_buses,
+        'visibleBusStopArsVerified': bool(app_buses and not exclusions and all(ars_matches)),
+        'busStopOccurrencesVerified': False, 'sameBusVehicleIdentityVerified': False,
+        'naverVisibleBoardingClocks': [s.get('displayedBoardingAt') for s in map_rides],
         'appWalkingSeconds': [s['durationSeconds'] if s.get('durationSeconds') is not None else s['durationMinutes'] * 60
                               for s in route['segments'] if s['kind'] == 'WALK'],
         # This diagnostic compares user-visible products; it cannot prove these unknowns.
@@ -145,6 +220,55 @@ def compare_inputs(worker, route, map_display):
         'mapAccuracyWithinTwoMinutesVerified': False, 'actualTripAccuracyVerified': False,
         'snapshotEvidence': map_display['snapshotEvidence'],
     }
+    if contains_bus:
+        result['naverVisibleComponents'] = visible_mixed_components(map_display)
+    if bus_legs:
+        app = comparison.worker_prediction(worker, 'effectiveSnapshot.effectiveTransitRoute')
+        result['appTimingComponents'] = comparison.timeline_budget(app)
+    return result
+
+
+def matches_full_visible_label(snapshot, label):
+    label = ' '.join(label.split())
+    return any(label == ' '.join(line.split()) or f'"{label}"' in ' '.join(line.split())
+               for line in snapshot.splitlines())
+
+
+def verify_bus_route_snapshot(map_display, snapshot, arrival):
+    chosen = map_display.get('routeEvidenceLabel') or ''
+    if not chosen or not matches_full_visible_label(snapshot, chosen):
+        raise ValueError('Capture the exact public mixed-route summary label')
+    chosen = ' '.join(chosen.split())
+    period = '오전' if arrival.hour < 12 else '오후'
+    clocks = (f'도착 {arrival:%H:%M}', f'{period} {arrival.hour % 12 or 12}:{arrival.minute:02} 도착')
+    if not any(re.search(r'(?<!\d)' + re.escape(clock) + r'(?!\S)', chosen) for clock in clocks):
+        raise ValueError('The mixed-route card must show the same arrival clock')
+    cursor = 0
+    for ride in map_display['rides']:
+        if ride['kind'] == 'BUS':
+            bus = ' '.join((ride['fromName'], ride['line'], '하차', ride['toName']))
+            # Collapsed route cards may list alternatives, e.g. "5516 6515 하차".
+            # They do not identify one bus for this arrival clock.
+            pattern = r'(?<!\S)' + re.escape(bus) + r'(?!\S)'
+            for endpoint in ('from', 'to'):
+                ars = ride.get(endpoint + 'Ars')
+                if ars is None:
+                    continue
+                label = ride.get(endpoint + 'ArsLabel') or ''
+                if (not re.fullmatch(r'[0-9]{5}', ars) or ars == '00000' or ride[endpoint + 'Name'] not in label or
+                        not re.search(r'(?<!\d)' + re.escape(ars) + r'(?!\d)', label) or
+                        not matches_full_visible_label(snapshot, label)):
+                    raise ValueError('Bus ARS requires its exact visible stop label')
+        elif ride['kind'] == 'SUBWAY' and (line := re.fullmatch(r'LINE_([1-9])', ride['line'])):
+            # The public collapsed card includes the order of boarding stops. An
+            # intermediate rail exit or station interior still requires separate evidence.
+            pattern = r'(?<!\S)지하철 ' + line[1] + r'호선 ' + re.escape(ride['fromName']) + r'(?:역)?(?!\S)'
+        else:
+            raise ValueError('This mixed-route snapshot format requires a numbered subway line')
+        location = re.search(pattern, chosen[cursor:])
+        if location is None:
+            raise ValueError('The selected card must show each boarding in order and a single bus with both stops')
+        cursor += location.end()
 
 
 def verify_snapshot(map_display, snapshot):
@@ -153,7 +277,7 @@ def verify_snapshot(map_display, snapshot):
     labels = map_display['visibleEvidenceLabels']
     if not labels or any(not label.strip() or ' '.join(label.split()) not in normalized for label in labels):
         raise ValueError('Map labels must exist in the saved public UI snapshot')
-    zone = dt.timezone(dt.timedelta(hours=9))
+    zone = SEOUL
     query = instant(map_display['requestedDepartureAt']).astimezone(zone)
     observed = instant(map_display['observedAt']).astimezone(zone)
     if query.date() != observed.date():
@@ -161,11 +285,98 @@ def verify_snapshot(map_display, snapshot):
     period = '오전' if query.hour < 12 else '오후'
     query_label = f'오늘 {period} {query.hour % 12 or 12:02}:{query.minute:02} 출발'
     arrival = instant(map_display['displayedArrivalAt']).astimezone(zone)
-    required = [query_label, f'도착 {arrival:%H:%M} ',
-                *[instant(r['displayedBoardingAt']).astimezone(zone).strftime('%H:%M') + r['visibleTerminal']
-                  for r in map_display['rides']]]
+    contains_bus = any(ride['kind'] == 'BUS' for ride in map_display['rides'])
+    if contains_bus:
+        verify_bus_route_snapshot(map_display, snapshot, arrival)
+    required = [query_label] if contains_bus else [query_label, f'도착 {arrival:%H:%M} ']
+    for ride in map_display['rides']:
+        if contains_bus and not ride.get('displayedBoardingAt'):
+            continue
+        clock = instant(ride['displayedBoardingAt']).astimezone(zone).strftime('%H:%M')
+        if ride['kind'] == 'BUS':
+            label = ride.get('visibleBoardingLabel') or ''
+            if not all(piece in label for piece in (clock, ride['line'], ride['fromName'])) or not matches_full_visible_label(snapshot, label):
+                raise ValueError('Bus boarding clocks require a visible label for this line and stop')
+        else:
+            required.append(clock + ride['visibleTerminal'])
     if any(not any(part in label for label in labels) for part in required):
         raise ValueError('Structured clocks must match the exact labels in the visible evidence')
+
+
+def public_mixed_route_request(map_display, snapshot, *, order, departure, now):
+    """Prepare a selection hint only for a fresh, explicitly expanded public route."""
+    if (map_display.get('provider') != 'NAVER_MAP_PUBLIC_UI' or map_display.get('mocked') is not False or
+            map_display.get('queryMode') != 'DEPART_AT' or map_display.get('arrivalClockRounding') != 'UNKNOWN'):
+        raise ValueError('Use a publicly displayed Naver route with an explicit departure')
+    observed = instant(map_display['observedAt'])
+    if (instant(map_display['requestedDepartureAt']) != departure or
+            not observed <= now < departure or (now - observed).total_seconds() > 300):
+        raise ValueError('The same future departure and a public capture within five minutes are required')
+    modes = {'bus-rail': ['BUS', 'SUBWAY'], 'rail-bus': ['SUBWAY', 'BUS']}
+    if [ride['kind'] for ride in map_display['rides']] != modes.get(order):
+        raise ValueError('The visible map route must have the requested bus and subway order')
+    verify_snapshot(map_display, snapshot)
+    rows = []
+    for line in snapshot.splitlines():
+        if button := re.match(r'^\s*-\s+\'?button "([^"]+)"(.*)$', line):
+            rows.append(button.groups())
+    cards = [index for index, (label, _) in enumerate(rows) if label.endswith(' 상세보기')]
+    expanded = [rows[index][0] for index in cards if '[expanded]' in rows[index][1]]
+    if expanded != [map_display['routeEvidenceLabel']]:
+        raise ValueError('Open only the mapped route card to confirm the rail alighting station')
+
+    rail = next(ride for ride in map_display['rides'] if ride['kind'] == 'SUBWAY')
+    line = re.fullmatch(r'LINE_([1-9])', rail['line'])
+    if not line or any(not rail.get(key) or rail[key] == 'UNKNOWN' for key in ('fromName', 'toName')):
+        raise ValueError('The subway line and both stations must be visible')
+    view = [label for label, _ in rows[cards[-1] + 1:]]
+    boarding = rf'{line[1]}호선\s*{re.escape(rail["fromName"])}(?:역)?\s+승차(?:\s|$)'
+    positions = [index for index, label in enumerate(view) if re.search(boarding, label)]
+    if len(positions) != 1:
+        raise ValueError('The selected map detail must show the rail boarding station')
+    alighting = next((label for label in view[positions[0] + 1:] if re.search(r'\s하차(?:\s|$)', label)), '')
+    if not re.search(r'(?<!\S)' + re.escape(rail['toName']) + r'(?:역)?\s+하차(?:\s|$)', alighting):
+        raise ValueError('The selected map detail must show the actual rail alighting label')
+
+    origin, destination = coordinates(map_display['requestedCoordinates'])
+    bus = next(ride for ride in map_display['rides'] if ride['kind'] == 'BUS')
+    if any(not bus.get(key) or bus[key] == 'UNKNOWN' for key in ('line', 'fromName', 'toName')):
+        raise ValueError('The bus line and both stops must be visible')
+    return {'departureAt': departure.astimezone(dt.timezone.utc).isoformat(), 'observedAt': observed.isoformat(),
+            'coordinates': {'origin': {'lat': float(origin[0]), 'lng': float(origin[1])},
+                            'destination': {'lat': float(destination[0]), 'lng': float(destination[1])}},
+            'route': {'railLine': rail['line'], 'railFrom': rail['fromName'], 'railTo': rail['toName'],
+                      'busNumber': bus['line'], 'busFrom': bus['fromName'], 'busTo': bus['toName'],
+                      'busFromArs': bus.get('fromArs'), 'busToArs': bus.get('toArs')}}
+
+
+def matches_public_mixed_route(worker, seed, request, *, order):
+    """Check that provider requery kept the route and the service IDs used at selection."""
+    snapshot = worker['effectiveSnapshot']
+    route = snapshot['effectiveTransitRoute']
+    observed = instant(request['observedAt'])
+    departure = instant(request['departureAt'])
+    evaluated = instant(worker['evaluatedAt'])
+    if (instant(route['departureAt']) != departure or instant(worker['comparisonRequestedDepartureAt']) != departure or
+            not observed <= evaluated < departure or (evaluated - observed).total_seconds() > 300 or
+            coordinates(worker['requestedCoordinates']) != coordinates(request['coordinates'])):
+        return False
+    rides = [leg for leg in route['segments'] if leg['kind'] != 'WALK']
+    if [ride['kind'] for ride in rides] != {'bus-rail': ['BUS', 'SUBWAY'], 'rail-bus': ['SUBWAY', 'BUS']}[order]:
+        return False
+    rail, bus = sorted(rides, key=lambda leg: leg['kind'] == 'BUS')
+    requested = request['route']
+    if (rail['rideTiming']['timetable']['line'], rail['fromName'], rail['toName'], bus['lineName'], bus['fromName'], bus['toName']) != (
+            requested['railLine'], requested['railFrom'], requested['railTo'], requested['busNumber'],
+            requested['busFrom'], requested['busTo']):
+        return False
+    original, = (leg for leg in seed['legs'] if leg['mode'] == 'BUS')
+    service = comparison.worker_bus_services(snapshot, route, [bus['sequence']])[bus['sequence']]
+    return (service['routeId'] == original['line']['localRouteId'] and
+            service['boarding']['stationId'] == original['from']['localStopId'] and
+            service['alighting']['stationId'] == original['to']['localStopId'] and
+            all(not requested[ars] or service[side]['arsId'] == requested[ars]
+                for side, ars in (('boarding', 'busFromArs'), ('alighting', 'busToArs'))))
 
 
 if __name__ == '__main__':

@@ -23,8 +23,9 @@ from eta_pinned_app import (
 )
 from eta_fixture_snapshot import wait_for_phase_snapshot
 from eta_train_position_slots import JourneyPositionSlots, MAX_READS
+from eta_mixed_postdeparture import mixed_observation_window, mixed_postdeparture_audit, qualifying_mixed_observation
 from eta_planned_route_evidence import (accepted_departure_plan, fresh_final_alighting, next_planned_observation_window, qualifying_planned_observation,
-                                        verified_timetable_plan, verify_expired_plan_status)
+                                        SAVED_ROUTE_TRACKING_CODE, verified_timetable_plan, verify_expired_plan_status)
 from eta_fixture_scope import DATED_TIMETABLE_API_BASES, DATED_TIMETABLE_PORTS, PRIVATE_API_BASE, REAL_ALTERNATE_API_BASE
 
 WORKSPACE = Path(__file__).resolve().parents[3]
@@ -153,16 +154,30 @@ def postdeparture_audit(evaluations, same_train_provisional, *, require_final_al
 
 
 def verify_postdeparture_status_split(worker, public):
-    """A new origin search must not masquerade as the saved journey's ETA/failure."""
-    diagnostic = public.get('originReplanDiagnostic') or {}
-    for key, value in [('travelMinutes', worker['travelMinutes']), ('source', worker['source']),
-                       ('stale', worker['stale']), ('failureReason', worker['failureReason'])]:
-        if diagnostic.get(key) != value:
-            raise RuntimeError('origin_replan_diagnostic_does_not_match_worker')
+    """Keep saved-route tracking separate from any actual origin replan."""
+    diagnostic = public.get('originReplanDiagnostic')
+    if (worker.get('failureReason') or '').split(':')[0] == SAVED_ROUTE_TRACKING_CODE:
+        if diagnostic is not None or worker.get('providerFetchedAt') is not None or not worker.get('stale') or \
+                worker.get('source') not in ('SELECTED_ROUTE', 'SAVED_FALLBACK'):
+            raise RuntimeError('saved_route_tracking_reported_origin_replan')
+    elif any((diagnostic or {}).get(key) != worker[key] for key in ('travelMinutes', 'source', 'stale', 'failureReason')):
+        raise RuntimeError('origin_replan_diagnostic_does_not_match_worker')
     if any(public.get(key) is not None for key in
            ('travelMinutes', 'source', 'liveFetchedAt', 'failureReason', 'predictedArrivalAt',
             'effectiveTransitRoute')) or public.get('stale') is not True:
         raise RuntimeError('origin_replan_leaked_into_saved_journey_eta')
+
+
+def verify_no_postdeparture_origin_search(previous, current):
+    """Compare cumulative route-provider invocations on the same isolated process."""
+    def route_calls(evaluation):
+        return sum(row['count'] for row in evaluation['journeyAdapterCalls']
+                   if row['provider'] in ('odsay_route', 'tmap_route'))
+
+    before, after = route_calls(previous), route_calls(current)
+    if before == 0 or after != before or (current.get('failureReason') or '').split(':')[0] != SAVED_ROUTE_TRACKING_CODE:
+        raise RuntimeError('postdeparture_origin_search_skip_not_verified')
+    return after - before
 
 
 def verify_planned_timing_failure(worker, public):
@@ -204,6 +219,8 @@ def main():
                         help='Defaults to a fresh ODsay selected route; choose Tmap explicitly for legacy route verification')
     parser.add_argument('--mixed-route-order', choices=('bus-rail', 'rail-bus'),
                         help='Select a matching ODsay journey with one Seoul bus and one subway ride')
+    parser.add_argument('--map-route-evidence', type=Path, help='Select the mixed route described by this fresh Naver public observation')
+    parser.add_argument('--map-route-snapshot', type=Path, help='Saved public UI snapshot of the expanded mixed route')
     parser.add_argument('--target-lead-minutes', type=int, choices=(70, 75, 90), default=75,
                         help='Future test appointment only; real clock and provider acceptance remain unchanged')
     parser.add_argument('--planned-departure-at',
@@ -254,8 +271,9 @@ def main():
     args.verify_planned_postdeparture |= args.verify_timetable_planned_postdeparture
     if args.mixed_route_order and (args.journey_provider != 'odsay' or args.api_port != 5523
             or args.verify_short_first_ride or args.verify_odsay_timetable_selection
-            or args.verify_planned_postdeparture or args.verify_observation_expiry):
-        parser.error('Mixed routes use the isolated ODsay departure check on port 5523')
+            or args.verify_timetable_planned_postdeparture or args.verify_planned_cache_expiry
+            or args.verify_observation_expiry):
+        parser.error('Mixed routes use the isolated ODsay live-planned check on port 5523')
     if args.verify_observed_service_connection and not observed_service_scope_valid(
             timetable=args.verify_timetable_planned_postdeparture,
             positions=args.observe_train_positions, max_evaluations=args.max_evaluations):
@@ -300,6 +318,20 @@ def main():
         target_arrival_at = comparison_target(args.target_arrival_at, departure, dt.datetime.now(dt.timezone.utc))
     except ValueError as error:
         parser.error(str(error))
+    public_mixed_request = None
+    if args.map_route_evidence or args.map_route_snapshot:
+        if not (args.map_route_evidence and args.map_route_snapshot and args.mixed_route_order and departure and target_arrival_at):
+            parser.error('Use both public route files, the mixed order, the departure and the target arrival together')
+        display_spec = importlib.util.spec_from_file_location('map_display', Path(__file__).with_name('verify-eta-map-display.py'))
+        display_comparison = importlib.util.module_from_spec(display_spec)
+        display_spec.loader.exec_module(display_comparison)
+        try:
+            mapped_route = json.loads(args.map_route_evidence.read_text())
+            public_mixed_request = display_comparison.public_mixed_route_request(
+                mapped_route, args.map_route_snapshot.read_text(), order=args.mixed_route_order,
+                departure=departure, now=dt.datetime.now(dt.timezone.utc))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            parser.error(f'Invalid public mixed-route evidence ({type(error).__name__})')
     timetable_target = None
     if args.timetable_target_arrival:
         try:
@@ -414,6 +446,9 @@ def main():
     report['journeyProvider'] = args.journey_provider
     if args.mixed_route_order:
         report['mixedRouteOrder'] = args.mixed_route_order
+    if public_mixed_request:
+        (root / 'public-mixed-route-request.json').write_text(json.dumps(public_mixed_request, ensure_ascii=False, indent=2))
+        report['publicMixedRouteSeedMatched'] = False
     report['publicStationFixture'] = args.public_nowon_sillim
     report['apiBase'] = base
     report['targetLeadMinutes'] = args.target_lead_minutes
@@ -595,6 +630,10 @@ def main():
         assert prepared['journeyProvider'] == args.journey_provider
         if args.mixed_route_order:
             assert prepared['mixedRouteOrder'] == args.mixed_route_order
+        if public_mixed_request:
+            assert prepared['publicMixedRouteSeedMatched'] is True
+            assert prepared['requestedCoordinates'] == public_mixed_request['coordinates']
+            report['publicMixedRouteSeedMatched'] = True
         if args.public_nowon_sillim:
             assert prepared['publicStationFixture'] is True and prepared['copiedFromScheduleId'] is None
             assert prepared['requestedCoordinates'] == {
@@ -917,6 +956,10 @@ def main():
             emit(state='waiting_real_comparison_clock', seconds=round(seconds), notBefore=args.evaluation_not_before)
             wait(lambda: dt.datetime.now(dt.timezone.utc) >= evaluation_not_before, server, seconds + 10)
         for index in range(1, max_evaluations + 1):
+            if public_mixed_request and index == 1 and (dt.datetime.now(dt.timezone.utc) -
+                    dt.datetime.fromisoformat(public_mixed_request['observedAt'])).total_seconds() > 300:
+                report['publicMixedRouteWorkerMatch'] = 'MAP_CAPTURE_EXPIRED_BEFORE_WORKER'
+                break
             server.stdin.write('evaluate\n')
             server.stdin.flush()
             path = root / f'evaluation-{index}.json'
@@ -937,15 +980,26 @@ def main():
                       'subwayArrivalCallsAfterWorker': value['subwayArrivalCallsAfterWorker']}
             report['evaluations'].append(record)
             emit(state='real_evaluation', **record)
-            if provider_error_requires_stop(value) or (position_slots is not None and value.get('providerFailures')):
+            if provider_error_requires_stop(value) or ((position_slots is not None or args.mixed_route_order) and value.get('providerFailures')):
                 report['providerErrorRetriesStopped'] = True
                 raise RuntimeError('provider_error_stopped_real_run')
+            if public_mixed_request and index == 1:
+                record['matchesRequestedMapRoute'] = False
+                if not is_accepted:
+                    report['publicMixedRouteWorkerMatch'] = 'NO_ACCEPTED_WORKER_ROUTE'
+                    break
+                if not display_comparison.matches_public_mixed_route(value, seed, public_mixed_request, order=args.mixed_route_order):
+                    report['publicMixedRouteWorkerMatch'] = 'WORKER_ROUTE_OR_REQUEST_CHANGED'
+                    break
+                report['publicMixedRouteWorkerMatch'] = 'MATCHED'
+                record['matchesRequestedMapRoute'] = True
             if position_slots is not None:
                 position_slots.apply_evaluation(index, value, dt.datetime.now(dt.timezone.utc))
                 observe_due_position()
             if args.verify_planned_postdeparture and index > 1:
+                record['originSearchCalls'] = verify_no_postdeparture_origin_search(previous, value)
                 plan = (value.get('effectiveSnapshot') or {}).get('inProgressPlannedRoute')
-                observation = qualifying_planned_observation(value)
+                observation = qualifying_mixed_observation(value) if args.mixed_route_order else qualifying_planned_observation(value)
                 if plan != initial_plan:
                     raise RuntimeError('original_planned_route_not_preserved')
                 if value['recommendedDepartureAt'] != report['evaluations'][0]['recommendedDepartureAt']:
@@ -953,7 +1007,10 @@ def main():
                 if observation and observation.get('routeIdentity') == plan.get('identity'):
                     source_at = dt.datetime.fromisoformat(observation['sourceUpdatedAt'])
                     evaluated_at = dt.datetime.fromisoformat(value['evaluatedAt'])
-                    if (0 <= (evaluated_at - source_at).total_seconds() <= 120 and
+                    max_age = observation.get('maxAgeSeconds', 120)
+                    if args.mixed_route_order and (dt.datetime.now(dt.timezone.utc) - source_at).total_seconds() > max_age:
+                        record['uiResult'] = 'MIXED_FORECAST_EXPIRED_BEFORE_UI'
+                    elif (0 <= (evaluated_at - source_at).total_seconds() <= max_age and
                             dt.datetime.fromisoformat(observation['predictedArrivalAt']) > evaluated_at):
                         ui('testVerifyIsolatedRealProviderPlannedArrival', f'ui-planned-{index}',
                            ('--real-isolated-evidence', str(path),
@@ -971,20 +1028,29 @@ def main():
                             raise RuntimeError('public_provisional_arrival_does_not_match_worker')
                         if observation.get('effectiveTransitRoute') is not None and prediction.get('effectiveTransitRoute') != observation['effectiveTransitRoute']:
                             raise RuntimeError('public_provisional_route_does_not_match_worker')
+                        if args.mixed_route_order and (
+                                dt.datetime.fromisoformat(prediction['sourceUpdatedAt']) != source_at or
+                                not evaluated_at <= dt.datetime.fromisoformat(prediction['presentedAt']) <=
+                                source_at + dt.timedelta(seconds=max_age)):
+                            raise RuntimeError('public_mixed_forecast_source_does_not_match_worker')
                         (root / f'ui-status-planned-{index}.json').write_text(json.dumps(public, indent=2))
                         record['uiResult'] = 'PROVISIONAL_PASSED'
                         record['plannedArrivalPrediction'] = prediction
-                        if prediction['basis'] != 'OBSERVED_SERVICE_CONNECTION':
-                            report['sameTrainProvisionalOnly'] = True
-                        connection = fresh_observed_service_connection(value, observation)
-                        if args.verify_reported_boarding_chain:
-                            record['otherObservedServiceConnection'] = connection
-                            connection = connection if connection and connection.get('classification') == 'REPORTED_BOARDING_AND_FRESH_ALIGHTING_NOT_PASSENGER_CONFIRMATION' else None
-                        record['observedServiceConnection'] = connection
-                        record['freshFinalAlighting'] = fresh_final_alighting(observation, observation_plan, value['evaluatedAt'])
-                        if (record['observedServiceConnection'] if args.verify_observed_service_connection else
-                                not args.verify_timetable_planned_postdeparture or record['freshFinalAlighting']):
-                            break
+                        if args.mixed_route_order:
+                            record['mixedStage'] = observation['mixedStage']
+                            record['alightingEvidence'] = observation['alightingEvidence']
+                        else:
+                            if prediction['basis'] != 'OBSERVED_SERVICE_CONNECTION':
+                                report['sameTrainProvisionalOnly'] = True
+                            connection = fresh_observed_service_connection(value, observation)
+                            if args.verify_reported_boarding_chain:
+                                record['otherObservedServiceConnection'] = connection
+                                connection = connection if connection and connection.get('classification') == 'REPORTED_BOARDING_AND_FRESH_ALIGHTING_NOT_PASSENGER_CONFIRMATION' else None
+                            record['observedServiceConnection'] = connection
+                            record['freshFinalAlighting'] = fresh_final_alighting(observation, observation_plan, value['evaluatedAt'])
+                            if (record['observedServiceConnection'] if args.verify_observed_service_connection else
+                                    not args.verify_timetable_planned_postdeparture or record['freshFinalAlighting']):
+                                break
                         observation_plan = observation.get('effectiveTransitRoute') or observation_plan
                 timing_failure = ((value.get('effectiveSnapshot') or {}).get('plannedRouteUpdate') or {}).get('failure')
                 preserved_plan = (value.get('effectiveSnapshot') or {}).get('lastUpdatedPlannedRoute') or plan
@@ -1002,6 +1068,8 @@ def main():
                         record['uiResult'] = 'PLANNED_TIMING_WARNING_VERIFIED'
                     else:
                         record['uiResult'] = 'TIMING_CONFLICT_TOO_CLOSE_TO_PLAN_END_FOR_UI'
+                elif not observation and args.mixed_route_order and (value.get('mixedPredictionAtEvaluation') or {}).get('basis') not in (None, 'LAST_ACCEPTED_PLAN'):
+                    record['uiResult'] = 'MIXED_FORECAST_NOT_QUALIFIED'
                 elif not observation and active_for_ui:
                     ui('testVerifyIsolatedRealProviderPlannedFallback', f'ui-planned-fallback-{index}',
                        ('--real-isolated-evidence', str(path),
@@ -1021,7 +1089,8 @@ def main():
                     record['uiResult'] = 'FALLBACK_PASSED_NOT_LIVE_CORRECTION'
                     report['plannedFallbackUiVerified'] = True
                 if record['uiResult'] == 'NOT_RUN':
-                    record['uiResult'] = 'NO_QUALIFYING_SAME_TRAIN_DELAY_OBSERVATION'
+                    record['uiResult'] = ('NO_QUALIFYING_MIXED_FORECAST' if args.mixed_route_order
+                                          else 'NO_QUALIFYING_SAME_TRAIN_DELAY_OBSERVATION')
             elif is_accepted:
                 # Export the calculation's actual departure anchor and train IDs.
                 # This is evidence for a subsequent map comparison, not a pass:
@@ -1034,8 +1103,14 @@ def main():
                 record['comparisonPredictionEvidence'] = prediction_path.name
                 ui('testVerifyIsolatedRealProviderEta', f'ui-evaluation-{index}', ('--real-isolated-evidence', str(path),
                     '--schedule-id', '363', '--existing-title', TITLE))
-                (root / f'ui-status-{index}.json').write_bytes((root / 'ui-status.json').read_bytes())
+                public_path = root / f'ui-status-{index}.json'
+                public_path.write_bytes((root / 'ui-status.json').read_bytes())
                 record['uiResult'] = 'PASSED'
+                if public_mixed_request and index == 1:
+                    display = display_comparison.compare(value, json.loads(public_path.read_text()), mapped_route)
+                    display_path = root / 'public-mixed-route-display-comparison.json'
+                    display_path.write_text(json.dumps(display, ensure_ascii=False, indent=2))
+                    report['publicMixedRouteDisplay'] = {'result': display['result'], 'evidence': display_path.name}
                 accepted_streak += 1
                 if args.verify_planned_postdeparture:
                     initial_plan = accepted_departure_plan(value['effectiveSnapshot'])
@@ -1082,7 +1157,17 @@ def main():
                     (root / 'ui-status-expired-planned-cache.json').write_text(json.dumps(expired, indent=2))
             if (not args.verify_planned_postdeparture and accepted_streak >= 2) or index == max_evaluations:
                 break
-            if args.verify_timetable_planned_postdeparture:
+            if args.mixed_route_order and args.verify_planned_postdeparture:
+                latest = (value.get('effectiveSnapshot') or {}).get('lastUpdatedPlannedRoute') or observation_plan
+                window = mixed_observation_window(latest, value, evaluation_index=index,
+                                                  now=dt.datetime.now(dt.timezone.utc))
+                if window is None:
+                    record['nextWindowUnavailable'] = 'NO_FUTURE_MIXED_ALIGHTING_WINDOW'
+                    break
+                record['nextObservationWindow'] = window
+                due = dt.datetime.fromisoformat(window['at'])
+                emit(state='waiting_planned_ride_window', **window)
+            elif args.verify_timetable_planned_postdeparture:
                 if ((value.get('effectiveSnapshot') or {}).get('plannedRouteUpdate') or {}).get('failure'):
                     record['nextWindowUnavailable'] = 'ROUTE_TIMING_UNRESOLVED'
                     break
@@ -1140,6 +1225,10 @@ def main():
             report['audit'] = {'result': 'PASSED', 'timetableSelectionUiVerified': True, 'timetableMapUiVerified': True,
                                'timetableScheduleSaveVerified': report.get('timetableScheduleSaveVerified', False),
                                'workerEvaluations': 0}
+        elif public_mixed_request and report.get('publicMixedRouteWorkerMatch') != 'MATCHED':
+            report['audit'] = {'result': 'PARTIAL', 'reason': report.get('publicMixedRouteWorkerMatch', 'MAP_ROUTE_NOT_EVALUATED')}
+        elif args.mixed_route_order and args.verify_planned_postdeparture:
+            report['audit'] = mixed_postdeparture_audit(report['evaluations'])
         elif args.verify_planned_postdeparture:
             report['audit'] = postdeparture_audit(report['evaluations'], report.get('sameTrainProvisionalOnly', False),
                 require_final_alighting=args.verify_timetable_planned_postdeparture and not args.verify_observed_service_connection,
@@ -1165,6 +1254,8 @@ def main():
                 assert json.loads(path.read_text()) == value
     except Exception as error:
         mark_failed(report, error)
+        if public_mixed_request and (root / 'public-mixed-route-seed-result.json').is_file():
+            report['publicMixedRouteSeedResult'] = 'NO_UNAMBIGUOUS_ODSAY_ROUTE'
         emit(state='failed', kind=type(error).__name__)
     finally:
         if server is not None and server.poll() is None:
