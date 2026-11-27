@@ -165,7 +165,7 @@ describe("TransitRouteProgressBar", () => {
             const subway = summary.findByProps({ testID: "route-summary-stop-subway-1" });
             const subwayStyles = subway.findAllByType(View).map(node => StyleSheet.flatten(node.props.style));
             expect(subwayStyles).toEqual(expect.arrayContaining([
-                expect.objectContaining({ height: 6, left: 0, right: 0 }),
+                expect.objectContaining({ height: 6.6, left: 0, right: 0 }),
                 expect.objectContaining({ width: 20, height: 20 }),
                 expect.objectContaining({ width: 36, paddingHorizontal: 3 }),
             ]));
@@ -290,7 +290,7 @@ describe("TransitRouteProgressBar", () => {
         expect(stop("walk-3").findAllByType("Ionicons" as never)).toHaveLength(0);
         expect(stop("transfer").findAllByType(View).some(node => {
             const style = StyleSheet.flatten(node.props.style);
-            return style?.height === 6 && style?.backgroundColor === "#ACB8C6";
+            return style?.height === 6.6 && style?.backgroundColor === "#ACB8C6";
         })).toBe(true);
         expect(root.findByProps({
             accessibilityLabel: "도보 6분, 4호선 16분, 환승 도보 3분, 2호선 8분, 도보 4분",

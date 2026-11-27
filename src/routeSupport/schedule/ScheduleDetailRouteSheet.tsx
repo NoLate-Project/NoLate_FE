@@ -407,11 +407,11 @@ export function ScheduleDetailRouteSheet({
         },
       ]}
     >
-      <Ionicons name="navigate-outline" size={16} color={departureCompleted ? topCardAccentText : '#FFFFFF'} />
+      <Ionicons name="navigate-outline" size={browseRoute ? 18 : 16} color={departureCompleted ? topCardAccentText : '#FFFFFF'} />
       <Text
         maxFontSizeMultiplier={2}
         lineBreakStrategyIOS="hangul-word"
-        style={[styles.sheetDepartureActionText, { color: departureCompleted ? topCardAccentText : '#FFFFFF' }]}
+        style={[styles.sheetDepartureActionText, browseRoute && navigationStyles.browseButtonLabel, { color: departureCompleted ? topCardAccentText : '#FFFFFF' }]}
       >
         {departureActionLabel}
       </Text>
@@ -1208,9 +1208,10 @@ export function ScheduleDetailRouteSheet({
           accessibilityLabel="안내 설정" accessibilityHint="출발 전에 음성과 알림 방식을 선택합니다."
           disabled={departureActionDisabled} accessibilityState={{ disabled: departureActionDisabled }}
           onPress={() => setOptionsKey(idleMenuKey)}
-          style={({ pressed }) => [styles.routeSecondaryAction, { opacity: pressed || departureActionDisabled ? 0.5 : 1 }]}>
-          <Ionicons name="options-outline" size={17} color={secondaryText} />
-          <Text style={[styles.routeSecondaryActionLabel, { color: secondaryText }]}>안내 설정</Text>
+          style={({ pressed }) => [navigationStyles.browseSettingsButton, { borderColor: isDark ? '#414C5B' : '#CDD5DF',
+            backgroundColor: isDark ? '#20262F' : '#FFFFFF', opacity: pressed || departureActionDisabled ? 0.5 : 1 }]}>
+          <Ionicons name="options-outline" size={18} color={primaryText} />
+          <Text style={[navigationStyles.browseButtonLabel, { color: primaryText }]}>안내 설정</Text>
         </Pressable>
         <View style={navigationStyles.browseDeparture}>{departureButton}</View>
       </View>
@@ -1278,8 +1279,10 @@ const styles = createScheduleDetailStyles({
 });
 
 const navigationStyles = StyleSheet.create({
-  browseDockRow: { minHeight: 64, paddingHorizontal: 20, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  browseDeparture: { flex: 1, alignItems: 'stretch' },
+  browseDockRow: { minHeight: 64, paddingHorizontal: 20, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  browseDeparture: { flex: 1.6, alignItems: 'stretch' },
+  browseSettingsButton: { flex: 1, minHeight: 48, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  browseButtonLabel: { fontSize: 15, fontWeight: '600', flexShrink: 1, textAlign: 'center' },
   browseStartButton: { alignSelf: 'stretch', minHeight: 48, marginBottom: 0, borderRadius: 12 },
   dock: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 29, borderTopWidth: StyleSheet.hairlineWidth },
   dockRow: { minHeight: 52, paddingHorizontal: 12, paddingVertical: 3, flexDirection: 'row', alignItems: 'center' },

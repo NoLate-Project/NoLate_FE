@@ -407,10 +407,21 @@ function getExpectedArrivalTime(arrival: TransitArrivalInfo): number | undefined
   return Number.isFinite(estimate) ? estimate : undefined;
 }
 
-export function hasPassedArrivalEstimate(arrival: TransitArrivalInfo, now: number): boolean {
-  if (arrival.arrivalStatus === 'ARRIVED' || arrival.arrivalStatus === 'DEPARTED') return false;
+export function getStationArrivalExpiry(arrival: TransitArrivalInfo, now: number): number {
+  if (arrival.arrivalStatus !== 'ARRIVED') return Infinity;
+  const maxAgeMs = arrival.provider === 'seoul-openapi' ? 120_000
+    : arrival.provider === 'seoul-bus' ? 45_000 : undefined;
+  if (maxAgeMs === undefined) return Infinity;
+
+  const source = Date.parse(arrival.sourceUpdatedAt ?? '');
+  return Number.isFinite(source) && source <= now + 5_000 ? source + maxAgeMs : -Infinity;
+}
+
+export function isDisplayableStationArrival(arrival: TransitArrivalInfo, now: number): boolean {
+  if (arrival.arrivalStatus === 'DEPARTED') return false;
+  if (arrival.arrivalStatus === 'ARRIVED') return now <= getStationArrivalExpiry(arrival, now);
   const expected = getExpectedArrivalTime(arrival);
-  return expected !== undefined && expected < now;
+  return expected === undefined || expected >= now;
 }
 
 /** 도착 예정 초를 분·초 기반의 짧은 대기 문구로 변환합니다. */

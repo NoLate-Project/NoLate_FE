@@ -302,6 +302,64 @@ describe("RouteStepTimeline timing", () => {
         expect(hasText("--:--")).toBe(false);
     });
 
+    it("does not show old station arrivals as live beside fresh forecasts in the recorded Sadang response", async () => {
+        const now = jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-20T02:40:03.449480Z"));
+        const old = { provider: "seoul-openapi", kind: "SUBWAY", arrivalStatus: "ARRIVED",
+            destinationName: "사당", sourceUpdatedAt: "2026-11-20T02:34:03Z", expectedAt: "2026-11-20T02:34:03Z" };
+        const fresh = { ...old, arrivalStatus: "PREVIOUS_STOP", destinationName: "오이도",
+            sourceUpdatedAt: "2026-11-20T02:39:35Z", expectedAt: "2026-11-20T02:41:35Z" };
+        jest.mocked(getSubwayArrivals).mockResolvedValueOnce([
+            old, fresh, old, { ...fresh, arrivalStatus: "IN_TRANSIT", destinationName: "사당",
+                expectedAt: "2026-11-20T02:48:05Z" },
+        ]);
+        const route = buildRouteInfo([{ durationMinutes: 5 }]);
+        route.steps[1].title = "사당";
+        try {
+            await act(async () => {
+                renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact inlineStationRail />);
+            });
+            const row = renderer!.root.findByProps({ testID: "route-step-row-leg-0" });
+            const texts = row.findAllByType(Text).flatMap(node => typeof node.props.children === "string" ? [node.props.children] : []);
+            expect(texts).not.toContain("도착");
+            expect(texts).toEqual(expect.arrayContaining(["실시간", "오이도행", "사당행"]));
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    it("lets a cached Seoul bus arrival expire before the next network refresh", async () => {
+        jest.useFakeTimers();
+        const now = Date.parse("2026-11-26T15:24:31Z");
+        jest.setSystemTime(now);
+        const route = buildRouteInfo([{ durationMinutes: 12 }]);
+        route.steps[1] = { ...route.steps[1], type: "BUS", lineName: "N37", boardingBusArrival: {
+            arsId: "01001", cityCode: "1000", cityCodeNamespace: "ODSAY_CID", stationName: "승차 정류장",
+        } };
+        const arrivals = jest.mocked(getBusArrivals);
+        arrivals.mockClear().mockResolvedValueOnce([{
+            provider: "seoul-bus", kind: "BUS", arrivalStatus: "ARRIVED",
+            sourceUpdatedAt: new Date(now - 44_000).toISOString(), observedAt: new Date(now).toISOString(),
+        }]);
+        try {
+            await act(async () => {
+                renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact inlineStationRail />);
+            });
+            const hasArrivedText = () => renderer!.root.findByProps({ testID: "route-step-row-leg-0" })
+                .findAllByType(Text).some(node => node.props.children === "도착");
+            expect(hasArrivedText()).toBe(true);
+
+            await act(async () => {
+                jest.advanceTimersByTime(1001);
+            });
+            expect(hasArrivedText()).toBe(false);
+            expect(arrivals).toHaveBeenCalledTimes(1);
+        } finally {
+            await act(async () => renderer?.unmount());
+            renderer = undefined;
+            jest.useRealTimers();
+        }
+    });
+
     it("pauses closed-sheet polling and retains the last arrival and open stops across a failed refresh", async () => {
         const route = buildRouteInfo([{ durationMinutes: 5 }]);
         route.steps[1].passStops = [{ name: "출발역" }, { name: "다음역" }];

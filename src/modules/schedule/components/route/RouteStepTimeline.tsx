@@ -48,8 +48,9 @@ import {
     getArrivalUpdatedAt,
     getArrivalWaitText,
     getPointLabel,
+    getStationArrivalExpiry,
     getTransferWalkDestination,
-    hasPassedArrivalEstimate,
+    isDisplayableStationArrival,
     Ionicons,
     buildStepDescription,
     StepIconGlyph,
@@ -144,12 +145,24 @@ export default function RouteStepTimeline({
     const [arrivalByStepId, setArrivalByStepId] = useState<Record<string, TransitArrivalInfo[]>>({});
     const [arrivalStateByStepId, setArrivalStateByStepId] = useState<Record<string, TransitArrivalLoadState>>({});
     const [arrivalUpdatedAtByStepId, setArrivalUpdatedAtByStepId] = useState<Record<string, string>>({});
+    const [, updateArrivalClock] = useState(0);
     const arrivalLookupKey = useMemo(() => buildArrivalLookupKey(routeInfo.steps), [routeInfo.steps]);
     const arrivalCacheKey = useRef<string | undefined>(undefined);
     const pendingArrivals = useRef(new Map<string, ReturnType<typeof loadArrivals>>());
     const pendingTransferTimeline = routeInfo.matchedTimelineBasis === "PENDING_TRANSFER";
     const arrivalLookupEnabled = realtimeArrivalsEnabled && !pendingTransferTimeline;
     const canShowCachedArrivals = compact && arrivalLookupEnabled && arrivalCacheKey.current === arrivalLookupKey;
+    const arrivalNow = Date.now();
+    const nextStatusExpiry = canShowCachedArrivals && realtimeArrivalsActive
+        ? Math.min(...Object.values(arrivalByStepId).flat()
+            .map(arrival => getStationArrivalExpiry(arrival, arrivalNow))
+            .filter(expiry => expiry >= arrivalNow))
+        : Infinity;
+    useEffect(() => {
+        if (!Number.isFinite(nextStatusExpiry)) return;
+        const timer = setTimeout(() => updateArrivalClock(tick => tick + 1), Math.max(1, nextStatusExpiry - Date.now() + 1));
+        return () => clearTimeout(timer);
+    }, [nextStatusExpiry]);
     let runningOffsetSeconds = 0;
     let offsetKnown = true;
     const stepOffsets = routeInfo.steps.map((step) => {
@@ -371,10 +384,8 @@ export default function RouteStepTimeline({
                 const arrivalRequest = arrivalLookupEnabled && hasBadge
                     ? getArrivalRequest(step)
                     : undefined;
-                const arrivalNow = Date.now();
                 const arrivals = hasBadge && canShowCachedArrivals ? arrivalByStepId[step.id] ?? [] : [];
-                const realtimeArrivals = arrivals.filter(arrival =>
-                    arrival.arrivalStatus !== "DEPARTED" && !hasPassedArrivalEstimate(arrival, arrivalNow));
+                const realtimeArrivals = arrivals.filter(arrival => isDisplayableStationArrival(arrival, arrivalNow));
                 const allArrivalsPassed = arrivals.length > 0 && realtimeArrivals.length === 0;
                 const arrivalState = hasBadge && canShowCachedArrivals ? arrivalStateByStepId[step.id] : undefined;
                 const arrivalUpdatedAt = hasBadge && canShowCachedArrivals ? arrivalUpdatedAtByStepId[step.id] : undefined;

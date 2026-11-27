@@ -568,7 +568,7 @@ const styles = StyleSheet.create({
     denseLabelledSummary: { marginTop: 4, gap: 4 },
     routeMarkerRow: { flexDirection: "row" },
     routeMarkerCell: { flexShrink: 1, minWidth: 0, alignItems: "flex-start" },
-    routeMarkerConnector: { position: "absolute", top: 7, left: 0, right: 0, height: 6, borderRadius: 3 },
+    routeMarkerConnector: { position: "absolute", top: 6.7, left: 0, right: 0, height: 6.6, borderRadius: 3.3 },
     routeMarkerSpacer: { height: 24 },
     routeMarkerContinuation: { position: "absolute", top: 3, right: 4 },
     routeMarker: {
