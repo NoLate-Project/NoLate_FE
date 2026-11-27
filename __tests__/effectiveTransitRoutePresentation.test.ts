@@ -68,6 +68,18 @@ function departureStatus(
     };
 }
 
+test("shows that a deferred bus transfer is pending without showing the original departure replan as an arrival", () => {
+    const status = departureStatus({ plannedJourneyTimingFailureReason: "TRANSFER_FORECAST_PENDING",
+        predictedArrivalAt: "2026-08-10T10:30:00+09:00", plannedJourneyArrivalPrediction: null });
+    const presentation = buildPlannedJourneyArrivalPresentation(status, Date.parse("2026-08-10T09:25:00+09:00"));
+    expect(presentation?.summary).toBe("환승 버스 도착정보 확인 중");
+    expect(presentation?.itinerary).not.toContain("10:30");
+    expect(resolveScheduleDetailDepartureTiming({ status, savedTravelMinutes: 10, isInspectingTravelPlan: false,
+        savedRecommendedDepartureAt: new Date("2026-08-10T09:00:00+09:00") })).toEqual({
+        recommendedDepartureAt: new Date("2026-08-10T09:10:00+09:00"),
+    });
+});
+
 describe("effective transit route presentation", () => {
     it("shows paired bus times only on accepted timing and preserves exact seconds", () => {
         const status = departureStatus();

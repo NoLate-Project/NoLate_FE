@@ -28,11 +28,24 @@ export type EffectiveTransitRoutePresentation = {
 
 const MAP_SAVED_ROUTE_NOTE = "지도에는 저장한 경로가 표시돼요";
 
+export function isPendingTransitTransfer(status: ScheduleDepartureStatus | null | undefined): boolean {
+    return status?.plannedJourneyTimingFailureReason === "TRANSFER_FORECAST_PENDING";
+}
+
 /** 출발 뒤의 계획 여정은 실제 탑승 확인이 아니며 출발 알람의 정상 ETA와 섞지 않는다. */
 export function buildPlannedJourneyArrivalPresentation(
     status: ScheduleDepartureStatus | null | undefined,
     nowMs: number,
 ): EffectiveTransitRoutePresentation | undefined {
+    if (isPendingTransitTransfer(status)) {
+        return {
+            guidanceTitle: "계획 경로 기준",
+            summary: "환승 버스 도착정보 확인 중",
+            compactSummary: "환승 버스 확인 중",
+            itinerary: "버스 도착정보가 확인되면 예상 도착시각을 갱신해요",
+            mapNote: MAP_SAVED_ROUTE_NOTE,
+        };
+    }
     if (status && ["TRANSFER_RECONNECTION_UNAVAILABLE", "EARLY_BOARDING_UNCONFIRMED", "TIMELINE_INCONSISTENT"]
         .includes(status.plannedJourneyTimingFailureReason ?? "")) {
         const earlyBoarding = status.plannedJourneyTimingFailureReason === "EARLY_BOARDING_UNCONFIRMED";
@@ -51,7 +64,7 @@ export function buildPlannedJourneyArrivalPresentation(
         !/^[0-9a-f]{64}$/.test(prediction.routeIdentity)) return undefined;
     const arrival = parseDate(prediction.predictedArrivalAt);
     const presented = parseDate(prediction.presentedAt);
-    const busObserved = prediction.basis === "MATCHED_BUS_REALTIME";
+    const busObserved = prediction.basis === "MATCHED_BUS_REALTIME" || prediction.basis === "MATCHED_TRAIN_AND_BUS_REALTIME";
     const freshnessMs = busObserved ? 45_000 : 120_000;
     const maxDisplayAgeMs = prediction.basis === "LAST_ACCEPTED_PLAN" ? 300_000 : freshnessMs;
     if (!arrival || !presented || arrival.getTime() <= nowMs ||
@@ -100,7 +113,8 @@ export function getDisplayedPlannedTransitRoute(
     const arrival = parseDate(route.arrivalAt);
     const baseline = prediction.basis === "LAST_ACCEPTED_PLAN";
     const busObserved = prediction.basis === "MATCHED_BUS_REALTIME";
-    const freshnessMs = busObserved ? 45_000 : 120_000;
+    const railBusConnection = prediction.basis === "MATCHED_TRAIN_AND_BUS_REALTIME";
+    const freshnessMs = busObserved || railBusConnection ? 45_000 : 120_000;
     if (!presented || !departure || !arrival || (!baseline && (!source || source.getTime() > nowMs + 5_000 ||
         nowMs - source.getTime() > freshnessMs)) || presented.getTime() > nowMs + 5_000 ||
         nowMs - presented.getTime() > (baseline ? 300_000 : freshnessMs) || departure.getTime() > nowMs + 5_000 ||
@@ -109,12 +123,15 @@ export function getDisplayedPlannedTransitRoute(
     const rides = route.segments.filter(segment => segment.kind !== "WALK");
     const buses = rides.filter(segment => segment.kind === "BUS");
     if (buses.length) {
-        const trains = rides.slice(buses.length);
+        const trains = rides.filter(segment => segment.kind !== "BUS");
         const mixed = trains.length > 0;
-        const lastTrainObserved = mixed && prediction.basis === "MATCHED_TRAIN_REALTIME";
-        if (route.provider !== "odsay" || (!baseline && !busObserved && !lastTrainObserved) ||
-            (baseline && prediction.sourceUpdatedAt != null) || rides[0]?.kind !== "BUS" ||
-            (mixed && (buses.length !== 1 || trains.length > 2 || trains.some(segment => segment.kind !== "SUBWAY")))) {
+        const busFirst = rides[0]?.kind === "BUS";
+        const busLast = rides.at(-1)?.kind === "BUS";
+        const lastTrainObserved = mixed && busFirst && prediction.basis === "MATCHED_TRAIN_REALTIME";
+        if (route.provider !== "odsay" || (!baseline && !busObserved && !lastTrainObserved && !railBusConnection) ||
+            (baseline && prediction.sourceUpdatedAt != null) || (railBusConnection && (!mixed || !busLast)) ||
+            (mixed && (buses.length !== 1 || trains.length > 2 || (!busFirst && !busLast) ||
+                trains.some(segment => segment.kind !== "SUBWAY")))) {
             return undefined;
         }
         let directForecast = false;
@@ -133,8 +150,28 @@ export function getDisplayedPlannedTransitRoute(
                 const observed = parseDate(timing.observationSourceUpdatedAt);
                 if (timing.basis !== "PLANNED_RIDE_ALIGHTING_REALTIME" || !source || !observed ||
                     observed.getTime() !== source.getTime()) return undefined;
-            } else if (timing.basis !== "TIMETABLE" &&
-                !(baseline && timing.basis === "PLANNED_RIDE_BASELINE" && timing.observationSourceUpdatedAt == null)) return undefined;
+            } else if (!railBusConnection && timing.basis !== "TIMETABLE" &&
+                !((baseline || (busLast && busObserved)) && timing.basis === "PLANNED_RIDE_BASELINE" &&
+                    timing.observationSourceUpdatedAt == null)) return undefined;
+        }
+        if (railBusConnection) {
+            const bus = buses[0];
+            const transfer = bus.transferTiming;
+            const railArrival = trains.at(-1)?.rideTiming?.predictedArrivalAt;
+            const busSource = parseDate(bus.busRidePrediction?.sourceUpdatedAt);
+            const busBoarding = parseDate(bus.busRidePrediction?.boardingAt);
+            const ready = parseDate(transfer?.confidenceReadyAt);
+            const railSources = trains.flatMap(({ rideTiming }) => [rideTiming?.observationSourceUpdatedAt,
+                rideTiming?.reportedBoarding ? null : rideTiming?.boardingObservationSourceUpdatedAt]).filter(value => value != null);
+            if (!source || !busSource || busSource < source || busSource.getTime() > nowMs + 5_000 || !railSources.length ||
+                railSources.some(value => {
+                    const stamp = parseDate(value);
+                    return !stamp || stamp < source || stamp.getTime() > nowMs + 5_000;
+                }) || !transfer || !railArrival || !busBoarding || !ready || ready > busBoarding ||
+                parseDate(transfer.previousArrivalAt)?.getTime() !== parseDate(railArrival)?.getTime() ||
+                parseDate(transfer.boardingAt)?.getTime() !== busBoarding.getTime() ||
+                transfer.walkingSeconds <= 0 || transfer.remainingSlackSeconds < 0) return undefined;
+            return route;
         }
         return baseline || directForecast || lastTrainObserved ? route : undefined;
     }
@@ -262,6 +299,10 @@ export function resolveScheduleDetailDepartureTiming({
                 ? inspectedTravelMinutes
                 : undefined,
         };
+    }
+
+    if (isPendingTransitTransfer(status)) {
+        return { recommendedDepartureAt: parseDate(status?.recommendedDepartureAt) ?? savedRecommendedDepartureAt };
     }
 
     const fresh = getFreshDepartureTiming(status);

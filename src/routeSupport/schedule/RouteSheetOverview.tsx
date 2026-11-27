@@ -10,7 +10,7 @@ export function RouteSheetOverview({ minutes, fallback, departureClock, departur
     : fallback;
   return <View testID="route-sheet-overview" style={styles.root}>
     <View style={styles.row}>
-      <Text accessibilityRole="header" style={[styles.duration, { color: primary }]}>{duration}</Text>
+      {duration ? <Text accessibilityRole="header" style={[styles.duration, { color: primary }]}>{duration}</Text> : null}
       <Text testID="route-sheet-overview-departure" style={[styles.meta, { color: secondary }]}>
       {[departureDate, `${departureClock} ${departed ? '출발' : '출발 예정'}`].filter(Boolean).join(' · ')}
       </Text>

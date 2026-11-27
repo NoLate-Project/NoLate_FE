@@ -1,6 +1,6 @@
 import type { ScheduleDepartureStatus } from '../../api/schedule';
 import type { TravelMode } from './types';
-import { getFreshDepartureTiming } from './effectiveTransitRoutePresentation';
+import { getFreshDepartureTiming, isPendingTransitTransfer } from './effectiveTransitRoutePresentation';
 
 /** 저장된 역산값은 유지하되, 운행·시간표 검증이 끝난 ETA처럼 안내하지 않는다. */
 export function getTransitEtaTrustPresentation({
@@ -23,6 +23,7 @@ export function getTransitEtaTrustPresentation({
   const ownStatus = isInspectingTravelPlan ? undefined : status;
   if (intercityTicketSelected) return { departureLabel: '연결 경로 예상 출발', warning: '입력한 운행 시각 · 앞뒤 이동 예상' };
   if (intercityJourneySelected) return { departureLabel: '연결 경로 예상 출발', warning: '운행 시간표 · 앞뒤 이동 예상' };
+  if (isPendingTransitTransfer(ownStatus)) return { departureLabel: '기존 출발 안내' };
   if (ownStatus?.plannedJourneyArrivalPrediction) {
     return { departureLabel: '기존 출발 안내', warning: '계획 경로의 잠정 도착 · 실제 탑승 미확인' };
   }

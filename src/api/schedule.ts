@@ -237,12 +237,14 @@ export type ScheduleDepartureStatus = {
         predictedArrivalAt: string;
         presentedAt: string;
         routeIdentity: string;
-        basis: "LAST_ACCEPTED_PLAN" | "MATCHED_TRAIN_REALTIME" | "MATCHED_BUS_REALTIME" |
+        basis: "LAST_ACCEPTED_PLAN" | "MATCHED_TRAIN_REALTIME" | "MATCHED_BUS_REALTIME" | "MATCHED_TRAIN_AND_BUS_REALTIME" |
             "MATCHED_RIDE_AND_ONWARD_TIMETABLE" | "OBSERVED_SERVICE_CONNECTION";
         effectiveTransitRoute?: EffectiveTransitRoute | null;
         sourceUpdatedAt?: string | null;
     } | null;
     plannedJourneyTimingFailureReason?: string | null;
+    /** Rail and transfer walk ending at the bus stop, before the destination ETA can be calculated. */
+    pendingTransferRailPlan?: EffectiveTransitRoute | null;
     /** 출발 후 원래 출발지에서 새로 출발할 경우의 재검색 진단. 저장된 여정의 ETA가 아니다. */
     originReplanDiagnostic?: {
         travelMinutes: number;

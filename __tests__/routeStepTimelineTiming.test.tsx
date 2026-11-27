@@ -58,6 +58,30 @@ function buildRouteInfo(durations: StepDuration[]): RouteInfo {
 }
 
 describe("RouteStepTimeline timing", () => {
+    it("shows exact transfer walking seconds and keeps a pending bus distinct from an unsupported stop", async () => {
+        const route = buildRouteInfo([{ durationMinutes: 12 }, { durationMinutes: 1 }, {}]);
+        route.matchedTimeline = true;
+        route.matchedTimelineBasis = "PENDING_TRANSFER";
+        route.arrivalTime = "";
+        route.steps[2] = { ...route.steps[2], type: "WALK", title: "도보",
+            matchedTimeline: { startAt: route.departureTime, endAt: new Date(Date.parse(route.departureTime) + 30_000).toISOString(), movementSeconds: 30 } };
+        route.steps[3] = { ...route.steps[3], type: "BUS", lineName: "402", boardingBusArrival: {
+            arsId: "01001", cityCode: "1000", cityCodeNamespace: "ODSAY_CID", providerCode: "4", stationName: "승차 정류장",
+        } };
+        const previousLookups = jest.mocked(getBusArrivals).mock.calls.length;
+
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact />);
+        });
+
+        const transfer = renderer!.root.findByProps({ testID: "route-step-row-leg-1" });
+        expect(transfer.props.accessibilityLabel).toContain("환승 도보 30초");
+        const bus = renderer!.root.findByProps({ testID: "route-step-row-leg-2" });
+        expect(bus.findAllByType(Text).map(node => node.props.children)).not.toContain("미지원");
+        expect(bus.props.accessibilityLabel).not.toContain("도착 정보를 확인할 수 없어요");
+        expect(getBusArrivals).toHaveBeenCalledTimes(previousLookups);
+    });
+
     it("shows each bus status once and retains a separately reported direction", async () => {
         const route = buildRouteInfo([{ durationMinutes: 12 }]);
         route.steps[1] = { ...route.steps[1], type: "BUS", lineName: "N37", boardingBusArrival: {

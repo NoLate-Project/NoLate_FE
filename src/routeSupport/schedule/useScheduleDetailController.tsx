@@ -55,6 +55,7 @@ import { useImmediateNavigationTransition } from '../../modules/performance/Imme
 import {
   buildEffectiveTransitRoutePresentation,
   buildPlannedJourneyArrivalPresentation,
+  isPendingTransitTransfer,
   resolveScheduleDetailDepartureTiming,
 } from '../../modules/schedule/effectiveTransitRoutePresentation';
 import {
@@ -403,6 +404,7 @@ export function useScheduleDetailController({
   });
   const startNow = navigationScheduleId === id && !liveActivityEntry && navigationEnd?.scheduleId !== id;
   const estimateScope = id && pathname === `/schedule/${id}` && authoritativeDetailLoaded && !inspectedTravelPlan
+    && (!isPendingTransitTransfer(departureStatus) || startNow)
     && (!navigationMode || startNow)
     ? `${currentMemberId}:${id}:${startNow ? 'navigation' : 'preview'}` : undefined;
   const currentTransitEstimate = useCurrentTransitEstimate(estimateScope, routeOption, displayOrigin, displayDestination);

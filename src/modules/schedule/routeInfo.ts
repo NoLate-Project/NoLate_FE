@@ -96,7 +96,7 @@ export function hasRenderableRouteStepGeometry(step: RouteStep, pointCount: numb
 export interface RouteInfo {
     /** Only the schedule detail presentation sets this on an in-memory copy. */
     matchedTimeline?: true;
-    matchedTimelineBasis?: "PLANNED" | "TIMETABLE";
+    matchedTimelineBasis?: "PLANNED" | "TIMETABLE" | "PENDING_TRANSFER";
     intercityJourney?: IntercityJourney;
     id: string;
     /** 시간표와 경로를 제공한 공급자. 기존 저장 데이터 호환을 위해 선택값으로 유지한다. */

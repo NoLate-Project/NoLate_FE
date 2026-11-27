@@ -147,7 +147,9 @@ export default function RouteStepTimeline({
     const arrivalLookupKey = useMemo(() => buildArrivalLookupKey(routeInfo.steps), [routeInfo.steps]);
     const arrivalCacheKey = useRef<string | undefined>(undefined);
     const pendingArrivals = useRef(new Map<string, ReturnType<typeof loadArrivals>>());
-    const canShowCachedArrivals = compact && realtimeArrivalsEnabled && arrivalCacheKey.current === arrivalLookupKey;
+    const pendingTransferTimeline = routeInfo.matchedTimelineBasis === "PENDING_TRANSFER";
+    const arrivalLookupEnabled = realtimeArrivalsEnabled && !pendingTransferTimeline;
+    const canShowCachedArrivals = compact && arrivalLookupEnabled && arrivalCacheKey.current === arrivalLookupKey;
     let runningOffsetSeconds = 0;
     let offsetKnown = true;
     const stepOffsets = routeInfo.steps.map((step) => {
@@ -169,6 +171,7 @@ export default function RouteStepTimeline({
         routeInfo.providerTimeBasis === "timetable";
     const hasExactTimeline = routeInfo.matchedTimeline || usesOdsayTimetable;
     const scheduleSourceLabel = routeInfo.matchedTimelineBasis === "TIMETABLE" ? "실시간 미확인 시간표"
+        : pendingTransferTimeline ? "계획 경로 시각"
         : routeInfo.matchedTimelineBasis === "PLANNED" ? "계획 경로의 잠정 시각" : routeInfo.matchedTimeline ? "현재 보정 여정" : routeInfo.intercityJourney ? (routeInfo.intercityJourney.service.timingBasis === "TICKET" ? "입력한 운행 시각 · 앞뒤 이동 예상" : "운행 시간표 · 앞뒤 이동 예상") : routeInfo.timeBasis === "provider_schedule"
         ? "운행 시간표"
         : "경로 예상 시간";
@@ -227,7 +230,7 @@ export default function RouteStepTimeline({
 
     useEffect(() => {
         const requests = latestArrivalRequests.current;
-        const canLoadArrivals = compact && realtimeArrivalsEnabled && requests.length > 0;
+        const canLoadArrivals = compact && arrivalLookupEnabled && requests.length > 0;
         const nextCacheKey = canLoadArrivals ? arrivalLookupKey : undefined;
         if (arrivalCacheKey.current !== nextCacheKey) {
             arrivalCacheKey.current = nextCacheKey;
@@ -287,7 +290,7 @@ export default function RouteStepTimeline({
             cancelled = true;
             clearInterval(timer);
         };
-    }, [arrivalLookupKey, compact, realtimeArrivalsActive, realtimeArrivalsEnabled]);
+    }, [arrivalLookupKey, compact, realtimeArrivalsActive, arrivalLookupEnabled]);
 
     const toggleStepDisclosure = (step: RouteStep, inlineStops = false) => {
         const opening = !expandedStepIds.has(step.id);
@@ -364,7 +367,8 @@ export default function RouteStepTimeline({
                 const rideDirectionLabel = directionHint && !isAlightingHint(directionHint) && !boardingDescription?.split(" · ").includes(directionHint)
                     ? directionHint : undefined;
                 const boardingGuideItems = hasBadge ? buildBoardingGuideItems(step) : [];
-                const arrivalRequest = realtimeArrivalsEnabled && hasBadge
+                const waitsForConnection = pendingTransferTimeline && step.type === "BUS";
+                const arrivalRequest = arrivalLookupEnabled && hasBadge
                     ? getArrivalRequest(step)
                     : undefined;
                 const arrivalNow = Date.now();
@@ -408,7 +412,7 @@ export default function RouteStepTimeline({
                 const usesScheduledClock = compact && !!timelineClockText
                     && !arrivalPresentation.showArrivalCard && !arrivalPresentation.showLoadingIcon;
                 const scheduledClockBasis = `${scheduleSourceLabel} 기준`;
-                const arrivalInlineMessage = usesScheduledClock
+                const arrivalInlineMessage = waitsForConnection ? undefined : usesScheduledClock
                     ? labelsEstimatedClocks
                         ? (arrivalRequest && !showSharedArrivalNotice ? arrivalPresentation.inlineMessage : undefined)
                         : arrivalRequest && (allArrivalsPassed || arrivalState === "error" || arrivalState === "empty")
@@ -741,7 +745,7 @@ export default function RouteStepTimeline({
                                                 </Text>
                                             )}
                                         </View>
-                                        {!usesScheduledClock && (!inlineStationRail || stackTimelineText || !arrivalPresentation.showArrivalCard) && <View style={[styles.rideActionStack, stackTimelineText && styles.rideActionStackExpanded]}>
+                                        {!waitsForConnection && !usesScheduledClock && (!inlineStationRail || stackTimelineText || !arrivalPresentation.showArrivalCard) && <View style={[styles.rideActionStack, stackTimelineText && styles.rideActionStackExpanded]}>
                                             <View style={styles.rideActionRow}>
                                                 <View style={[styles.rideActionChip, { borderColor: isDark ? "rgba(255,255,255,0.16)" : "#D1D5DB" }]}>
                                                     <Text style={[styles.rideActionText, { color: primaryColor }]}>

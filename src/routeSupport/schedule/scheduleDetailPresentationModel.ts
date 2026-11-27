@@ -23,7 +23,7 @@ import {
 } from './scheduleDetailModel';
 import type { ScheduleDetailController } from './useScheduleDetailController';
 import { getTransitEtaTrustPresentation } from '../../modules/schedule/transitEtaTrustPresentation';
-import { getFutureTimetableArrivalSummary } from '../../modules/schedule/effectiveTransitRoutePresentation';
+import { getFutureTimetableArrivalSummary, isPendingTransitTransfer } from '../../modules/schedule/effectiveTransitRoutePresentation';
 import { formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from '../../modules/schedule/transitRouteProgress';
 
 function formatRouteHeaderPlaceName(name: string): string {
@@ -61,6 +61,7 @@ export function buildScheduleDetailPresentation(
     savedDisplayTravelMinutes,
   } = controller;
   if (!item) return null;
+  const pendingTransfer = !inspectedTravelPlan && isPendingTransitTransfer(controller.departureStatus);
 
   const originName = displayOrigin?.name;
   const destinationName = displayDestination?.name;
@@ -87,7 +88,8 @@ export function buildScheduleDetailPresentation(
       )} ${savedDisplayTravelMinutes}분`
     : travelModeLabel(displayTravelMode ?? undefined);
   // Header/map describe the saved plan, while the lower card describes the current evaluation.
-  const travelText = effectiveTransitRoutePresentation ? `저장 경로 · ${savedTravelText}` : savedTravelText;
+  const travelText = pendingTransfer ? travelModeLabel(displayTravelMode ?? undefined)
+    : effectiveTransitRoutePresentation ? `저장 경로 · ${savedTravelText}` : savedTravelText;
   const hasDepartureInfo = Boolean(
     recommendedDepartureAt ||
       currentMemberDepartedAt ||
@@ -189,15 +191,15 @@ export function buildScheduleDetailPresentation(
     : routeSummaryKind === 'duration_only'
     ? '상세 경로 미설정'
     : '저장된 경로 없음';
-  const currentRouteDurationLabel = hasRouteSummary
+  const currentRouteDurationLabel = pendingTransfer ? '' : hasRouteSummary
     ? typeof currentTravelMinutes === 'number'
       ? `${currentTravelMinutes}분`
       : routeNumberText(routeOption)
     : '미설정';
-  const displayedRouteMinutes = routeDetailInfo?.matchedTimeline
+  const displayedRouteMinutes = pendingTransfer ? undefined : routeDetailInfo?.matchedTimeline
     ? routeDetailInfo.totalDurationMinutes
     : savedDisplayTravelMinutes;
-  const routeDurationLabel = hasRouteSummary
+  const routeDurationLabel = pendingTransfer ? '' : hasRouteSummary
     ? typeof displayedRouteMinutes === 'number'
       ? `${displayedRouteMinutes}분`
       : routeNumberText(routeOption)
@@ -221,7 +223,7 @@ export function buildScheduleDetailPresentation(
     currentRouteDurationLabel === routeDurationLabel;
   const timetableArrival = displayTravelMode === 'TRANSIT' && !inspectedTravelPlan && !effectiveTransitRoutePresentation
     ? getFutureTimetableArrivalSummary(controller.departureStatus, nowMs) : undefined;
-  const routeArrivalSummary = !hasRouteSummary
+  const routeArrivalSummary = pendingTransfer ? undefined : !hasRouteSummary
     ? scheduleRangeLabel
     : !controller.largeRouteHeader && hasDetailedRoute && displayTravelMode === 'TRANSIT' && !controller.navigationMode
     ? timetableArrival ?? etaTrust.warning

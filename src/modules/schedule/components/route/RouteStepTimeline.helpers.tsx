@@ -5,6 +5,7 @@ import { Animated, Easing, LayoutAnimation, View } from 'react-native';
 import type { TransitArrivalInfo } from '../../../../api/transitArrivals';
 import {
   formatRouteDistance,
+  formatRouteDurationSeconds,
   type RouteInfo,
   type RouteStep,
   type RouteStepType,
@@ -214,9 +215,11 @@ export function stripStopAction(name: string): string {
 }
 
 function walkingMetrics(step: RouteStep): string[] {
+  const verifiedSeconds = step.matchedTimeline?.movementSeconds;
   return [
     formatRouteDistance(step.distanceMeters),
-    typeof step.durationMinutes === 'number' ? `${step.durationMinutes}분` : undefined,
+    verifiedSeconds !== undefined ? formatRouteDurationSeconds(verifiedSeconds)
+      : typeof step.durationMinutes === 'number' ? `${step.durationMinutes}분` : undefined,
   ].filter((item): item is string => item !== undefined);
 }
 
