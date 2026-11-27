@@ -279,7 +279,7 @@ def verify_values(worker, public):
         bus_board = instant(bus_timing['boardingAt'])
         bus_source = instant(bus_timing['sourceUpdatedAt'])
         assert bus_source <= bus_board < instant(bus_timing['alightingAt'])
-        assert -5 <= (instant(worker['evaluatedAt']) - bus_source).total_seconds() <= 120
+        assert -5 <= (instant(worker['evaluatedAt']) - bus_source).total_seconds() <= 45
         assert not bus_timing.get('reportedAlightingAt') and not bus_timing.get('alightingObservationSourceUpdatedAt')
     observation = snapshot['firstBoardingObservation']
     # The Worker may retain an earlier safe alert time instead of postponing it.
@@ -288,16 +288,17 @@ def verify_values(worker, public):
     recommendation = instant(worker['recommendedDepartureAt'])
     assert recommendation <= route_departure
     assert route_departure == instant(observation['departureAt'])
-    assert observation['provider'] == 'seoul-openapi'
     if bus_first:
+        # Older archived paired bus results used the general Seoul provider label.
+        assert observation['provider'] in ('seoul-bus', 'seoul-openapi')
         assert not observation.get('trainNumber') and observation['stationName'] == bus['fromName']
         assert observation['lineName'] == bus['lineName']
         assert instant(observation['expectedBoardingAt']) == bus_board
         assert instant(observation['sourceUpdatedAt']) == bus_source
     else:
-        assert observation['trainNumber']
+        assert observation['provider'] == 'seoul-openapi' and observation['trainNumber']
     age = (instant(observation['evaluatedAt']) - instant(observation['sourceUpdatedAt'])).total_seconds()
-    assert -60 <= age <= 120
+    assert -60 <= age <= (45 if bus_first else 120)
     assert instant(observation['readyAt']) <= instant(observation['expectedBoardingAt'])
     assert instant(observation['evaluatedAt']) <= instant(worker['evaluatedAt']) + dt.timedelta(seconds=15)
     rides = [s['rideTiming'] for s in route['segments'] if s['kind'] == 'SUBWAY']

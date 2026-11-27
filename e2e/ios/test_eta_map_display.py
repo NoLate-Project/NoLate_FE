@@ -49,6 +49,66 @@ class MapDisplayTest(unittest.TestCase):
         self.assertIn('ORIGINAL_COMPARISON_DEPARTURE_MISMATCH',
                       verifier.compare(self.worker, self.public, self.map)['exclusionReasons'])
 
+    def public_rail_snapshot(self, display, *, origin_x='14144636.035502888', alight='사당'):
+        url = f'https://map.naver.com/p/directions/{origin_x},4530994.374320928,origin,,/14129758.22897297,4506824.249386212,destination,,/-/transit/0'
+        return '\n'.join([f'- Page URL: {url}',
+            f'- button "{display["routeEvidenceLabel"]}" [expanded]',
+            '- button "다른 경로 상세보기"',
+            '- \'button "4호선지하철 48분 4호선노원역 승차 파노라마 보기 21:19오이도행"\'',
+            f'- \'button "도보 3분 {alight}역 하차 파노라마 보기"\'',
+            '- \'button "2호선지하철 7분 2호선사당역 승차 파노라마 보기 22:16내선순환행"\'',
+            '- \'button "신림역 하차 파노라마 보기"\''])
+
+    def test_separate_public_proof_of_numeric_pins_walk_stages_and_boarding_minutes(self):
+        self.map['routeEvidenceLabel'] = '69분 오후 10:25 도착 도보 1분 4호선지하철 48분 도보 3분 2호선지하철 7분 도보 1분 상세보기'
+        snapshot = self.public_rail_snapshot(self.map)
+        result = verifier.compare(self.worker, self.public, self.map, snapshot)
+        self.assertEqual(result['publicMapAddressPoints'], 'MATCHED_PUBLIC_NUMERIC_POINTS')
+        self.assertEqual(result['naverVisibleComponents']['visibleWalkingMinutes'], {'access': 1, 'transfers': [3], 'egress': 1})
+        self.assertTrue(result['publicRailTimingEvidence']['sameVisibleInputsAndRideMinutes'])
+        self.assertFalse(result['sameTrainIdentityVerified'])
+        self.assertFalse(result['stationPlatformWalkingCoverageVerified'])
+        different_point = verifier.compare(self.worker, self.public, self.map,
+            self.public_rail_snapshot(self.map, origin_x='14144637.035502888'))
+        self.assertIn('PUBLIC_MAP_ADDRESS_POINTS_MISMATCH', different_point['exclusionReasons'])
+        alias = self.public_rail_snapshot(self.map, origin_x='3zlfnI')
+        self.assertEqual(verifier.compare(self.worker, self.public, self.map, alias)['publicMapAddressPoints'], 'UNVERIFIED')
+        wrong_alighting = verifier.compare(self.worker, self.public, self.map, self.public_rail_snapshot(self.map, alight='동작'))
+        self.assertIn('SELECTED_PUBLIC_RAIL_DETAIL_UNVERIFIED', wrong_alighting['publicRailTimingEvidence']['exclusionReasons'])
+
+    def test_rail_diagnostics_keep_unshown_walking_and_different_boarding_out_of_the_matched_sample(self):
+        self.map['routeEvidenceLabel'] = '69분 오후 10:25 도착 4호선지하철 48분 도보 3분 2호선지하철 7분 상세보기'
+        self.map['rides'][0]['displayedBoardingAt'] = '2026-10-12T21:17:00+09:00'
+        snapshot = self.public_rail_snapshot(self.map).replace('21:19오이도행', '21:17오이도행')
+        diagnostic = verifier.compare(self.worker, self.public, self.map, snapshot)['publicRailTimingEvidence']
+        self.assertTrue(diagnostic['selectedPublicRideDetailVerified'])
+        self.assertEqual(diagnostic['exclusionReasons'], [
+            'DOOR_OR_TRANSFER_WALKING_NOT_FULLY_DISPLAYED', 'RIDE_BOARDING_CLOCKS_DIFFER'])
+        self.assertEqual(diagnostic['boardingClockComparisons'][0]['appClockMinusMapDisplayedSeconds'], 145)
+
+    def test_preflight_requires_public_pins_fresh_capture_and_all_walks_before_provider_calls(self):
+        self.map['routeEvidenceLabel'] = '69분 오후 10:25 도착 도보 1분 4호선지하철 48분 도보 3분 2호선지하철 7분 도보 1분 상세보기'
+        snapshot = self.public_rail_snapshot(self.map)
+        snapshot += '\n' + '\n'.join(self.map['visibleEvidenceLabels'])
+        departure = verifier.instant(self.map['requestedDepartureAt'])
+        now = verifier.instant(self.map['observedAt'])
+        request = verifier.public_rail_point_request(self.map, snapshot, departure=departure, now=now)
+        self.assertEqual(request['coordinates'], self.worker['requestedCoordinates'])
+        self.assertEqual(request['firstBoardingStation'], '노원')
+        for invalid in (snapshot.replace('도보 1분 상세보기', '상세보기'), snapshot.replace('14144636.035502888', '14144637.0')):
+            with self.assertRaises(ValueError):
+                verifier.public_rail_point_request(self.map, invalid, departure=departure, now=now)
+        without_access = copy.deepcopy(self.map)
+        without_access['routeEvidenceLabel'] = self.map['routeEvidenceLabel'].replace('도보 1분 4호선', '4호선')
+        with self.assertRaisesRegex(ValueError, 'both endpoint walks'):
+            verifier.public_rail_point_request(without_access,
+                snapshot.replace(self.map['routeEvidenceLabel'], without_access['routeEvidenceLabel']), departure=departure, now=now)
+
+        short = copy.deepcopy(self.map)
+        short['rides'][0]['fromName'] = '동작'
+        short_snapshot = snapshot.replace('4호선노원역', '4호선동작역')
+        self.assertEqual(verifier.public_rail_point_request(short, short_snapshot, departure=departure, now=now)['firstBoardingStation'], '동작')
+
     def mixed(self, bus_first=False):
         worker, public, display = copy.deepcopy(self.worker), copy.deepcopy(self.public), copy.deepcopy(self.map)
         snapshot = worker['effectiveSnapshot']

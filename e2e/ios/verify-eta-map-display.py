@@ -11,6 +11,7 @@ import json
 import math
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 comparison_spec = importlib.util.spec_from_file_location('eta_comparison', Path(__file__).with_name('verify-eta-comparison.py'))
 comparison = importlib.util.module_from_spec(comparison_spec)
@@ -18,6 +19,7 @@ comparison_spec.loader.exec_module(comparison)
 SEOUL = dt.timezone(dt.timedelta(hours=9))
 DISPLAY_DURATION = r'(?:\d+시간(?:\s*\d+분)?|\d+분)'
 ROUTE_COMPONENT = re.compile(rf'(도보|[^\s]+지하철|[^\s]+버스)\s+({DISPLAY_DURATION})(?!\S)')
+WEB_MERCATOR_RADIUS_METERS = 6378137
 
 
 def instant(value):
@@ -40,7 +42,7 @@ def coordinates(value):
     return result
 
 
-def compare(worker, public, map_display):
+def compare(worker, public, map_display, snapshot=None):
     if (worker.get('classification') != 'REAL_PROVIDER_ISOLATED_WORKER'
             or worker.get('database') != 'H2_MEMORY_ONLY'
             or worker.get('clockMode') != 'SYSTEM_WALL_CLOCK'
@@ -59,10 +61,10 @@ def compare(worker, public, map_display):
             or public.get('effectiveTransitRoute') != route
             or public.get('predictedArrivalAt') != route['arrivalAt']):
         raise ValueError('The app API must still expose the same accepted prediction')
-    return compare_inputs(worker, route, map_display)
+    return compare_inputs(worker, route, map_display, snapshot)
 
 
-def compare_timetable_preview(worker, public, map_display):
+def compare_timetable_preview(worker, public, map_display, map_snapshot=None):
     """Separate future timetable display evidence; never an accepted real-time ETA pass."""
     snapshot = worker.get('effectiveSnapshot') or {}
     route = snapshot.get('effectiveTransitRoute') or {}
@@ -96,14 +98,14 @@ def compare_timetable_preview(worker, public, map_display):
                 or timing['predictedBoardingAt'] != table['boardingAt']
                 or timing['predictedArrivalAt'] != table['arrivalAt']):
             raise ValueError('Do not mix real-time ride evidence into timetable-only comparison')
-    result = compare_inputs(worker, route, map_display)
+    result = compare_inputs(worker, route, map_display, map_snapshot)
     result.update(classification='TIMETABLE_ONLY_FUTURE_DISPLAY_DIAGNOSTIC',
                   result='TIMETABLE_DISPLAY_COMPARED' if result['result'] == 'DISPLAY_COMPARED' else result['result'],
                   acceptedRealtimeEtaVerified=False, futureTimetableDisplayOnly=True)
     return result
 
 
-def visible_mixed_components(map_display):
+def visible_route_components(map_display):
     """Read the selected card's component durations. Unpublished gaps stay unknown."""
     card = map_display.get('routeEvidenceLabel') or ''
     def minutes(value):
@@ -129,7 +131,7 @@ def visible_mixed_components(map_display):
             if total is not None and all(walk is not None for walk in walks) else None}
 
 
-def compare_inputs(worker, route, map_display):
+def compare_inputs(worker, route, map_display, snapshot=None):
     if (map_display.get('provider') != 'NAVER_MAP_PUBLIC_UI'
             or map_display.get('mocked') is not False
             or map_display.get('queryMode') != 'DEPART_AT'):
@@ -189,6 +191,9 @@ def compare_inputs(worker, route, map_display):
         exclusions.append('CAPTURE_TIME_SKEW')
     if coordinates(worker['requestedCoordinates']) != coordinates(map_display['requestedCoordinates']):
         exclusions.append('REQUEST_COORDINATES_MISMATCH')
+    public_points = public_point_alignment(map_display, snapshot)
+    if public_points == 'MISMATCH':
+        exclusions.append('PUBLIC_MAP_ADDRESS_POINTS_MISMATCH')
     if topology != map_topology:
         exclusions.append('VISIBLE_ROUTE_MISMATCH')
     ars_matches = [shown.get(field) == saved[field] if shown.get(field) else None
@@ -212,6 +217,7 @@ def compare_inputs(worker, route, map_display):
         'visibleBusStopArsVerified': bool(app_buses and not exclusions and all(ars_matches)),
         'busStopOccurrencesVerified': False, 'sameBusVehicleIdentityVerified': False,
         'naverVisibleBoardingClocks': [s.get('displayedBoardingAt') for s in map_rides],
+        'publicMapAddressPoints': public_points,
         'appWalkingSeconds': [s['durationSeconds'] if s.get('durationSeconds') is not None else s['durationMinutes'] * 60
                               for s in route['segments'] if s['kind'] == 'WALK'],
         # This diagnostic compares user-visible products; it cannot prove these unknowns.
@@ -220,12 +226,102 @@ def compare_inputs(worker, route, map_display):
         'mapAccuracyWithinTwoMinutesVerified': False, 'actualTripAccuracyVerified': False,
         'snapshotEvidence': map_display['snapshotEvidence'],
     }
-    if contains_bus:
-        result['naverVisibleComponents'] = visible_mixed_components(map_display)
+    components = visible_route_components(map_display) if map_display.get('routeEvidenceLabel') else None
+    if contains_bus or components:
+        result['naverVisibleComponents'] = components
+    if not contains_bus and topology == map_topology:
+        details_verified = rail_detail_matches(map_display, snapshot)
+        result['publicRailTimingEvidence'] = rail_display_evidence(
+            app_trains, map_rides, components, public_points, comparable, details_verified,
+            app_departure == map_departure)
     if bus_legs:
         app = comparison.worker_prediction(worker, 'effectiveSnapshot.effectiveTransitRoute')
         result['appTimingComponents'] = comparison.timeline_budget(app)
     return result
+
+
+def public_point_alignment(map_display, snapshot):
+    """Compare the numeric pins exposed in the public route address to the declared request.
+
+    The browser can expose opaque place identifiers. Their coordinates are left unverified.
+    """
+    page_urls = re.findall(r'^- Page URL: (\S+)$', snapshot or '', re.MULTILINE)
+    if len(page_urls) != 1:
+        return 'UNVERIFIED'
+    url = urlsplit(page_urls[0])
+    path = url.path.split('/')
+    if (url.scheme != 'https' or url.netloc != 'map.naver.com' or path[:3] != ['', 'p', 'directions'] or
+            path[5:7] != ['-', 'transit'] or len(path) not in (7, 8) or (len(path) == 8 and not path[7].isdecimal())):
+        return 'UNVERIFIED'
+    for point, (lat, lng) in zip(path[3:5], coordinates(map_display['requestedCoordinates'])):
+        fields = point.split(',')
+        if len(fields) != 5 or not fields[2] or any(fields[3:]):
+            return 'UNVERIFIED'  # A named POI, station object, or waypoint can snap to a different boundary.
+        try:
+            x, y = map(float, fields[:2])
+        except ValueError:
+            return 'UNVERIFIED'
+        if abs(lat) >= 90 or not math.isfinite(x) or not math.isfinite(y):
+            return 'MISMATCH'
+        expected_x = WEB_MERCATOR_RADIUS_METERS * math.radians(lng)
+        expected_y = WEB_MERCATOR_RADIUS_METERS * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+        # Allow numeric coordinate serialization differences, up to one millimetre in the projection.
+        if not (math.isclose(x, expected_x, rel_tol=0, abs_tol=.001) and
+                math.isclose(y, expected_y, rel_tol=0, abs_tol=.001)):
+            return 'MISMATCH'
+    return 'MATCHED_PUBLIC_NUMERIC_POINTS'
+
+
+def rail_detail_matches(map_display, snapshot):
+    if not snapshot or not map_display.get('routeEvidenceLabel'):
+        return False
+    rows = [match.groups() for match in re.finditer(r'^\s*-\s+\'?button "([^"]+)"(.*)$', snapshot, re.MULTILINE)]
+    cards = [i for i, (label, _) in enumerate(rows) if label.endswith(' 상세보기')]
+    if [rows[i][0] for i in cards if '[expanded]' in rows[i][1]] != [map_display['routeEvidenceLabel']]:
+        return False
+    view = iter(label for label, _ in rows[cards[-1] + 1:])
+    for ride in map_display['rides']:
+        line = re.fullmatch(r'LINE_([1-9])', ride['line'])
+        if line is None or not ride.get('visibleTerminal'):
+            return False
+        boarding = rf'{line[1]}호선\s*{re.escape(ride["fromName"])}(?:역)?\s+승차(?:\s|$)'
+        alighting = rf'(?<!\S){re.escape(ride["toName"])}(?:역)?\s+하차(?:\s|$)'
+        boarding_clock = instant(ride['displayedBoardingAt']).astimezone(SEOUL).strftime('%H:%M') + ride['visibleTerminal']
+        from_label = next((label for label in view if re.search(r'\s승차(?:\s|$)', label)), '')
+        if not re.search(boarding, from_label) or boarding_clock not in from_label:
+            return False
+        to_label = next((label for label in view if re.search(r'\s하차(?:\s|$)', label)), '')
+        if not re.search(alighting, to_label):
+            return False
+    return True
+
+
+def rail_display_evidence(app_trains, map_rides, components, public_points, comparable, details_verified, same_suggested_departure):
+    clocks = []
+    for app, shown in zip(app_trains, map_rides):
+        boarding = instant(app['boardingAt'])
+        naver_minute = instant(shown['displayedBoardingAt'])
+        clocks.append({'appBoardingAt': app['boardingAt'], 'naverVisibleBoardingAt': shown['displayedBoardingAt'],
+                       'appClockMinusMapDisplayedSeconds': (boarding - naver_minute).total_seconds(),
+                       'boardingFallsInSameDisplayedMinute': boarding.replace(second=0, microsecond=0) == naver_minute})
+    walking = (components or {}).get('visibleWalkingMinutes') or {}
+    all_walks_visible = bool(walking and None not in [walking['access'], *walking['transfers'], walking['egress']])
+    reasons = []
+    if not comparable:
+        reasons.append('DISPLAY_INPUTS_NOT_MATCHED')
+    if public_points != 'MATCHED_PUBLIC_NUMERIC_POINTS':
+        reasons.append('PUBLIC_NUMERIC_POINTS_UNVERIFIED')
+    if not details_verified:
+        reasons.append('SELECTED_PUBLIC_RAIL_DETAIL_UNVERIFIED')
+    if not same_suggested_departure:
+        reasons.append('DISPLAYED_DOOR_DEPARTURE_DIFFERS')
+    if not all_walks_visible:
+        reasons.append('DOOR_OR_TRANSFER_WALKING_NOT_FULLY_DISPLAYED')
+    if not all(clock['boardingFallsInSameDisplayedMinute'] for clock in clocks):
+        reasons.append('RIDE_BOARDING_CLOCKS_DIFFER')
+    return {'boardingClockComparisons': clocks, 'selectedPublicRideDetailVerified': details_verified,
+            'allWalkingStagesDisplayed': all_walks_visible,
+            'sameVisibleInputsAndRideMinutes': not reasons, 'exclusionReasons': reasons}
 
 
 def matches_full_visible_label(snapshot, label):
@@ -246,10 +342,10 @@ def verify_bus_route_snapshot(map_display, snapshot, arrival):
     cursor = 0
     for ride in map_display['rides']:
         if ride['kind'] == 'BUS':
-            bus = ' '.join((ride['fromName'], ride['line'], '하차', ride['toName']))
             # Collapsed route cards may list alternatives, e.g. "5516 6515 하차".
             # They do not identify one bus for this arrival clock.
-            pattern = r'(?<!\S)' + re.escape(bus) + r'(?!\S)'
+            pattern = (r'(?<!\S)' + re.escape(ride['fromName']) + r' (?:중앙 )?' +
+                       re.escape(f'{ride["line"]} 하차 {ride["toName"]}') + r'(?!\S)')
             for endpoint in ('from', 'to'):
                 ars = ride.get(endpoint + 'Ars')
                 if ars is None:
@@ -280,10 +376,15 @@ def verify_snapshot(map_display, snapshot):
     zone = SEOUL
     query = instant(map_display['requestedDepartureAt']).astimezone(zone)
     observed = instant(map_display['observedAt']).astimezone(zone)
-    if query.date() != observed.date():
-        raise ValueError('This snapshot protocol supports the explicitly visible today label only')
     period = '오전' if query.hour < 12 else '오후'
-    query_label = f'오늘 {period} {query.hour % 12 or 12:02}:{query.minute:02} 출발'
+    if query.date() == observed.date():
+        day_label = '오늘'
+    elif query.date() == observed.date() + dt.timedelta(days=1):
+        day_label = f'{query.month}월 {query.day}일'
+    else:
+        raise ValueError('Use the visible today label or explicit date for a departure after midnight')
+    displayed_hour = 0 if query.hour == 0 else query.hour % 12 or 12
+    query_label = f'{day_label} {period} {displayed_hour:02}:{query.minute:02} 출발'
     arrival = instant(map_display['displayedArrivalAt']).astimezone(zone)
     contains_bus = any(ride['kind'] == 'BUS' for ride in map_display['rides'])
     if contains_bus:
@@ -303,7 +404,7 @@ def verify_snapshot(map_display, snapshot):
         raise ValueError('Structured clocks must match the exact labels in the visible evidence')
 
 
-def public_mixed_route_request(map_display, snapshot, *, order, departure, now):
+def public_mixed_route_request(map_display, snapshot, *, order, departure, now, require_numeric_points=False):
     """Prepare a selection hint only for a fresh, explicitly expanded public route."""
     if (map_display.get('provider') != 'NAVER_MAP_PUBLIC_UI' or map_display.get('mocked') is not False or
             map_display.get('queryMode') != 'DEPART_AT' or map_display.get('arrivalClockRounding') != 'UNKNOWN'):
@@ -316,6 +417,8 @@ def public_mixed_route_request(map_display, snapshot, *, order, departure, now):
     if [ride['kind'] for ride in map_display['rides']] != modes.get(order):
         raise ValueError('The visible map route must have the requested bus and subway order')
     verify_snapshot(map_display, snapshot)
+    if require_numeric_points:
+        require_public_endpoint_walks(map_display, snapshot)
     rows = []
     for line in snapshot.splitlines():
         if button := re.match(r'^\s*-\s+\'?button "([^"]+)"(.*)$', line):
@@ -348,6 +451,39 @@ def public_mixed_route_request(map_display, snapshot, *, order, departure, now):
             'route': {'railLine': rail['line'], 'railFrom': rail['fromName'], 'railTo': rail['toName'],
                       'busNumber': bus['line'], 'busFrom': bus['fromName'], 'busTo': bus['toName'],
                       'busFromArs': bus.get('fromArs'), 'busToArs': bus.get('toArs')}}
+
+
+def public_rail_point_request(map_display, snapshot, *, departure, now):
+    """Only prepare a live run with public point pins, an explicit departure and a visible corridor."""
+    if (map_display.get('provider') != 'NAVER_MAP_PUBLIC_UI' or map_display.get('mocked') is not False or
+            map_display.get('queryMode') != 'DEPART_AT' or map_display.get('arrivalClockRounding') != 'UNKNOWN'):
+        raise ValueError('Use a publicly displayed Naver route with an explicit departure')
+    observed = instant(map_display['observedAt'])
+    if (instant(map_display['requestedDepartureAt']) != departure or
+            not observed <= now < departure or (now - observed).total_seconds() > 300):
+        raise ValueError('The same future departure and a public capture within five minutes are required')
+    verify_snapshot(map_display, snapshot)
+    require_public_endpoint_walks(map_display, snapshot)
+    rides = map_display['rides']
+    if len(rides) != 2 or any(ride['kind'] != 'SUBWAY' for ride in rides):
+        raise ValueError('Select the public two-ride subway detail')
+    first, second = rides
+    if ((first['line'], first['toName'], second['line'], second['fromName'], second['toName']) !=
+            ('LINE_4', '사당', 'LINE_2', '사당', '신림') or first['fromName'] not in ('노원', '동작') or
+            not rail_detail_matches(map_display, snapshot)):
+        raise ValueError('The selected visible boarding and alighting stops must match the observed corridor')
+    return {'departureAt': departure.astimezone(dt.timezone.utc).isoformat(), 'observedAt': observed.isoformat(),
+            'coordinates': {name: {'lat': float(lat), 'lng': float(lng)} for name, (lat, lng) in
+                zip(('origin', 'destination'), coordinates(map_display['requestedCoordinates']))},
+            'firstBoardingStation': first['fromName']}
+
+
+def require_public_endpoint_walks(map_display, snapshot):
+    if public_point_alignment(map_display, snapshot) != 'MATCHED_PUBLIC_NUMERIC_POINTS':
+        raise ValueError('The public numeric endpoint pins must match the declared coordinates')
+    walking = (visible_route_components(map_display) or {}).get('visibleWalkingMinutes') or {}
+    if not walking or None in [walking['access'], *walking['transfers'], walking['egress']]:
+        raise ValueError('Select a public result that shows both endpoint walks and the transfer walk')
 
 
 def matches_public_mixed_route(worker, seed, request, *, order):
@@ -389,8 +525,9 @@ if __name__ == '__main__':
                         default='accepted-realtime')
     args = parser.parse_args()
     map_display = json.loads(args.map_display.read_text())
-    verify_snapshot(map_display, args.snapshot.read_text())
+    snapshot = args.snapshot.read_text()
+    verify_snapshot(map_display, snapshot)
     comparator = compare if args.prediction_kind == 'accepted-realtime' else compare_timetable_preview
-    result = comparator(json.loads(args.worker.read_text()), json.loads(args.public_status.read_text()), map_display)
+    result = comparator(json.loads(args.worker.read_text()), json.loads(args.public_status.read_text()), map_display, snapshot)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     raise SystemExit(0 if result['result'] in ('DISPLAY_COMPARED', 'TIMETABLE_DISPLAY_COMPARED') else 3)

@@ -463,7 +463,8 @@ class RealIsolationVerifierTest(unittest.TestCase):
                 bus.update(kind='BUS', lineName='N37', fromName='첫 정류장', toName='다음 정류장', busRidePrediction={
                     'boardingAt': clocks['predictedBoardingAt'], 'alightingAt': clocks['predictedArrivalAt'], 'sourceUpdatedAt': source})
                 if bus_first:
-                    snapshot['firstBoardingObservation'].update(trainNumber=None, stationName='첫 정류장', lineName='N37')
+                    snapshot['firstBoardingObservation'].update(provider='seoul-bus', trainNumber=None,
+                        stationName='첫 정류장', lineName='N37')
                 route['segments'][3]['transferTiming'] = {
                     'walkingSeconds': 120, 'previousArrivalAt': '2026-10-08T02:44:00Z', 'boardingAt': '2026-10-08T02:50:00Z',
                     'physicalReadyAt': '2026-10-08T02:46:00Z', 'confidenceReadyAt': '2026-10-08T02:47:00Z',
@@ -478,7 +479,10 @@ class RealIsolationVerifierTest(unittest.TestCase):
                     changed = copy.deepcopy(worker)
                     changed_route = changed['effectiveSnapshot']['effectiveTransitRoute']
                     changed_bus = changed_route['segments'][bus['sequence']]['busRidePrediction']
-                    if fault == 'stale-bus': changed_bus['sourceUpdatedAt'] = '2026-10-08T01:57:59Z'
+                    if fault == 'stale-bus':
+                        changed_bus['sourceUpdatedAt'] = '2026-10-08T01:59:14Z'
+                        if bus_first:
+                            changed['effectiveSnapshot']['firstBoardingObservation']['sourceUpdatedAt'] = changed_bus['sourceUpdatedAt']
                     elif fault == 'invalid-transfer': changed_route['segments'][3]['transferTiming']['physicalReadyAt'] = '2026-10-08T02:46:01Z'
                     else: changed_bus['reportedAlightingAt'] = changed_bus['alightingAt']
                     with self.subTest(fault=fault), self.assertRaises(AssertionError):

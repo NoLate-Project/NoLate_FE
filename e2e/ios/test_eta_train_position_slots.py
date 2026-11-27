@@ -65,6 +65,19 @@ class PositionSlotsTest(unittest.TestCase):
         self.assertLessEqual(max(final), dt.datetime.fromisoformat(self.route['departureAt']) + dt.timedelta(minutes=90))
         self.assertEqual(len(slots.pending), MAX_READS)
 
+    def test_public_short_corridor_tracks_dongjak_instead_of_reusing_nowon(self):
+        first = self.route['segments'][0]
+        first['fromName'] = '동작'
+        first['rideTiming']['timetable']['fromStationCode'] = '0431'
+        with self.assertRaisesRegex(ValueError, 'Unexpected observation corridor'):
+            JourneyPositionSlots().apply_evaluation(1, self.worker, NOW)
+        slots = JourneyPositionSlots(short_corridor=True)
+        slots.apply_evaluation(1, self.worker, NOW)
+        first_boarding = [slot for slot in slots.pending.values()
+                          if slot['line'] == 'LINE_4' and slot['event'] == 'BOARDING']
+        self.assertEqual({slot['station'] for slot in first_boarding}, {'동작'})
+        self.assertEqual(len(slots.pending), MAX_READS)
+
     def test_reconnected_train_only_changes_unspent_future_windows(self):
         old = sorted(self.slots.pending.values(), key=lambda s: s['at'])
         for slot in old[:5]:

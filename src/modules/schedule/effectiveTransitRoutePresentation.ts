@@ -28,6 +28,34 @@ export type EffectiveTransitRoutePresentation = {
 
 const MAP_SAVED_ROUTE_NOTE = "지도에는 저장한 경로가 표시돼요";
 const MAX_REPORTED_ARRIVAL_AGE_MS = 20 * 60_000;
+const MAX_SEOUL_BUS_FORECAST_AGE_MS = 45_000;
+
+/** The existing detail clock expires a cached live ETA even while the next server read is pending. */
+export function expireSeoulBusDepartureStatus(
+    status: ScheduleDepartureStatus | undefined,
+    nowMs: number,
+): ScheduleDepartureStatus | undefined {
+    if (status?.source !== "LIVE_PROVIDER" || status.stale || status.failureReason) return status;
+    const expired = status.effectiveTransitRoute?.segments.some(({ busRidePrediction }) => {
+        if (!busRidePrediction) return false;
+        const sourceAt = parseDate(busRidePrediction.sourceUpdatedAt)?.getTime();
+        return sourceAt == null || sourceAt > nowMs + 5000 || nowMs - sourceAt > MAX_SEOUL_BUS_FORECAST_AGE_MS;
+    });
+    if (!expired) return status;
+    return {
+        ...status,
+        stale: true,
+        confidence: "LOW",
+        failureReason: "TRANSIT_ARRIVAL_SOURCE_STALE: 차량 관측정보가 오래됐어요",
+        predictedArrivalAt: null,
+        onTimeArrivalPossible: null,
+        transitRouteProvenance: null,
+        transitTimingBasis: null,
+        firstBoardingWaitMinutes: null,
+        routeChanged: false,
+        effectiveTransitRoute: null,
+    };
+}
 
 export function isPendingTransitTransfer(status: ScheduleDepartureStatus | null | undefined): boolean {
     return status?.plannedJourneyTimingFailureReason === "TRANSFER_FORECAST_PENDING";
@@ -69,7 +97,7 @@ export function buildPlannedJourneyArrivalPresentation(
     const finalBusReported = prediction.basis === "FINAL_BUS_ALIGHTING_REPORTED";
     const finalTrainReported = prediction.basis === "FINAL_TRAIN_ALIGHTING_REPORTED";
     const finalRideReported = finalBusReported || finalTrainReported;
-    const freshnessMs = busObserved ? 45_000 : 120_000;
+    const freshnessMs = busObserved ? MAX_SEOUL_BUS_FORECAST_AGE_MS : 120_000;
     const maxDisplayAgeMs = prediction.basis === "LAST_ACCEPTED_PLAN" ? 300_000 : freshnessMs;
     if (!arrival || !presented || arrival.getTime() <= nowMs ||
         presented.getTime() > nowMs + 5_000 || nowMs - presented.getTime() > maxDisplayAgeMs) return undefined;
@@ -123,7 +151,7 @@ export function getDisplayedPlannedTransitRoute(
     const finalTrainReported = prediction.basis === "FINAL_TRAIN_ALIGHTING_REPORTED";
     const finalRideReported = finalBusReported || finalTrainReported;
     const railBusConnection = prediction.basis === "MATCHED_TRAIN_AND_BUS_REALTIME";
-    const freshnessMs = busObserved || railBusConnection ? 45_000 : 120_000;
+    const freshnessMs = busObserved || railBusConnection ? MAX_SEOUL_BUS_FORECAST_AGE_MS : 120_000;
     if (!presented || !departure || !arrival || (!baseline && (!source || source.getTime() > nowMs + 5_000 ||
         nowMs - source.getTime() > (finalRideReported ? MAX_REPORTED_ARRIVAL_AGE_MS : freshnessMs))) || presented.getTime() > nowMs + 5_000 ||
         nowMs - presented.getTime() > (baseline ? 300_000 : freshnessMs) || departure.getTime() > nowMs + 5_000 ||

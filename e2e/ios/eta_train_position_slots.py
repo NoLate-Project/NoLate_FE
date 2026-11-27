@@ -8,6 +8,7 @@ from eta_planned_route_evidence import verified_timetable_plan
 
 OFFSETS_SECONDS = (-120, -15, 90, 195)
 CORRIDOR = (('LINE_4', '노원', '사당', '0411', '0433'), ('LINE_2', '사당', '신림', '0226', '0230'))
+SHORT_CORRIDOR = (('LINE_4', '동작', '사당', '0431', '0433'), CORRIDOR[1])
 MAX_READS = len(CORRIDOR) * 2 * len(OFFSETS_SECONDS)
 
 
@@ -19,7 +20,8 @@ def _instant(text):
 
 
 class JourneyPositionSlots:
-    def __init__(self):
+    def __init__(self, *, short_corridor=False):
+        self.corridor = SHORT_CORRIDOR if short_corridor else CORRIDOR
         self.identity = None
         self.original_departure = None
         self.service_date = None
@@ -79,7 +81,7 @@ class JourneyPositionSlots:
                 return
             source, route = latest
         rides = [leg for leg in route['segments'] if leg['kind'] != 'WALK']
-        if (not route.get('identity') or route.get('provider') != 'odsay' or len(rides) != len(CORRIDOR)
+        if (not route.get('identity') or route.get('provider') != 'odsay' or len(rides) != len(self.corridor)
                 or (index > 1 and (self.identity != route['identity'] or
                                     self.original_departure != _instant(route['departureAt'])))):
             raise ValueError('Unrelated position observation journey')
@@ -90,7 +92,7 @@ class JourneyPositionSlots:
                 self.log.append({**old, 'at': old['at'].isoformat(), 'status': 'MISSED_CLOCK_WINDOW'})
         service_dates = set()
         pending = {}
-        for ride, (line, start, end, start_id, end_id) in zip(rides, CORRIDOR):
+        for ride, (line, start, end, start_id, end_id) in zip(rides, self.corridor):
             timing = ride['rideTiming']
             service = observed_service(ride)
             table = timing['timetable']

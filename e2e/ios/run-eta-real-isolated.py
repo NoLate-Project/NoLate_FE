@@ -213,14 +213,16 @@ def main():
     fixture.add_argument('--copied-input', type=Path, help='Existing approved read-only 296/367 snapshot')
     fixture.add_argument('--public-nowon-sillim', action='store_true',
                          help='Use the public Nowon–Sillim coordinates for a fixed-departure ODsay comparison')
+    fixture.add_argument('--public-map-points', action='store_true',
+                         help='Use the exact numeric points in a fresh public Naver route detail')
     parser.add_argument('--max-evaluations', type=int, choices=(1, 2, 3), default=3,
                         help='Bound actual provider calls; fewer than two accepted UI cases remains PARTIAL')
     parser.add_argument('--journey-provider', choices=('odsay', 'tmap'), default='odsay',
                         help='Defaults to a fresh ODsay selected route; choose Tmap explicitly for legacy route verification')
     parser.add_argument('--mixed-route-order', choices=('bus-rail', 'rail-bus'),
                         help='Select a matching ODsay journey with one Seoul bus and one subway ride')
-    parser.add_argument('--map-route-evidence', type=Path, help='Select the mixed route described by this fresh Naver public observation')
-    parser.add_argument('--map-route-snapshot', type=Path, help='Saved public UI snapshot of the expanded mixed route')
+    parser.add_argument('--map-route-evidence', type=Path, help='Select the route described by this fresh Naver public observation')
+    parser.add_argument('--map-route-snapshot', type=Path, help='Saved public UI snapshot of the expanded route')
     parser.add_argument('--target-lead-minutes', type=int, choices=(70, 75, 90), default=75,
                         help='Future test appointment only; real clock and provider acceptance remain unchanged')
     parser.add_argument('--planned-departure-at',
@@ -294,6 +296,9 @@ def main():
     if args.verify_short_first_ride and (args.api_port != 5523 or args.journey_provider != 'odsay'
                                        or args.verify_odsay_timetable_selection or args.verify_planned_postdeparture):
         parser.error('The short first-ride live check requires its own ODsay/H2/5523 run')
+    if args.public_map_points and (args.api_port != 5523 or args.journey_provider != 'odsay'
+                                  or args.verify_short_first_ride or args.verify_odsay_timetable_selection):
+        parser.error('The public map points use the isolated ODsay run on port 5523')
     if args.verify_odsay_timetable_selection and (
             args.journey_provider != 'odsay' or args.verify_observation_expiry or args.verify_planned_postdeparture
             or args.planned_departure_at or args.evaluation_not_before):
@@ -319,19 +324,27 @@ def main():
     except ValueError as error:
         parser.error(str(error))
     public_mixed_request = None
-    if args.map_route_evidence or args.map_route_snapshot:
-        if not (args.map_route_evidence and args.map_route_snapshot and args.mixed_route_order and departure and target_arrival_at):
-            parser.error('Use both public route files, the mixed order, the departure and the target arrival together')
+    public_rail_request = None
+    if args.map_route_evidence or args.map_route_snapshot or args.public_map_points:
+        if not (args.map_route_evidence and args.map_route_snapshot and (args.mixed_route_order or args.public_map_points)
+                and departure and target_arrival_at):
+            parser.error('Use both public route files, a route mode, the departure and the target arrival together')
         display_spec = importlib.util.spec_from_file_location('map_display', Path(__file__).with_name('verify-eta-map-display.py'))
         display_comparison = importlib.util.module_from_spec(display_spec)
         display_spec.loader.exec_module(display_comparison)
         try:
             mapped_route = json.loads(args.map_route_evidence.read_text())
-            public_mixed_request = display_comparison.public_mixed_route_request(
-                mapped_route, args.map_route_snapshot.read_text(), order=args.mixed_route_order,
-                departure=departure, now=dt.datetime.now(dt.timezone.utc))
+            public_snapshot = args.map_route_snapshot.read_text()
+            captured_at = dt.datetime.now(dt.timezone.utc)
+            if args.mixed_route_order:
+                public_mixed_request = display_comparison.public_mixed_route_request(
+                    mapped_route, public_snapshot, order=args.mixed_route_order, departure=departure, now=captured_at,
+                    require_numeric_points=args.public_map_points)
+            else:
+                public_rail_request = display_comparison.public_rail_point_request(
+                    mapped_route, public_snapshot, departure=departure, now=captured_at)
         except (OSError, ValueError, KeyError, TypeError) as error:
-            parser.error(f'Invalid public mixed-route evidence ({type(error).__name__})')
+            parser.error(f'Invalid public route evidence ({type(error).__name__}): {error}')
     timetable_target = None
     if args.timetable_target_arrival:
         try:
@@ -398,6 +411,12 @@ def main():
         except ValueError as error:
             parser.error(str(error))
         fixture_input = '--public-nowon-sillim'
+    elif args.public_map_points:
+        try:
+            require_public_comparison_departure(departure.astimezone(SEOUL).isoformat())
+        except ValueError as error:
+            parser.error(str(error))
+        fixture_input = '--public-map-points'
     else:
         copied = args.copied_input.resolve(strict=True)
         if not str(copied).startswith('/private/tmp/nolate-real-naver-requery-04-'):
@@ -449,6 +468,10 @@ def main():
     if public_mixed_request:
         (root / 'public-mixed-route-request.json').write_text(json.dumps(public_mixed_request, ensure_ascii=False, indent=2))
         report['publicMixedRouteSeedMatched'] = False
+    public_point_request = (public_rail_request or public_mixed_request) if args.public_map_points else None
+    if public_point_request:
+        (root / 'public-map-point-request.json').write_text(json.dumps(public_point_request, ensure_ascii=False, indent=2))
+        report['publicMapPointSeedMatched'] = False
     report['publicStationFixture'] = args.public_nowon_sillim
     report['apiBase'] = base
     report['targetLeadMinutes'] = args.target_lead_minutes
@@ -460,7 +483,8 @@ def main():
     report['reportedBoardingChainRequested'] = args.verify_reported_boarding_chain
     report['firstBoardingRecheckRequested'] = args.verify_first_boarding_recheck
     report['firstBoardingFollowup'] = args.first_boarding_followup if args.verify_first_boarding_recheck else None
-    position_slots = JourneyPositionSlots() if args.observe_train_positions else None
+    short_corridor = bool(public_rail_request and public_rail_request['firstBoardingStation'] == '동작')
+    position_slots = JourneyPositionSlots(short_corridor=short_corridor) if args.observe_train_positions else None
     position_reads = 0
     if position_slots is not None:
         report['trainPositions'] = {'maximumHttpCalls': MAX_READS, 'physicalHttpCalls': 0,
@@ -640,6 +664,10 @@ def main():
                 'origin': {'lat': 37.65636195, 'lng': 127.06342739},
                 'destination': {'lat': 37.48426844, 'lng': 126.92977778},
             }
+        if public_point_request:
+            assert prepared['publicMapPointSeedMatched'] is True and prepared['copiedFromScheduleId'] is None
+            assert prepared['requestedCoordinates'] == public_point_request['coordinates']
+            report['publicMapPointSeedMatched'] = True
         if args.journey_provider == 'odsay' and args.planned_departure_at:
             seed = json.loads((root / 'odsay-seed-journey.json').read_text())
             report['odsaySeedRequestedDepartureAt'] = verify_odsay_departure_input(args.planned_departure_at, prepared, seed)
@@ -1106,11 +1134,14 @@ def main():
                 public_path = root / f'ui-status-{index}.json'
                 public_path.write_bytes((root / 'ui-status.json').read_bytes())
                 record['uiResult'] = 'PASSED'
-                if public_mixed_request and index == 1:
-                    display = display_comparison.compare(value, json.loads(public_path.read_text()), mapped_route)
-                    display_path = root / 'public-mixed-route-display-comparison.json'
+                if (public_mixed_request or public_rail_request) and index == 1:
+                    display = display_comparison.compare(value, json.loads(public_path.read_text()), mapped_route,
+                        public_snapshot)
+                    comparison_kind = 'mixed' if public_mixed_request else 'rail'
+                    display_path = root / f'public-{comparison_kind}-route-display-comparison.json'
                     display_path.write_text(json.dumps(display, ensure_ascii=False, indent=2))
-                    report['publicMixedRouteDisplay'] = {'result': display['result'], 'evidence': display_path.name}
+                    key = 'publicMixedRouteDisplay' if public_mixed_request else 'publicRailRouteDisplay'
+                    report[key] = {'result': display['result'], 'evidence': display_path.name}
                 accepted_streak += 1
                 if args.verify_planned_postdeparture:
                     initial_plan = accepted_departure_plan(value['effectiveSnapshot'])
@@ -1129,8 +1160,19 @@ def main():
                 else:
                     ui('testVerifyIsolatedRealProviderDiagnostic', f'ui-diagnostic-{index}', ('--real-isolated-evidence', str(path),
                         '--schedule-id', '363', '--existing-title', TITLE))
-                (root / f'ui-status-{index}.json').write_bytes((root / 'ui-status.json').read_bytes())
+                public_path = root / f'ui-status-{index}.json'
+                public_path.write_bytes((root / 'ui-status.json').read_bytes())
                 record['uiResult'] = 'DIAGNOSTIC_PASSED_NOT_ACCEPTED_ETA'
+                if public_rail_request and index == 1 and not already_departed:
+                    try:
+                        display = display_comparison.compare_timetable_preview(
+                            value, json.loads(public_path.read_text()), mapped_route, public_snapshot)
+                    except ValueError:
+                        report['publicRailRouteDisplay'] = {'result': 'NO_COMPARABLE_FUTURE_TIMETABLE_PREVIEW'}
+                    else:
+                        display_path = root / 'public-rail-route-timetable-preview-comparison.json'
+                        display_path.write_text(json.dumps(display, ensure_ascii=False, indent=2))
+                        report['publicRailRouteDisplay'] = {'result': display['result'], 'evidence': display_path.name}
             if not is_accepted:
                 accepted_streak = 0
             if args.verify_planned_postdeparture and index == 1 and initial_plan is None:

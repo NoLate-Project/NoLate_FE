@@ -3,6 +3,7 @@ import {
     buildEffectiveTransitRoutePresentation,
     getFutureTimetableArrivalSummary,
     buildPlannedJourneyArrivalPresentation,
+    expireSeoulBusDepartureStatus,
     getFreshDepartureTiming,
     resolveAcceptedDepartureStatus,
     resolveScheduleDetailDepartureTiming,
@@ -81,6 +82,24 @@ test("shows that a deferred bus transfer is pending without showing the original
 });
 
 describe("effective transit route presentation", () => {
+    it("expires an unchanged bus forecast in the schedule detail while retaining the earlier departure reminder", () => {
+        const status = departureStatus();
+        const bus = status.effectiveTransitRoute!.segments.find(segment => segment.kind === "BUS")!;
+        bus.busRidePrediction = { boardingAt: "2026-08-10T09:16:00+09:00", alightingAt: "2026-08-10T09:35:00+09:00",
+            sourceUpdatedAt: "2026-08-10T09:00:00+09:00" };
+        const now = Date.parse(bus.busRidePrediction.sourceUpdatedAt);
+
+        expect(expireSeoulBusDepartureStatus(status, now + 45_000)).toBe(status);
+        const expired = expireSeoulBusDepartureStatus(status, now + 45_001);
+        expect(expired).toMatchObject({ stale: true, confidence: "LOW", predictedArrivalAt: null, effectiveTransitRoute: null });
+        expect(buildEffectiveTransitRoutePresentation(expired)).toBeUndefined();
+        expect(resolveScheduleDetailDepartureTiming({ status: expired, savedTravelMinutes: 50,
+            savedRecommendedDepartureAt: new Date("2026-08-10T09:18:00+09:00"), isInspectingTravelPlan: false })).toEqual({
+            recommendedDepartureAt: new Date(status.recommendedDepartureAt!), travelMinutes: 50, preservingEarlierDeparture: true,
+        });
+        expect(buildEffectiveTransitRoutePresentation(status)).toBeDefined();
+    });
+
     it("keeps the last bus's confirmed stop report and the remaining walk separate from a live forecast", () => {
         const reportedAt = "2026-08-10T09:43:30+09:00";
         const arrivalAt = "2026-08-10T09:46:30+09:00";

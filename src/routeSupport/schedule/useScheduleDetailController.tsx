@@ -55,6 +55,7 @@ import { useImmediateNavigationTransition } from '../../modules/performance/Imme
 import {
   buildEffectiveTransitRoutePresentation,
   buildPlannedJourneyArrivalPresentation,
+  expireSeoulBusDepartureStatus,
   isPendingTransitTransfer,
   resolveScheduleDetailDepartureTiming,
 } from '../../modules/schedule/effectiveTransitRoutePresentation';
@@ -187,7 +188,7 @@ export function useScheduleDetailController({
     internalPreviewItem
     ?? (id ? state.itemsById[id] : undefined)
     ?? initialItem;
-  const { departureStatus } =
+  const { departureStatus: fetchedDepartureStatus } =
     useScheduleDepartureStatusController({
       scheduleId: id,
       startAt: item?.startAt,
@@ -196,6 +197,10 @@ export function useScheduleDetailController({
       routePlannerSessionId,
       routeSavePending,
     });
+  const departureStatus = useMemo(
+    () => expireSeoulBusDepartureStatus(fetchedDepartureStatus, nowMs),
+    [fetchedDepartureStatus, nowMs],
+  );
 
   const fromGuidanceActivity = !internalPreviewItem && entrySource === 'guidance-activity' && automaticUUID(guidanceSession);
   const authoritativeDetailLoaded = !internalPreviewItem && loadedDetailId === id;
