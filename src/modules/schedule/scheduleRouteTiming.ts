@@ -336,6 +336,7 @@ export function reconcileScheduleRouteTiming({
     }
 
     if (route && typeof route === "object" && !Array.isArray(route)) {
+        const selected = route as Partial<RouteAlternativeOption>;
         return {
             departAt: nextDepartureAt,
             route: {
@@ -348,7 +349,9 @@ export function reconcileScheduleRouteTiming({
                     providerTimeBasis: "route_estimate",
                     transitDepartureAt: undefined,
                     transitDepartureTimeSource: undefined,
-                    transitServiceState: undefined,
+                    // The saved provider route still exists. Its service at the new time is unconfirmed.
+                    transitServiceState: selected.provider === "odsay" && selected.source === "api" && selected.mode === "TRANSIT"
+                        ? "unknown" : undefined,
                 }),
                 routeInfo: nextRouteInfo,
             },

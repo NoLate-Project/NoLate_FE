@@ -401,13 +401,6 @@ export function useScheduleIndexAuxiliaryData({
     yearOverviewLoadSessionRef,
     yearOverviewLoadedYearsRef,
   ]);
-  // The calendar range already contains the nearby schedules needed by the
-  // agenda notice. Reuse it instead of issuing an unbounded /api/schedules
-  // request on every focus/foreground transition.
-  const routeSetupItems = useMemo(
-    () => itemsArray.filter(item => item.routeSetupRequired === true),
-    [itemsArray],
-  );
   const writableCategories = useMemo(() => {
     const joinedCalendarIds = new Set(
       scheduleCalendars.map(calendar => calendar.id),
@@ -580,7 +573,6 @@ export function useScheduleIndexAuxiliaryData({
     loadYearOverviewSchedules,
     requireActiveCalendarWriteAccess,
     retryCategoryLoad,
-    routeSetupItems,
     searchKeywordLength,
     searchAwaitingCurrentQuery: searchKeywordLength >= SEARCH_MIN_QUERY_LENGTH
       && settledSearchKey !== currentSearchKey,

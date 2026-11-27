@@ -223,16 +223,3 @@ function curationProgressValue(step: OnboardingStep): number {
       return 6;
   }
 }
-
-/** 캘린더 가져오기 소개 문구 한 건을 아이콘, 제목, 설명이 있는 행으로 렌더링합니다. */
-export function IntroPoint({ label }: { label: string }) {
-  const { colors, mode } = useTheme();
-  const styles = createCalendarImportStyles(colors, mode);
-
-  return (
-    <View style={styles.introPoint}>
-      <Ionicons name="checkmark-circle" size={18} color={BRAND_BLUE} />
-      <Text style={styles.introPointText}>{label}</Text>
-    </View>
-  );
-}

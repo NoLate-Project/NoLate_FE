@@ -82,7 +82,7 @@ test('serialization, map normalization, schedule selection and an appointment ed
 
 test.each([
     ['mapping not confirmed', { mappingConfirmed: false }],
-    ['no boarding margin', { boardingBufferMinutes: 0 }],
+    ['negative boarding margin', { boardingBufferMinutes: -1 }],
     ['negative alighting margin', { alightingBufferMinutes: -1 }],
     ['stale timetable', { fetchedAt: '2026-10-12T07:00:00+09:00' }],
     ['invalid provider timestamp', { fetchedAt: 'invalid' }],
@@ -117,19 +117,19 @@ test('missing station coordinates and multiple intercity rides require a differe
     expect(input.search).not.toHaveBeenCalled();
 });
 
-test('boarding buffers have preparation labels without becoming walking or rides', async () => {
+test('planning margins stay out of the displayed transport legs', async () => {
     const route = await buildIntercityJourney(args());
     const dropdown = buildRouteDropdownSummaryItems(route, origin.name, destination.name);
-    expect(dropdown.filter(item => item.kind === 'WAIT').map(item => item.title)).toEqual(['탑승 준비·대기 · 15분', '하차 후 여유 · 5분']);
-    expect(dropdown.find(item => item.kind === 'TRAIN')!.subtitle).toContain('11:00 → 12:00 · 예매 미확인');
-    const waits = buildRouteProgressSegments(route).filter(item => item.kind === 'WAIT');
-    expect(waits.map(item => item.minutes)).toEqual([15, 5]);
-    expect(waits.every(item => !item.isRide && !item.lineLabel)).toBe(true);
-    const boardingBuffer = route.transitLegs!.find(leg => leg.journeyPhase === 'BUFFER')!;
-    boardingBuffer.durationMinutes = 18;
-    boardingBuffer.durationSeconds = 18 * 60;
-    expect(buildRouteDropdownSummaryItems(route).find(item => item.kind === 'WAIT')?.title)
-        .toBe('탑승 준비·대기 (준비 15분 포함) · 18분');
+    expect(dropdown.some(item => item.kind === 'WAIT')).toBe(false);
+    expect(dropdown.find(item => item.kind === 'TRAIN')!.subtitle).toContain('11:00 → 12:00');
+});
+test('zero margins connect at the service times without invented preparation legs', async () => {
+    const input = args();
+    const route = await buildIntercityJourney({ ...input, selection: { ...selection, boardingBufferMinutes: 0, alightingBufferMinutes: 0 } });
+    expect(route.transitLegs!.some(leg => leg.journeyPhase === 'BUFFER')).toBe(false);
+    expect(input.search.mock.calls[0][3].departureAt).toEqual(new Date('2026-10-12T10:40:00+09:00'));
+    expect(input.search.mock.calls[1][3].departureAt).toEqual(new Date(service.arrivalAt));
+    expect(route.transitLegs!.find(leg => leg.kind === 'TRAIN')!.startDateTime).toBe(new Date(service.departureAt).toISOString());
 });
 test('walking connection attribution survives composition', async () => {
     const board = option.transitLegs![1].startCoord!;

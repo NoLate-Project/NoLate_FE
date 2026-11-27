@@ -102,10 +102,12 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                                     key={option.value}
                                     onPress={() => switchShareMode(option.value)}
                                     accessibilityRole="tab"
+                                    accessibilityLabel={option.label}
                                     accessibilityState={{ selected }}
                                     style={styles.modeOption}
                                 >
                                     <Ionicons
+                                        accessible={false}
                                         name={option.icon}
                                         size={17}
                                         color={selected ? colors.textPrimary : colors.textSecondary}

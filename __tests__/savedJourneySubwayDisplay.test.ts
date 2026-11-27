@@ -17,7 +17,7 @@ const snapshot=(patch={})=>({enabled:true,status:'ACTIVE',sessionId:binding.sess
 it('uses one station-correlated state for detail, route bar and next-station instruction',()=>{
     expect(presentSavedJourneyGuidance(snapshot(),binding,1021)?.subway).toMatchObject({currentStopName:'현재역',remainingStops:1});
     expect(presentSavedJourneyRoutePosition(snapshot(),binding,input,1021)).toMatchObject({legIndex:1,legProgress:0.5,barFraction:0.5});
-    expect(presentSavedJourneyStage(snapshot(),binding,input,1021)).toEqual({title:'현재역',action:'다음 역 하차 · 하차 준비',activeLegIndex:1});
+    expect(presentSavedJourneyStage(snapshot(),binding,input,1021)).toEqual({title:'현재역',action:'하차역에서 내리세요',activeLegIndex:1});
 });
 it('does not move on a clock and hides expired station evidence',()=>{
     expect(presentSavedJourneyRoutePosition(snapshot(),binding,input,1034)).toEqual(presentSavedJourneyRoutePosition(snapshot(),binding,input,1021));

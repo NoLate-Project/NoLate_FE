@@ -200,7 +200,7 @@ export default function QuickScheduleModal({
         updateVoiceTranscript,
         voiceDurationMillis,
         voiceMeterHistory,
-        voicePermissionDenied,
+        voiceInputIssue,
         voiceRecognitionAlternatives,
         voiceRecognitionConfidence,
         voiceStatusMessage,
@@ -344,7 +344,7 @@ export default function QuickScheduleModal({
     const baseCardHeight =
         presentedStep === "input"
             ? inputMode === "photo" && !selectedPhoto
-                ? 378
+                ? 278
                 : CARD_HEIGHT_BY_MODE[inputMode]
             : presentedStep === "edit" && editingField
             ? editingField === "notification" && !notificationRouteReady
@@ -572,7 +572,6 @@ export default function QuickScheduleModal({
         inputModeDescription,
         photoErrorBorder,
         photoErrorSurface,
-        photoErrorTextColor,
         photoErrorTitleColor,
         photoNeedsReview,
         photoScanFrameStyle,
@@ -602,7 +601,7 @@ export default function QuickScheduleModal({
         text,
         voiceDurationMillis,
         voiceMeterHistory,
-        voicePermissionDenied,
+        voiceNeedsManualInput: voiceInputIssue !== null,
         voiceStatusMessage,
         voiceTranscript,
         voiceUri,
@@ -638,7 +637,6 @@ export default function QuickScheduleModal({
             onVoiceTranscriptChange={updateVoiceTranscript}
             photoErrorBorder={photoErrorBorder}
             photoErrorSurface={photoErrorSurface}
-            photoErrorTextColor={photoErrorTextColor}
             photoErrorTitleColor={photoErrorTitleColor}
             photoNeedsReview={photoNeedsReview}
             photoRecognitionError={photoRecognitionError}
@@ -656,7 +654,7 @@ export default function QuickScheduleModal({
             voiceControlTitle={voiceControlTitle}
             voiceDurationMillis={voiceDurationMillis}
             voiceMeterHistory={voiceMeterHistory}
-            voicePermissionDenied={voicePermissionDenied}
+            voiceInputIssue={voiceInputIssue}
             voiceSpectrumEnergy={voiceSpectrumEnergy}
             voiceTranscript={voiceTranscript}
             voiceTranscriptTruncated={voiceTranscriptTruncated}

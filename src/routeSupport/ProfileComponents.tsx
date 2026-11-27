@@ -18,7 +18,9 @@ export function AccountInfoRow({
     actionLabel,
     actionIcon,
     buttonRef,
+    compact = false,
 }: {
+    compact?: boolean;
     label: string;
     value?: string;
     colors: ReturnType<typeof useTheme>["colors"];
@@ -31,17 +33,17 @@ export function AccountInfoRow({
 }) {
     const content = (
         <>
-            <View style={styles.accountRowMain}>
+            <View style={[styles.accountRowMain, compact && styles.compactAccountRowMain]}>
                 {value === undefined ? (
-                    <Text style={[styles.accountActionTitle, { color: colors.textPrimary }]}>
+                    <Text style={[styles.accountActionTitle, compact && styles.compactAccountLabel, { color: colors.textPrimary }]}>
                         {[label, actionLabel].filter(Boolean).join(" ")}
                     </Text>
                 ) : <>
-                <Text style={[styles.accountLabel, { color: colors.textSecondary }]}>{label}</Text>
+                <Text style={[styles.accountLabel, compact && styles.compactAccountLabel, { color: compact ? colors.textPrimary : colors.textSecondary }]}>{label}</Text>
                 <Text
                     selectable={selectable}
                     numberOfLines={2}
-                    style={[styles.accountValue, { color: colors.textPrimary }]}
+                    style={[styles.accountValue, compact && styles.compactAccountValue, { color: compact ? colors.textSecondary : colors.textPrimary }]}
                 >
                     {value}
                 </Text>
@@ -49,7 +51,7 @@ export function AccountInfoRow({
             </View>
             {actionLabel ? (
                 <View style={styles.accountRowAction}>
-                    {value !== undefined && <Text style={[styles.accountActionLabel, { color: colors.textSecondary }]}>{actionLabel}</Text>}
+                    {value !== undefined && (!compact || actionLabel === "복사됨") && <Text style={[styles.accountActionLabel, { color: colors.textSecondary }]}>{actionLabel}</Text>}
                     {actionIcon ? <Ionicons name={actionIcon} size={16} color={colors.textSecondary} /> : null}
                 </View>
             ) : null}
@@ -57,6 +59,7 @@ export function AccountInfoRow({
     );
     const rowStyle = [
         styles.accountRow,
+        compact && styles.compactAccountRow,
         showDivider ? styles.accountRowDivider : styles.accountRowLast,
         { borderBottomColor: colors.border },
     ];

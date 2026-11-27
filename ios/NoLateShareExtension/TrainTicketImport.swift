@@ -304,7 +304,9 @@ struct TrainTicketDraft {
     var departure: String?
     var arrival: String?
     if labels.isEmpty {
-      let times = matches(#"(?<![0-9])"# + clockPattern)
+      // An unlabelled HH:mm:ss footer is not a journey clock. Exclude the
+      // entire token so its minute/second suffix cannot become another time.
+      let times = matches(#"(?<![0-9:])"# + clockPattern + #"(?!:[0-9])"#)
       let accessoryClock = #"(?:현재|결제|발권|예매)\s*(?:시각|시간|일시)?\s*[:：]?\s*"# + clockPattern
       if let sharedDate, times.count == 2, text.range(of: accessoryClock, options: .regularExpression) == nil {
         departure = clock(period: times[0][1], hour: times[0][2], minute: times[0][3]).map { sharedDate + " " + $0 }

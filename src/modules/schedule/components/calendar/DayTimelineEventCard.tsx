@@ -62,6 +62,7 @@ export default function DayTimelineEventCard({
     const { colors, mode } = useTheme();
     const cardRef = useRef<React.ElementRef<typeof Pressable>>(null);
     const { fontScale } = useWindowDimensions();
+    const standardText = fontScale <= 1.35;
     const rows = getDayTimelineEventRows(height, fontScale);
     const categoryColor = item.category?.color ?? "#8e8e93";
     const metadata = useMemo(() => getDayTimelineEventMetadata(item), [item]);
@@ -69,6 +70,10 @@ export default function DayTimelineEventCard({
     const startTime = formatDayTimelineDeparture(item.startAt);
     const timeText = laneCount >= 3 ? startTime : fullTimeText;
     const departureText = formatDayTimelineDeparture(metadata.departureAt);
+    const departurePassed = metadata.departureAt && new Date(metadata.departureAt).getTime() < Date.now();
+    const departureColor = standardText
+        ? departurePassed ? colors.textSecondary : mode === "dark" ? "#74B5FF" : "#205FC5"
+        : categoryColor;
     const travelText = [
         departureText ? `${departureText} 출발` : "",
         metadata.travelMinutes ? `${metadata.travelMinutes}분` : "",
@@ -136,7 +141,7 @@ export default function DayTimelineEventCard({
             <View style={[styles.accent, { backgroundColor: categoryColor }]} />
             <View style={[styles.content, showsTravelRow && styles.contentWithChevron]}>
                 <View style={[styles.titleRow, { height: rows.titleHeight }]}>
-                    {metadata.isTravel ? (
+                    {metadata.isTravel && !standardText ? (
                         <Ionicons
                             accessible={false}
                             name={travelIconName(metadata.travelMode)}
@@ -148,7 +153,7 @@ export default function DayTimelineEventCard({
                     <Text
                         maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE}
                         numberOfLines={1}
-                        style={[styles.title, { color: colors.textPrimary }]}
+                        style={[styles.title, standardText && styles.standardTitle, { color: colors.textPrimary }]}
                     >
                         {item.title}
                     </Text>
@@ -184,12 +189,12 @@ export default function DayTimelineEventCard({
                             accessible={false}
                             name={travelIconName(metadata.travelMode)}
                             size={12}
-                            color={categoryColor}
+                            color={departureColor}
                         />
                         <Text
                             maxFontSizeMultiplier={DAY_TIMELINE_EVENT_MAX_FONT_SCALE}
                             numberOfLines={1}
-                            style={[styles.travelText, { color: categoryColor }]}
+                            style={[styles.travelText, standardText && styles.standardTravelText, { color: departureColor }]}
                         >
                             {travelText}
                         </Text>
@@ -199,7 +204,7 @@ export default function DayTimelineEventCard({
             {showsTravelRow ? (
                 <Ionicons
                     accessible={false}
-                    name="chevron-forward"
+                    name="chevron-forward-outline"
                     size={13}
                     color={colors.textSecondary}
                     style={styles.chevron}
@@ -268,6 +273,12 @@ const styles = StyleSheet.create({
         fontSize: 13.5,
         fontWeight: "800",
         letterSpacing: 0,
+    },
+    standardTitle: {
+        fontWeight: "600",
+    },
+    standardTravelText: {
+        fontWeight: "600",
     },
     metaRow: {
         minWidth: 0,

@@ -315,17 +315,10 @@ describe('month agenda loading presentation', () => {
   });
 
   test('foreground 전체 일정 조회 대신 이미 받은 월 범위를 재사용한다', () => {
-    const scheduleApiImport = calendarDataSource;
-    const routeSetupProjection = sourceBetween(
-      auxiliaryDataSource,
-      'const routeSetupItems = useMemo',
-      'const writableCategories = useMemo',
-    );
-
-    expect(scheduleApiImport).not.toContain('getSchedules,');
-    expect(routeSetupProjection).toContain(
-      'itemsArray.filter((item) => item.routeSetupRequired === true)',
-    );
+    for (const source of [calendarDataSource, auxiliaryDataSource]) {
+      expect(source).not.toContain('getSchedules,');
+      expect(source).not.toContain('getSchedules(');
+    }
   });
 
   test('폐기된 revision 응답은 이전 월 범위를 다시 조회하지 않는다', () => {

@@ -16,7 +16,6 @@ const nativeStyles = StyleSheet.create({
         justifyContent: "center",
         gap: 8,
     },
-    loadingText: { fontSize: 12, lineHeight: 18, fontWeight: "700" },
     zoomControls: {
         position: "absolute",
         right: 12,

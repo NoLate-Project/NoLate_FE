@@ -21,6 +21,8 @@ import {
 
 type ScheduleDepartureStatusControllerOptions = {
   scheduleId?: string;
+  startAt?: string;
+  departAt?: string;
   previewEnabled: boolean;
   routePlannerSessionId?: string;
   routeSavePending: boolean;
@@ -34,6 +36,8 @@ type ScheduleDepartureStatusControllerOptions = {
  */
 export function useScheduleDepartureStatusController({
   scheduleId,
+  startAt,
+  departAt,
   previewEnabled,
   routePlannerSessionId,
   routeSavePending,
@@ -73,7 +77,7 @@ export function useScheduleDepartureStatusController({
   const refreshEligibleRef = useRef(refreshEligible);
   refreshEligibleRef.current = refreshEligible;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setDepartureStatus(undefined);
     setAcceptedDepartureStatus(undefined);
     setDepartureStatusNextCheckAt(undefined);
@@ -82,7 +86,7 @@ export function useScheduleDepartureStatusController({
     etaRefreshDueAtRef.current = undefined;
     evaluatedAtRef.current = undefined;
     setDepartureStatusRefreshRevision(0);
-  }, [scheduleId]);
+  }, [scheduleId, startAt, departAt]);
 
   useLayoutEffect(() => {
     activeScheduleIdRef.current = scheduleId;
@@ -173,7 +177,7 @@ export function useScheduleDepartureStatusController({
   useEffect(() => {
     if (!refreshEligible) return;
     refreshDepartureStatus();
-  }, [refreshDepartureStatus, refreshEligible]);
+  }, [refreshDepartureStatus, refreshEligible, startAt, departAt]);
 
   useEffect(() => {
     if (!refreshEligible) return undefined;

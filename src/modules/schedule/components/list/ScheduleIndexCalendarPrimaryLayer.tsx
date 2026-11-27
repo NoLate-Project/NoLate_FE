@@ -11,8 +11,6 @@ import {
 import ScheduleIcon from '../shared/ScheduleIcon';
 import Reanimated from 'react-native-reanimated';
 import CalendarGlassSurface from '../calendar/CalendarGlassSurface';
-import CalendarScopeContextLabel from '../calendar/CalendarScopeContextLabel';
-import { CALENDAR_SEARCH_LARGE_FONT_SCALE, SEARCH_MIN_QUERY_LENGTH, showsSearchResultCountInDateHeading } from './CalendarSearchResults';
 import { CALENDAR_VIEW_OPTIONS, showsCalendarToolbarModeIcon } from '../calendar/viewMode';
 import LiquidGlassIconButton, {
   isLiquidGlassIconButtonAvailable,
@@ -30,9 +28,7 @@ import { ADD_MENU_SOURCE } from '../../addHandoffMotion';
 import { CALENDAR_PRIMARY_PILL_LAYOUT } from '../../calendarMotion';
 import type { ScheduleIndexController } from '../../hooks/useScheduleIndexController';
 
-const CALENDAR_TOOLBAR_HEIGHT = 56;
-
-const CALENDAR_CONTEXT_HEIGHT = 24;
+const CALENDAR_CONTEXT_HEIGHT = 0;
 
 const STICKY_MONTH_HEADER_HEIGHT = 50;
 
@@ -85,7 +81,7 @@ const styles = createScheduleIndexStyles({
 
 type Props = { controller: ScheduleIndexController };
 
-/** 달력 본문, 범위 문맥과 기본 액체형 보기 컨트롤을 렌더링합니다. */
+/** 달력 본문과 기본 액체형 보기 컨트롤을 렌더링합니다. */
 export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
   const {
     insets,
@@ -99,7 +95,6 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
     searchQuery,
     setSearchQuery,
     shouldHideHandoffSurface,
-    todayFocusOpacity,
     todayFocusTranslateY,
     addHandoffToolbarOpacity,
     primaryDatePillNativeRef,
@@ -121,11 +116,6 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
     primaryPillYearScale,
     usesLiquidViewModeControl,
     isSearchToolbarOpen,
-    searchAwaitingCurrentQuery,
-    searchLoading,
-    searchError,
-    searchKeywordLength,
-    searchResults,
     searchHeaderTargetWidth,
     liquidPrototypeLayerWidth,
     liquidPrototypeLayerHeight,
@@ -150,19 +140,10 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
     handleCalendarViewModeChange,
     handleDayViewMenuSelect,
     handlePrimaryDateButtonPress,
-    activeCalendarPresentation,
-    activeCalendarIconColor,
   } = controller;
   const { width, fontScale } = useWindowDimensions();
   const showsViewModeIcon = showsCalendarToolbarModeIcon(width, fontScale);
   const usesWideViewModeSlot = showsViewModeIcon && pillTargetDepth !== 'year';
-  const searchResultCount =
-    fontScale <= CALENDAR_SEARCH_LARGE_FONT_SCALE &&
-    isSearchToolbarOpen && searchKeywordLength >= SEARCH_MIN_QUERY_LENGTH &&
-    !searchAwaitingCurrentQuery && !searchLoading && !searchError && searchResults.length > 0 &&
-    !showsSearchResultCountInDateHeading(searchResults, fontScale)
-      ? searchResults.length
-      : undefined;
   const viewModeLabel = selectedLiquidMode === 'day' ? '일간'
     : selectedLiquidMode === 'multi' ? '여러 날'
     : selectedLiquidMode === 'week' ? '주간'
@@ -320,23 +301,6 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
           </View>
         </Animated.View>
       }
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.calendarScopeContextLayer,
-          {
-            top: insets.top + CALENDAR_TOOLBAR_HEIGHT,
-            opacity: todayFocusOpacity,
-            transform: [{ translateY: todayFocusTranslateY }],
-          },
-        ]}
-      >
-        <CalendarScopeContextLabel
-          title={activeCalendarPresentation.title}
-          color={activeCalendarIconColor}
-          searchResultCount={searchResultCount}
-        />
-      </Animated.View>
       {usesLiquidViewModeControl ? (
         <Animated.View
           pointerEvents={shouldHideHandoffSurface ? 'none' : 'box-none'}

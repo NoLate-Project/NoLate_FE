@@ -5,7 +5,7 @@ import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { Alert, Linking, Platform } from 'react-native';
 import TrainBookingAction, { TRAIN_BOOKING_APP_URL, TRAIN_BOOKING_URL } from '../src/modules/schedule/components/route/TrainBookingAction';
 import IntercityTimetableSheet from '../src/modules/schedule/components/route/IntercityTimetableSheet';
-import ImportedTicketSummary from '../src/modules/schedule/components/detail/ImportedTicketSummary';
+import { ImportedTicketDisclosure } from '../src/modules/schedule/components/detail/ImportedTicketSummary';
 
 jest.mock('../src/api/intercityTimetable', () => ({ getIntercityCities: jest.fn(), getIntercityServices: jest.fn(), getIntercityStops: jest.fn() }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
@@ -25,26 +25,18 @@ afterEach(async () => {
 });
 const button = () => view.root.findAll(node => node.props.accessibilityLabel === '코레일 공식 예매 열기' && typeof node.props.onPress === 'function')[0];
 
-test('opening the official HTTPS site does not apply or dismiss the current timetable selection', async () => {
-    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
-    const select = jest.fn(); const close = jest.fn();
-    await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date()} dark={false} departureName="서울" arrivalName="부산" onClose={close} onSelect={select} />); });
-    await act(async () => { button().props.onPress(); });
-    expect(open).toHaveBeenCalledWith('https://www.korail.com/');
-    expect(select).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
-    expect(button().props.disabled).toBe(false);
+test('the train timetable stays in route selection without a booking link', async () => {
+    await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date()} dark={false} departureName="서울" arrivalName="부산" onClose={jest.fn()} />); });
+    expect(button()).toBeUndefined();
 });
 
-test('installed app opens its main screen once without also opening the website or changing a selection', async () => {
+test('the booking action on a ticket opens the official iOS app once', async () => {
     jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
     const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
-    const select = jest.fn(); const close = jest.fn();
-    await act(async () => { view = TestRenderer.create(<IntercityTimetableSheet kind="TRAIN" date={new Date()} dark={false} onClose={close} onSelect={select} />); });
+    await act(async () => { view = TestRenderer.create(<TrainBookingAction />); });
     await act(async () => { await button().props.onPress(); });
-    expect(Linking.canOpenURL).toHaveBeenCalledWith(TRAIN_BOOKING_APP_URL);
     expect(open.mock.calls).toEqual([[TRAIN_BOOKING_APP_URL]]);
     expect(TRAIN_BOOKING_APP_URL).not.toMatch(/[?#]/);
-    expect(select).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
 });
 
 test.each(['query', 'launch'])('app %s failure falls back to the official website', async failure => {
@@ -106,11 +98,14 @@ test('Android remains deferred and bus timetables do not link to a train booking
     expect(view.toJSON()).toBeNull();
 });
 
-test('collapsed saved-ticket summary keeps the expansion control reachable by deferring its booking action', async () => {
+test('the calendar event shows the existing booking link only after opening the saved ticket', async () => {
     const route = { importedTicket: { version: 1, id: 'ticket:12345678-1234-1234-1234-123456789012', kind: 'TRAIN', source: 'IOS_SHARE_IMAGE', verification: 'USER_CONFIRMED', bookingStatus: 'UNVERIFIED', departureName: '수서', arrivalName: '공주', departureAt: '2099-10-13T12:20:00+09:00', arrivalAt: '2099-10-13T13:12:00+09:00', trainNumber: '615', confirmedAt: '2099-10-12T12:00:00+09:00' } };
-    await act(async () => { view = TestRenderer.create(<ImportedTicketSummary route={route} showBooking={false} />); });
+    await act(async () => { view = TestRenderer.create(<ImportedTicketDisclosure route={route} showBooking />); });
     expect(button()).toBeUndefined();
-    expect(JSON.stringify(view.toJSON())).toContain('예매 상태 미검증');
-    await act(async () => view.update(<ImportedTicketSummary route={route} showBooking />));
+    expect(JSON.stringify(view.toJSON())).not.toContain('가져온 기차 승차권');
+    const disclosure = view.root.findAll(node => node.props.accessibilityLabel === '가져온 승차권 보기'
+        && typeof node.props.onPress === 'function')[0];
+    await act(async () => disclosure.props.onPress());
     expect(button()).toBeDefined();
+    expect(JSON.stringify(view.toJSON())).toContain('예매 상태 미검증');
 });

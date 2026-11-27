@@ -41,7 +41,7 @@ export function buildPlannedJourneyArrivalPresentation(
             summary: earlyBoarding ? "승차 시각을 확인하고 있어요" : "환승 시각을 확인하고 있어요",
             compactSummary: earlyBoarding ? "승차 재확인 필요" : "환승 재확인 필요",
             itinerary: earlyBoarding ? "열차가 예상보다 일찍 도착해 계획대로 탈 수 있을지 확인하고 있어요"
-                : "관측된 하차 시각으로 다음 열차를 안전하게 연결하지 못했어요",
+                : "관측된 하차 시각으로 다음 편을 연결하지 못했어요",
             waitMeta: "실제 탑승·환승 여부는 확인하지 못했어요. 출발 알림 시각은 바뀌지 않아요",
             mapNote: MAP_SAVED_ROUTE_NOTE,
         };
@@ -107,20 +107,36 @@ export function getDisplayedPlannedTransitRoute(
         arrival.getTime() <= nowMs || arrival.getTime() !== parseDate(prediction.predictedArrivalAt)?.getTime() ||
         !isPositiveMinute(route.totalMinutes) || !Array.isArray(route.segments) || !route.segments.length) return undefined;
     const rides = route.segments.filter(segment => segment.kind !== "WALK");
-    if (rides.length && rides.every(segment => segment.kind === "BUS")) {
-        if (route.provider !== "odsay" || (!baseline && !busObserved) || (baseline && prediction.sourceUpdatedAt != null)) {
+    const buses = rides.filter(segment => segment.kind === "BUS");
+    if (buses.length) {
+        const trains = rides.slice(buses.length);
+        const mixed = trains.length > 0;
+        const lastTrainObserved = mixed && prediction.basis === "MATCHED_TRAIN_REALTIME";
+        if (route.provider !== "odsay" || (!baseline && !busObserved && !lastTrainObserved) ||
+            (baseline && prediction.sourceUpdatedAt != null) || rides[0]?.kind !== "BUS" ||
+            (mixed && (buses.length !== 1 || trains.length > 2 || trains.some(segment => segment.kind !== "SUBWAY")))) {
             return undefined;
         }
         let directForecast = false;
-        for (const segment of rides) {
+        for (const segment of buses) {
             if (!rideTimingLabel(segment, status.timeZone)) return undefined;
             const bus = segment.busRidePrediction!;
             if (bus.alightingObservationSourceUpdatedAt == null) continue;
             const observed = parseDate(bus.alightingObservationSourceUpdatedAt);
-            if (baseline || !source || !observed || observed < source || observed.getTime() > nowMs + 5_000) return undefined;
+            if (!busObserved || !source || !observed || observed < source || observed.getTime() > nowMs + 5_000) return undefined;
             directForecast = true;
         }
-        return baseline || directForecast ? route : undefined;
+        for (const [index, segment] of trains.entries()) {
+            if (!rideTimingLabel(segment, status.timeZone)) return undefined;
+            const timing = segment.rideTiming!;
+            if (lastTrainObserved && index === trains.length - 1) {
+                const observed = parseDate(timing.observationSourceUpdatedAt);
+                if (timing.basis !== "PLANNED_RIDE_ALIGHTING_REALTIME" || !source || !observed ||
+                    observed.getTime() !== source.getTime()) return undefined;
+            } else if (timing.basis !== "TIMETABLE" &&
+                !(baseline && timing.basis === "PLANNED_RIDE_BASELINE" && timing.observationSourceUpdatedAt == null)) return undefined;
+        }
+        return baseline || directForecast || lastTrainObserved ? route : undefined;
     }
     if (busObserved) return undefined;
     for (const segment of rides) {
@@ -444,10 +460,20 @@ function exactWalkingSeconds(segment: EffectiveTransitRouteSegment): number | un
     return seconds;
 }
 
+function rideClocks(segment: EffectiveTransitRouteSegment): { boardingAt: string; alightingAt: string } | undefined {
+    if (segment.kind === "BUS") return segment.busRidePrediction ?? undefined;
+    if (segment.kind === "SUBWAY" && segment.rideTiming) {
+        return { boardingAt: segment.rideTiming.predictedBoardingAt, alightingAt: segment.rideTiming.predictedArrivalAt };
+    }
+    return undefined;
+}
+
 /** The previous alighting, transfer walks and next boarding all belong to this ordered itinerary. */
-export function subwayTransferWaitSeconds(segments: EffectiveTransitRouteSegment[], index: number): number | undefined {
+export function transitTransferWaitSeconds(segments: EffectiveTransitRouteSegment[], index: number): number | undefined {
     const segment = segments[index];
-    if (index < 1 || segment.sequence !== index || segment.kind !== "SUBWAY" || !segment.rideTiming) return undefined;
+    if (index < 1 || segment.sequence !== index) return undefined;
+    const nextClocks = rideClocks(segment);
+    if (!nextClocks || !rideTimingLabel(segment)) return undefined;
     let previousIndex = index - 1;
     let walkingSeconds: number | undefined = 0;
     while (previousIndex >= 0 && segments[previousIndex].kind === "WALK") {
@@ -459,10 +485,11 @@ export function subwayTransferWaitSeconds(segments: EffectiveTransitRouteSegment
         previousIndex--;
     }
     const previousRide = segments[previousIndex];
-    if (!previousRide || previousRide.sequence !== previousIndex || previousRide.kind !== "SUBWAY" ||
-        !previousRide.rideTiming || !rideTimingLabel(previousRide) || !rideTimingLabel(segment)) return undefined;
-    const previousRideArrivalAt = previousRide.rideTiming.predictedArrivalAt;
-    const boardingAt = segment.rideTiming.predictedBoardingAt;
+    if (!previousRide || previousRide.sequence !== previousIndex || !rideTimingLabel(previousRide)) return undefined;
+    const previousClocks = rideClocks(previousRide);
+    if (!previousClocks) return undefined;
+    const previousRideArrivalAt = previousClocks.alightingAt;
+    const boardingAt = nextClocks.boardingAt;
     if (!segment.transferTiming) {
         // Older accepted plans have clocks and recorded walks but no separate transfer object.
         // Without a walk leg we do not know whether this transfer took zero walking time.
@@ -488,7 +515,7 @@ export function subwayTransferWaitSeconds(segments: EffectiveTransitRouteSegment
 }
 
 /** Use the route departure and exact access legs. The notification can have an earlier, protected time. */
-export function firstSubwayBoardingInterval(route: EffectiveTransitRoute): { sequence: number; seconds: number } | undefined {
+export function firstTransitBoardingInterval(route: EffectiveTransitRoute): { sequence: number; seconds: number } | undefined {
     let readyAt = Date.parse(route.departureAt);
     const segments = [...route.segments].sort((a, b) => a.sequence - b.sequence);
     for (const [index, segment] of segments.entries()) {
@@ -499,8 +526,9 @@ export function firstSubwayBoardingInterval(route: EffectiveTransitRoute): { seq
             readyAt += seconds * 1000;
             continue;
         }
-        if (segment.kind !== "SUBWAY" || !segment.rideTiming) return undefined;
-        const seconds = (Date.parse(segment.rideTiming.predictedBoardingAt) - readyAt) / 1000;
+        const clocks = rideClocks(segment);
+        if (!clocks || (segment.kind === "BUS" && !rideTimingLabel(segment))) return undefined;
+        const seconds = (Date.parse(clocks.boardingAt) - readyAt) / 1000;
         return Number.isSafeInteger(seconds) && seconds >= 0 ? { sequence: index, seconds } : undefined;
     }
     return undefined;
@@ -521,16 +549,21 @@ function segmentLabel(segment: EffectiveTransitRouteSegment, showMinutes: boolea
     const seconds = exactWalkingSeconds(segment);
     const walkingDuration = seconds === undefined ? undefined : formatRouteDurationSeconds(seconds);
     const ride = rideTimingLabel(segment, timeZone);
-    const timing = ride && segment.rideTiming;
-    const firstInterval = timing && showMinutes
-        ? firstBoardingIntervalLabel(firstIntervalSeconds, isBoardingStationArrivalPrediction(timing)) : undefined;
-    const rideSeconds = timing ? (Date.parse(timing.predictedArrivalAt) - Date.parse(timing.predictedBoardingAt)) / 1000 : 0;
-    const separateRide = timing && (firstIntervalSeconds !== undefined || transferWait !== undefined) &&
+    const clocks = ride ? rideClocks(segment) : undefined;
+    const firstInterval = clocks && showMinutes
+        ? firstBoardingIntervalLabel(firstIntervalSeconds,
+            Boolean(segment.rideTiming && isBoardingStationArrivalPrediction(segment.rideTiming)),
+            segment.kind === "BUS" ? "BUS" : "SUBWAY") : undefined;
+    const rideSeconds = clocks ? (Date.parse(clocks.alightingAt) - Date.parse(clocks.boardingAt)) / 1000 : 0;
+    const separateRide = clocks && (firstIntervalSeconds !== undefined || transferWait !== undefined) &&
         Number.isSafeInteger(rideSeconds) && rideSeconds > 0;
     let duration: string | undefined;
     if (showMinutes) {
         if (walkingDuration) duration = `약 ${walkingDuration}`;
-        else if (separateRide) duration = `승차역부터 하차역까지 약 ${formatRouteDurationSeconds(rideSeconds)}`;
+        else if (separateRide) {
+            const travelScope = segment.kind === "BUS" ? "승차 정류장부터 하차 정류장까지" : "승차역부터 하차역까지";
+            duration = `${travelScope} 약 ${formatRouteDurationSeconds(rideSeconds)}`;
+        }
         else if (isPositiveMinute(segment.durationMinutes)) duration = `약 ${Math.ceil(segment.durationMinutes)}분`;
     }
     const transferWaitLabel = transferWait !== undefined && transferWait > 0
@@ -543,10 +576,10 @@ function segmentLabel(segment: EffectiveTransitRouteSegment, showMinutes: boolea
 }
 
 function itineraryLabel(route: EffectiveTransitRoute, showMinutes: boolean, timeZone?: string | null,
-                        firstInterval = showMinutes && Array.isArray(route.segments) ? firstSubwayBoardingInterval(route) : undefined): string {
+                        firstInterval = showMinutes && Array.isArray(route.segments) ? firstTransitBoardingInterval(route) : undefined): string {
     const segments = Array.isArray(route.segments) ? [...route.segments].sort((a, b) => a.sequence - b.sequence) : [];
     const labels = segments.map((segment, index) => segmentLabel(segment, showMinutes, timeZone,
-        showMinutes || segment.transferTiming ? subwayTransferWaitSeconds(segments, index) : undefined,
+        showMinutes || segment.transferTiming ? transitTransferWaitSeconds(segments, index) : undefined,
         segment.sequence === firstInterval?.sequence ? firstInterval.seconds : undefined))
         .filter(Boolean);
 
@@ -611,7 +644,7 @@ export function buildEffectiveTransitRoutePresentation(
     // The Worker can preserve an earlier alert while the ETA uses a later route start.
     const hasEarlierAlarm = freshTiming.recommendedDepartureAt < routeDeparture;
     const departureLabel = hasEarlierAlarm ? "경로 출발" : "출발";
-    const firstInterval = sameRoute && Array.isArray(route.segments) ? firstSubwayBoardingInterval(route) : undefined;
+    const firstInterval = sameRoute && Array.isArray(route.segments) ? firstTransitBoardingInterval(route) : undefined;
     const clockRange = departureAt && arrivalAt
         ? `${departureAt} ${departureLabel} · ${arrivalAt} 도착`
         : departureAt

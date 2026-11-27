@@ -4,12 +4,12 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import BrandedLoader, { BrandedLoadingState, type BrandedLoaderSize } from "../src/ui/BrandedLoader";
+import LoadingIndicator from "../src/ui/LoadingIndicator";
 import { useSystemReduceMotion } from "../src/modules/performance/useSystemReduceMotion";
 import { QuickScheduleLoadingStep } from "../src/modules/schedule/components/form/QuickScheduleStatusSteps";
 
 jest.mock("../src/modules/performance/useSystemReduceMotion", () => ({ useSystemReduceMotion: jest.fn(() => false) }));
 jest.mock("../src/modules/theme/ThemeContext", () => ({ useTheme: () => ({ colors: {}, mode: "light" }) }));
-jest.mock("../src/ui/LoadingIndicator", () => "LoadingIndicator");
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 
 const artwork = require("../assets/nolate-loading-mark.png");
@@ -43,6 +43,15 @@ test.each([true, false])("analysis and saving use the same mark (%s)", (isAnalyz
         label="처리 중" isAnalyzing={isAnalyzing} />); });
     expect(renderer.root.findByType(Image).props.source).toBe(artwork);
 });
+
+test.each<["inline" | "compact" | "regular", number]>([["inline", 20], ["compact", 20], ["regular", 28]])(
+    "%s status uses the blue mark even on an inverse surface", (size, width) => {
+        act(() => { renderer = TestRenderer.create(<LoadingIndicator size={size} tone="inverse" delayMs={150} />); });
+        const image = renderer.root.findByType(Image);
+        expect(image.props.source).toBe(artwork);
+        expect(StyleSheet.flatten(image.props.style)).toEqual({ width, height: width });
+    },
+);
 
 test("startup and the native launch screen use identical artwork", () => {
     act(() => { renderer = TestRenderer.create(<BrandedLoadingState startup size="full" accessibilityLabel="준비 중" />); });

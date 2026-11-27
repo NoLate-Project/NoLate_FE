@@ -43,6 +43,23 @@ it('exposes compact GPS guidance separately from expand buttons and allows scrol
     act(() => view.unmount());
 });
 
+it.each([['BUS', '버스 대기'], ['SUBWAY', '열차 대기']] as const)(
+    'announces waiting for %s once before boarding in either layout',
+    (kind, expected) => {
+        const input = { ...route, legs: [route.legs[0], { ...route.legs[1], kind }] };
+        const position = { legIndex: 0, legProgress: 1, barFraction: 0.5, waiting: true };
+        for (const showCopy of [false, true]) {
+            let view!: ReactTestRenderer;
+            act(() => { view = TestRenderer.create(<SavedJourneyRouteBar input={input} position={position} showCopy={showCopy} />); });
+            const track = view.root.findAll(node => typeof node.props.accessibilityLabel === 'string'
+                && node.props.accessibilityLabel.includes('전체 여정 완료율'))[0];
+            expect(track.props.accessibilityLabel.split(expected)).toHaveLength(2);
+            expect(track.props.accessibilityLabel).not.toContain('현재 위치는');
+            act(() => view.unmount());
+        }
+    },
+);
+
 it('shows a time caption for each short route leg in travel order', () => {
     const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions')
         .mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });

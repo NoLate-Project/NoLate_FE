@@ -22,7 +22,7 @@ async function openOfficialBooking(appURL: string | undefined, webURL: string) {
 
 /** Opens the official service without changing the route or its booking status. */
 export function OfficialBookingAction({ dark = false, appURL, webURL, name, label, note }: {
-    dark?: boolean; appURL?: string; webURL: string; name: string; label: string; note: string;
+    dark?: boolean; appURL?: string; webURL: string; name: string; label: string; note?: string;
 }) {
     const opening = useRef(false);
     const [pending, setPending] = useState(false);
@@ -56,7 +56,7 @@ export function OfficialBookingAction({ dark = false, appURL, webURL, name, labe
             <Text style={[styles.label, labelStyle]}>{label}</Text>
             <Ionicons name="open-outline" size={18} color={labelStyle.color} />
         </Pressable>
-        <Text style={[styles.note, noteStyle]}>{note}</Text>
+        {note && <Text style={[styles.note, noteStyle]}>{note}</Text>}
     </View>;
 }
 

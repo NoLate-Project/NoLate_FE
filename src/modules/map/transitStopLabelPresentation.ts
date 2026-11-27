@@ -50,7 +50,8 @@ export function getTransitBoardingDirectionHint(
     const nextStop = passStops.slice(searchStart).find((stop) => (
         !!normalizeStopName(stop.name) && comparableStopName(stop.name) !== boardName
     ));
-    if (nextStop?.name) return `${normalizeStopName(nextStop.name) ?? nextStop.name} 방향`;
+    const nextName = normalizeStopName(nextStop?.name);
+    if (nextName) return /(?:방향|방면)$/u.test(nextName) ? nextName : `${nextName} 방향`;
 
     const endName = normalizeStopName(source.endName);
     return endName ? `${endName}까지` : undefined;

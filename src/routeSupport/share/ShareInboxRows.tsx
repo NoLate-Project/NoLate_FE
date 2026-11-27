@@ -1,6 +1,7 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { ActivityIndicator, Pressable, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import styles from './inbox.styles';
 
@@ -291,7 +292,7 @@ export function ScheduleShareRow({
           >
             <ShareInboxDecoration>
               {safetyPending ? (
-                <ActivityIndicator size="small" color={colors.textSecondary} />
+                <BrandedLoader size="inline" accessibilityLabel="신고 또는 차단 처리 중" />
               ) : (
                 <Ionicons
                   name="ellipsis-horizontal"
@@ -446,7 +447,7 @@ export function CalendarShareRow({
           >
             <ShareInboxDecoration>
               {safetyPending ? (
-                <ActivityIndicator size="small" color={colors.textSecondary} />
+                <BrandedLoader size="inline" accessibilityLabel="신고 또는 차단 처리 중" />
               ) : (
                 <Ionicons
                   name="ellipsis-horizontal"

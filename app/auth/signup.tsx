@@ -210,7 +210,6 @@ export default function SignUp() {
     return (
         <AuthScreen
             title="계정을 만들어요"
-            subtitle="기본 정보와 비밀번호를 설정해 주세요."
             signupStep={1}
             backLabel="로그인으로 돌아가기"
             onBack={() => {

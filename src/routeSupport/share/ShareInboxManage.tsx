@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
@@ -20,6 +19,7 @@ import {
 } from '../../modules/share/shareInboxPresentation';
 import { type AppColors } from '../../modules/theme/ThemeContext';
 import BrandedLoader from '../../ui/BrandedLoader';
+import LoadingIndicator from '../../ui/LoadingIndicator';
 
 import {
   contentModeLabel,
@@ -244,7 +244,8 @@ export function ManageShareSheet({
                           </Text>
                           <Pressable
                             accessibilityRole="button"
-                            accessibilityLabel={`${target} 권한을 ${permissionLabel(nextPermission)}로 변경`}
+                            accessibilityLabel={`${target}, ${permissionLabel(nextPermission)} 권한으로 변경`}
+                            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                             accessibilityState={{ disabled: shareMutationPending, busy: updating }}
                             disabled={shareMutationPending}
                             onPress={() => onChangeSharePermission(share, nextPermission)}
@@ -258,7 +259,7 @@ export function ManageShareSheet({
                             ]}
                           >
                             {updating ? (
-                              <ActivityIndicator size="small" color={accent} />
+                              <BrandedLoader size="inline" accessibilityLabel="권한 변경 중" />
                             ) : (
                               <>
                                 <Text style={[styles.memberPermission, { color: colors.textSecondary }]}>
@@ -284,10 +285,7 @@ export function ManageShareSheet({
                           ]}
                         >
                           {revoking ? (
-                            <ActivityIndicator
-                              size="small"
-                              color={colors.textSecondary}
-                            />
+                            <BrandedLoader size="inline" accessibilityLabel="멤버 내보내는 중" />
                           ) : (
                             <Ionicons
                               name="person-remove-outline"
@@ -383,10 +381,7 @@ export function ManageShareSheet({
                           ]}
                         >
                           {revoking ? (
-                            <ActivityIndicator
-                              size="small"
-                              color={colors.textSecondary}
-                            />
+                            <BrandedLoader size="inline" accessibilityLabel="공유 해제 중" />
                           ) : (
                             <Ionicons
                               name="unlink-outline"
@@ -483,7 +478,7 @@ export function InlineErrorCard({
         { backgroundColor: colors.surface2, borderColor: colors.border },
       ]}
     >
-      <Ionicons accessible={false} name={refreshing ? 'refresh-outline' : 'alert-circle-outline'} size={18} color={ROUTE_AMBER} />
+      {refreshing ? <LoadingIndicator size="inline" delayMs={150} /> : <Ionicons accessible={false} name="alert-circle-outline" size={18} color={ROUTE_AMBER} />}
       <Text
         numberOfLines={2}
         style={[styles.inlineErrorText, { color: colors.textSecondary }]}

@@ -199,10 +199,11 @@ public enum NoLateGuidancePresentationPolicy {
     if let segment = content.validSegment {
       var action = "다음 \(segment.toStopName)"
       if segment.fromStopIndex + 1 == segment.totalStops - 1 {
-        action += " 하차"
         let transfer = position.legIndex + 2
         if legs.indices.contains(transfer), legs[transfer-1].kind == "WALK", ["SUBWAY","BUS"].contains(legs[transfer].kind) {
-          action += " · \(NoLateGuidanceRouteLayoutPolicy.legendLabel(legs[transfer])) 환승"
+          action += " 하차 · \(NoLateGuidanceRouteLayoutPolicy.legendLabel(legs[transfer])) 환승"
+        } else {
+          action = "다음 역에서 내리세요"
         }
       }
       return .init(title:"\(segment.fromStopName) → \(segment.toStopName)",action:action,symbol:"tram.fill",compact:"다음 \(segment.toStopName)")
@@ -211,7 +212,7 @@ public enum NoLateGuidancePresentationPolicy {
       if let subway = content.subway, subway.valid {
         return .init(title: subway.currentStopName,
           action: subway.remainingStops == 0 ? "하차역 도착 · 하차 확인 중" : subway.remainingStops == 1
-            ? "다음 역 하차 · 하차 준비" : "다음 \(subway.nextStopName ?? "역") · \(subway.remainingStops)개 역 남음",
+            ? "\(subway.nextStopName ?? "다음 역")에서 내리세요" : "다음 \(subway.nextStopName ?? "역") · \(subway.remainingStops)개 역 남음",
           symbol: "tram.fill", compact: subway.remainingStops <= 1 ? "하차 준비" : "\(subway.remainingStops)개 역")
       }
       if let notice = content.alighting {

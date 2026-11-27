@@ -1,7 +1,7 @@
+import BrandedLoader from "../../../../ui/BrandedLoader";
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
-  ActivityIndicator,
   findNodeHandle,
   Animated,
   Pressable,
@@ -211,7 +211,7 @@ export default function CalendarSearchResults({
       ) : null}
       {searchLoading ? (
         <View style={[styles.dropdownEmpty, styles.searchLoading]} accessibilityLiveRegion="polite">
-          <ActivityIndicator color={colors.textSecondary} />
+          <BrandedLoader size="inline" accessibilityLabel="일정 검색 중" />
           <Text
             style={[styles.dropdownEmptyText, { color: colors.textSecondary }]}
           >

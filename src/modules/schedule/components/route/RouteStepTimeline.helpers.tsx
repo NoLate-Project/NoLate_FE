@@ -10,7 +10,7 @@ import {
   type RouteStepType,
 } from '../../routeInfo';
 import { getBusArrivalStationIdentifiers, type BusArrivalStationIdentifiers } from '../../transitArrivalIdentifiers';
-import { formatTransferBoardingTarget, isTransitRideKind } from '../../../map/transitModes';
+import { formatTransferBoardingTarget, isIntercityRideKind, isTransitRideKind } from '../../../map/transitModes';
 import styles from './RouteStepTimeline.styles';
 import type { BusBoardingScroll } from './RouteBusBoardingContext';
 
@@ -288,11 +288,17 @@ export function buildBoardingGuideItems(
 
 /** 버스·지하철 이동 단계의 정거장 수와 하차 정보를 한 줄 설명으로 만듭니다. */
 export function buildRideDescription(step: RouteStep): string | undefined {
-  if (step.description)
-    return step.description
+  if (step.description) {
+    const description = isIntercityRideKind(step.type)
+      ? step.description
+        .replace(/ · 예매 (?:상태 미검증|미확인)$/u, '')
+        .replace(/(^| · )승차권 입력(?= \d{2}:\d{2})/u, '$1입력 시각')
+      : step.description;
+    return description
       .replace(/\s*승차\s*→\s*([^·]+?)\s*하차(?=\s*·|\s*$)/gu, ' · $1')
       .replace(/\s+/g, ' ')
       .trim();
+  }
   const chunks = [
     typeof step.stationCount === 'number'
       ? `${step.stationCount}${step.type === 'BUS' ? '개 정류장' : '정거장'}`

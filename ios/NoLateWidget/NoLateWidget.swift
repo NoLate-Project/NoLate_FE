@@ -298,6 +298,7 @@ private struct NoLateFeaturedSchedule: View {
 }
 
 private struct NoLateDepartureLabel: View {
+  @Environment(\.widgetFamily) private var family
   let schedule: NoLateWidgetSchedule
   let now: Date
 
@@ -316,10 +317,10 @@ private struct NoLateDepartureLabel: View {
     HStack(spacing: 5) {
       NoLateWidgetIcons.timing(timing, size: 12, isHomeWidget: true)
         .accessibilityHidden(true)
-      Text(NoLateWidgetFormatting.lockHeadline(schedule, now: now))
+      Text(NoLateWidgetFormatting.lockHeadline(schedule, now: now, compactDate: family == .systemSmall))
         .font(.system(size: 13, weight: .semibold))
         .monospacedDigit()
-        .lineLimit(1)
+        .lineLimit(family == .systemSmall ? 2 : 1)
         .minimumScaleFactor(0.8)
     }
     .padding(.horizontal, 9)
@@ -506,10 +507,11 @@ private enum NoLateWidgetFormatting {
     return formatter.string(from: date)
   }
 
-  static func day(_ date: Date, now: Date) -> String {
+  static func day(_ date: Date, now: Date, compact: Bool = false) -> String {
     if Calendar.current.isDate(date, inSameDayAs: now) { return "오늘" }
     if let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now),
        Calendar.current.isDate(date, inSameDayAs: tomorrow) { return "내일" }
+    if compact { return headerDate(date, compact: true) }
     return date.formatted(.dateTime.month().day().locale(Locale(identifier: "ko_KR")))
   }
 
@@ -547,15 +549,15 @@ private enum NoLateWidgetFormatting {
     }
   }
 
-  static func lockHeadline(_ schedule: NoLateWidgetSchedule, now: Date) -> String {
+  static func lockHeadline(_ schedule: NoLateWidgetSchedule, now: Date, compactDate: Bool = false) -> String {
     let timing = NoLateWidgetPresentation.timing(for: schedule, at: now)
     if let date = timing.date {
-      let prefix = Calendar.current.isDate(date, inSameDayAs: now) ? "" : "\(day(date, now: now)) "
+      let prefix = Calendar.current.isDate(date, inSameDayAs: now) ? "" : "\(day(date, now: now, compact: compactDate)) "
       let time = "\(prefix)\(numericTime(date))"
       return "\(time) \(timing == .departure(date) ? "출발" : "시작")"
     }
     if timing == .allDay, let start = schedule.startDate {
-      return "\(day(start, now: now)) · 종일"
+      return "\(day(start, now: now, compact: compactDate)) · 종일"
     }
     return timing == .leaveNow ? "지금 출발" : timing.label
   }

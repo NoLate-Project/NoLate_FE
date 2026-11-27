@@ -24,6 +24,7 @@ type Props = {
     trackOnly?: boolean;
     labelledSummary?: boolean;
     alignedSummary?: boolean;
+    dense?: boolean;
     focusedSegmentIndex?: number;
     reduceFocusMotion?: boolean;
     showTrackOnlyFocusLabel?: boolean;
@@ -80,15 +81,21 @@ export default function TransitRouteProgressBar({
     trackOnly = false,
     labelledSummary = false,
     alignedSummary = false,
+    dense = false,
     focusedSegmentIndex: focusedLegIndex,
     reduceFocusMotion,
     showTrackOnlyFocusLabel = true,
 }: Props) {
+    // WAIT represents app planning margins, not an observed transport segment.
+    const visibleSegments = routeSegments.filter(segment => segment.kind !== "WAIT");
+    const focusedVisibleIndex = focusedLegIndex === undefined ? undefined
+        : routeSegments[focusedLegIndex]?.kind === "WAIT" ? undefined
+        : visibleSegments.indexOf(routeSegments[focusedLegIndex]);
     const summary = labelledSummary && alignedSummary
-        ? groupTransitRouteSummary(routeSegments, focusedLegIndex)
+        ? groupTransitRouteSummary(visibleSegments, focusedVisibleIndex)
         : undefined;
-    const segments = summary?.segments ?? routeSegments;
-    const focusedSegmentIndex = summary ? summary.focusedIndex : focusedLegIndex;
+    const segments = summary?.segments ?? visibleSegments;
+    const focusedSegmentIndex = summary ? summary.focusedIndex : focusedVisibleIndex;
     const initialReduceMotion = useReducedMotion();
     const { width: windowWidth, fontScale } = useWindowDimensions();
     const [summaryWidth, setSummaryWidth] = useState(0);
@@ -187,7 +194,7 @@ export default function TransitRouteProgressBar({
                 accessibilityLabel={segments.map((_, index) =>
                     getTransitRouteSegmentAccessibilityLabel(segments, index)
                 ).join(", ")}
-                style={styles.labelledSummary}
+                style={[styles.labelledSummary, dense && styles.denseLabelledSummary]}
                 onLayout={alignedSummary ? event => setSummaryWidth(event.nativeEvent.layout.width) : undefined}
             >
                 {alignedSummary ? rows.map((row, rowIndex) => (
@@ -558,6 +565,7 @@ export default function TransitRouteProgressBar({
 
 const styles = StyleSheet.create({
     labelledSummary: { width: "100%", marginTop: 12, gap: 9 },
+    denseLabelledSummary: { marginTop: 4, gap: 4 },
     routeMarkerRow: { flexDirection: "row" },
     routeMarkerCell: { flexShrink: 1, minWidth: 0, alignItems: "flex-start" },
     routeMarkerConnector: { position: "absolute", top: 7, left: 0, right: 0, height: 6, borderRadius: 3 },

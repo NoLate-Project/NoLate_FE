@@ -182,22 +182,6 @@ export function createCalendarImportStylesPart1(
       lineHeight: 23,
       fontWeight: '400',
     },
-    introPointList: {
-      gap: 10,
-      marginTop: 8,
-    },
-    introPoint: {
-      minHeight: 28,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    introPointText: {
-      color: colors.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
-      fontWeight: "600",
-    },
     providerList: {
       gap: 10,
       marginTop: 6,

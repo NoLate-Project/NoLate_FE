@@ -21,7 +21,7 @@ import {
 import { CALENDAR_PRIMARY_PILL_LAYOUT } from '../../calendarMotion';
 import type { ScheduleIndexController } from '../../hooks/useScheduleIndexController';
 
-const CALENDAR_CONTEXT_HEIGHT = 24;
+const CALENDAR_CONTEXT_HEIGHT = 0;
 
 const STICKY_MONTH_HEADER_HEIGHT = 50;
 
@@ -106,10 +106,10 @@ const styles = createScheduleIndexStyles({
   STICKY_WEEKDAY_HEADER_HEIGHT,
 });
 
-type Props = { controller: ScheduleIndexController };
+type Props = { controller: ScheduleIndexController; categoryBannerInset: number };
 
 /** 검색 결과, 고정 월 헤더와 폴백 보기·추가 메뉴를 렌더링합니다. */
-export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
+export function ScheduleIndexCalendarOverlayMenus({ controller, categoryBannerInset }: Props) {
   const {
     isFocused,
     reduceMotionEnabled,
@@ -258,6 +258,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
             styles.stickyCalendarHeader,
             stickyCalendarHeaderPosition,
             {
+              marginTop: categoryBannerInset,
               height: reservedStickyCalendarHeaderHeight,
               opacity: controller.savedAgendaTarget?.stackPending
                 ? 0

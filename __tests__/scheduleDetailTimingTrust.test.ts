@@ -1,6 +1,6 @@
 import type { ScheduleDepartureStatus } from '../src/api/schedule';
 import { buildSavedRouteDetailInfo } from '../src/modules/schedule/savedRouteDetailPresentation';
-import { buildRouteInfoFromAlternative } from '../src/modules/schedule/routeInfo';
+import { buildRouteInfoFromAlternative, type RouteInfo } from '../src/modules/schedule/routeInfo';
 import type { RouteAlternativeOption } from '../src/modules/map/routingService';
 import { buildScheduleDetailPresentation } from '../src/routeSupport/schedule/scheduleDetailPresentationModel';
 import type { ScheduleDetailController } from '../src/routeSupport/schedule/useScheduleDetailController';
@@ -64,6 +64,37 @@ it('shows matching saved endpoints once in the standard route header', () => {
 });
 
 describe('schedule detail timing trust', () => {
+  it('uses the same 137, 157 and 73 second walks as the refreshed Nowon timetable', () => {
+    // Reproduce the old eight-minute total beside the three walk durations captured from the Worker.
+    const option: RouteAlternativeOption = {
+      id: 'nowon-sillim', mode: 'TRANSIT', provider: 'odsay', source: 'api', minutes: 60,
+      transitLegs: [
+        { kind: 'WALK', label: '접근 도보', durationMinutes: 1, durationSeconds: 173 },
+        { kind: 'SUBWAY', label: '4호선', durationMinutes: 47 },
+        { kind: 'WALK', label: '환승 도보', durationMinutes: 3, durationSeconds: 157 },
+        { kind: 'SUBWAY', label: '2호선', durationMinutes: 8 },
+        { kind: 'WALK', label: '도착 도보', durationMinutes: 1, durationSeconds: 150 },
+      ],
+    };
+    const saved = buildRouteInfoFromAlternative(option);
+    expect(detail({ routeOption: option, routeDetailInfo: saved }).routeFactLabels).toContain('도보 8분');
+    const intervals = [137, 157, 73];
+    let index = 0;
+    const matched: RouteInfo = { ...saved, matchedTimeline: true, matchedTimelineBasis: 'TIMETABLE',
+      totalDurationMinutes: 67,
+      steps: saved.steps.map(step => {
+        if (step.type !== 'WALK') return step;
+        const durationSeconds = intervals[index++];
+        return { ...step, durationSeconds, durationMinutes: Math.ceil(durationSeconds / 60) };
+      }),
+    };
+    const revised = detail({ routeOption: option, routeDetailInfo: matched });
+    expect(revised.displayedRouteMinutes).toBe(67);
+    expect(revised.routeDurationLabel).toBe('67분');
+    expect(revised.routeFactLabels).toContain('도보 7분');
+    expect(revised.routeFactLabels).not.toContain('도보 8분');
+  });
+
   it('summarizes the saved timetable walk rather than the older provider walk', () => {
     const option: RouteAlternativeOption = {
       id: 'odsay-subway', mode: 'TRANSIT', provider: 'odsay', source: 'api', minutes: 20,
@@ -113,14 +144,14 @@ describe('schedule detail timing trust', () => {
     expect(presentation.routeArrivalSummary).toBeUndefined();
   });
 
-  it('keeps the actual rejected route estimate visible in compact and expanded metadata', () => {
+  it('omits the generic timing warning for a rejected route estimate', () => {
     // 실제 실패 당시 공개 API 응답이다. 현재 운행 정확도를 증명하는 표본으로 사용하지 않는다.
     const captured = require('./fixtures/eta-unverified-route-20261120.json') as ScheduleDepartureStatus;
     const presentation = detail({ departureStatus: captured });
 
     expect(presentation.departureTimeLabel).toBe('예상 출발');
-    expect(presentation.routeArrivalSummary).toBe('운행시각 미확인 · 저장 경로 기준');
-    expect(presentation.routeDetailMeta).toBe('운행시각 미확인 · 저장 경로 기준 · 환승 1회');
+    expect(presentation.routeArrivalSummary).toBeUndefined();
+    expect(presentation.routeDetailMeta).toBe('환승 1회');
     expect(presentation.effectiveTransitRoutePresentation).toBeUndefined();
   });
 
@@ -134,6 +165,34 @@ describe('schedule detail timing trust', () => {
     expect(presentation.departureTimeLabel).toBe('예상 출발');
     expect(presentation.routeArrivalSummary).toBeUndefined();
     expect(presentation.routeDetailMeta).toBe('환승 1회');
+  });
+
+  it('keeps a saved plan separate from a current-departure lookup after departure is recorded', () => {
+    const routeDetailInfo = {
+      id: 'saved-bus', originName: '출발지', destinationName: '도착지',
+      totalDurationMinutes: 12, totalDurationSeconds: 720,
+      departureTime: '2026-10-04T01:40:00+09:00', arrivalTime: '2026-10-04T01:52:00+09:00',
+      timeBasis: 'estimated' as const,
+      steps: [{ id: 'bus', type: 'BUS' as const, title: '402', durationMinutes: 12 }],
+    };
+    const currentTransitEstimate = {
+      id: 'current', mode: 'TRANSIT' as const, provider: 'odsay' as const, source: 'api' as const, minutes: 12,
+      providerDepartureAt: '2026-10-04T10:07:00+09:00', providerArrivalAt: '2026-10-04T10:19:00+09:00',
+    };
+    const input = { routeDetailInfo, currentTransitEstimate,
+      currentMemberDepartedAt: '2026-10-04T01:35:00+09:00' };
+    const saved = detail(input);
+    expect(saved.departureTimeLabel).toBe('실제 출발');
+    expect(saved.recommendedDepartureTimeLabel).toBe('01:35');
+    expect(saved.routePlanTimeLabel).toBe('01:40 출발 계획');
+    expect(saved.routeArrivalSummary).toBeUndefined();
+    expect(saved.currentTransitClock).toBe('10:07 출발 기준 · 10:19 도착 예상');
+    expect(detail({ ...input, navigationMode: true }).routeArrivalSummary)
+      .toBe('10:07 출발 기준 · 10:19 도착 예상');
+    expect(detail({ ...input, largeRouteHeader: true }).routeArrivalSummary)
+      .toBe('10:07 출발 기준 · 10:19 도착 예상');
+    expect(detail({ ...input, routeDetailInfo: { ...routeDetailInfo, departureTime: 'invalid' } }).routePlanTimeLabel)
+      .toBeUndefined();
   });
 
   it('keeps confirmed late-arrival diagnostics visible in the expanded route metadata', () => {

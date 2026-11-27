@@ -24,6 +24,7 @@ export type ScheduleAgendaCardProps = {
   item: ScheduleItem;
   onPress: (restoreFocus: () => void) => void;
   onLongPress?: () => void;
+  onOpenRouteSetup?: () => void;
   swipeActions?: ScheduleSwipeActionCallbacks;
   compact?: boolean;
   groupRow?: boolean;
@@ -37,6 +38,7 @@ export default function ScheduleAgendaCard({
   item,
   onPress,
   onLongPress,
+  onOpenRouteSetup,
   swipeActions,
   compact = false,
   groupRow = false,
@@ -81,7 +83,8 @@ export default function ScheduleAgendaCard({
   const hasContext = Boolean(
     metadata.location || travelText || item.routeSetupRequired,
   );
-  const departureColor = mode === 'dark' ? '#74B5FF' : '#205FC5';
+  const departurePassed = metadata.departureAt && new Date(metadata.departureAt).getTime() < Date.now();
+  const departureColor = departurePassed ? colors.textSecondary : mode === 'dark' ? '#74B5FF' : '#205FC5';
   const routeStatusColor = mode === 'dark' ? '#FF9F0A' : '#B85F00';
   const availableSwipeActionText = [
     swipeActions?.onEdit ? '수정' : '',
@@ -171,12 +174,14 @@ export default function ScheduleAgendaCard({
           .join(', ')}
         accessibilityHint={accessibilityHint}
         accessibilityActions={[
+          ...(item.routeSetupRequired && onOpenRouteSetup ? [{ name: 'routeSetup', label: '경로 설정' }] : []),
           ...(swipeActions?.onEdit ? [{ name: 'edit', label: '수정' }] : []),
           ...(swipeActions?.onDelete
             ? [{ name: 'delete', label: '삭제' }]
             : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
+          if (nativeEvent.actionName === 'routeSetup') onOpenRouteSetup?.();
           if (nativeEvent.actionName === 'edit') swipeActions?.onEdit?.();
           if (nativeEvent.actionName === 'delete') swipeActions?.onDelete?.();
         }}
@@ -250,9 +255,20 @@ export default function ScheduleAgendaCard({
                 </View>
               ) : null}
               {item.routeSetupRequired ? (
-                <View
+                <Pressable
                   testID="agenda-route-required-badge"
-                  style={styles.metadataRow}
+                  accessible={false}
+                  disabled={!onOpenRouteSetup}
+                  onPress={event => {
+                    event.stopPropagation();
+                    onOpenRouteSetup?.();
+                  }}
+                  style={({ pressed }) => [
+                    styles.metadataRow,
+                    onOpenRouteSetup && styles.routeSetupAction,
+                    onOpenRouteSetup && { backgroundColor: mode === 'dark' ? '#32250F' : '#FFF4E5' },
+                    { opacity: pressed ? 0.65 : 1 },
+                  ]}
                 >
                   <ScheduleIcon name="departure" color={routeStatusColor} />
                   <Text
@@ -260,12 +276,13 @@ export default function ScheduleAgendaCard({
                     style={[
                       styles.metadataText,
                       styles.departureText,
+                      onOpenRouteSetup && styles.routeSetupActionText,
                       { color: routeStatusColor },
                     ]}
                   >
-                    경로 미설정
+                    {onOpenRouteSetup ? '경로 설정' : '경로 미설정'}
                   </Text>
-                </View>
+                </Pressable>
               ) : travelText ? (
                 <View
                   testID="agenda-card-departure-row"

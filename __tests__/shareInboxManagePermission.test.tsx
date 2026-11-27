@@ -92,7 +92,7 @@ describe("ManageShareSheet permission controls", () => {
 
         act(() => {
             renderer!.root.findByProps({
-                accessibilityLabel: "friend@example.com 권한을 편집로 변경",
+                accessibilityLabel: "friend@example.com, 편집 권한으로 변경",
             }).props.onPress();
         });
 

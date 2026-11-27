@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import React from "react";
-import { AccessibilityInfo, ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { AccessibilityInfo, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar, Text, TextInput, View, useWindowDimensions } from "react-native";
 import Animated, { FadeIn, FadeInDown, ReduceMotion } from "react-native-reanimated";
 
 import CalendarGlassSurface from "../src/modules/schedule/components/calendar/CalendarGlassSurface";
@@ -23,6 +23,15 @@ const nameSheetBackdropEntry = FadeIn.duration(200).reduceMotion(ReduceMotion.Sy
 const nameSheetEntry = FadeInDown.duration(200)
     .withInitialValues({ transform: [{ translateY: 14 }] })
     .reduceMotion(ReduceMotion.System);
+
+function ProfileSurface({ flat, children, style, ...props }: React.ComponentProps<typeof CalendarGlassSurface> & { flat: boolean }) {
+    if (flat) return <View style={[style, styles.flatSurface]}>{children}</View>;
+    return <CalendarGlassSurface {...props} style={style}>{children}</CalendarGlassSurface>;
+}
+
+function ProfileAccountActions({ inline, children }: { inline: boolean; children: React.ReactNode }) {
+    return inline ? <View style={styles.compactAccountActions}>{children}</View> : <>{children}</>;
+}
 
 /** 프로필 정보와 계정·캘린더·앱 설정을 섹션별로 표시하는 화면입니다. */
 export default function ProfileRoute() {
@@ -152,12 +161,12 @@ export function ProfileScreen() {
             style={({ pressed }) => [
                 styles.calendarManageButton,
                 compactProfile && styles.compactCalendarAction,
-                { borderColor: colors.border, backgroundColor: colors.inputBackground, opacity: pressed ? 0.62 : 1 },
+                { borderColor: colors.border, backgroundColor: compactProfile ? connectionIconBackground : colors.inputBackground, opacity: pressed ? 0.62 : 1 },
             ]}
         >
             {!compactProfile && <Ionicons name="settings-outline" size={17} color={colors.textPrimary} />}
-            <Text style={[styles.calendarManageButtonText, { color: colors.textPrimary }]}>{importActionTitle}</Text>
-            <Ionicons name="chevron-forward-outline" size={17} color={colors.textSecondary} />
+            <Text style={[styles.calendarManageButtonText, compactProfile && styles.compactImportText, { color: compactProfile ? connectionIconColor : colors.textPrimary }]}>{importActionTitle}</Text>
+            {!compactProfile && <Ionicons name="chevron-forward-outline" size={17} color={colors.textSecondary} />}
         </Pressable>
     );
     const identity = (
@@ -177,10 +186,10 @@ export function ProfileScreen() {
             </View>
             <View style={styles.profileCardText}>
                 <Animated.Text key={nameRevision} entering={nameRevision ? profileDetailEntry : undefined}
-                    numberOfLines={1} style={[styles.profileName, { color: colors.textPrimary }]}>
+                    numberOfLines={1} style={[styles.profileName, compactProfile && styles.compactProfileName, { color: colors.textPrimary }]}>
                     {displayAccountName}
                 </Animated.Text>
-                <Text numberOfLines={1} style={[styles.profileMeta, { color: colors.textSecondary }]}>
+                <Text numberOfLines={1} style={[styles.profileMeta, compactProfile && styles.compactProfileMeta, { color: colors.textSecondary }]}>
                     {compactProfile ? (account?.loginType ? `${displayLoginType} 계정` : displayLoginType) : profileSummary}
                 </Text>
             </View>
@@ -197,7 +206,7 @@ export function ProfileScreen() {
                 importantForAccessibility={hasOpenModal ? "no-hide-descendants" : "auto"}
                 style={[styles.header, { paddingTop: insets.top + 8 }]}
             >
-                <CalendarGlassSurface
+                <ProfileSurface flat={compactProfile}
                     interactive
                     variant="toolbar"
                     style={[styles.backGlass, { borderColor: colors.border }]}
@@ -210,17 +219,17 @@ export function ProfileScreen() {
                     >
                         <Ionicons name="chevron-back-outline" size={22} color={colors.textPrimary} />
                     </Pressable>
-                </CalendarGlassSurface>
+                </ProfileSurface>
 
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>프로필</Text>
 
-                {compactProfile ? <View style={styles.headerSpacer} /> : <CalendarGlassSurface
+                {compactProfile ? <View style={styles.headerSpacer} /> : <ProfileSurface flat={compactProfile}
                     interactive
                     variant="toolbar"
                     style={[styles.backGlass, { borderColor: colors.border }]}
                 >
                     {editName}
-                </CalendarGlassSurface>}
+                </ProfileSurface>}
 
             </View>
 
@@ -235,7 +244,7 @@ export function ProfileScreen() {
                     { paddingBottom: Math.max(insets.bottom, 18) + 20 },
                 ]}
             >
-                {compactProfile ? <View style={styles.compactIdentity}>{identity}</View> : <CalendarGlassSurface
+                {compactProfile ? <View style={styles.compactIdentity}>{identity}</View> : <ProfileSurface flat={compactProfile}
                     variant="card"
                     tone="solidCard"
                     style={[
@@ -244,7 +253,7 @@ export function ProfileScreen() {
                     ]}
                 >
                     {identity}
-                </CalendarGlassSurface>}
+                </ProfileSurface>}
 
                 {profileError ? (
                     <Pressable
@@ -355,7 +364,7 @@ export function ProfileScreen() {
                                 ]}
                             >
                                 {savingProfile ? (
-                                    <ActivityIndicator color="#ffffff" />
+                                    <BrandedLoader size="inline" accessibilityLabel="표시 이름 저장 중" />
                                 ) : (
                                     <Text style={[styles.saveButtonText, disabledNameButton && { color: mode === "dark" ? "#B9C8E5" : "#526582" }]}>저장</Text>
                                 )}
@@ -365,13 +374,14 @@ export function ProfileScreen() {
                 </Modal>
 
                 <View style={styles.section}>
-                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>계정 정보</Text>
-                    <CalendarGlassSurface
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{compactProfile ? "계정" : "계정 정보"}</Text>
+                    <ProfileSurface flat={compactProfile}
                         variant="card"
                         tone="solidCard"
                         style={[styles.accountCard, { borderColor: colors.border }]}
                     >
                         {!compactProfile && <AccountInfoRow
+                            compact={compactProfile}
                             label="표시 이름"
                             value={displayAccountName}
                             colors={colors}
@@ -381,6 +391,7 @@ export function ProfileScreen() {
                         />}
                         {displayMemberId ? (
                             <AccountInfoRow
+                            compact={compactProfile}
                                 label="NoLate ID"
                                 value={`#${displayMemberId}`}
                                 colors={colors}
@@ -390,6 +401,7 @@ export function ProfileScreen() {
                             />
                         ) : null}
                         <AccountInfoRow
+                            compact={compactProfile}
                             label="이메일"
                             value={displayEmail}
                             colors={colors}
@@ -397,6 +409,7 @@ export function ProfileScreen() {
                             showDivider={!compactProfile || account?.loginType === "COMMON"}
                         />
                         {!compactProfile && <AccountInfoRow
+                            compact={compactProfile}
                             label="로그인"
                             value={displayLoginType}
                             colors={colors}
@@ -404,6 +417,7 @@ export function ProfileScreen() {
                         />}
                         {account?.loginType === "COMMON" ? (
                             <AccountInfoRow
+                            compact={compactProfile}
                                 label="비밀번호"
                                 value={compactProfile ? undefined : "안전하게 변경"}
                                 colors={colors}
@@ -417,13 +431,13 @@ export function ProfileScreen() {
                                 actionIcon="chevron-forward-outline"
                             />
                         ) : null}
-                    </CalendarGlassSurface>
+                    </ProfileSurface>
                 </View>
 
-                {isNaverAccount ? (
+                {isNaverAccount && !compactProfile ? (
                     <View style={styles.section}>
                         <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>네이버 계정 정보</Text>
-                        <CalendarGlassSurface
+                        <ProfileSurface flat={compactProfile}
                             variant="card"
                             tone="solidCard"
                             style={[styles.usageCard, { borderColor: colors.border }]}
@@ -442,13 +456,13 @@ export function ProfileScreen() {
                             <Text style={[styles.usageItemBody, { color: colors.textSecondary }]}>프로필에 표시</Text>
                             <Text style={[styles.usageItemTitle, styles.usageItemSpacing, { color: colors.textPrimary }]}>이메일 · {displayEmail}</Text>
                             <Text style={[styles.usageItemBody, { color: colors.textSecondary }]}>로그인 계정 확인에 사용</Text>
-                        </CalendarGlassSurface>
+                        </ProfileSurface>
                     </View>
                 ) : null}
 
                 <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{compactProfile ? "캘린더" : "캘린더 연동"}</Text>
-                    <CalendarGlassSurface
+                    <ProfileSurface flat={compactProfile}
                         interactive={!compactProfile && !calendarConnection}
                         variant="card"
                         tone="solidCard"
@@ -457,9 +471,9 @@ export function ProfileScreen() {
                         {calendarConnection ? (
                             <View style={[styles.calendarConnectionContent, compactProfile && styles.compactCalendarConnection]}>
                                 <View style={styles.calendarConnectionHeader}>
-                                    <View style={[styles.calendarConnectionIcon, { backgroundColor: connectionIconBackground }]}>
+                                    {!compactProfile && <View style={[styles.calendarConnectionIcon, { backgroundColor: connectionIconBackground }]}>
                                         <Ionicons name="calendar-outline" size={21} color={connectionIconColor} />
-                                    </View>
+                                    </View>}
                                     <View style={styles.calendarConnectionTitleWrap}>
                                         <Text style={[styles.calendarConnectionTitle, { color: colors.textPrimary }]}>
                                             {calendarConnection.providerLabel}
@@ -541,22 +555,10 @@ export function ProfileScreen() {
                                 {!compactProfile && importAction}
                             </View>
                         ) : compactProfile ? (
-                            <View style={[styles.calendarConnectionContent, styles.compactCalendarConnection]}>
-                                <View style={styles.calendarConnectionHeader}>
-                                    <View style={[styles.calendarConnectionIcon, { backgroundColor: connectionIconBackground }]}>
-                                        <Ionicons name={calendarConnectionError ? "refresh-outline" : "calendar-outline"} size={21} color={connectionIconColor} />
-                                    </View>
-                                    <View style={styles.calendarConnectionTitleWrap}>
-                                        <Text style={[styles.calendarConnectionTitle, { color: colors.textPrimary }]}>
-                                            {calendarConnectionError ? "연결 상태를 확인하지 못했어요" : "연동된 캘린더 없음"}
-                                        </Text>
-                                        {!calendarConnectionError && (
-                                            <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
-                                                휴대폰 캘린더나 Google Calendar의 일정을 추가할 수 있어요
-                                            </Text>
-                                        )}
-                                    </View>
-                                </View>
+                            <View style={[styles.compactCalendarEmpty, { borderBottomColor: colors.border }]}>
+                                <Text style={[styles.compactCalendarEmptyText, { color: colors.textPrimary }]}>
+                                    {calendarConnectionError ? "연결 상태 확인 실패" : "연동된 캘린더 없음"}
+                                </Text>
                                 {importAction}
                             </View>
                         ) : (
@@ -592,13 +594,13 @@ export function ProfileScreen() {
                                 <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                             </Pressable>
                         )}
-                    </CalendarGlassSurface>
+                    </ProfileSurface>
                 </View>
 
                 <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>앱 설정</Text>
-                    <View style={styles.settingsList}>
-                        <CalendarGlassSurface
+                    <View style={[styles.settingsList, compactProfile && styles.compactSettingsList]}>
+                        <ProfileSurface flat={compactProfile}
                             interactive
                             variant="card"
                             tone="solidCard"
@@ -613,18 +615,20 @@ export function ProfileScreen() {
                                 onPress={() => { returnFocus.current = placesLink; openPlacesSettings(); }}
                                 style={({ pressed }) => [
                                     styles.legalButton,
+                                    compactProfile && styles.compactSettingRow,
+                                    compactProfile && { borderBottomColor: colors.border },
                                     { opacity: pressed ? 0.62 : 1 },
                                 ]}
                             >
                                 <View style={styles.appSettingRowContent}>
-                                    <View style={[styles.appSettingIcon, { backgroundColor: "rgba(37,99,235,0.12)" }]}>
+                                    {!compactProfile && <View style={[styles.appSettingIcon, { backgroundColor: "rgba(37,99,235,0.12)" }]}>
                                         <Ionicons name="location-outline" size={20} color="#2563EB" />
-                                    </View>
+                                    </View>}
                                     <View style={styles.settingTextWrap}>
-                                        <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>내 장소</Text>
-                                        <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
+                                        <Text style={[styles.settingTitle, compactProfile && styles.compactSettingTitle, { color: colors.textPrimary }]}>내 장소</Text>
+                                        {(!compactProfile || defaultOriginName) && <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
                                             {defaultOriginName ? `기본주소 · ${defaultOriginName}` : "기본주소와 즐겨찾기 카테고리 관리"}
-                                        </Text>
+                                        </Text>}
                                     </View>
                                 </View>
                                 <View
@@ -634,23 +638,23 @@ export function ProfileScreen() {
                                     <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                                 </View>
                             </Pressable>
-                        </CalendarGlassSurface>
+                        </ProfileSurface>
 
-                        <CalendarGlassSurface
+                        <ProfileSurface flat={compactProfile}
                             variant="card"
                             tone="solidCard"
                             style={[styles.settingsCard, { borderColor: colors.border }]}
                         >
-                            <View style={styles.settingTextWrap}>
-                                <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>화면 테마</Text>
-                                <Text style={[styles.settingHint, { color: colors.textSecondary }]}>시스템 설정을 따르거나 밝기를 직접 선택하세요</Text>
+                            <View style={[styles.settingTextWrap, compactProfile && styles.compactThemeHeading]}>
+                                <Text style={[styles.settingTitle, compactProfile && styles.compactSettingTitle, { color: colors.textPrimary }]}>화면 테마</Text>
+                                {!compactProfile && <Text style={[styles.settingHint, { color: colors.textSecondary }]}>시스템 설정을 따르거나 밝기를 직접 선택하세요</Text>}
                             </View>
                             <View style={styles.settingSwitchWrap}>
-                                <ThemeModeSwitch style={styles.settingSwitch} />
+                                <ThemeModeSwitch showIcons={!compactProfile} style={styles.settingSwitch} />
                             </View>
-                        </CalendarGlassSurface>
+                        </ProfileSurface>
 
-                        <CalendarGlassSurface
+                        <ProfileSurface flat={compactProfile}
                             interactive
                             variant="card"
                             tone="solidCard"
@@ -664,16 +668,18 @@ export function ProfileScreen() {
                                 onPress={() => { returnFocus.current = privacyLink; openPrivacyPolicy(); }}
                                 style={({ pressed }) => [
                                     styles.legalButton,
+                                    compactProfile && styles.compactSettingRow,
+                                    compactProfile && { borderBottomColor: colors.border },
                                     { opacity: pressed ? 0.62 : 1 },
                                 ]}
                             >
                                 <View style={styles.settingTextWrap}>
-                                    <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>
+                                    <Text style={[styles.settingTitle, compactProfile && styles.compactSettingTitle, { color: colors.textPrimary }]}>
                                         개인정보처리방침
                                     </Text>
-                                    <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
+                                    {!compactProfile && <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
                                         캘린더, 위치, 알림 정보 처리 기준
-                                    </Text>
+                                    </Text>}
                                 </View>
                                 <View
                                     accessibilityElementsHidden
@@ -682,9 +688,9 @@ export function ProfileScreen() {
                                     <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                                 </View>
                             </Pressable>
-                        </CalendarGlassSurface>
+                        </ProfileSurface>
 
-                        <CalendarGlassSurface
+                        <ProfileSurface flat={compactProfile}
                             interactive
                             variant="card"
                             tone="solidCard"
@@ -698,20 +704,22 @@ export function ProfileScreen() {
                                 onPress={() => { returnFocus.current = termsLink; openTermsOfService(); }}
                                 style={({ pressed }) => [
                                     styles.legalButton,
+                                    compactProfile && styles.compactSettingRow,
+                                    compactProfile && { borderBottomColor: colors.border },
                                     { opacity: pressed ? 0.62 : 1 },
                                 ]}
                             >
                                 <View style={styles.settingTextWrap}>
                                     <Text
-                                        style={[styles.settingTitle, { color: colors.textPrimary }]}
+                                        style={[styles.settingTitle, compactProfile && styles.compactSettingTitle, { color: colors.textPrimary }]}
                                     >
                                         서비스 이용약관
                                     </Text>
-                                    <Text
+                                    {!compactProfile && <Text
                                         style={[styles.settingHint, { color: colors.textSecondary }]}
                                     >
                                         NoLate 서비스 이용 기준
-                                    </Text>
+                                    </Text>}
                                 </View>
                                 <View
                                     accessibilityElementsHidden
@@ -720,15 +728,16 @@ export function ProfileScreen() {
                                     <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
                                 </View>
                             </Pressable>
-                        </CalendarGlassSurface>
+                        </ProfileSurface>
                     </View>
                 </View>
 
-                <CalendarGlassSurface
+                <ProfileAccountActions inline={compactProfile}>
+                <ProfileSurface flat={compactProfile}
                     interactive
                     variant="card"
                     tone="solidCard"
-                    style={[styles.signOutGlass, { borderColor: colors.border }]}
+                    style={[styles.signOutGlass, compactProfile && styles.compactAccountActionSurface, { borderColor: colors.border }]}
                 >
                     <Pressable
                         accessibilityRole="button"
@@ -742,6 +751,7 @@ export function ProfileScreen() {
                         }}
                         style={({ pressed }) => [
                             styles.signOutButton,
+                            compactProfile && styles.compactAccountActionButton,
                             {
                                 opacity: pressed || signingOut ? 0.58 : 1,
                             },
@@ -753,20 +763,20 @@ export function ProfileScreen() {
                                 variant="auth"
                                 accessibilityLabel="로그아웃하고 있어요"
                             />
-                        ) : (
+                        ) : !compactProfile && (
                             <Ionicons name="log-out-outline" size={19} color="#ef4444" />
                         )}
-                        <Text style={styles.signOutText}>
+                        <Text style={[styles.signOutText, compactProfile && styles.compactSignOutText, compactProfile && { color: mode === "dark" ? "#FF6961" : "#D92D20" }]}>
                             {signingOut ? "로그아웃 중" : "로그아웃"}
                         </Text>
                     </Pressable>
-                </CalendarGlassSurface>
+                </ProfileSurface>
 
-                <CalendarGlassSurface
+                <ProfileSurface flat={compactProfile}
                     interactive
                     variant="card"
                     tone="solidCard"
-                    style={[styles.withdrawGlass, { borderColor: colors.border }]}
+                    style={[styles.withdrawGlass, compactProfile && styles.compactAccountActionSurface, { borderColor: colors.border }]}
                 >
                     <Pressable
                         accessibilityRole="button"
@@ -780,19 +790,21 @@ export function ProfileScreen() {
                         }}
                         style={({ pressed }) => [
                             styles.signOutButton,
+                            compactProfile && styles.compactAccountActionButton,
                             { opacity: pressed || withdrawing || signingOut || !account?.loginType ? 0.58 : 1 },
                         ]}
                     >
                         {withdrawing ? (
                             <BrandedLoader size="button" variant="auth" accessibilityLabel="회원탈퇴를 처리하고 있어요" />
-                        ) : (
+                        ) : !compactProfile && (
                             <Ionicons name="person-remove-outline" size={19} color={colors.textSecondary} />
                         )}
-                        <Text style={[styles.withdrawText, { color: colors.textSecondary }]}>
+                        <Text style={[styles.withdrawText, compactProfile && styles.compactWithdrawText, { color: colors.textSecondary }]}>
                             {withdrawing ? "회원탈퇴 처리 중" : "회원탈퇴"}
                         </Text>
                     </Pressable>
-                </CalendarGlassSurface>
+                </ProfileSurface>
+                </ProfileAccountActions>
             </ScrollView>
             {passwordChanged && (
                 <View pointerEvents="none" style={[styles.accountNotice, { bottom: Math.max(insets.bottom, 16), backgroundColor: colors.surface2 }]}>

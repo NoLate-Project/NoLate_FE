@@ -366,12 +366,7 @@ export function buildRouteDropdownSummaryItems(
         const key = `${option.id}:${leg.kind}:${leg.label}:${index}`;
 
         if (leg.journeyPhase === "BUFFER") {
-            const preparation = option.intercityJourney?.boardingBufferMinutes;
-            const onlyPreparation = nextLeg?.intercityService && preparation !== undefined && (
-                leg.durationSeconds === undefined ? leg.durationMinutes === preparation : leg.durationSeconds === preparation * 60
-            );
-            const label = onlyPreparation ? "탑승 준비·대기" : leg.label;
-            return { key, kind: "WAIT", title: [label, duration].filter(Boolean).join(" · "), subtitle: "역·터미널 여유시간" };
+            return { key, kind: "WAIT", title: "" };
         }
         if (leg.kind === "WALK") {
             if (isRideLegKind(prevLeg?.kind) && nextLeg && isTransitRideKind(nextLeg.kind)) {
@@ -419,7 +414,7 @@ export function buildRouteDropdownSummaryItems(
                 kind: leg.kind,
                 color: getTransitLegColor(leg),
                 title: `${prefix}${lineLabel}${timeSuffix}`,
-                subtitle: [placeName, stopCountText, rideClock, leg.intercityService && `${serviceTimeRange(leg.intercityService)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · "),
+                subtitle: [placeName, stopCountText, rideClock, leg.intercityService && serviceTimeRange(leg.intercityService)].filter(Boolean).join(" · "),
             };
         }
 
@@ -435,5 +430,5 @@ export function buildRouteDropdownSummaryItems(
         items.unshift({ key: `${option.id}:entrance`, kind: "WALK",
             title: `역 출구까지 도보 ${formatRouteDuration(Math.ceil(entrance.seconds / 60))}` });
     }
-    return items;
+    return items.filter(item => item.kind !== "WAIT");
 }

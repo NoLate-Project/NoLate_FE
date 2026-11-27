@@ -13,6 +13,7 @@ export type OutlinedSelectionColors = {
 type Props = {
     style?: StyleProp<ViewStyle>;
     stacked?: boolean;
+    showIcons?: boolean;
     outlinedSelection?: OutlinedSelectionColors;
 };
 
@@ -42,7 +43,7 @@ const OPTIONS: Array<{
     },
 ];
 
-export default function ThemeModeSwitch({ style, stacked = false, outlinedSelection }: Props) {
+export default function ThemeModeSwitch({ style, stacked = false, showIcons = true, outlinedSelection }: Props) {
     const { colors, preference, setPreference } = useTheme();
 
     return (
@@ -85,7 +86,7 @@ export default function ThemeModeSwitch({ style, stacked = false, outlinedSelect
                             pressed && styles.pressed,
                         ]}
                     >
-                        {!outlinedSelection && <Ionicons
+                        {showIcons && !outlinedSelection && <Ionicons
                             accessible={false}
                             name={option.icon}
                             size={15}

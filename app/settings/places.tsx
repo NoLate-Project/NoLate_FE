@@ -2,7 +2,6 @@ import styles from "../../src/routeSupport/settings/places.styles";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     AccessibilityInfo,
-    ActivityIndicator,
     Platform,
     Animated,
     Modal,
@@ -24,7 +23,7 @@ import {
 } from "../../src/modules/schedule/favoritePlaceSelection";
 import type { FavoritePlace } from "../../src/api/favoritePlaces";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
-import { BrandedLoadingState } from "../../src/ui/BrandedLoader";
+import BrandedLoader, { BrandedLoadingState } from "../../src/ui/BrandedLoader";
 import {
     CategoryEditor,
     CategoryTab,
@@ -62,6 +61,7 @@ export default function PlacesSettingsScreen() {
         defaultOrigin,
         loading,
         refreshing,
+        pullRefreshing,
         loadError,
         busyKey,
         sheet,
@@ -202,11 +202,11 @@ export default function PlacesSettingsScreen() {
                         accessibilityLabel="내 장소 새로고침"
                         accessibilityState={{ disabled: loading || refreshing }}
                         disabled={loading || refreshing}
-                        onPress={refresh}
+                        onPress={() => refresh("toolbar")}
                         style={({ pressed }) => [styles.headerButton, { opacity: pressed || loading || refreshing ? 0.5 : 1 }]}
                     >
                         {refreshing
-                            ? <ActivityIndicator size="small" color={colors.textPrimary} />
+                            ? <BrandedLoader size="inline" accessibilityLabel="내 장소 새로고침 중" />
                             : <Ionicons name="refresh-outline" size={20} color={colors.textPrimary} />}
                     </Pressable>
                 </CalendarGlassSurface>
@@ -222,7 +222,7 @@ export default function PlacesSettingsScreen() {
                 />
             ) : <ScrollView
                 showsVerticalScrollIndicator={false}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+                refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={() => refresh("pull")} tintColor="transparent" />}
                 contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, 18) + 28 }]}
             >
                 {loadError ? (
@@ -628,7 +628,7 @@ export default function PlacesSettingsScreen() {
             {busyKey ? (
                 <View pointerEvents="none" style={styles.busyOverlay}>
                     <View style={[styles.busyPill, { backgroundColor: mode === "dark" ? "#2C2C2E" : "#FFFFFF" }]}>
-                        <ActivityIndicator size="small" color="#2563EB" />
+                        <BrandedLoader size="inline" accessibilityLabel="내 장소 변경사항 저장 중" />
                         <Text style={[styles.busyText, { color: colors.textPrimary }]}>변경사항 저장 중</Text>
                     </View>
                 </View>

@@ -1,9 +1,9 @@
+import BrandedLoader from "../../src/ui/BrandedLoader";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
     AccessibilityInfo,
-    ActivityIndicator,
     findNodeHandle,
     Alert,
     BackHandler,
@@ -343,7 +343,6 @@ export default function Login() {
 
     return (
         <AuthScreen
-            subtitle="늦지 않게, 오늘의 이동을 준비하세요."
             keyboardRevealRef={standardLayout && passwordFocused ? loginActionRef : undefined}
         >
             <AuthInput
@@ -461,6 +460,7 @@ export default function Login() {
 
             <Pressable
                 accessibilityRole="button"
+                accessibilityLabel="회원가입"
                 accessibilityState={{ disabled: loginBusy }}
                 disabled={loginBusy}
                 onPress={() => {
@@ -475,7 +475,6 @@ export default function Login() {
                     { opacity: loginBusy || pressed ? 0.62 : 1 },
                 ]}
             >
-                <Text style={styles.signUpHint}>처음이신가요?</Text>
                 <Text style={styles.signUpText}>회원가입</Text>
                 {standardLayout && <Ionicons accessible={false} name="arrow-forward-outline" size={16} color={colors.textSecondary} />}
             </Pressable>
@@ -550,7 +549,7 @@ function SocialButton({
         >
             <View style={[styles.socialMark, markStyle]}>
                 {loading ? (
-                    <ActivityIndicator size="small" color={symbolColor ?? colors.textPrimary} />
+                    <BrandedLoader size="inline" accessibilityLabel="로그인 중" />
                 ) : icon ? (
                     <Ionicons name={icon} size={16} color={symbolColor ?? colors.textPrimary} />
                 ) : (
@@ -662,11 +661,6 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             justifyContent: "center",
             gap: 7,
             marginTop: 4,
-        },
-        signUpHint: {
-            color: colors.textSecondary,
-            fontSize: 13,
-            fontWeight: "800",
         },
         signUpText: {
             color: colors.textPrimary,

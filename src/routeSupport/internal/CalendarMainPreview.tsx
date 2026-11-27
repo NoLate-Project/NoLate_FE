@@ -231,9 +231,6 @@ export default function CalendarMainPreview({
       onDelete: showPreviewMessage('일정 삭제'),
     }),
     onRequestViewMode: setViewMode,
-    routeSetupRequiredCount: fixtureItems.filter(
-      item => item.routeSetupRequired,
-    ).length,
     onOpenRouteSetup: showPreviewMessage('경로 설정'),
   };
   const primaryPillLabel = usesMonthInPrimaryPill(viewMode, fontScale) ? '2026년 10월' : '2026년';

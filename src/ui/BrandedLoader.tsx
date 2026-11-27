@@ -3,7 +3,7 @@ import { Platform, StyleSheet, Text, View, type StyleProp, type ViewStyle } from
 import { useTheme } from "../modules/theme/ThemeContext";
 import NoLateLoadingMark from "./NoLateLoadingMark";
 
-export type BrandedLoaderSize = "full" | "section" | "button";
+export type BrandedLoaderSize = "full" | "section" | "button" | "inline";
 export type BrandedLoaderVariant = "schedule" | "calendar" | "route" | "share" | "auth";
 
 type BrandedLoaderProps = {

@@ -2,6 +2,17 @@ import type { ScheduleItem } from "./types";
 
 const WEEKDAY_LABELS = ["일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"];
 
+export function getPendingRouteSetupItems(items: ScheduleItem[], now = Date.now()): ScheduleItem[] {
+    return items.filter(item => item.routeSetupRequired === true).sort((a, b) => {
+        const aTime = new Date(a.startAt).getTime();
+        const bTime = new Date(b.startAt).getTime();
+        const aFuture = aTime >= now;
+        const bFuture = bTime >= now;
+        if (aFuture !== bFuture) return aFuture ? -1 : 1;
+        return aFuture ? aTime - bTime : bTime - aTime;
+    });
+}
+
 export type AgendaSection = {
     dateKey: string;
     header: string;

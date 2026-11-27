@@ -77,8 +77,8 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
   const mapProblem = mapState === 'error' || mapState === 'unavailable';
   const rideCount = input?.legs.filter(leg => leg.kind === 'BUS' || leg.kind === 'SUBWAY').length ?? 0;
   // This is the saved route's planned duration, never a live remaining-time claim.
-  const summary = [routeDurationLabel && routeDurationLabel !== '미설정' ? `예정 ${routeDurationLabel}` : '대중교통',
-    rideCount > 1 ? `환승 ${rideCount - 1}회` : rideCount === 1 ? '환승 없음' : undefined].filter(Boolean).join(' · ');
+  const summary = [(!ended && presentation.currentTransitClock) || (routeDurationLabel && routeDurationLabel !== '미설정' ? `예정 ${routeDurationLabel}` : '대중교통'),
+    rideCount > 1 ? `환승 ${rideCount - 1}회` : undefined].filter(Boolean).join(' · ');
   const surface = { backgroundColor: isDark ? '#20242C' : '#FFFFFF', borderColor: sheetBorder };
   return <Reanimated.View entering={reduceMotion ? undefined : FadeIn.duration(220).reduceMotion(ReduceMotion.System)}
     pointerEvents="box-none"
@@ -100,7 +100,7 @@ function JourneyNavigationHeader({ presentation, mapState, onRetryMap }: Schedul
           </View>
           <View style={[navigationHeaderStyles.summaryPill, surface]}>
             <Text testID="schedule-navigation-route-summary" style={[navigationHeaderStyles.summary, { color: primaryText }]}
-              accessibilityLabel={`대중교통 길안내, ${summary}`}
+              accessibilityLabel={`대중교통 길안내, ${summary}${rideCount === 1 ? ' · 환승 없음' : ''}`}
               lineBreakStrategyIOS="hangul-word">{summary}</Text>
           </View>
         </>}
@@ -166,6 +166,8 @@ export function ScheduleDetailHeader({
     plainHeaderHeight,
     primaryText,
     routeTitle,
+    scheduleRangeLabel,
+    displayDestination,
     secondaryText,
     setRouteHeaderHeight,
     setShareSheetVisible,
@@ -235,6 +237,7 @@ export function ScheduleDetailHeader({
         styles.topHeaderTitle,
         isPlainSchedule && styles.plainTopHeaderTitle,
         !isPlainSchedule && titleTextLayout,
+        !isPlainSchedule && !largeRouteHeader && styles.compactRouteHeaderTitle,
         largeRouteHeader && { fontSize: largeTitleFontSize },
         { color: primaryText },
       ]}
@@ -269,7 +272,16 @@ export function ScheduleDetailHeader({
       </Text>
     </View>
   ) : null;
-  const routeBar = showTopRouteBar ? (
+  const routeBar = showTopRouteBar && !largeRouteHeader ? (
+    <View style={styles.compactRouteHeaderContext}>
+      <Text numberOfLines={1} style={[styles.compactRouteHeaderDate, { color: secondaryText }]}>{scheduleRangeLabel}</Text>
+      <View style={styles.compactRouteHeaderDestination}>
+        {renderHighlight("route")}
+        <Text testID="schedule-detail-route-name" numberOfLines={1} accessibilityLabel={routeTitle}
+          style={[styles.compactRouteHeaderPlace, { color: secondaryText }]}>{displayDestination?.name ?? routeTitle}</Text>
+      </View>
+    </View>
+  ) : showTopRouteBar ? (
     <View style={[
       styles.topHeaderRouteBar,
       largeRouteHeader && styles.topHeaderRouteBarLarge,
@@ -309,6 +321,7 @@ export function ScheduleDetailHeader({
         <View
           style={[
             styles.topHeaderSurface,
+            !isPlainSchedule && !largeRouteHeader && styles.compactRouteHeaderSurface,
             isPlainSchedule
               ? { backgroundColor: colors.background }
               : isDark ? styles.panelOpaqueBackdropDark : styles.panelOpaqueBackdropLight,

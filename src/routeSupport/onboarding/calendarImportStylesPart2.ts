@@ -66,13 +66,6 @@ export function createCalendarImportStylesPart2(
       lineHeight: 19,
       fontWeight: '700',
     },
-    scanList: { marginTop: 10, gap: 8 },
-    scanRow: {
-      flexDirection: 'row', alignItems: 'center', minHeight: 49, gap: 10,
-      paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
-      backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-    },
-    scanText: { flex: 1, fontSize: 14, fontWeight: '600' },
     emptyBox: {
       minHeight: 174,
       borderRadius: 18,

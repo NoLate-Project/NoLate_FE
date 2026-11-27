@@ -62,7 +62,7 @@ export function usePlacesSettings() {
     const [categories, setCategories] = useState<FavoritePlaceCategory[]>([]);
     const [defaultOrigin, setDefaultOrigin] = useState<FavoritePlace | null>(null);
     const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
+    const [refreshSource, setRefreshSource] = useState<"toolbar" | "pull" | null>(null);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [busyKey, setBusyKey] = useState<string | null>(null);
     const [sheet, setSheet] = useState<SheetState>(null);
@@ -118,7 +118,7 @@ export function usePlacesSettings() {
         } finally {
             if (loadRequestIdRef.current === requestId) {
                 if (showLoading) setLoading(false);
-                setRefreshing(false);
+                setRefreshSource(null);
             }
         }
     }, []);
@@ -236,8 +236,8 @@ export function usePlacesSettings() {
         });
     }, [busyKey, stopSearch]);
 
-    const refresh = useCallback(() => {
-        setRefreshing(true);
+    const refresh = useCallback((source: "toolbar" | "pull") => {
+        setRefreshSource(source);
         void loadPlaces(false);
     }, [loadPlaces]);
 
@@ -347,7 +347,7 @@ export function usePlacesSettings() {
         setBusyKey("save-place");
         try {
             loadRequestIdRef.current += 1;
-            setRefreshing(false);
+            setRefreshSource(null);
             if (sheet.favoriteId) {
                 const updated = await updateFavoritePlaceToApi(sheet.favoriteId, {
                     label,
@@ -454,7 +454,7 @@ export function usePlacesSettings() {
         if (items.length !== next.length) return;
 
         loadRequestIdRef.current += 1;
-        setRefreshing(false);
+        setRefreshSource(null);
         setFavorites(next);
         setBusyKey("reorder-places");
         try {
@@ -597,7 +597,8 @@ export function usePlacesSettings() {
         categories,
         defaultOrigin,
         loading,
-        refreshing,
+        refreshing: refreshSource !== null,
+        pullRefreshing: refreshSource === "pull",
         loadError,
         busyKey,
         sheet,

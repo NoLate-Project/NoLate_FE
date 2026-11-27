@@ -1,4 +1,4 @@
-import ImportedTicketSummary from './ImportedTicketSummary';
+import { ImportedTicketDisclosure } from './ImportedTicketSummary';
 import ScheduleSharingInformation, { ScheduleDetailReadingRow } from './ScheduleSharingInformation';
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
@@ -349,7 +349,7 @@ export default function PlainScheduleDetailView({
                     </View>
                 ) : null}
 
-                <ImportedTicketSummary route={item.route} />
+                <ImportedTicketDisclosure key={item.id} route={item.route} showBooking />
 
                 {travelPlan ? (
                     <View style={styles.travelPlanSection}>

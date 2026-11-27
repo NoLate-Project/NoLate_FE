@@ -1029,14 +1029,12 @@ describe("QuickScheduleModal live speech", () => {
         });
 
         expect(mockStartLiveSpeechRecognition).not.toHaveBeenCalled();
-        expect(alertSpy).toHaveBeenCalledWith(
-            "음성 인식 사용 불가",
-            expect.stringContaining("직접 입력해 주세요")
-        );
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" })
-                .props.editable
-        ).toBe(true);
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 내용 직접 입력" }).props.editable).toBe(true);
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "음성 인식 다시 시도" }).props.onPress();
+        });
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(1);
         alertSpy.mockRestore();
     });
 

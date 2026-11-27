@@ -179,7 +179,7 @@ export function getTransitRouteSegmentAccessibilityLabel(segments: TransitRouteP
 export function getTransitRouteSummaryAccessibilityLabel(
     segments: TransitRouteProgressSegment[]
 ) {
-    const grouped = groupTransitRouteSummary(segments).segments;
+    const grouped = groupTransitRouteSummary(segments.filter(segment => segment.kind !== "WAIT")).segments;
     const itinerary = grouped.map((_, index) => (
         getTransitRouteSegmentAccessibilityLabel(grouped, index)
     )).join(", ");

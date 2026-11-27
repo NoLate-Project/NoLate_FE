@@ -311,7 +311,7 @@ describe("schedule edit route timing reconciliation", () => {
         });
     });
 
-    test("일정 시각을 바꾸면 이전 ODsay 열차편을 지우고 같은 경로의 지도 정보는 유지한다", () => {
+    test.each(["operating", "unknown", undefined])("ODsay 경로의 일정 시각 변경 시 기존 운행 상태 %s와 열차 시각을 갱신한다", previousServiceState => {
         const scheduledRide = {
             boardingAt: "2026-07-20T10:11:00Z",
             arrivalAt: "2026-07-20T10:34:00Z",
@@ -321,7 +321,7 @@ describe("schedule edit route timing reconciliation", () => {
             provider: "odsay",
             providerTimeBasis: "route_estimate",
             transitDepartureAt: routeInfo.departureTime,
-            transitServiceState: "operating",
+            transitServiceState: previousServiceState,
             transitDepartureTimeSource: "requested",
             odsayTimetablePreview: { departureAt: routeInfo.departureTime, arrivalAt: routeInfo.arrivalTime, rides: [scheduledRide] },
             routeInfo: {
@@ -343,7 +343,7 @@ describe("schedule edit route timing reconciliation", () => {
         });
         expect(stored).not.toHaveProperty("odsayTimetablePreview");
         expect(stored).not.toHaveProperty("transitDepartureAt");
-        expect(stored).not.toHaveProperty("transitServiceState");
+        expect(stored.transitServiceState).toBe("unknown");
         expect(stored.routeInfo.steps[0]).not.toHaveProperty("scheduledRide");
     });
 

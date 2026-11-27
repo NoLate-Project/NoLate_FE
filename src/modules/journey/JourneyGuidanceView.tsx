@@ -1,6 +1,7 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useTheme } from "../theme/ThemeContext";
 import { getNextManualActionLabel } from "./journeyPresentation";
@@ -98,7 +99,7 @@ export function JourneyGuidanceView({ progress, route, pending = false, onAdvanc
                 <Pressable testID="journey-advance" accessibilityRole="button" accessibilityState={{ disabled: pending, busy: pending }}
                     disabled={pending} onPress={onAdvance}
                     style={({ pressed }) => [styles.primaryButton, { backgroundColor: accent, opacity: pending || pressed ? 0.6 : 1 }]}>
-                    {pending ? <ActivityIndicator color={mode === "dark" ? "#0B2254" : "#FFFFFF"} /> : null}
+                    {pending ? <BrandedLoader size="inline" accessibilityLabel="길안내 처리 중" /> : null}
                     <Text style={[styles.primaryLabel, { color: buttonForeground }]}>{actionLabel}</Text>
                 </Pressable>
             ) : (

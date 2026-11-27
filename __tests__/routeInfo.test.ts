@@ -212,6 +212,21 @@ describe("routeInfo", () => {
         expect(compactTransitLineLabel("직행좌석:9007")).toBe("9007");
         expect(compactTransitLineLabel("간선:402")).toBe("402");
         expect(compactTransitLineLabel("수도권4호선")).toBe("4호선");
+        expect(compactTransitLineLabel("KTX · 00001편")).toBe("KTX 00001");
+        expect(compactTransitLineLabel("KTX-산천 · 00161편")).toBe("KTX-산천 00161");
+    });
+
+    it("기존 일정의 잘린 열차 번호를 선택한 운행편에서 복구한다", () => {
+        const stored = {
+            id: "saved-train", originName: "서울", destinationName: "부산", totalDurationMinutes: 157,
+            departureTime: "2026-11-28T05:13:00+09:00", arrivalTime: "2026-11-28T07:50:00+09:00",
+            steps: [{ id: "leg-2", type: "TRAIN", title: "서울", lineName: "KTX · 0000...", badgeText: "기차 · KTX · 0000...",
+                intercityService: { kind: "TRAIN", grade: "KTX", trainNumber: "00001" } }],
+        };
+        const route = getRouteInfoFromRoute({ routeInfo: stored });
+        expect(route?.steps[0]).toMatchObject({ lineName: "KTX 00001", badgeText: "기차 · KTX 00001" });
+        expect(getRouteInfoFromRoute(route)).toBe(route);
+        expect(stored.steps[0].lineName).toBe("KTX · 0000...");
     });
 
     it("자동차 공급자 안내를 공통 상세 단계와 비용 정보로 보존한다", () => {

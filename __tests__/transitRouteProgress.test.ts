@@ -45,9 +45,9 @@ describe("buildTransitRouteProgressSegments", () => {
         expect(segments.map(segment => segment.kind)).toEqual(["SUBWAY", "WALK", "WAIT", "INTERCITY_BUS"]);
         expect(buildRouteDropdownSummaryItems({
             id: "buffer-route", mode: "TRANSIT", source: "api", minutes: 117, transitLegs: legs,
-        }).map(item => item.kind)).toEqual(["SUBWAY", "WALK", "WAIT", "INTERCITY_BUS"]);
+        }).map(item => item.kind)).toEqual(["SUBWAY", "WALK", "INTERCITY_BUS"]);
         expect(getTransitRouteSummaryAccessibilityLabel(segments))
-            .toBe("이동 경로, 공항철도 6분, 환승 도보 6분, 대기 20분, 우등 1시간 25분");
+            .toBe("이동 경로, 공항철도 6분, 환승 도보 6분, 우등 1시간 25분");
     });
 
     it("uses the same subway identity and color on the map, summary, and timeline", () => {

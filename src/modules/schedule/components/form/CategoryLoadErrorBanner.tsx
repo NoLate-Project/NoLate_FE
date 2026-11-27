@@ -1,5 +1,6 @@
+import BrandedLoader from "../../../../ui/BrandedLoader";
 import React from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useTheme } from "../../../theme/ThemeContext";
@@ -45,7 +46,7 @@ export default function CategoryLoadErrorBanner({
                 ]}
             >
                 {retrying ? (
-                    <ActivityIndicator size="small" color={errorColor} />
+                    <BrandedLoader size="inline" accessibilityLabel="카테고리 다시 불러오는 중" />
                 ) : (
                     <Text style={[styles.retryText, { color: errorColor }]}>다시 시도</Text>
                 )}

@@ -187,6 +187,9 @@ export function createCalendarImportStylesPart3(
       justifyContent: 'center',
       backgroundColor: BRAND_BLUE,
     },
+    originSearchButtonPending: {
+      backgroundColor: brandTint,
+    },
     originSearchButtonText: {
       color: '#FFFFFF',
       fontSize: 13,

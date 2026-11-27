@@ -4,7 +4,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } fr
 import Reanimated, { ReduceMotion, withTiming } from "react-native-reanimated";
 
 import { useSystemReduceMotion } from "../../../performance/useSystemReduceMotion";
-import LoadingIndicator from "../../../../ui/LoadingIndicator";
 import NoLateLoadingMark from "../../../../ui/NoLateLoadingMark";
 import { createQuickScheduleModalStyles } from "./QuickScheduleModal.styles";
 import {
@@ -55,7 +54,6 @@ export function QuickScheduleLoadingStep({
           {description}
         </Text>
       ) : null}
-      {isAnalyzing && <LoadingIndicator size="regular" delayMs={logoDelayMs + logoSettleMs} />}
     </View>
   );
 }

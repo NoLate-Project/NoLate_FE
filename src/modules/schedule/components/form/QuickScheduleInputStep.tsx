@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useLayoutEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
 import {
-  ActivityIndicator,
   Image,
   Linking,
   Platform,
@@ -81,7 +80,6 @@ type QuickScheduleInputStepProps = {
   onVoiceTranscriptChange: (value: string) => void;
   photoErrorBorder: string;
   photoErrorSurface: string;
-  photoErrorTextColor: string;
   photoErrorTitleColor: string;
   photoNeedsReview: boolean;
   photoRecognitionError: string;
@@ -99,7 +97,7 @@ type QuickScheduleInputStepProps = {
   voiceControlTitle: string;
   voiceDurationMillis: number;
   voiceMeterHistory: number[];
-  voicePermissionDenied: boolean;
+  voiceInputIssue: "permission" | "service" | null;
   voiceSpectrumEnergy: number;
   voiceTranscript: string;
   voiceTranscriptTruncated: boolean;
@@ -135,7 +133,6 @@ export function QuickScheduleInputStep({
   onVoiceTranscriptChange,
   photoErrorBorder,
   photoErrorSurface,
-  photoErrorTextColor,
   photoErrorTitleColor,
   photoNeedsReview,
   photoRecognitionError,
@@ -152,7 +149,7 @@ export function QuickScheduleInputStep({
   voiceControlMeta,
   voiceControlTitle,
   voiceMeterHistory,
-  voicePermissionDenied,
+  voiceInputIssue,
   voiceSpectrumEnergy,
   voiceTranscript,
   voiceTranscriptTruncated,
@@ -244,7 +241,7 @@ export function QuickScheduleInputStep({
           >
             <Ionicons
               accessible={false}
-              name={item.icon}
+              name={!largeText && item.key === "text" ? "pencil-outline" : item.icon}
               size={17}
               color={selected ? BLUE : colors.textSecondary}
             />
@@ -373,64 +370,52 @@ export function QuickScheduleInputStep({
                 </View>
               </>
             ) : (
-              <View style={[styles.photoEmptyPanel, { backgroundColor: mediaPanelBackground, borderColor: colors.inputBorder }]}>
-                <View style={[styles.photoEmptyIcon, { backgroundColor: mode === "dark" ? "rgba(36,107,254,0.16)" : "rgba(36,107,254,0.09)" }]}>
-                  <Ionicons accessible={false} name="image-outline" size={18} color={BLUE} />
-                </View>
-                <Text lineBreakStrategyIOS="hangul-word" style={[styles.photoEmptyTitle, { color: colors.textPrimary }]}>
-                  {largeText ? "일정 사진 추가" : "일정이 적힌 사진을 선택하세요"}
-                </Text>
-                <Text lineBreakStrategyIOS="hangul-word" style={[styles.photoEmptyMeta, { color: colors.textSecondary }]}>
-                  사진에서 날짜와 장소를 읽어요.
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="사진 선택"
-                  accessibilityHint="사진 촬영 또는 사진 앱 선택 메뉴가 열립니다"
-                  accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
-                  disabled={submitting || isVoiceFinalizing}
-                  onPress={onPhotoActionSheet}
-                  style={({ pressed }) => [styles.photoEmptyAction, {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.inputBorder,
-                    opacity: pressed ? 0.7 : 1,
-                  }]}
-                >
-                  <Text style={[styles.photoEmptyActionText, { color: colors.textPrimary }]}>사진 선택하기</Text>
-                </Pressable>
-              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="사진 선택"
+                accessibilityHint="사진 촬영 또는 사진 앱 선택 메뉴가 열립니다"
+                accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
+                disabled={submitting || isVoiceFinalizing}
+                onPress={onPhotoActionSheet}
+                style={({ pressed }) => [styles.photoEmptyAction, {
+                  backgroundColor: mediaPanelBackground,
+                  borderColor: colors.inputBorder,
+                  opacity: pressed ? 0.72 : 1,
+                }]}
+              >
+                <Ionicons accessible={false} name="image-outline" size={20} color={BLUE} />
+                <Text style={[styles.photoEmptyActionText, { color: colors.textPrimary }]}>사진 선택하기</Text>
+              </Pressable>
             )}
 
             {selectedPhoto && (
               <View style={[styles.photoTranscriptWrap, { backgroundColor: mode === "dark" ? "#151821" : "#F8FAFD", borderColor: colors.inputBorder }]}>
                 {isPhotoRecognizing && !photoRecognitionError && (
                   <View style={styles.photoTranscriptHeader} accessibilityLiveRegion="polite">
-                    <ActivityIndicator size="small" color={BLUE} />
+                    <BrandedLoader size="inline" accessibilityLabel="사진 읽는 중" />
                     <Text style={[styles.photoTranscriptLabel, { color: colors.textPrimary }]}>사진을 읽고 있어요</Text>
                   </View>
                 )}
 
-                {isPhotoRecognizing && !photoRecognitionError ? (
-                  <View pointerEvents="none" testID="quick-schedule-photo-reading-placeholder" style={styles.photoReadingPlaceholder}>
-                    <View style={[styles.photoReadingLine, styles.photoReadingLineLong]} />
-                    <View style={[styles.photoReadingLine, styles.photoReadingLineMedium]} />
-                    <View style={[styles.photoReadingLine, styles.photoReadingLineShort]} />
-                  </View>
-                ) : (
+                {(!isPhotoRecognizing || Boolean(photoRecognitionError)) && (
                   <>
                     {photoRecognitionError && (
-                      <View style={[styles.photoRecognitionErrorWrap, { backgroundColor: photoErrorSurface, borderColor: photoErrorBorder }]}>
-                        <Text accessibilityLiveRegion="polite" style={[styles.photoRecognitionErrorTitle, { color: photoErrorTitleColor }]}>
-                          {isPhotoRecognizing ? "사진을 다시 읽고 있어요" : "일정 내용을 찾지 못했어요"}
-                        </Text>
-                        <Text style={[styles.photoRecognitionErrorText, { color: photoErrorTextColor }]}>날짜와 시간을 직접 적거나 사진을 바꿔 보세요.</Text>
+                      <View style={isPhotoRecognizing ? styles.photoTranscriptHeader : [styles.photoRecognitionErrorWrap, { backgroundColor: photoErrorSurface, borderColor: photoErrorBorder }]}>
+                        {!isPhotoRecognizing && (
+                          <Text accessibilityLiveRegion="polite" style={[styles.photoRecognitionErrorTitle, { color: photoErrorTitleColor }]}>
+                            일정 내용을 찾지 못했어요
+                          </Text>
+                        )}
                         <Pressable accessibilityRole="button" accessibilityLabel="사진 내용 다시 읽기"
                           accessibilityState={{ busy: isPhotoRecognizing, disabled: isPhotoRecognizing || submitting }}
                           disabled={isPhotoRecognizing || submitting}
-                          onPress={onPhotoRecognitionRetry} style={({ pressed }) => [styles.photoRecognitionRetry, { opacity: pressed || isPhotoRecognizing ? 0.72 : 1 }]}>
-                          {isPhotoRecognizing ? <ActivityIndicator size="small" color={BLUE} /> :
+                          onPress={onPhotoRecognitionRetry}
+                          style={({ pressed }) => [isPhotoRecognizing ? styles.photoTranscriptHeader : styles.photoRecognitionRetry, { opacity: pressed ? 0.72 : 1 }]}>
+                          {isPhotoRecognizing ? <BrandedLoader size="inline" accessibilityLabel="사진 다시 읽는 중" /> :
                             <Ionicons accessible={false} name="refresh-outline" size={15} color={BLUE} />}
-                          <Text style={styles.photoRecognitionRetryText}>다시 읽기</Text>
+                          <Text style={isPhotoRecognizing ? [styles.photoTranscriptLabel, { color: colors.textPrimary }] : styles.photoRecognitionRetryText}>
+                            {isPhotoRecognizing ? "사진을 다시 읽고 있어요" : "다시 읽기"}
+                          </Text>
                         </Pressable>
                       </View>
                     )}
@@ -465,25 +450,28 @@ export function QuickScheduleInputStep({
         )}
 
         {inputMode === "voice" && (
-          <View style={[styles.voicePanel, voicePermissionDenied && styles.voicePermissionPanel, {
-            backgroundColor: voicePermissionDenied ? colors.surface : mediaPanelBackground,
+          <View style={[styles.voicePanel, voiceInputIssue !== null && styles.voicePermissionPanel, {
+            backgroundColor: voiceInputIssue ? colors.surface : mediaPanelBackground,
             borderColor: colors.border,
-          }]}>
-            {voicePermissionDenied ? (
+          }, !largeText && styles.voicePanelFlat]}>
+            {voiceInputIssue ? (
               <View style={styles.voicePermissionNotice}>
                 <Text accessibilityLiveRegion="polite" style={[styles.voiceTitle, styles.voicePermissionCopy, { color: colors.textPrimary }]}>
-                  마이크를 사용할 수 없어요
+                  {voiceInputIssue === "permission" ? "마이크를 사용할 수 없어요" : "지금은 음성 인식을 사용할 수 없어요"}
                 </Text>
-                <Text lineBreakStrategyIOS="hangul-word" style={[styles.voiceMeta, styles.voicePermissionCopy, { color: colors.textSecondary }]}>
-                  설정에서 마이크를 허용하거나 아래에 직접 입력해 주세요.
-                </Text>
+                {voiceInputIssue === "permission" && (
+                  <Text lineBreakStrategyIOS="hangul-word" style={[styles.voiceMeta, styles.voicePermissionCopy, { color: colors.textSecondary }]}>
+                    설정에서 마이크를 허용하거나 아래에 직접 입력해 주세요.
+                  </Text>
+                )}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="설정 열기"
-                  onPress={() => { Linking.openSettings().catch(() => undefined); }}
+                  accessibilityLabel={voiceInputIssue === "permission" ? "설정 열기" : "음성 인식 다시 시도"}
+                  disabled={submitting || isVoiceFinalizing}
+                  onPress={voiceInputIssue === "permission" ? () => { Linking.openSettings().catch(() => undefined); } : onStartVoiceRecording}
                   style={({ pressed }) => [styles.voiceSettingsButton, { borderColor: colors.border, opacity: pressed ? 0.66 : 1 }]}
                 >
-                  <Text style={styles.voiceSettingsText}>설정 열기</Text>
+                  <Text style={styles.voiceSettingsText}>{voiceInputIssue === "permission" ? "설정 열기" : "음성 인식 다시 시도"}</Text>
                 </Pressable>
               </View>
             ) : (
@@ -493,9 +481,9 @@ export function QuickScheduleInputStep({
                 accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
                 onPress={isVoiceRecording ? onStopVoiceRecording : onStartVoiceRecording}
                 disabled={submitting || isVoiceFinalizing}
-                style={({ pressed }) => [styles.voiceRecordControl, { opacity: pressed ? 0.78 : isVoiceFinalizing ? 0.5 : 1 }]}
+                style={({ pressed }) => [styles.voiceRecordControl, !largeText && styles.voiceRecordControlFlat, { opacity: pressed ? 0.78 : isVoiceFinalizing ? 0.5 : 1 }]}
               >
-                <View style={styles.voiceOrbWrap}>
+                <View style={[styles.voiceOrbWrap, !largeText && !isVoiceRecording && styles.voiceOrbWrapFlat]}>
                   {isVoiceRecording && (
                     <View pointerEvents="none" style={styles.voiceSpectrumMotion}>
                       <VoiceSpectrumHalo energy={voiceSpectrumEnergy} />
@@ -511,32 +499,32 @@ export function QuickScheduleInputStep({
                       </View>
                     </View>
                   )}
-                  <View style={[styles.voiceOrb, { backgroundColor: isVoiceRecording ? BLUE : colors.surface, borderColor: isVoiceRecording || voiceTranscript.trim() || voiceUri ? BLUE : colors.border }]}>
+                  <View style={[styles.voiceOrb, { backgroundColor: isVoiceRecording ? BLUE : colors.surface, borderColor: isVoiceRecording || voiceTranscript.trim() || voiceUri ? BLUE : colors.border }, !largeText && styles.voiceOrbFlat, !largeText && !isVoiceRecording && { backgroundColor: mode === "dark" ? "#152440" : "#EAF1FF" }]}>
                     <Ionicons accessible={false} name={isVoiceRecording ? "stop" : "mic-outline"} size={24} color={isVoiceRecording ? "#FFFFFF" : BLUE} />
                   </View>
                 </View>
                 <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>{voiceControlTitle}</Text>
-                <Text numberOfLines={2} style={[styles.voiceMeta, { color: colors.textSecondary }]}>{voiceControlMeta}</Text>
+                {(largeText || voiceControlMeta !== "예) 내일 오후 3시 서울역에서 회의") && <Text numberOfLines={2} style={[styles.voiceMeta, { color: colors.textSecondary }]}>{voiceControlMeta}</Text>}
               </Pressable>
             )}
-            <View style={[styles.voiceTranscriptWrap, { backgroundColor: voicePermissionDenied ? inputBackground : colors.surface, borderColor: colors.inputBorder }]}>
+            <View style={[styles.voiceTranscriptWrap, { backgroundColor: voiceInputIssue ? inputBackground : colors.surface, borderColor: colors.inputBorder }, !largeText && styles.voiceTranscriptWrapFlat]}>
               <View style={styles.voiceTranscriptHeader}>
-                <Text style={[styles.voiceTranscriptLabel, { color: colors.textSecondary }]}>{voicePermissionDenied ? "직접 입력" : "말한 내용"}</Text>
+                <Text style={[styles.voiceTranscriptLabel, !largeText && styles.voiceTranscriptLabelFlat, { color: colors.textSecondary }]}>{voiceInputIssue ? "직접 입력" : "말한 내용"}</Text>
                 {voiceTranscriptTruncated && <Text style={[styles.voiceConfidence, styles.truncatedRecognitionText]}>앞 300자만 표시</Text>}
               </View>
               <TextInput
                 ref={inputRef}
                 testID="quick-schedule-voice-transcript"
-                accessibilityLabel={voicePermissionDenied ? "일정 내용 직접 입력" : "실시간 음성 인식 텍스트"}
+                accessibilityLabel={voiceInputIssue ? "일정 내용 직접 입력" : "실시간 음성 인식 텍스트"}
                 editable={!submitting && !isVoiceRecording && !isVoiceFinalizing}
                 multiline
                 maxLength={QUICK_TEXT_LIMIT}
                 value={voiceTranscript}
                 onChangeText={onVoiceTranscriptChange}
-                placeholder={voicePermissionDenied ? "예) 11월 20일 오후 3시 서울역에서 회의" : isVoiceRecording ? "말한 내용이 여기에 표시됩니다." : voiceUri ? "필요하면 내용을 직접 적어 주세요." : largeText ? "직접 적어도 돼요." : "직접 입력해도 됩니다."}
-                placeholderTextColor={colors.inputPlaceholder}
+                placeholder={voiceInputIssue ? "예) 11월 20일 오후 3시 서울역에서 회의" : isVoiceRecording ? "말한 내용이 여기에 표시됩니다." : voiceUri ? "필요하면 내용을 직접 적어 주세요." : largeText ? "직접 적어도 돼요." : "직접 입력해도 됩니다."}
+                placeholderTextColor={largeText ? colors.inputPlaceholder : colors.textSecondary}
                 selectionColor={BLUE}
-                style={[styles.voiceTranscriptInput, largeText && styles.voiceTranscriptInputLarge, { color: colors.textPrimary }]}
+                style={[styles.voiceTranscriptInput, largeText && styles.voiceTranscriptInputLarge, !largeText && styles.voiceTranscriptInputFlat, { color: colors.textPrimary, borderColor: colors.inputBorder }]}
               />
             </View>
           </View>
@@ -561,7 +549,7 @@ export function QuickScheduleInputStep({
           <BrandedLoader size="button" variant="schedule" accessibilityLabel="일정을 만들고 있어요" />
         ) : (
           <>
-            <Ionicons accessible={false} name="calendar-outline" size={17} color={showInactiveSubmit ? colors.textSecondary : "#fff"} />
+            {largeText && <Ionicons accessible={false} name="calendar-outline" size={17} color={showInactiveSubmit ? colors.textSecondary : "#fff"} />}
             <Text maxFontSizeMultiplier={largeText ? 2.35 : undefined} style={[styles.submitText, showInactiveSubmit && { color: colors.textSecondary }]}>일정 미리보기</Text>
           </>
         )}

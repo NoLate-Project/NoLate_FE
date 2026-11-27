@@ -915,6 +915,11 @@ final class NoLateE2ETests: XCTestCase {
             XCTAssertTrue(instruction.waitForExistence(timeout: 20))
             XCTAssertTrue(instruction.label.contains("봉천"))
             XCTAssertEqual(state.label, "출발 대기")
+            let clock = app.staticTexts["schedule-navigation-route-summary"]
+            let currentEstimate = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                clock.label.contains("출발 기준") && clock.label.contains("도착 예상")
+            }, object: clock)
+            XCTAssertEqual(XCTWaiter.wait(for: [currentEstimate], timeout: 25), .completed)
             capture("bongcheon-ready-to-walk")
             NSLog("E2E_BONGCHEON_ARMED")
             // Replay the first walking leg only, with fixes spaced 9 m and 6 s apart.
@@ -4906,7 +4911,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         try testVerifySavedEtaJourney()
         let diagnostic = environment["E2E_EXPECTED_DIAGNOSTIC"] ?? ""
         let warning = diagnostic == "TRANSIT_ARRIVAL_UNAVAILABLE" ? "실시간 도착정보 없음" :
-            diagnostic == "TRANSIT_ARRIVAL_OUT_OF_HORIZON" ? "실시간 조회 범위 밖" : "운행시각 미확인"
+            diagnostic == "TRANSIT_ARRIVAL_OUT_OF_HORIZON" ? "실시간 조회 범위 밖" : "예상 출발"
         // Navigation retains older detail nodes in the accessibility tree. Inspect
         // the visible current summary, not the first cached node with this prefix.
         let summaries = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "일정 상세 시트 펼치기, 예상 출발 "))
@@ -4914,7 +4919,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             visibleSummary = summaries.allElementsBoundByIndex.first {
                 $0.exists && $0.isHittable && $0.frame.height > 30 &&
-                self.app.frame.contains($0.frame) && $0.label.contains(warning)
+                self.app.frame.contains($0.frame) && $0.label.contains(warning) && !$0.label.contains("운행시각 미확인")
             }
             return visibleSummary != nil
         }, object: nil)
@@ -6111,7 +6116,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         }
         let accepted = ["success", "reconnect", "early-transfer", "dwell-transfer", "first-alighting-late", "onward-delay", "transfer-observed", "recovered"].contains(phase)
         let prefix = accepted ? "일정 상세 시트 펼치기, 권장 출발 " : "일정 상세 시트 펼치기, 예상 출발 "
-        let warning = phase == "missed" ? "환승 불가" : phase == "late" ? "정시 도착 불가" : phase == "early-transfer-risk" ? "환승 가능 여부 미확인" : phase == "unknown" ? "운행시각 미확인" : phase == "transfer-first-unobserved" ? "실시간 도착정보 없음" : nil
+        let warning = phase == "missed" ? "환승 불가" : phase == "late" ? "정시 도착 불가" : phase == "early-transfer-risk" ? "환승 가능 여부 미확인" : phase == "transfer-first-unobserved" ? "실시간 도착정보 없음" : nil
         let summaries = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
         var visible: XCUIElement?
         let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -6467,7 +6472,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         let expectedDeparture = clock.string(from: configuration.target.addingTimeInterval(-3888))
         let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             summary.exists && summary.label.contains("예상 출발 " + expectedDeparture) &&
-                summary.label.contains("운행시각 미확인")
+                !summary.label.contains("운행시각 미확인")
         }, object: nil)
         try require(XCTWaiter.wait(for: [expected], timeout: 20) == .completed,
                     "Unverified route timing must remain explicitly estimated")

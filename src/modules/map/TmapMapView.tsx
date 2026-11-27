@@ -1,3 +1,4 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import React, {
   forwardRef,
   useCallback,
@@ -8,7 +9,6 @@ import React, {
   useState,
 } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   Pressable,
   Text,
@@ -703,7 +703,7 @@ const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(
           >
             {loadingContent ?? (
               <>
-                <ActivityIndicator color="#2979FF" />
+                <BrandedLoader size="inline" accessibilityLabel="지도 불러오는 중" />
                 <Text style={[styles.loadingText, { color: fallbackTextColor }]}>
                   지도를 불러오는 중…
                 </Text>

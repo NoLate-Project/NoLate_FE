@@ -45,8 +45,7 @@ type UseScheduleIndexBottomBarParams = {
   notificationUnreadCount: number;
   openAccountSettings: () => void;
   openCalendarScopeSelector: () => void;
-  openRouteSetupTarget: () => void;
-  routeSetupRequiredCount: number;
+  openRouteSetupTarget: (id: string) => void;
   scheduleCalendars: ScheduleCalendar[];
   scheduleError: string | null;
   scheduleLoading: boolean;
@@ -82,7 +81,6 @@ export function useScheduleIndexBottomBar({
   openAccountSettings,
   openCalendarScopeSelector,
   openRouteSetupTarget,
-  routeSetupRequiredCount,
   scheduleCalendars,
   scheduleError,
   scheduleLoading,
@@ -153,7 +151,6 @@ export function useScheduleIndexBottomBar({
     () => [
       {
         key: 'calendar-scope-selector',
-        label: '캘린더',
         icon: SCHEDULE_ICONS.calendar,
         accessibilityLabel: `현재 ${activeCalendarPresentation.title}, 캘린더 선택`,
         accessibilityState: { expanded: calendarScopeSelectorVisible },
@@ -161,7 +158,6 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'notification-inbox-shortcut',
-        label: '알림',
         icon: SCHEDULE_ICONS.notifications,
         badgeCount: notificationUnreadCount,
         emphasized: notificationUnreadCount > 0,
@@ -173,7 +169,6 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'share-inbox-shortcut',
-        label: '공유함',
         icon: SCHEDULE_ICONS.inbox,
         badgeCount: shareBadgeCount,
         emphasized: shareBadgeCount > 0,
@@ -185,7 +180,6 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'account-settings-shortcut',
-        label: '프로필',
         icon: SCHEDULE_ICONS.account,
         accessibilityLabel: '내 정보 및 설정',
         onPress: openAccountSettings,
@@ -226,7 +220,6 @@ export function useScheduleIndexBottomBar({
           returnHighlight={agendaReturnHighlight}
           getScheduleSwipeActions={getScheduleSwipeActions}
           onRequestScheduleActions={onRequestScheduleActions}
-          routeSetupRequiredCount={routeSetupRequiredCount}
           onOpenRouteSetup={openRouteSetupTarget}
           onRequestViewMode={handleCalendarViewModeChange}
         />
@@ -250,7 +243,6 @@ export function useScheduleIndexBottomBar({
           returnHighlight={agendaReturnHighlight}
           getScheduleSwipeActions={getScheduleSwipeActions}
           onRequestScheduleActions={onRequestScheduleActions}
-          routeSetupRequiredCount={routeSetupRequiredCount}
           onOpenRouteSetup={openRouteSetupTarget}
           onRequestViewMode={handleCalendarViewModeChange}
         />
@@ -276,7 +268,6 @@ export function useScheduleIndexBottomBar({
       openRouteSetupTarget,
       savedEntry,
       saveReturnVisible,
-      routeSetupRequiredCount,
       scheduleError,
     ],
   );

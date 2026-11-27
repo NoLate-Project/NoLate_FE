@@ -162,6 +162,7 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         && previous.route === baseRouteIdentity && previous.memberId === memberId
         && previous.sessionId === snapshot?.sessionId
         && (snapshot?.status === 'EXPIRED' || snapshot?.status === 'STOPPED');
+    const showStartIntroduction = !autoPrepareRoute && !endedHere && (!issue || canConnectWalking);
     const heading = ownRunning ? (snapshot?.status === 'ARMED' ? '출발 대기' : '위치 안내 중')
         : endedHere && snapshot?.status === 'STOPPED' && snapshot.qualityReason === 'DESTINATION_ARRIVED'
             ? '목적지에 도착했어요'
@@ -189,15 +190,15 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
         </View>;
     }
     if (checkingCheckpoint) {
-        const resumeConsent = '이 안내를 이어가려면 위치 사용에 동의해 주세요.';
-        const checkpointMessage = trial.savedCheckpoint ? '이 일정의 이전 안내를 이어갈 수 있어요.'
+        const resumeConsent = '길안내 중 위치 사용에 동의합니다';
+        const checkpointMessage = trial.savedCheckpoint ? null
             : checkpointState === 'CURRENT' ? '다른 일정의 안내가 남아 있어요. 해당 일정에서 안내를 확인해 주세요.'
             : checkpointState === 'BLOCKED' || checkpointState === 'WAITING'
                 ? '이전 안내 상태를 확인하지 못했어요. 저장한 경로는 계속 볼 수 있어요.'
                 : '이전 안내 상태를 확인하고 있어요.';
         return <View testID="saved-detail-controls" style={styles.root}>
             <Text accessibilityRole="header" style={[styles.heading, isDark && styles.headingDark]}>이전 위치 안내</Text>
-            <Text accessibilityLiveRegion="polite" style={descriptionStyle}>{checkpointMessage}</Text>
+            {checkpointMessage && <Text accessibilityLiveRegion="polite" style={descriptionStyle}>{checkpointMessage}</Text>}
             {trial.savedCheckpoint && <>
                 <Pressable testID="saved-detail-restore-consent" accessibilityRole="checkbox"
                     accessibilityLabel={resumeConsent} accessibilityState={{ checked: trial.consented, disabled: !trial.canConsentToSavedRestore }}
@@ -230,17 +231,17 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     }
     if (departureRequest && !departureRequest.signal.aborted && !trial.running && !connectionError && !trial.errorCode
         && snapshot?.enabled && (!trial.assessment || trial.eligible) && (!departureRequest.claimed || trial.pending)
-        && (!issue || connecting || !connected && !autoConnectionKey.current)) {
+        && (!issue || canConnectWalking && (connecting || !connected && !autoConnectionKey.current))) {
         return <View testID="saved-detail-starting" style={styles.root}>
             <Text style={descriptionStyle} accessibilityLiveRegion="polite">저장한 경로를 확인하고 있어요.</Text>
         </View>;
     }
     return <View testID="saved-detail-controls" style={ownRunning && navigationMenu && statusShownInRouteHeader ? styles.inlineControls : styles.root}>
-        {!(statusShownInRouteHeader && ownRunning) && (trial.running || !autoPrepareRoute) && <Animated.View key={heading} entering={headingEntrance}>
+        {!(statusShownInRouteHeader && ownRunning) && (trial.running || showStartIntroduction || !autoPrepareRoute && endedHere) && <Animated.View key={heading} entering={headingEntrance}>
             <Text testID="saved-detail-guidance-heading" accessibilityRole="header" accessibilityLiveRegion="polite"
                 style={[styles.heading, isDark && styles.headingDark]}>{heading}</Text>
         </Animated.View>}
-        {!trial.running && !autoPrepareRoute && <Text style={descriptionStyle}>
+        {!trial.running && showStartIntroduction && <Text style={descriptionStyle}>
             이동하면 출발을 감지하고 다음 구간을 알려드려요.
         </Text>}
         {!trial.running&&(!autoPrepareRoute||!connected)&&canConnectWalking&&

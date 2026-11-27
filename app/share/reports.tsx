@@ -203,7 +203,6 @@ export default function SharingReportHistoryScreen() {
         refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={() => load('pull')} />}
         contentContainerStyle={[styles.content, { paddingBottom: showRefreshError ? noticeBottom + 66 : Math.max(insets.bottom, 20) + 24 }]}
       >
-        <Text style={[styles.description, { color: colors.textSecondary }]}>접수한 공유 신고의 현재 처리 상태를 확인할 수 있어요.</Text>
         {loading ? (
           <BrandedLoadingState style={styles.state} accessibilityLabel="신고 내역을 확인하고 있어요"
             title="신고 내역을 확인하고 있어요" />
@@ -342,7 +341,6 @@ const styles = StyleSheet.create({
   headerButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, fontSize: 21, lineHeight: 28, fontWeight: '700' },
   content: { paddingHorizontal: 18, paddingTop: 10 },
-  description: { fontSize: 14, lineHeight: 21, fontWeight: '400' },
   state: { minHeight: 260, alignItems: 'center', justifyContent: 'center', gap: 10 },
   stateText: { fontSize: 14, lineHeight: 21, fontWeight: '500', textAlign: 'center' },
   notice: { minHeight: 0, paddingTop: 56, paddingBottom: 24, justifyContent: 'flex-start', gap: 12 },

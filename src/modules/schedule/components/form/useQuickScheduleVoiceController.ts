@@ -62,7 +62,7 @@ export function useQuickScheduleVoiceController({
   const [voiceRecognitionConfidence, setVoiceRecognitionConfidence] = useState<number>();
   const [voiceRecognitionAlternatives, setVoiceRecognitionAlternatives] = useState<LiveSpeechRecognitionAlternative[]>([]);
   const [voiceStatusMessage, setVoiceStatusMessage] = useState("");
-  const [voicePermissionDenied, setVoicePermissionDenied] = useState(false);
+  const [voiceInputIssue, setVoiceInputIssue] = useState<"permission" | "service" | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [isVoiceFinalizing, setIsVoiceFinalizing] = useState(false);
   const [voiceMeterHistory, setVoiceMeterHistory] = useState(() => createVoiceMeterHistory(0));
@@ -114,7 +114,7 @@ export function useQuickScheduleVoiceController({
     setVoiceRecognitionConfidence(undefined);
     setVoiceRecognitionAlternatives([]);
     setVoiceStatusMessage("");
-    setVoicePermissionDenied(false);
+    setVoiceInputIssue(null);
     setIsVoiceRecording(false);
     setIsVoiceFinalizing(false);
     setVoiceMeterHistory(createVoiceMeterHistory());
@@ -325,10 +325,9 @@ export function useQuickScheduleVoiceController({
       if (!permission.granted) {
         liveSpeechStartingRef.current = false;
         setIsVoiceFinalizing(false);
-        setVoicePermissionDenied(true);
+        setVoiceInputIssue("permission");
         return;
       }
-      setVoicePermissionDenied(false);
       clearPhotoRecognition();
       setVoiceUri(null);
     } catch (error) {
@@ -343,10 +342,10 @@ export function useQuickScheduleVoiceController({
         if (!startIsCurrent()) return;
         liveSpeechStartingRef.current = false; setIsVoiceFinalizing(false);
         if (!availability.serviceAvailable) {
-          const message = availability.reason ?? "현재 이 기기에서 한국어 음성 인식 서비스를 사용할 수 없습니다.";
-          setVoiceStatusMessage(`${message} 아래 입력칸에 직접 입력할 수 있어요.`);
-          Alert.alert("음성 인식 사용 불가", `${message}\n\n아래 인식 문장 칸에 일정을 직접 입력해 주세요.`); return;
+          setVoiceInputIssue("service");
+          return;
         }
+        setVoiceInputIssue(null);
         if (availability.supportsOnDevice) { await beginLiveSpeechCapture(true); return; }
         const reason = availability.reason ?? "이 기기에서는 오프라인 음성 입력을 사용할 수 없어요.";
         setVoiceStatusMessage(`${reason} 직접 입력하거나 온라인 인식을 선택할 수 있어요.`);
@@ -367,6 +366,7 @@ export function useQuickScheduleVoiceController({
     voiceDurationMillisRef.current = 0; voiceTranscriptRef.current = ""; liveSpeechBaseDurationMillisRef.current = 0;
     liveSpeechTranscriptBufferRef.current = createLiveSpeechTranscriptBuffer();
     setVoiceDurationMillis(0); setVoiceTranscript(""); setVoiceTranscriptTruncated(false); setVoiceRecognitionConfidence(undefined); setVoiceRecognitionAlternatives([]);
+    setVoiceInputIssue(null);
     let recorder: Audio.Recording | null = null;
     let recordingAudioModeEnabled = false;
     /** 녹음 모드를 일반 재생 모드로 되돌린다. */
@@ -478,19 +478,19 @@ export function useQuickScheduleVoiceController({
   useEffect(() => () => { invalidateVoiceOperations(); clearVoiceTimer(); }, [clearVoiceTimer, invalidateVoiceOperations]);
 
   useEffect(() => {
-    if (!voicePermissionDenied) return undefined;
+    if (voiceInputIssue !== "permission") return undefined;
     let active = true;
     const subscription = AppState.addEventListener("change", nextState => {
       if (nextState !== "active" || !visibleRef.current || closingRef.current) return;
       Audio.getPermissionsAsync().then(permission => {
-        if (active && permission.granted) setVoicePermissionDenied(false);
+        if (active && permission.granted) setVoiceInputIssue(null);
       }).catch(() => undefined);
     });
     return () => {
       active = false;
       subscription.remove();
     };
-  }, [closingRef, visibleRef, voicePermissionDenied]);
+  }, [closingRef, visibleRef, voiceInputIssue]);
 
   return {
     hasActiveVoiceSession: Boolean(audioRecordingRef.current || isVoiceRecording || isVoiceFinalizing || voiceUri),
@@ -504,7 +504,7 @@ export function useQuickScheduleVoiceController({
     updateVoiceTranscript,
     voiceDurationMillis,
     voiceMeterHistory,
-    voicePermissionDenied,
+    voiceInputIssue,
     voiceRecognitionAlternatives,
     voiceRecognitionConfidence,
     voiceStatusMessage,

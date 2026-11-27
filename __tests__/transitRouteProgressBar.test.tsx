@@ -25,7 +25,7 @@ describe("TransitRouteProgressBar", () => {
         renderer = undefined;
     });
 
-    it("shows terminal waiting with its own clock icon and caption in the collapsed summary", async () => {
+    it("omits app planning margins from the collapsed transport summary", async () => {
         const wait: TransitRouteProgressSegment = {
             key: "wait", label: "20분", kind: "WAIT", minutes: 20, color: "#4F5760", flex: 20, isRide: false,
         };
@@ -36,9 +36,9 @@ describe("TransitRouteProgressBar", () => {
         });
 
         expect(renderer!.root.findAllByType("Ionicons" as never).map(icon => icon.props.name))
-            .toEqual(["walk-outline", "time-outline", "train-outline"]);
-        expect(renderer!.root.findAllByType(Text).map(node => node.props.children)).toContain("대기");
-        expect(renderer!.root.findByProps({ accessibilityLabel: "도보 3분, 대기 20분, 4호선 16분" })).toBeTruthy();
+            .toEqual(["walk-outline", "train-outline"]);
+        expect(renderer!.root.findAllByType(Text).map(node => node.props.children)).not.toContain("대기");
+        expect(renderer!.root.findByProps({ accessibilityLabel: "도보 3분, 4호선 16분" })).toBeTruthy();
     });
 
     it("renders the same compact mode nodes used by route detail screens", async () => {

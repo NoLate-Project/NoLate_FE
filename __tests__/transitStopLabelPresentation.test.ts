@@ -12,16 +12,21 @@ describe("transitStopLabelPresentation", () => {
         })).toBe("외선순환");
     });
 
-    it("derives a safe boarding direction from the next physical stop", () => {
+    it.each([
+        ["남성시장", "남성시장 방향"],
+        ["숭례문남산방향", "숭례문남산방향"],
+        ["남산 방면", "남산 방면"],
+        ["한국은행", "한국은행 방향"],
+    ])("derives the boarding direction from the next stop %s", (name, expected) => {
         expect(getTransitBoardingDirectionHint({
             startName: "남성역",
             endName: "사당역",
             passStops: [
                 { name: "남성역" },
-                { name: "남성시장" },
+                { name },
                 { name: "사당역" },
             ],
-        })).toBe("남성시장 방향");
+        })).toBe(expected);
     });
 
     it("does not present the alighting stop as a vehicle headsign", () => {

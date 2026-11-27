@@ -228,7 +228,7 @@ class RealIsolationVerifierTest(unittest.TestCase):
             with self.subTest(code=code):
                 self.assertEqual(diagnostic_warning(code + ': safe reason'), warning)
                 self.assertNotEqual(diagnostic_warning(code), '저장 경로 기준')
-        self.assertEqual(diagnostic_warning('UNKNOWN: reason'), '운행시각 미확인 · 저장 경로 기준')
+        self.assertEqual(diagnostic_warning('UNKNOWN: reason'), '예상 출발')
 
     def test_consecutive_acceptance_cannot_count_separated_successes_or_missing_rounds(self):
         for statuses, expected in [

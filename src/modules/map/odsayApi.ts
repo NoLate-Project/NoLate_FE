@@ -799,7 +799,8 @@ export function odsayApiErrorMessage(error: unknown): string {
 export async function getOdsayTransitRouteOptions(
     origin: Place,
     destination: Place,
-    departureAt = new Date()
+    departureAt = new Date(),
+    signal?: AbortSignal,
 ): Promise<TransitRouteOption[]> {
     const isolated = await getIsolatedOdsaySimulatorTransport();
     const apiKey = isolated?.apiKey ?? resolveOdsayApiKey();
@@ -807,6 +808,7 @@ export async function getOdsayTransitRouteOptions(
 
     const response = await axios.get(`${isolated?.baseUrl ?? ODSAY_API_BASE_URL}/maasRP`, {
         timeout: ODSAY_REQUEST_TIMEOUT_MS,
+        signal,
         params: {
             apiKey,
             SX: origin.lng,

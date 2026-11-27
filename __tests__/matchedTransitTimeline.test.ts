@@ -1,7 +1,8 @@
 import type { EffectiveTransitRouteSegment, ScheduleDepartureStatus } from "../src/api/schedule";
 import { applyMatchedTransitTimeline } from "../src/modules/schedule/matchedTransitTimeline";
-import { buildEffectiveTransitRoutePresentation } from "../src/modules/schedule/effectiveTransitRoutePresentation";
+import { buildEffectiveTransitRoutePresentation, buildPlannedJourneyArrivalPresentation } from "../src/modules/schedule/effectiveTransitRoutePresentation";
 import type { RouteInfo } from "../src/modules/schedule/routeInfo";
+import { buildSavedTransitProgressFromSteps, getTransitRouteSummaryAccessibilityLabel } from "../src/modules/schedule/transitRouteProgress";
 
 const at = (minute: number) => new Date(Date.UTC(2026, 10, 15, 0, minute)).toISOString();
 const info: RouteInfo = {
@@ -55,6 +56,104 @@ test("matches both vehicle clocks without adding transfer wait twice or changing
         matchedTimeline: { startAt: at(19), endAt: at(32), transferWaitSeconds: 388 },
     });
     expect(info.steps[3].matchedTimeline).toBeUndefined();
+});
+
+test("uses the same Seoul bus clocks for the summary and the saved map after a transfer reconnects", () => {
+    const seconds = (value: number) => new Date(Date.parse(at(0)) + value * 1000).toISOString();
+    const walk = (sequence: number, durationSeconds: number, walkingScope: "ACCESS" | "TRANSFER" | "EGRESS"): EffectiveTransitRouteSegment => ({
+        sequence, kind: "WALK", durationMinutes: 1, durationSeconds, walkingScope,
+    });
+    const route = {
+        provider: "odsay", identity: "b".repeat(64), departureAt: at(0), arrivalAt: seconds(820), totalMinutes: 14,
+        segments: [walk(0, 30, "ACCESS"), {
+            sequence: 1, kind: "BUS", lineName: "101", fromName: "첫 정류장", toName: "환승 정류장", durationMinutes: 6,
+            busRidePrediction: { boardingAt: seconds(90), alightingAt: seconds(390), sourceUpdatedAt: seconds(-5),
+                alightingObservationSourceUpdatedAt: seconds(148) },
+        }, walk(2, 30, "TRANSFER"), {
+            sequence: 3, kind: "BUS", lineName: "202", fromName: "다음 정류장", toName: "마지막 정류장", durationMinutes: 6,
+            busRidePrediction: { boardingAt: seconds(480), alightingAt: seconds(760), sourceUpdatedAt: seconds(151) },
+            transferTiming: { previousArrivalAt: seconds(390), walkingSeconds: 30, physicalReadyAt: seconds(420),
+                boardingAt: seconds(480), bufferSeconds: 0, confidenceMarginSeconds: 60,
+                requiredMarginSeconds: 60, confidenceReadyAt: seconds(480), remainingSlackSeconds: 0 },
+        }, walk(4, 60, "EGRESS")] satisfies EffectiveTransitRouteSegment[],
+    };
+    const saved: RouteInfo = { ...info, provider: "odsay", steps: [info.steps[0],
+        { id: "access", type: "WALK", title: "접근" },
+        { id: "first-bus", type: "BUS", lineName: "101", title: "첫 정류장", alightingName: "환승 정류장" },
+        { id: "transfer", type: "WALK", title: "환승" },
+        { id: "next-bus", type: "BUS", lineName: "202", title: "다음 정류장", alightingName: "마지막 정류장" },
+        { id: "egress", type: "WALK", title: "도착 도보" }, info.steps.at(-1)!,
+    ] };
+    const updated: ScheduleDepartureStatus = { ...status(), stale: true, source: null, effectiveTransitRoute: null,
+        plannedJourneyArrivalPrediction: { routeIdentity: route.identity, basis: "MATCHED_BUS_REALTIME",
+            presentedAt: seconds(153), sourceUpdatedAt: seconds(145), predictedArrivalAt: route.arrivalAt,
+            effectiveTransitRoute: route } };
+    const now = Date.parse(seconds(170));
+    const presentation = buildPlannedJourneyArrivalPresentation(updated, now)!;
+    expect(presentation.itinerary).toContain("첫 승차 대기 약 1분 (버스 도착 기준) · 승차 정류장부터 하차 정류장까지 약 5분");
+    expect(presentation.itinerary).toContain("환승 도보 · 약 30초");
+    expect(presentation.itinerary).toContain("환승 대기 약 1분 · 승차 정류장부터 하차 정류장까지 약 4분 40초");
+    expect(presentation.itinerary).toContain("같은 버스 하차 예보");
+    expect(presentation.compactSummary).toContain("탑승 미확인");
+    const result = applyMatchedTransitTimeline(saved, updated, now)!;
+    expect(result).toMatchObject({ departureTime: at(0), arrivalTime: seconds(820), totalDurationSeconds: 820 });
+    expect(result.steps[2].matchedTimeline).toMatchObject({ firstBoardingIntervalSeconds: 60, movementSeconds: 300 });
+    expect(result.steps[4].matchedTimeline).toMatchObject({ startAt: seconds(480), transferWaitSeconds: 60, movementSeconds: 280 });
+    expect(applyMatchedTransitTimeline(saved, updated, Date.parse(seconds(191)))).toBe(saved);
+    expect(updated.recommendedDepartureAt).toBe(at(0));
+
+    route.segments[3].transferTiming!.physicalReadyAt = seconds(430);
+    expect(buildPlannedJourneyArrivalPresentation(updated, now)?.itinerary).not.toContain("환승 대기 약");
+    expect(applyMatchedTransitTimeline(saved, updated, now)?.steps[4].matchedTimeline?.transferWaitSeconds).toBeUndefined();
+});
+
+test("shows the updated bus-to-train times and keeps the current evidence on the correct ride", () => {
+    const seconds = (value: number) => new Date(Date.parse(at(0)) + value * 1000).toISOString();
+    const bus: EffectiveTransitRouteSegment = {
+        sequence: 1, kind: "BUS", lineName: "402", fromName: "승차 정류장", toName: "하차 정류장", durationMinutes: 6,
+        busRidePrediction: { boardingAt: seconds(90), alightingAt: seconds(390), sourceUpdatedAt: seconds(-5),
+            alightingObservationSourceUpdatedAt: seconds(148) },
+    };
+    const train = ride(3, "2호선", "사당", "신림", 8, 12);
+    train.rideTiming!.timetable.trainNumber = "2014";
+    train.rideTiming!.timetable.boardingAt = train.rideTiming!.predictedBoardingAt = seconds(500);
+    train.rideTiming!.timetable.arrivalAt = train.rideTiming!.predictedArrivalAt = seconds(760);
+    const route = { provider: "odsay", identity: "b".repeat(64), departureAt: at(0), arrivalAt: seconds(820), totalMinutes: 14,
+        segments: [{ sequence: 0, kind: "WALK", durationMinutes: 1, durationSeconds: 30 }, bus,
+            { sequence: 2, kind: "WALK", durationMinutes: 1, durationSeconds: 30, walkingScope: "TRANSFER" }, train,
+            { sequence: 4, kind: "WALK", durationMinutes: 1, durationSeconds: 60 }] satisfies EffectiveTransitRouteSegment[],
+    };
+    const saved: RouteInfo = { ...info, provider: "odsay", steps: [info.steps[0],
+        { id: "access", type: "WALK", title: "접근" },
+        { id: "bus", type: "BUS", lineName: "402", title: "승차 정류장", alightingName: "하차 정류장" },
+        info.steps[2], info.steps[3], { id: "egress", type: "WALK", title: "도착 도보" }, info.steps.at(-1)!,
+    ] };
+    const updated: ScheduleDepartureStatus = { ...status(), stale: true, source: null, effectiveTransitRoute: null,
+        plannedJourneyArrivalPrediction: { routeIdentity: route.identity, basis: "MATCHED_BUS_REALTIME",
+            presentedAt: seconds(153), sourceUpdatedAt: seconds(145), predictedArrivalAt: route.arrivalAt,
+            effectiveTransitRoute: route } };
+    const afterBus = Date.parse(seconds(170));
+    const firstItinerary = buildPlannedJourneyArrivalPresentation(updated, afterBus)?.itinerary;
+    expect(firstItinerary).toContain("같은 버스 하차 예보");
+    expect(firstItinerary).toContain("환승 대기 약 1분 20초");
+    expect(firstItinerary).toContain("2014열차 · 시간표");
+    expect(applyMatchedTransitTimeline(saved, updated, afterBus)?.steps[4].matchedTimeline)
+        .toMatchObject({ startAt: seconds(500), endAt: seconds(760), transferWaitSeconds: 80 });
+
+    delete bus.busRidePrediction!.alightingObservationSourceUpdatedAt;
+    train.rideTiming!.predictedArrivalAt = seconds(790);
+    train.rideTiming!.basis = "PLANNED_RIDE_ALIGHTING_REALTIME";
+    train.rideTiming!.observationSourceUpdatedAt = seconds(598);
+    route.arrivalAt = seconds(850);
+    route.totalMinutes = 15;
+    Object.assign(updated.plannedJourneyArrivalPrediction!, { basis: "MATCHED_TRAIN_REALTIME", presentedAt: seconds(600),
+        sourceUpdatedAt: seconds(598), predictedArrivalAt: route.arrivalAt });
+    const afterTrain = Date.parse(seconds(650));
+    expect(buildPlannedJourneyArrivalPresentation(updated, afterTrain)?.itinerary).toContain("2014열차 · 하차역 실시간");
+    expect(buildPlannedJourneyArrivalPresentation(updated, afterTrain)?.itinerary).not.toContain("같은 버스 하차 예보");
+    expect(applyMatchedTransitTimeline(saved, updated, afterTrain)?.arrivalTime).toBe(seconds(850));
+    expect(updated.recommendedDepartureAt).toBe(at(0));
+    expect(applyMatchedTransitTimeline(saved, updated, Date.parse(seconds(719)))).toBe(saved);
 });
 
 test("separates the Sadang transfer walk, wait and ride in both views from the same station clocks", () => {
@@ -172,6 +271,35 @@ test("aligns a verified future timetable on the saved route and leaves its alarm
     expect(applyMatchedTransitTimeline(differentProvider, future, now)).toBe(differentProvider);
     route.segments[2].fromName = "교대";
     expect(applyMatchedTransitTimeline(saved, future, now)).toBe(saved);
+});
+
+test("replays the refreshed Nowon–Sadang clocks in the compact progress bar", () => {
+    const seconds = (value: number) => new Date(Date.parse(at(0)) + value * 1000).toISOString();
+    const first = ride(1, "수도권 4호선", "노원", "사당", 5, 53);
+    first.rideTiming!.timetable.boardingAt = first.rideTiming!.predictedBoardingAt = seconds(330);
+    first.rideTiming!.timetable.arrivalAt = first.rideTiming!.predictedArrivalAt = seconds(3210);
+    const second = ride(3, "수도권 2호선", "사당", "신림", 58, 65);
+    second.rideTiming!.timetable.arrivalAt = second.rideTiming!.predictedArrivalAt = seconds(3930);
+    const saved: RouteInfo = { ...info, provider: "odsay", steps: [info.steps[0],
+        { id: "access", type: "WALK", title: "접근", durationMinutes: 1 },
+        { ...info.steps[1], durationMinutes: 47 }, info.steps[2], { ...info.steps[3], durationMinutes: 8 },
+        { id: "egress", type: "WALK", title: "도착 도보", durationMinutes: 1 }, info.steps.at(-1)!,
+    ] };
+    const route = { ...status().effectiveTransitRoute!, departureAt: at(0), arrivalAt: seconds(4003), totalMinutes: 67,
+        segments: [{ sequence: 0, kind: "WALK", durationMinutes: 3, durationSeconds: 137 }, first,
+            { sequence: 2, kind: "WALK", durationMinutes: 3, durationSeconds: 157 }, second,
+            { sequence: 4, kind: "WALK", durationMinutes: 2, durationSeconds: 73 }] satisfies EffectiveTransitRouteSegment[],
+    };
+    const updated = { ...status(), source: "TIMETABLE_PROVIDER" as const, stale: true, effectiveTransitRoute: null,
+        failureReason: "TRANSIT_TRAIN_NOT_YET_OBSERVED: safe", futureTimetablePrediction: route,
+        futureTimetableRouteProvenance: "SELECTED_ROUTE_PRESERVED" as const };
+    const matched = applyMatchedTransitTimeline(saved, updated, Date.parse(seconds(-60)))!;
+    expect(getTransitRouteSummaryAccessibilityLabel(buildSavedTransitProgressFromSteps(saved.steps)))
+        .toContain("도보 1분, 4호선 47분");
+    const summary = buildSavedTransitProgressFromSteps(matched.steps);
+    expect(getTransitRouteSummaryAccessibilityLabel(summary)).toContain("도보 3분, 4호선 48분");
+    expect(summary.map(segment => segment.durationSeconds)).toEqual([137, 2880, 157, 450, 73]);
+    expect(matched.arrivalTime).toBe(seconds(4003));
 });
 
 test("keeps the predicted station arrival distinct from the timetable boarding clock", () => {

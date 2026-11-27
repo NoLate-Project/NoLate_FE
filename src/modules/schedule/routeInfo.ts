@@ -227,9 +227,11 @@ export function rideMovementDurationLabel(minutes?: number, matchedSeconds?: num
     return typeof minutes === "number" ? `${minutes}분` : undefined;
 }
 
-export function firstBoardingIntervalLabel(seconds: number | undefined, stationArrival = false): string | undefined {
+export function firstBoardingIntervalLabel(seconds: number | undefined, stationArrival = false,
+                                          vehicle: "BUS" | "SUBWAY" = "SUBWAY"): string | undefined {
     if (typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds <= 0) return undefined;
-    return `첫 승차 대기 약 ${formatRouteDurationSeconds(seconds)} (열차 ${stationArrival ? "도착" : "출발"} 기준)`;
+    const timing = vehicle === "BUS" ? "버스 도착" : stationArrival ? "열차 도착" : "열차 출발";
+    return `첫 승차 대기 약 ${formatRouteDurationSeconds(seconds)} (${timing} 기준)`;
 }
 
 export function formatRouteDistance(distanceMeters?: number): string | undefined {
@@ -261,6 +263,8 @@ export function isOdsayTimetableRouteInfo(route?: RouteInfo): boolean {
 export function compactTransitLineLabel(lineName?: string): string | undefined {
     if (!lineName) return undefined;
     let normalized = lineName.trim();
+    const numberedService = normalized.match(/^(.+?)\s*·\s*([A-Z0-9-]+)편$/i);
+    if (numberedService) return `${numberedService[1].trim()} ${numberedService[2]}`;
     const leadingTokenRegex = /^(승차|하차|환승|승|하|환|버스|지하철)\s*/i;
     for (let index = 0; index < 3; index += 1) {
         const next = normalized.replace(leadingTokenRegex, "").trim();
@@ -504,7 +508,7 @@ function buildRideStep(
         type,
         title: startName ?? lineName ?? fallbackKind,
         alightingName: endName,
-        description: [destinationHint(endName), stationText, durationText, leg.intercityService && `${leg.intercityService.timingBasis === 'TICKET' ? '승차권 입력' : '시간표'} ${serviceTimeRange(leg.intercityService)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · ") || undefined,
+        description: [destinationHint(endName), stationText, durationText, leg.intercityService && `${leg.intercityService.timingBasis === 'TICKET' ? '승차권 입력' : '시간표'} ${serviceTimeRange(leg.intercityService)}`].filter(Boolean).join(" · ") || undefined,
         durationMinutes,
         intercityService: leg.intercityService,
         waitingMinutes: leg.waitingMinutes,
@@ -833,6 +837,12 @@ export function isSameScheduleDraftRoute(current: RouteInfo | undefined, next: R
 
 function normalizeStoredRoute(route: RouteInfo): RouteInfo {
     const steps = route.steps.map(step => {
+        const service = step.intercityService;
+        if (step.type === "TRAIN" && service?.kind === "TRAIN" && typeof service.trainNumber === "string" && service.trainNumber.trim()) {
+            const lineName = [service.grade, service.trainNumber.trim()].filter(Boolean).join(" ");
+            const badgeText = `${transitModeLabel(step.type)} · ${lineName}`;
+            return step.lineName === lineName && step.badgeText === badgeText ? step : { ...step, lineName, badgeText };
+        }
         if (step.type !== "SUBWAY") return step;
         const lineName = findTransitRideLineLabel({ lineName: step.lineName, label: step.badgeText });
         if (!lineName) return step;

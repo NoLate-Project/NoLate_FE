@@ -356,7 +356,7 @@ final class NoLateJourneySubwayRideCoreTests: XCTestCase {
     XCTAssertEqual(displayed.subway?.remainingStops,1)
     XCTAssertEqual(displayed.rideProgress,0.5)
     XCTAssertEqual(NoLateGuidanceRoutePositionPolicy.position(displayed,legs:session.routeLegs,now:1073)?.legIndex,1)
-    XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(displayed,legs:session.routeLegs,now:1073).action,"다음 역 하차 · 하차 준비")
+    XCTAssertEqual(NoLateGuidancePresentationPolicy.presentation(displayed,legs:session.routeLegs,now:1073).action,"합성 역에서 내리세요")
     var notices = NoLateGuidanceNoticePolicy()
     XCTAssertEqual(notices.next(displayed,legs:session.routeLegs,now:1073)?.kind,"SUBWAY_ONE_STOP_BEFORE")
     XCTAssertNil(notices.next(displayed,legs:session.routeLegs,now:1074))

@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useMemo,
   type Dispatch,
   type SetStateAction,
 } from 'react';
@@ -11,14 +10,12 @@ import {
   type ScheduleCalendar,
 } from '../../../api/scheduleCalendars';
 import { buildRouteSetupEntryRoute } from '../routeSetupNavigation';
-import type { ScheduleItem } from '../types';
 import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
 
 type UseScheduleIndexCalendarActionsParams = {
   calendarShareTarget: ScheduleCalendar | null;
   closeToolbarMenu: (onClosed?: () => void) => void;
   firstDayStorageKey: string;
-  routeSetupItems: ScheduleItem[];
   setCalendarScopeSelectorVisible: Dispatch<SetStateAction<boolean>>;
   setCalendarShareTarget: Dispatch<SetStateAction<ScheduleCalendar | null>>;
   setFirstDay: Dispatch<SetStateAction<0 | 1>>;
@@ -32,7 +29,6 @@ export function useScheduleIndexCalendarActions({
   calendarShareTarget,
   closeToolbarMenu,
   firstDayStorageKey,
-  routeSetupItems,
   setCalendarScopeSelectorVisible,
   setCalendarShareTarget,
   setFirstDay,
@@ -75,23 +71,9 @@ export function useScheduleIndexCalendarActions({
     [calendarShareTarget, setCalendarShareTarget, setScheduleCalendars],
   );
 
-  const routeSetupTarget = useMemo(() => {
-    const now = Date.now();
-    return [...routeSetupItems].sort((a, b) => {
-      const aTime = new Date(a.startAt).getTime();
-      const bTime = new Date(b.startAt).getTime();
-      const aFuture = aTime >= now;
-      const bFuture = bTime >= now;
-      if (aFuture !== bFuture) return aFuture ? -1 : 1;
-      return aFuture ? aTime - bTime : bTime - aTime;
-    })[0];
-  }, [routeSetupItems]);
-
-  /** 경로 설정이 필요한 일정 중 현재 시점과 가장 가까운 일정으로 이동한다. */
-  const openRouteSetupTarget = useCallback(() => {
-    if (!routeSetupTarget) return;
-    router.push(buildRouteSetupEntryRoute(routeSetupTarget.id));
-  }, [routeSetupTarget, router]);
+  const openRouteSetupTarget = useCallback((id: string) => {
+    router.push(buildRouteSetupEntryRoute(id));
+  }, [router]);
 
   /** 주 시작 요일을 즉시 반영하고 다음 실행에도 유지되도록 로컬 저장소에 기록한다. */
   const handleFirstDayChange = useCallback(

@@ -201,7 +201,7 @@ describe("schedule agenda presentation", () => {
         expect(onDelete).toHaveBeenCalledTimes(1);
     });
 
-    test("경로 미설정 안내는 캘린더를 덮지 않고 일정 목록 안에서 열린다", async () => {
+    test("경로 설정은 해당 일정에만 표시하고 목록 위에 중복 안내를 만들지 않는다", async () => {
         const onOpenRouteSetup = jest.fn();
 
         await act(async () => {
@@ -209,13 +209,16 @@ describe("schedule agenda presentation", () => {
                 <ThemeProvider>
                     <SelectedDayAgendaPanel
                         selectedDay="2026-07-14"
-                        items={[schedule("meeting", 14, 10, "회의")]}
+                        items={[
+                            { ...schedule("other-day", 15, 9, "내일 회의"), routeSetupRequired: true },
+                            { ...schedule("meeting", 14, 10, "회의"), routeSetupRequired: true },
+                            schedule("ready", 14, 12, "경로가 있는 일정"),
+                        ]}
                         loading={false}
                         error={null}
                         bottomInset={0}
                         onPressRetry={jest.fn()}
                         onOpenSchedule={jest.fn()}
-                        routeSetupRequiredCount={2}
                         onOpenRouteSetup={onOpenRouteSetup}
                         onRequestViewMode={jest.fn()}
                     />
@@ -223,15 +226,19 @@ describe("schedule agenda presentation", () => {
             );
         });
 
-        expect(renderedText(renderer!)).toContain("경로 미설정 2개");
+        expect(renderedText(renderer!)).not.toContain("경로 미설정 1개");
+        expect(renderedText(renderer!)).toContain("경로 설정");
         const scroll = renderer!.root.findByType(ScrollView);
-        const notice = scroll.find((node) => (
-            node.props.accessibilityLabel ===
-            "경로 설정이 필요한 일정 2개. 가장 가까운 일정의 경로 설정 열기"
-        ));
+        const notice = scroll.findByProps({ testID: "agenda-route-required-badge" });
 
-        await act(async () => notice.props.onPress());
-        expect(onOpenRouteSetup).toHaveBeenCalledTimes(1);
+        const stopPropagation = jest.fn();
+        await act(async () => notice.props.onPress({ stopPropagation }));
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(onOpenRouteSetup).toHaveBeenCalledWith("meeting");
+        const card = scroll.findAllByProps({ testID: "selected-day-agenda-card" })
+            .find(node => node.props.accessibilityLabel?.startsWith("회의,"))!;
+        act(() => card.props.onAccessibilityAction({ nativeEvent: { actionName: "routeSetup" } }));
+        expect(onOpenRouteSetup).toHaveBeenCalledTimes(2);
     });
 
     test("상세형 하단 손잡이의 위·아래 스와이프는 목록형·스택형을 요청한다", async () => {

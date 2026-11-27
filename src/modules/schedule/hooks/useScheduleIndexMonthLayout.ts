@@ -11,7 +11,6 @@ import {
   Easing as ReanimatedEasing,
   ReduceMotion,
   cancelAnimation as cancelReanimatedAnimation,
-  useAnimatedStyle,
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -36,7 +35,7 @@ import {
 } from '../calendarMotion';
 
 const CALENDAR_TOOLBAR_HEIGHT = 56;
-const CALENDAR_CONTEXT_HEIGHT = 24;
+const CALENDAR_CONTEXT_HEIGHT = 0;
 const STICKY_MONTH_HEADER_HEIGHT = 50;
 const STICKY_WEEKDAY_HEADER_HEIGHT = 18;
 const STICKY_CALENDAR_HEADER_HEIGHT =
@@ -246,26 +245,6 @@ export function useScheduleIndexMonthLayout({
     outputRange: [0, 0, 1],
     extrapolate: 'clamp',
   });
-  const monthCalendarAnimatedStyle = useAnimatedStyle(() => {
-    const height = monthCalendarAnimatedHeight.value;
-    return height > 0 ? { height } : {};
-  });
-  const monthAgendaSlotAnimatedStyle = useAnimatedStyle(() => {
-    const top = monthCalendarAnimatedHeight.value;
-    return {
-      top: Math.max(0, top),
-      opacity: top > 0 ? 1 : 0,
-    };
-  });
-  const monthCalendarTargetLayerStyle = useAnimatedStyle(() => {
-    const targetHeight = detailMonthMotionActive.value
-      ? monthCalendarAnimatedHeight.value
-      : monthCalendarTargetHeight.value;
-    if (targetHeight <= 0) return {};
-
-    return { height: targetHeight };
-  });
-
   /** 달력 컨테이너의 실측 높이를 저장하고 패널이 닫힌 상태의 기준 높이로 사용한다. */
   const handleMonthDisplayLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -360,11 +339,8 @@ export function useScheduleIndexMonthLayout({
     detailMonthPageLayouts,
     handleMonthDisplayLayout,
     monthAgendaPanelOpacity,
-    monthAgendaSlotAnimatedStyle,
     monthAgendaSwapIncomingOpacity,
     monthAgendaSwapOutgoingOpacity,
-    monthCalendarAnimatedStyle,
-    monthCalendarTargetLayerStyle,
     resolveMonthCalendarLayout,
   };
 }

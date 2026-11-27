@@ -10,7 +10,7 @@ def diagnostic_warning(failure_reason):
         'TRANSIT_ON_TIME_ARRIVAL_UNAVAILABLE': '현재 확인된 경로로 정시 도착 불가',
         'TRANSIT_TRANSFER_MISSED': '환승 불가 · 경로 재확인 필요',
         'TRANSIT_ITINERARY_REFRESH_UNSUPPORTED': '재조회 미지원 · 경로 재선택 필요',
-        'TRANSIT_INTERCITY_TIMETABLE_UNAVAILABLE': '시외 운행시각 미확인 · 예매편 확인 필요',
+        'TRANSIT_INTERCITY_TIMETABLE_UNAVAILABLE': '예매한 편의 시간표를 확인해 주세요',
         'TRANSIT_ARRIVAL_SOURCE_STALE': '차량 관측정보 오래됨 · 저장 경로 기준',
         'TRANSIT_ARRIVAL_SOURCE_UNVERIFIED': '차량 관측시각 검증 불가 · 저장 경로 기준',
         'TRANSIT_ARRIVAL_RATE_LIMITED': '도착정보 API 한도 초과 · 저장 경로 기준',
@@ -18,4 +18,4 @@ def diagnostic_warning(failure_reason):
         'TRANSIT_ARRIVAL_API_ERROR': '도착정보 API 오류 · 저장 경로 기준',
         'TRANSIT_ARRIVAL_UNAVAILABLE': '실시간 도착정보 없음 · 저장 경로 기준',
         'TRANSIT_ARRIVAL_OUT_OF_HORIZON': '실시간 조회 범위 밖 · 저장 경로 기준',
-    }.get(code, '운행시각 미확인 · 저장 경로 기준')
+    }.get(code, '예상 출발')

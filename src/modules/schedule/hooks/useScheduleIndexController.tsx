@@ -486,7 +486,6 @@ export function useScheduleIndexController(
   const {
     itemsArray,
     requireActiveCalendarWriteAccess,
-    routeSetupItems,
   } = auxiliaryData;
   const [dismissedGuidanceRun, setDismissedGuidanceRun] = useState<string>();
   const guidanceReturnItem = focusRequest === 'month' && focusDayRequest && focusRun && focusRun !== dismissedGuidanceRun &&
@@ -743,7 +742,6 @@ export function useScheduleIndexController(
     calendarShareTarget,
     closeToolbarMenu,
     firstDayStorageKey: CALENDAR_FIRST_DAY_STORAGE_KEY,
-    routeSetupItems,
     setCalendarScopeSelectorVisible,
     setCalendarShareTarget,
     setFirstDay,
@@ -777,7 +775,6 @@ export function useScheduleIndexController(
     openAccountSettings,
     openCalendarScopeSelector,
     openRouteSetupTarget,
-    routeSetupRequiredCount: routeSetupItems.length,
     scheduleCalendars,
     scheduleError,
     scheduleLoading: state.loading,

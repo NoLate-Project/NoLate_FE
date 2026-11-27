@@ -10,6 +10,9 @@ export function supportsSavedTransitLegs(legs: JourneyRouteInput['legs'], includ
 export function savedJourneyEntryIssue(input: JourneyRouteInput | null, subwayTrial=false): string | null {
     if (!input) return '저장된 대중교통 경로를 확인할 수 없어 위치 안내를 준비할 수 없어요.';
     if (!supportsSavedTransitLegs(input.legs, subwayTrial)) {
+        if (input.legs.some(leg => leg.kind === 'ETC' || leg.kind === 'UNKNOWN')) {
+            return '이 경로는 실시간 길안내를 지원하지 않아요.';
+        }
         return subwayTrial
             ? '승차·환승·하차 지점 사이의 도보 경로를 확인할 수 없어요.'
             : '위치 안내는 도보와 버스가 번갈아 이어지는 경로를 지원해요. 지하철 탑승 안내는 아직 지원하지 않아요.';
@@ -28,7 +31,7 @@ export function savedJourneyEntryIssue(input: JourneyRouteInput | null, subwayTr
     if (input.legs.some(leg => (!input.walkingSnapshot||leg.kind!=='WALK') && (!leg.exact || !leg.geometryInputComplete || leg.coordinates.length < 2
         || leg.coordinates.some(point => !valid(point)) || !valid(leg.start) || !valid(leg.end)
         || leg.geometrySource !== (leg.kind === 'WALK' ? 'WALK_STEPS_LINESTRING' : 'TRANSIT_PASS_SHAPE_LINESTRING')))) {
-        return '일부 구간의 경로를 확인할 수 없어요. 길찾기에서 경로를 다시 선택해 주세요.';
+        return '실제 이동 경로를 확인할 수 없어요. 길찾기에서 다시 선택해 주세요.';
     }
     return null;
 }

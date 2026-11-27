@@ -17,7 +17,7 @@ const INITIAL_CAMERA = {
   longitude: FALLBACK_LNG,
   zoom: 12,
 };
-const routeLoadingEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+const routeErrorEntrance = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 
 type Props = { controller: RoutePlannerController };
 
@@ -90,19 +90,10 @@ export function RoutePlannerMapCanvas({ controller }: Props) {
         fallbackBackgroundColor={isDark ? '#0B1220' : '#EEF2F6'}
         fallbackTextColor={colors.textSecondary}
         loadingContent={isRouteDetailMode ? (
-          <Reanimated.View entering={routeLoadingEntrance} style={styles.routeMapLoadingContext}>
-            <View style={styles.routeMapLoadingStatus}>
-              <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                <BrandedLoader size="button" settleMark accessibilityLabel="지도 준비 중" />
-              </View>
-              <Text maxFontSizeMultiplier={2} style={[styles.routeMapLoadingTitle, { color: colors.textPrimary }]}>
-                지도 준비 중
-              </Text>
-            </View>
-          </Reanimated.View>
+          <BrandedLoader size="section" startup accessibilityLabel="지도 준비 중" />
         ) : undefined}
         renderLoadError={isRouteDetailMode ? retry => (
-          <Reanimated.View entering={routeLoadingEntrance} style={styles.routeMapLoadingContext}>
+          <Reanimated.View entering={routeErrorEntrance} style={styles.routeMapLoadingContext}>
             <Text maxFontSizeMultiplier={2} style={[styles.routeMapLoadingTitle, { color: colors.textPrimary }]}>
               지도를 불러오지 못했어요
             </Text>

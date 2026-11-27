@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef } from 'react';
-import { Animated, Easing, Image, StyleSheet, View } from 'react-native';
+import { Animated, Easing, StyleSheet, View } from 'react-native';
 
 import { useSystemReduceMotion } from '../../modules/performance/useSystemReduceMotion';
 import { useTheme } from '../../modules/theme/ThemeContext';
-import { BRAND_BLUE, CURATION_APP_LOGO } from './calendarImportModel';
+import { BRAND_BLUE } from './calendarImportModel';
 
 const settleEasing = Easing.bezier(0.22, 1, 0.36, 1);
 const calendarPages = [
@@ -12,44 +12,6 @@ const calendarPages = [
   { left: 25, tilt: '4deg' },
   { left: 38, tilt: '-2deg' },
 ] as const;
-
-export function CalendarScanLogo() {
-  const reduceMotion = useSystemReduceMotion();
-  const progress = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
-
-  useEffect(() => {
-    if (reduceMotion) {
-      progress.setValue(1);
-      return;
-    }
-    const settle = Animated.timing(progress, {
-      toValue: 1,
-      duration: 520,
-      easing: settleEasing,
-      useNativeDriver: true,
-      isInteraction: false,
-    });
-    settle.start();
-    return () => settle.stop();
-  }, [progress, reduceMotion]);
-
-  return (
-    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.scanFrame}>
-      <Animated.View style={[styles.logoFrame, {
-        transform: [
-          { perspective: 420 },
-          { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [7, 0] }) },
-          { rotateX: progress.interpolate({ inputRange: [0, 1], outputRange: ['16deg', '0deg'] }) },
-          { rotateY: progress.interpolate({ inputRange: [0, 1], outputRange: ['-27deg', '0deg'] }) },
-        ],
-      }]}>
-        <View style={styles.logoEdge} />
-        <Image source={CURATION_APP_LOGO} accessibilityIgnoresInvertColors fadeDuration={0} style={styles.logoFace} />
-        <View style={styles.logoRim} />
-      </Animated.View>
-    </View>
-  );
-}
 
 export default function CalendarImportStatusMark({ partial = false }: { partial?: boolean }) {
   const { colors, mode } = useTheme();
@@ -132,16 +94,6 @@ export default function CalendarImportStatusMark({ partial = false }: { partial?
 }
 
 const styles = StyleSheet.create({
-  scanFrame: { width: 98, height: 96, alignItems: 'center', justifyContent: 'center' },
-  logoFrame: { width: 70, height: 70 },
-  logoEdge: {
-    ...StyleSheet.absoluteFillObject, top: 3, bottom: -4, left: 2, right: -3,
-    backgroundColor: '#174AA2', borderRadius: 20, borderWidth: 1, borderColor: '#82B2FF',
-    shadowColor: '#253B60', shadowOpacity: 0.25, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 7 },
-  },
-  logoFace: { width: 70, height: 70, borderRadius: 19 },
-  logoRim: { ...StyleSheet.absoluteFillObject, borderRadius: 19, borderWidth: 1, borderColor: '#D6E7FF8C' },
   resultFrame: { width: 112, height: 112, alignItems: 'center', justifyContent: 'center' },
   stack: { width: 112, height: 96 },
   page: {

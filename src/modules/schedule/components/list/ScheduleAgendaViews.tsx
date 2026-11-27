@@ -83,8 +83,7 @@ type AgendaStateProps = {
     onOpenSchedule: (id: string, restoreFocus?: () => void) => void;
     getScheduleSwipeActions?: ScheduleSwipeActionResolver;
     onRequestScheduleActions?: (item: ScheduleItem) => void;
-    routeSetupRequiredCount?: number;
-    onOpenRouteSetup?: () => void;
+    onOpenRouteSetup?: (id: string) => void;
     returnHighlight?: { id: string; opacity: Animated.Value };
     focusTarget?: AgendaFocusTarget;
 };
@@ -264,52 +263,6 @@ function AgendaInlineState({
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 {error}
             </Text>
-        </Pressable>
-    );
-}
-
-function RouteSetupInlineNotice({
-    count,
-    onPress,
-}: {
-    count: number;
-    onPress?: () => void;
-}) {
-    const { colors, mode } = useTheme();
-    const actionColor = mode === "dark" ? "#FF9F0A" : "#B85F00";
-
-    if (count <= 0 || !onPress) return null;
-
-    return (
-        <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`경로 설정이 필요한 일정 ${count}개. 가장 가까운 일정의 경로 설정 열기`}
-            accessibilityHint="일정 상세에서 경로를 설정합니다"
-            onPress={onPress}
-            style={({ pressed }) => [
-                styles.routeSetupNotice,
-                {
-                    backgroundColor: mode === "dark"
-                        ? "rgba(255,159,10,0.10)"
-                        : "rgba(255,159,10,0.075)",
-                    borderColor: mode === "dark"
-                        ? "rgba(255,159,10,0.32)"
-                        : "rgba(210,126,0,0.20)",
-                    opacity: pressed ? 0.62 : 1,
-                },
-            ]}
-        >
-            <View style={styles.routeSetupNoticeIcon}>
-                <ScheduleIcon name="departure" color={actionColor} />
-            </View>
-            <Text
-                numberOfLines={1}
-                style={[styles.routeSetupNoticeTitle, { color: colors.textPrimary }]}
-            >
-                {`경로 미설정 ${count}개`}
-            </Text>
-            <Text style={[styles.routeSetupNoticeAction, { color: actionColor }]}>설정</Text>
-            <ScheduleIcon name="forward" color={actionColor} />
         </Pressable>
     );
 }
@@ -518,7 +471,6 @@ export function SelectedDayAgendaPanel({
     onOpenSchedule,
     getScheduleSwipeActions,
     onRequestScheduleActions,
-    routeSetupRequiredCount = 0,
     onOpenRouteSetup,
     onRequestViewMode,
     returnHighlight,
@@ -584,10 +536,6 @@ export function SelectedDayAgendaPanel({
                 ]}
                 showsVerticalScrollIndicator={false}
             >
-                <RouteSetupInlineNotice
-                    count={routeSetupRequiredCount}
-                    onPress={onOpenRouteSetup}
-                />
                 {loading || error || selectedItems.length === 0 ? (
                     <AgendaInlineState
                         loading={loading}
@@ -616,6 +564,7 @@ export function SelectedDayAgendaPanel({
                                 ) : null}
                                 <ScheduleAgendaCard
                                     item={item}
+                                    onOpenRouteSetup={onOpenRouteSetup ? () => onOpenRouteSetup(item.id) : undefined}
                                     groupRow
                                     showMultiDaySummary
                                     cardRef={revealTarget?.id === item.id ? returnFocus.cardRef : undefined}
@@ -650,7 +599,6 @@ export function MonthAgendaList({
     onOpenSchedule,
     getScheduleSwipeActions,
     onRequestScheduleActions,
-    routeSetupRequiredCount = 0,
     onOpenRouteSetup,
     onRequestViewMode,
     entryDate,
@@ -889,9 +837,8 @@ export function MonthAgendaList({
         (option) => option.id === activeCategoryId
     )?.title ?? allCategoriesTitle;
     const listIdentity = `${visibleMonth.slice(0, 7)}:${calendarScope}:${entryDate ?? ""}:${positioningDate ?? ""}:${activeCategoryId ?? "all"}:${handledSavedItem ?? ""}:${stickyDates}`;
-    const showRouteNotice = routeSetupRequiredCount > 0 && Boolean(onOpenRouteSetup);
     const stickyHeaderIndices = stickyDates && !loading && !error
-        ? sections.map((_, index) => Number(showRouteNotice) + 2 * index)
+        ? sections.map((_, index) => 2 * index)
         : undefined;
 
     useEffect(() => {
@@ -1028,11 +975,6 @@ export function MonthAgendaList({
                 ]}
                 showsVerticalScrollIndicator={false}
             >
-                {showRouteNotice ? (
-                    <View style={stickyDates && styles.stickySectionSpacing}>
-                        <RouteSetupInlineNotice count={routeSetupRequiredCount} onPress={onOpenRouteSetup} />
-                    </View>
-                ) : null}
                 {loading || error || sections.length === 0 ? (
                     <AgendaInlineState
                         loading={loading}
@@ -1121,6 +1063,7 @@ export function MonthAgendaList({
                                     ) : null}
                                     <ScheduleAgendaCard
                                         item={item}
+                                        onOpenRouteSetup={onOpenRouteSetup ? () => onOpenRouteSetup(item.id) : undefined}
                                         compact
                                         groupRow
                                         showMultiDaySummary

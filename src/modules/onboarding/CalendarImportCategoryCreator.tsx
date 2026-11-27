@@ -1,7 +1,7 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     Keyboard,
     Pressable,
@@ -126,11 +126,11 @@ export default function CalendarImportCategoryCreator({
                 </View>
                 <View style={styles.openCopy}>
                     <Text style={styles.openTitle}>새 카테고리 추가</Text>
-                    <Text numberOfLines={1} style={styles.openCaption}>
-                        {assignmentTargetLabel
-                            ? `${assignmentTargetLabel}에 적용할 분류를 만들어요`
-                            : "필요한 분류를 여기서 바로 만들 수 있어요"}
-                    </Text>
+                    {assignmentTargetLabel ? (
+                        <Text numberOfLines={1} style={styles.openCaption}>
+                            {assignmentTargetLabel}에 적용
+                        </Text>
+                    ) : null}
                 </View>
                 <Ionicons accessible={false} name="chevron-down" size={17} color={colors.textSecondary} />
             </Pressable>
@@ -225,7 +225,7 @@ export default function CalendarImportCategoryCreator({
                     ]}
                 >
                     {saving ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <BrandedLoader size="inline" accessibilityLabel="카테고리 추가 중" />
                     ) : (
                         <Ionicons accessible={false} name="checkmark" size={17} color="#FFFFFF" />
                     )}

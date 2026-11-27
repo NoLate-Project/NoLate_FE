@@ -1,16 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image, Platform, Text, View } from 'react-native';
 
-import { CalendarScanLogo } from './CalendarImportStatusMark';
+import NoLateLoadingMark from '../../ui/NoLateLoadingMark';
 import type { AppColors } from '../../modules/theme/ThemeContext';
 import { ProviderOptionRow } from './CalendarImportCandidates';
 import {
   CalendarConsentChecklist,
-  IntroPoint,
   StepIcon,
 } from './CalendarImportConsent';
 import {
-  BRAND_BLUE,
   CURATION_APP_LOGO,
   SCAN_MESSAGES,
   type CalendarConsentId,
@@ -73,22 +71,17 @@ export default function CalendarImportEarlySteps({
             />
           </View>
           <Text accessibilityRole="header" style={styles.title}>
-            캘린더를 연결하면{'\n'}출발 준비가 쉬워져요
+            캘린더 일정 가져오기
           </Text>
           <Text style={styles.subtitle}>
-            일정을 가져오면 필요한 출발 시간까지 한 번에 준비할 수 있어요.
+            선택한 일정만 NoLate에 복사해요.
           </Text>
 
-          <View style={styles.introPointList}>
-            <IntroPoint label="원본 캘린더 일정은 바뀌지 않아요" />
-            <IntroPoint label="가져올 일정은 직접 확인할 수 있어요" />
-          </View>
         </View>
       )}
 
       {step === 'provider' && (
         <View style={styles.stepWrap}>
-          <Text style={styles.eyebrow}>캘린더 가져오기</Text>
           <Text accessibilityRole="header" style={styles.title}>어느 캘린더에서{'\n'}가져올까요?</Text>
           <Text style={styles.subtitle}>
             여러 캘린더를 함께 선택할 수 있어요.
@@ -147,24 +140,14 @@ export default function CalendarImportEarlySteps({
       {step === 'scanning' && (
         <View style={styles.stepWrap}>
           <View style={styles.centeredStatusHeader}>
-            <CalendarScanLogo />
+            <View accessible accessibilityRole="progressbar" accessibilityLabel="캘린더 가져오기"
+              accessibilityValue={{ min: 1, now: scanStage + 1, max: SCAN_MESSAGES.length, text: SCAN_MESSAGES[scanStage] }}>
+              <NoLateLoadingMark size={82} delayMs={0} />
+            </View>
             <Text accessibilityRole="header" style={[styles.title, { textAlign: 'center' }]}>가져올 일정을{'\n'}찾고 있어요</Text>
             <Text style={[styles.subtitle, { textAlign: 'center' }]}>
-              {scanStatusMessage === SCAN_MESSAGES[scanStage] ? '선택한 캘린더에서 다가오는 일정을 확인합니다.' : scanStatusMessage}
+              {scanStatusMessage}
             </Text>
-          </View>
-          <View style={styles.scanList}>
-            {SCAN_MESSAGES.slice(0, scanStage + 1).map((message, index) => {
-              const complete = scanStage > index;
-              return (
-                <View key={message} style={styles.scanRow}>
-                  <Ionicons accessible={false} name={complete ? 'checkmark-circle-outline' : 'time-outline'} size={20}
-                    color={complete ? '#148A64' : BRAND_BLUE} />
-                  <Text style={[styles.scanText, { color: colors.textPrimary }]}>{message}</Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{complete ? '완료' : '진행 중'}</Text>
-                </View>
-              );
-            })}
           </View>
         </View>
       )}

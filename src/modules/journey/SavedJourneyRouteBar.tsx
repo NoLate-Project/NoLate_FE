@@ -12,10 +12,11 @@ import { SAVED_JOURNEY_MOTION } from './savedJourneyMotion';
 const labels: Record<string, string> = { WALK: '도보', BUS: '버스', SUBWAY: '지하철', ETC: '이동', UNKNOWN: '미확인' };
 const colors: Record<string, string> = { WALK: '#78828F', BUS: '#2F963B', SUBWAY: '#239FD2', ETC: '#78828F', UNKNOWN: '#78828F' };
 /** Preserve all original legs. Static planned proportions never advance live progress by time. */
-export function SavedJourneyRouteBar({ input, position, layout, copy: stageCopy, compact = false, isDark = false, showCopy = true, recovery = false, navigation = false, docked = false, dockCaption }: {
+export function SavedJourneyRouteBar({ input, position, layout, copy: stageCopy, compact = false, isDark = false, showCopy = true, recovery = false, navigation = false, docked = false, dockCaption, trackingLocation = true }: {
     input: JourneyRouteInput; position: SavedJourneyRoutePosition | null; layout?: SavedJourneyRouteLayout | null;
     copy?: string; compact?: boolean; isDark?: boolean; showCopy?: boolean; recovery?: boolean; navigation?: boolean; docked?: boolean;
     dockCaption?: React.ReactNode;
+    trackingLocation?: boolean;
 }) {
     // Refresh native text metrics, never the engine/session or GPS-derived position.
     const { fontScale } = useWindowDimensions();
@@ -31,7 +32,7 @@ export function SavedJourneyRouteBar({ input, position, layout, copy: stageCopy,
         : '승차 지점까지 · 도보로 이동 중');
     const segments = layout?.legs ?? input.legs.map(leg => ({ ...leg, label: labels[leg.kind], color: colors[leg.kind], fraction: 1 / input.legs.length, durationMinutes: null }));
     const caption = layout?.caption ?? '구간 동일 폭';
-    const currentSegment = position && segments[position.waiting ? position.legIndex + 1 : position.legIndex];
+    const currentSegment = position && segments[position.legIndex];
     const showAllCompactLabels = compact && !showCopy && fontScale <= 1.35 && segments.length <= 3;
     const alignCompactLabels = showAllCompactLabels && segments.every(leg => leg.fraction >= 0.15);
     const compactLabels = showAllCompactLabels ? segments : segments.filter(leg => leg.kind === 'SUBWAY' || leg.kind === 'BUS');
@@ -41,13 +42,24 @@ export function SavedJourneyRouteBar({ input, position, layout, copy: stageCopy,
     })).filter(leg => leg.kind === 'BUS' || leg.kind === 'SUBWAY') : [];
     const dockLines = docked ? segments.filter(leg => leg.kind === 'SUBWAY' || leg.kind === 'BUS')
         .map(leg => compactTransitLineLabel(leg.label) ?? leg.label).join('  →  ') : '';
+    const segmentDescription = segments.map(leg =>
+        `${leg.index + 1}. ${leg.label}${leg.durationMinutes ? ` 예정 ${Math.ceil(leg.durationMinutes)}분` : ''}`
+    ).join(' → ');
+    const locationDescription = position?.waiting
+        ? (showCopy ? null : `${copy}.`)
+        : currentSegment ? `현재 위치는 ${currentSegment.label} 구간입니다.` : '현재 위치를 확인 중입니다.';
+    const accessibilityLabel = [
+        showCopy ? `${segmentDescription}, ${copy}.` : `${segmentDescription}.`,
+        trackingLocation && locationDescription,
+        `${caption}, 전체 여정 완료율이 아닙니다.`,
+    ].filter(Boolean).join(' ');
     return <View key={fontScale} testID="saved-journey-route-bar" style={[styles.root, navigationRail && styles.navigationRoot]}>
         {docked && (dockCaption ?? <Text accessible={false} importantForAccessibility="no" numberOfLines={1}
             style={[styles.dockLines, isDark && styles.darkCopy]}>{dockLines || '전체 경로'}</Text>)}
         {!compact && <Text style={[styles.heading, isDark && styles.darkCopy]}>전체 이동 경로 · {caption}</Text>}
         <View style={[styles.track, navigationRail && styles.navigationTrack, docked && styles.dockTrack, isDark && styles.darkTrack]} accessible
             onLayout={event => { trackWidth.value = Math.max(0, event.nativeEvent.layout.width - 2); }}
-            accessibilityLabel={`${segments.map(leg => `${leg.index + 1}. ${leg.label}${leg.durationMinutes ? ` 예정 ${Math.ceil(leg.durationMinutes)}분` : ''}`).join(' → ')}${showCopy ? `, ${copy}.` : '.'} ${currentSegment ? `현재 위치는 ${currentSegment.label} 구간입니다.` : '현재 위치를 확인 중입니다.'} ${caption}, 전체 여정 완료율이 아닙니다.`}>
+            accessibilityLabel={accessibilityLabel}>
             {segments.map(leg => <View key={leg.index} testID={`saved-journey-route-leg-${leg.index}`}
                 style={[styles.segment, { backgroundColor: leg.color, flex: leg.fraction }, leg.index === 0 && styles.first,
                     leg.index === input.legs.length - 1 && styles.last]} />)}

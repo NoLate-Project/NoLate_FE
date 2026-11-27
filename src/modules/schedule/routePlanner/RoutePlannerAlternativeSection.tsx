@@ -347,7 +347,7 @@ export function RoutePlannerAlternativeSection({ controller, onRevealFirstStop }
                 forceDark={shouldRenderTransitDetailDark}
                 primaryTextColor={detailPrimaryText}
                 secondaryTextColor={detailSecondaryText}
-                showEstimatedClockHeading={isDurationEstimate}
+                showEstimatedClockHeading={isDurationEstimate && (largeRouteText || !departureBasisClock)}
                 realtimeArrivalsActive={!isBottomSheetHidden && bottomSheetSnap !== 'collapsed'}
                 compact
                 inlineStationRail

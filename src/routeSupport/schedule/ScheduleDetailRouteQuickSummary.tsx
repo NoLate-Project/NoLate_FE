@@ -21,8 +21,6 @@ import {
 import { ScheduleRouteFacts } from './ScheduleRouteFacts';
 import { createScheduleDetailStyles } from './schedule-detail.styles';
 import type { ScheduleDetailPresentation } from './scheduleDetailPresentationModel';
-import ImportedTicketSummary from '../../modules/schedule/components/detail/ImportedTicketSummary';
-import { getImportedTicket } from '../../modules/schedule/importedTicket';
 
 type ScheduleDetailRouteQuickSummaryProps = {
   presentation: ScheduleDetailPresentation;
@@ -31,6 +29,8 @@ type ScheduleDetailRouteQuickSummaryProps = {
   automaticRouteSummary?: React.ReactNode;
   navigationInstruction?: React.ReactNode;
   departureAction?: React.ReactNode;
+  secondaryActions?: React.ReactNode;
+  overview?: React.ReactNode;
 };
 
 /** 축소된 경로 시트에 권장 출발, 남은 시간, 경로 막대와 출발 완료 동작을 요약한다. */
@@ -41,6 +41,8 @@ export function ScheduleDetailRouteQuickSummary({
   automaticRouteSummary,
   navigationInstruction,
   departureAction,
+  secondaryActions,
+  overview,
 }: ScheduleDetailRouteQuickSummaryProps) {
   const {
     departureDateLabel,
@@ -119,14 +121,12 @@ export function ScheduleDetailRouteQuickSummary({
         ref={summaryScrollRef}
         style={styles.compactSummaryScroll}
         contentContainerStyle={[styles.improvedCompactSummary,
+          !!overview && { minHeight: 0 },
           automaticGuidanceActive && { minHeight: 0 },
           reservedFooterHeight > 0 && { paddingBottom: reservedFooterHeight + 8 }]}
         onContentSizeChange={!largeRouteHeader ? handleCompactContentSizeChange : undefined}
         showsVerticalScrollIndicator={largeRouteHeader || compactSummaryScrollable}
       >
-        {!presentation.internalPreviewItem && getImportedTicket(presentation.item.route) ? (
-          <ImportedTicketSummary route={presentation.item.route} showBooking={false} />
-        ) : null}
         {showRouteIdentityInSheet && <View style={[
           styles.improvedRouteIdentityCompact,
           largeRouteHeader && styles.improvedRouteIdentityCompactLarge,
@@ -159,8 +159,8 @@ export function ScheduleDetailRouteQuickSummary({
           </Pressable>
         </View>}
 
-        {!automaticGuidanceActive && <View style={styles.improvedCompactBody}>
-          <View style={[styles.improvedCompactTopRow, largeRouteHeader && styles.improvedCompactTopRowLarge]}>
+        {!automaticGuidanceActive && <View style={[styles.improvedCompactBody, !!overview && { minHeight: 0, flex: 0, paddingBottom: 0 }]}>
+          {overview ?? <View style={[styles.improvedCompactTopRow, largeRouteHeader && styles.improvedCompactTopRowLarge]}>
           <Pressable
           onPress={() => snapSheet('expanded')}
           accessible={sheetMode === 'compact'}
@@ -246,11 +246,13 @@ export function ScheduleDetailRouteQuickSummary({
               </View>
           </Pressable>
           {departureAction}
-          </View>
+          </View>}
+          {secondaryActions}
+          {/* The summary button already reads these details when the overview is absent. */}
           <SummaryDetails
             accessible={false}
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
+            accessibilityElementsHidden={!overview}
+            importantForAccessibility={overview ? 'auto' : 'no-hide-descendants'}
             onPress={largeRouteHeader ? undefined : () => snapSheet('expanded')}
           >
           {focusedRouteContext && (
@@ -258,7 +260,7 @@ export function ScheduleDetailRouteQuickSummary({
               {focusedRouteContext}
             </Text>
           )}
-          {!largeRouteHeader && arrivalSummary}
+          {!overview && !largeRouteHeader && arrivalSummary}
           {!effectiveTransitRoutePresentation ? (
             <>
               <TransitRouteProgressBar
@@ -267,6 +269,7 @@ export function ScheduleDetailRouteQuickSummary({
                 compact
                 labelledSummary
                 alignedSummary
+                dense={!!overview}
                 focusedSegmentIndex={focusedSegmentIndex}
                 reduceFocusMotion={reduceMotion}
               />
@@ -292,7 +295,7 @@ export function ScheduleDetailRouteQuickSummary({
             </View>
           ) : (
             <ScheduleRouteFacts
-              labels={routeDetailInfo ? compactRouteFactLabels : routeFactLabels}
+              labels={overview ? routeFactLabels : routeDetailInfo ? compactRouteFactLabels : routeFactLabels}
               color={secondaryText}
               borderColor={sheetBorder}
               largeText={largeRouteHeader}

@@ -33,7 +33,7 @@ import type {
   ScheduleDayDisplayController,
 } from './useScheduleDayDisplayController';
 
-const CALENDAR_CONTEXT_HEIGHT = 24;
+const CALENDAR_CONTEXT_HEIGHT = 0;
 
 const STICKY_MONTH_HEADER_HEIGHT = 50;
 

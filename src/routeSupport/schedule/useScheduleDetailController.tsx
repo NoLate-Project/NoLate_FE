@@ -75,6 +75,9 @@ import {
 import { useScheduleDetailSheetController } from './useScheduleDetailSheetController';
 import { useScheduleDetailMapController } from './useScheduleDetailMapController';
 import { applyMatchedTransitTimeline } from '../../modules/schedule/matchedTransitTimeline';
+import { buildSavedTransitProgressFromSteps } from '../../modules/schedule/transitRouteProgress';
+import { useCurrentTransitEstimate } from './useCurrentTransitEstimate';
+import { buildRouteInfoFromAlternative } from '../../modules/schedule/routeInfo';
 import { useScheduleDepartureStatusController } from './useScheduleDepartureStatusController';
 
 /**
@@ -179,18 +182,20 @@ export function useScheduleDetailController({
 
   useEffect(() => () => routePlannerFocusTask.current?.cancel(), []);
 
+  const item =
+    internalPreviewItem
+    ?? (id ? state.itemsById[id] : undefined)
+    ?? initialItem;
   const { departureStatus } =
     useScheduleDepartureStatusController({
       scheduleId: id,
+      startAt: item?.startAt,
+      departAt: item?.departAt,
       previewEnabled: Boolean(internalPreviewItem),
       routePlannerSessionId,
       routeSavePending,
     });
 
-  const item =
-    internalPreviewItem
-    ?? (id ? state.itemsById[id] : undefined)
-    ?? initialItem;
   const fromGuidanceActivity = !internalPreviewItem && entrySource === 'guidance-activity' && automaticUUID(guidanceSession);
   const authoritativeDetailLoaded = !internalPreviewItem && loadedDetailId === id;
   const guidanceActivityHandoff = useGuidanceActivityHandoff(
@@ -371,7 +376,7 @@ export function useScheduleDetailController({
     showWholeRoute,
     routeDetailInfo: savedRouteDetailInfo,
     routeOption,
-    routeProgressSegments,
+    routeProgressSegments: savedRouteProgressSegments,
     focusedLegIndex,
     hasFocusedMapLocation,
     selectedRoutePassStop,
@@ -396,11 +401,23 @@ export function useScheduleDetailController({
     screenVisible: pathname === `/schedule/${id}`,
     snapSheet,
   });
+  const startNow = navigationScheduleId === id && !liveActivityEntry && navigationEnd?.scheduleId !== id;
+  const estimateScope = id && pathname === `/schedule/${id}` && authoritativeDetailLoaded && !inspectedTravelPlan
+    && (!navigationMode || startNow)
+    ? `${currentMemberId}:${id}:${startNow ? 'navigation' : 'preview'}` : undefined;
+  const currentTransitEstimate = useCurrentTransitEstimate(estimateScope, routeOption, displayOrigin, displayDestination);
+  const departureRouteInfo = useMemo(() => startNow && currentTransitEstimate
+    ? buildRouteInfoFromAlternative({ ...currentTransitEstimate, mode: 'TRANSIT' }, displayOrigin ?? undefined, displayDestination ?? undefined)
+    : undefined, [startNow, currentTransitEstimate, displayOrigin, displayDestination]);
   const currentTravelMinutes = displayedDepartureTiming.travelMinutes;
   const routeDetailInfo = useMemo(() => inspectedTravelPlan
     ? savedRouteDetailInfo
-    : applyMatchedTransitTimeline(savedRouteDetailInfo, departureStatus, nowMs),
-    [departureStatus, inspectedTravelPlan, savedRouteDetailInfo, nowMs]);
+    : departureRouteInfo ?? applyMatchedTransitTimeline(savedRouteDetailInfo, departureStatus, nowMs),
+    [departureRouteInfo, departureStatus, inspectedTravelPlan, savedRouteDetailInfo, nowMs]);
+  const routeProgressSegments = useMemo(() => routeDetailInfo?.matchedTimeline
+    ? buildSavedTransitProgressFromSteps(routeDetailInfo.steps)
+    : savedRouteProgressSegments,
+    [routeDetailInfo, savedRouteProgressSegments]);
   const effectiveTransitRoutePresentation = inspectedTravelPlan
     ? undefined
     : buildPlannedJourneyArrivalPresentation(departureStatus, nowMs) ??
@@ -961,6 +978,7 @@ export function useScheduleDetailController({
     displayDestination,
     savedDisplayTravelMinutes,
     currentTravelMinutes,
+    currentTransitEstimate,
     departureStatus,
     effectiveTransitRoutePresentation,
     displayTravelMode,

@@ -25,6 +25,7 @@ const status = (override: Partial<ScheduleDepartureStatus> = {}): ScheduleDepart
 
 describe('transit ETA trust presentation', () => {
   it.each([
+    ['TRANSIT_INTERCITY_TIMETABLE_UNAVAILABLE', '운행 시간표를 확인해 주세요'],
     ['TRANSIT_TRANSFER_TIMING_UNKNOWN', '환승 가능 여부 미확인 · 저장 경로 기준'],
     ['TRANSIT_TRAIN_NOT_YET_OBSERVED', '열차의 실시간 도착 정보가 없어요'],
     ['TRANSIT_ARRIVAL_SOURCE_STALE', '차량 관측정보 오래됨 · 저장 경로 기준'],
@@ -49,7 +50,7 @@ describe('transit ETA trust presentation', () => {
     status({ recommendedDepartureAt: null }),
   ])('does not present unknown or degraded timing as a verified recommendation', snapshot => {
     expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', status: snapshot }))
-      .toEqual({ departureLabel: '예상 출발', warning: '운행시각 미확인 · 저장 경로 기준' });
+      .toEqual({ departureLabel: '예상 출발' });
   });
   it('guides unsupported legacy transit routes back to route selection', () => {
     expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', status: status({
@@ -58,7 +59,7 @@ describe('transit ETA trust presentation', () => {
   });
   it('does not borrow current member ETA when inspecting another plan', () => {
     expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', status: status(), isInspectingTravelPlan: true }).warning)
-      .toBe('운행시각 미확인 · 저장 경로 기준');
+      .toBeUndefined();
   });
   it('preserves a confirmed late-arrival diagnostic instead of calling it unknown', () => {
     expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', status: status({ stale: true,
@@ -82,11 +83,11 @@ describe('transit ETA trust presentation', () => {
     expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', status: snapshot }))
       .toEqual({ departureLabel: '예상 출발', warning });
     expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', status: snapshot,
-      isInspectingTravelPlan: true }).warning).toBe('운행시각 미확인 · 저장 경로 기준');
+      isInspectingTravelPlan: true }).warning).toBeUndefined();
   });
 });
 
   test('a selected public intercity timetable does not borrow an earlier live city ETA', () => {
     expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', intercityJourneySelected: true, status: status({ source: 'LIVE_PROVIDER' }) }))
-      .toEqual({ departureLabel: '연결 경로 예상 출발', warning: '선택 편 시간표 · 앞뒤 운행·예매 미확인' });
+      .toEqual({ departureLabel: '연결 경로 예상 출발', warning: '운행 시간표 · 앞뒤 이동 예상' });
   });

@@ -1,8 +1,8 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useRef } from 'react';
 import {
   AccessibilityInfo,
-  ActivityIndicator,
   Animated,
   Easing,
   Platform,
@@ -426,7 +426,7 @@ export function SearchSheet({
               ]}
             >
               {searching ? (
-                <ActivityIndicator size="small" color={dark ? '#111216' : '#FFFFFF'} />
+                <BrandedLoader size="inline" accessibilityLabel="장소 검색 중" />
               ) : (
                 <Ionicons name="arrow-forward-outline" size={19} color={dark ? '#111216' : '#FFFFFF'} />
               )}
@@ -671,7 +671,7 @@ export function PlaceEditor({
           ]}
         >
           {disabled ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
+            <BrandedLoader size="inline" accessibilityLabel="장소 저장 중" />
           ) : (
             <Ionicons name="checkmark-outline" size={20} color="#FFFFFF" />
           )}
@@ -801,7 +801,7 @@ export function CategoryEditor({
           ]}
         >
           {disabled ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
+            <BrandedLoader size="inline" accessibilityLabel="카테고리 저장 중" />
           ) : (
             <Ionicons name={standardCreate ? 'checkmark-outline' : 'checkmark'} size={20} color="#FFFFFF" />
           )}

@@ -615,10 +615,7 @@ function ShareInboxScreen() {
           details: details.trim() || undefined,
         });
         if (mountedRef.current) setReportItem(null);
-        Alert.alert(
-          '신고가 접수됐어요',
-          '검토가 필요한 공유로 안전하게 접수했습니다.',
-        );
+        Alert.alert('신고가 접수됐어요');
       } catch (reportError) {
         Alert.alert('신고 접수 실패', getErrorMessage(reportError));
       } finally {

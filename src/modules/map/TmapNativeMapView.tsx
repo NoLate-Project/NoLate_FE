@@ -1,3 +1,4 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import nativeStyles from "./TmapNativeMapView.styles";
 import React, {
     forwardRef,
@@ -9,7 +10,6 @@ import React, {
     useState,
 } from "react";
 import {
-    ActivityIndicator,
     NativeSyntheticEvent,
     Platform,
     Pressable,
@@ -473,12 +473,7 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
                     accessibilityLiveRegion="polite"
                     style={[nativeStyles.loadingOverlay, { backgroundColor: fallbackBackgroundColor }]}
                 >
-                    {loadingContent ?? (
-                        <>
-                            <ActivityIndicator color="#2979FF" />
-                            <Text style={[nativeStyles.loadingText, { color: fallbackTextColor }]}>지도를 불러오는 중…</Text>
-                        </>
-                    )}
+                    {loadingContent ?? <BrandedLoader size="section" startup accessibilityLabel="지도 불러오는 중" />}
                 </View>
             ) : null}
             {!onLoadStateChange && runtimeErrorMessage && renderLoadError ? (

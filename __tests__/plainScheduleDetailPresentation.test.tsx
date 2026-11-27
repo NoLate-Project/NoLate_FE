@@ -335,7 +335,7 @@ describe("PlainScheduleDetailView", () => {
         }
     });
 
-    test("경로 설정 전에도 가져온 승차권과 예매 미검증 상태를 보여 준다", async () => {
+    test("경로 설정 전에는 사용자가 펼쳤을 때 가져온 승차권을 보여 준다", async () => {
         const importedTicket = { version: 1, id: "ticket:12345678-1234-1234-1234-123456789012", kind: "TRAIN", source: "IOS_SHARE_IMAGE", verification: "USER_CONFIRMED", bookingStatus: "UNVERIFIED", departureName: "수서", arrivalName: "공주", departureAt: "2026-10-13T12:20:00+09:00", arrivalAt: "2026-10-13T13:12:00+09:00", trainNumber: "615", grade: "SRT", confirmedAt: "2026-10-12T00:00:00Z" };
         await act(async () => {
             renderer = TestRenderer.create(<ThemeProvider><PlainScheduleDetailView
@@ -343,6 +343,10 @@ describe("PlainScheduleDetailView", () => {
                 contentTopInset={120} contentBottomInset={40}
             /></ThemeProvider>);
         });
+        expect(renderer!.root.findAllByProps({ testID: "imported-ticket-summary" })).toHaveLength(0);
+        const disclosure = renderer!.root.findAll(node => node.props.accessibilityLabel === "가져온 승차권 보기"
+            && typeof node.props.onPress === "function")[0];
+        await act(async () => disclosure.props.onPress());
         const text = renderer!.root.findAllByType(Text).map(node => node.props.children).flat(Infinity).join(" ");
         const compactText = text.replace(/\s+/g, " ");
         expect(compactText).toMatch(/가져온\s+기차\s+승차권/);

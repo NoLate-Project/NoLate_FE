@@ -38,6 +38,10 @@ const styles = StyleSheet.create({
     itemCompact: {
         paddingVertical: 1,
     },
+    timedEndpointRow: {
+        // The clock is positioned below the endpoint; include it in the row's layout footprint.
+        minHeight: 70,
+    },
     itemCompactFocused: {
         backgroundColor: "transparent",
         borderColor: "transparent",
@@ -141,6 +145,12 @@ const styles = StyleSheet.create({
         minHeight: 46,
         marginTop: 0,
     },
+    badgeInlineCompact: { flexShrink: 0 },
+    badgeTextInlineCompact: { lineHeight: 18, fontWeight: "700", textAlign: "center" },
+    lineCompactTight: { minHeight: 24 },
+    titleInlineCompact: { fontSize: 15, fontWeight: "600" },
+    titleSuffixInlineCompact: { fontSize: 13, fontWeight: "400" },
+    descriptionInlineCompact: { fontSize: 13, fontWeight: "400" },
     timelineClockBadge: {
         position: "absolute",
         top: 35,
@@ -366,6 +376,8 @@ const styles = StyleSheet.create({
         fontWeight: "800",
         letterSpacing: 0,
     },
+    inlineArrivalContext: { fontSize: 12, lineHeight: 17, marginTop: 8 },
+    inlineArrivalCard: { borderWidth: 0, paddingHorizontal: 0, paddingVertical: 4, marginTop: 4, backgroundColor: "transparent" },
     arrivalCard: {
         marginTop: 10,
         marginRight: 4,

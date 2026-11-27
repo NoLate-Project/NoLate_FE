@@ -1,10 +1,8 @@
 import { isIntercityRideKind, isTransitRideKind, transitModeLabel } from "../../../map/transitModes";
 import styles from "./RouteStepTimeline.styles";
-import BusBookingAction from './BusBookingAction';
-import TrainBookingAction from './TrainBookingAction';
 import { RouteBusBoardingContext } from './RouteBusBoardingContext';
 import { DottedWalkingRail } from './DottedWalkingRail';
-import { routeColorForWhiteIcon, routeColorInk } from '../../routeColorContrast';
+import { routeColorForCaption, routeColorForWhiteIcon, routeColorInk } from '../../routeColorContrast';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     Platform,
@@ -15,6 +13,7 @@ import {
     useWindowDimensions,
 } from "react-native";
 import Reanimated, { Easing, FadeIn, Keyframe, ReduceMotion } from "react-native-reanimated";
+import LoadingIndicator from "../../../../ui/LoadingIndicator";
 
 import {
     getBusArrivals,
@@ -129,6 +128,7 @@ export default function RouteStepTimeline({
 }: Props) {
     const { fontScale } = useWindowDimensions();
     const stackTimelineText = compact && fontScale > 1.35;
+    const tightInlineRail = compact && inlineStationRail && !stackTimelineText;
     const reduceMotion = useSystemReduceMotion();
     const { colors, mode } = useTheme();
     const isDark = forceDark ?? mode === "dark";
@@ -169,12 +169,13 @@ export default function RouteStepTimeline({
         routeInfo.providerTimeBasis === "timetable";
     const hasExactTimeline = routeInfo.matchedTimeline || usesOdsayTimetable;
     const scheduleSourceLabel = routeInfo.matchedTimelineBasis === "TIMETABLE" ? "실시간 미확인 시간표"
-        : routeInfo.matchedTimelineBasis === "PLANNED" ? "계획 경로의 잠정 시각" : routeInfo.matchedTimeline ? "현재 보정 여정" : routeInfo.intercityJourney ? (routeInfo.intercityJourney.service.timingBasis === "TICKET" ? "승차권 입력 시각 · 앞뒤 이동 예상 · 예매 상태 미검증" : "선택 운행편 · 앞뒤 이동 예상 · 예매 미확인") : routeInfo.timeBasis === "provider_schedule"
+        : routeInfo.matchedTimelineBasis === "PLANNED" ? "계획 경로의 잠정 시각" : routeInfo.matchedTimeline ? "현재 보정 여정" : routeInfo.intercityJourney ? (routeInfo.intercityJourney.service.timingBasis === "TICKET" ? "입력한 운행 시각 · 앞뒤 이동 예상" : "운행 시간표 · 앞뒤 이동 예상") : routeInfo.timeBasis === "provider_schedule"
         ? "운행 시간표"
         : "경로 예상 시간";
-    const labelsEstimatedClocks = compact && showEstimatedClockHeading &&
+    const hasEstimatedClocks = compact &&
         routeInfo.timeBasis === "estimated" && !routeInfo.matchedTimeline && !routeInfo.intercityJourney &&
         routeInfo.steps.length > 0 && Boolean(formatArrivalClock(routeInfo.departureTime, 0));
+    const labelsEstimatedClocks = hasEstimatedClocks && showEstimatedClockHeading;
     const arrivalRequests = useMemo(() => routeInfo.steps
         .map((step) => ({ step, request: getArrivalRequest(step) }))
         .filter((item): item is ArrivalLookup => !!item.request),
@@ -312,9 +313,10 @@ export default function RouteStepTimeline({
                     {estimatedClockHeading}
                 </Text>
             )}
-            {routeInfo.intercityJourney?.service.timingBasis !== 'TICKET' && routeInfo.steps.some(step => step.type === 'TRAIN') && <TrainBookingAction dark={isDark} />}
-            {routeInfo.intercityJourney?.service.timingBasis !== 'TICKET' && routeInfo.steps.filter(step => ['EXPRESS_BUS', 'INTERCITY_BUS', 'COACH'].includes(step.type)).slice(0, 1).map(step => <BusBookingAction key={step.id} kind={step.type} dark={isDark} />)}
             {routeInfo.steps.map((step, index) => {
+                // App planning margins are not provider movement legs. Keep original
+                // indices and offsets so legacy saved boarding/arrival clocks stay fixed.
+                if (step.journeyPhase === "BUFFER") return null;
                 const isLast = index === routeInfo.steps.length - 1;
                 const stepColor = getRouteStepColor(step);
                 const selected = selectedStepId === step.id;
@@ -355,6 +357,9 @@ export default function RouteStepTimeline({
                         (!inlineStops || (part !== rideDuration && !/^\d+(?:개\s*)?\s*(?:정거장|정류장|분)$/u.test(part))),
                     ).join(" · ")
                     : rideDescription;
+                const displayedBoardingDescription = compact && intercityRide && alightingName
+                    ? boardingDescription?.split(" · ").filter(part => !/^시간표\s/u.test(part)).join(" · ")
+                    : boardingDescription;
                 const directionHint = hasBadge ? getRouteStepDirectionHint(step, rideDescription) : undefined;
                 const rideDirectionLabel = directionHint && !isAlightingHint(directionHint) && !boardingDescription?.split(" · ").includes(directionHint)
                     ? directionHint : undefined;
@@ -391,7 +396,7 @@ export default function RouteStepTimeline({
                 const exactAlighting = routeInfo.matchedTimeline ? step.matchedTimeline?.endAt : step.scheduledRide?.arrivalAt;
                 const transferWaitSeconds = matched?.transferWaitSeconds;
                 const boardingIntervalLabel = firstBoardingIntervalLabel(matched?.firstBoardingIntervalSeconds,
-                    matched?.startsWithStationArrivalPrediction) ?? (typeof transferWaitSeconds === "number" &&
+                    matched?.startsWithStationArrivalPrediction, step.type === "BUS" ? "BUS" : "SUBWAY") ?? (typeof transferWaitSeconds === "number" &&
                     transferWaitSeconds > 0 && Number.isSafeInteger(transferWaitSeconds)
                     ? `환승 대기 예상 ${formatRouteDurationSeconds(transferWaitSeconds)}` : undefined);
                 const alightingClock = !alightingName ? undefined : hasExactTimeline
@@ -411,12 +416,17 @@ export default function RouteStepTimeline({
                         : scheduledClockBasis
                     : getTransitArrivalInlineMessage(arrivalPresentation, timelineClockText, scheduleSourceLabel);
                 const arrivalStatusLabel = getTransitArrivalStatusLabel(arrivalPresentation, timelineClockText);
+                const arrivalUpdatedClock = arrivalUpdatedAt ? formatArrivalClock(arrivalUpdatedAt, 0) : undefined;
+                const inlineArrivalContext = [
+                    arrivalPresentation.statusLabel === "실시간" ? "현재 정류장 도착" : "도착 정보 갱신 지연",
+                    arrivalUpdatedClock ? `${arrivalUpdatedClock} 갱신` : arrivalPresentation.freshnessLabel,
+                ].filter(Boolean).join(" · ");
                 const arrivalWaitColor = arrivalPresentation.statusLabel === "갱신 지연"
                     ? secondaryColor
                     : isDark ? "#FF8C86" : "#B42318";
                 const prioritizeStops = expanded && !inlineStops && stackTimelineText && Boolean(onRevealFirstStop);
                 const transferDestination = compact ? getTransferWalkDestination(routeInfo.steps, index) : undefined;
-                const walkingTransfer = compact && step.journeyPhase !== "BUFFER" &&
+                const walkingTransfer = compact &&
                     (Boolean(transferDestination) || step.type === "TRANSFER");
                 const alightingIntoTransfer = !!alightingName &&
                     !!getTransferWalkDestination(routeInfo.steps, index + 1);
@@ -441,7 +451,7 @@ export default function RouteStepTimeline({
                     : undefined;
                 const clockAccessibilityLabel = shouldShowTimelineClock
                     ? stationArrivalLabel ? `${timelineClockText} ${stationArrivalLabel}`
-                        : labelsEstimatedClocks ? `예상 ${timelineClockText}` : timelineClockText
+                        : hasEstimatedClocks ? `예상 ${timelineClockText}` : timelineClockText
                     : undefined;
                 const isWalkStep = step.type === "WALK";
                 const isPointStep = step.type === "ORIGIN" || step.type === "DESTINATION";
@@ -475,15 +485,15 @@ export default function RouteStepTimeline({
                         <Text
                             numberOfLines={1}
                             maxFontSizeMultiplier={stackTimelineText ? undefined : 1.3}
-                            style={[styles.timelineClockText, { color: isDark ? "#D7D7DA" : "#374151" }]}
+                            style={[styles.timelineClockText, tightInlineRail && styles.badgeTextInlineCompact, { color: isDark ? "#D7D7DA" : "#374151" }]}
                         >
                             {timelineClockText}
                         </Text>
                     </View>
                 ) : null;
                 const lineBadge = showsLineBadge ? (
-                    <View style={[styles.badge, compact && styles.badgeCompact, intercityRide && styles.badgeIntercity, stackTimelineText && styles.badgeExpanded, { backgroundColor: transitBadgeColor }]}>
-                        <Text numberOfLines={stackTimelineText ? undefined : 1} maxFontSizeMultiplier={1.5} style={[styles.badgeText, compact && styles.badgeTextCompact, { color: routeColorInk(transitBadgeColor) }]}>
+                    <View style={[styles.badge, compact && styles.badgeCompact, tightInlineRail && styles.badgeInlineCompact, intercityRide && styles.badgeIntercity, stackTimelineText && styles.badgeExpanded, { backgroundColor: transitBadgeColor }]}>
+                        <Text numberOfLines={stackTimelineText ? undefined : 1} maxFontSizeMultiplier={1.5} style={[styles.badgeText, compact && styles.badgeTextCompact, tightInlineRail && styles.badgeTextInlineCompact, { color: routeColorInk(transitBadgeColor) }]}>
                             {lineBadgeText}
                         </Text>
                     </View>
@@ -624,7 +634,7 @@ export default function RouteStepTimeline({
                             >
                                 <StepIconGlyph
                                     type={step.type}
-                                    isWaiting={step.journeyPhase === "BUFFER"}
+                                    isWaiting={false}
                                     color={iconColor}
                                     compact={compact}
                                 />
@@ -635,6 +645,7 @@ export default function RouteStepTimeline({
                                     style={[
                                         styles.line,
                                         compact && styles.lineCompact,
+                                        tightInlineRail && styles.lineCompactTight,
                                         {
                                             backgroundColor: walkingTransfer ? "transparent" :
                                                 step.type === "WALK" || step.type === "ORIGIN" || step.type === "DESTINATION"
@@ -672,7 +683,7 @@ export default function RouteStepTimeline({
                                     expandable && !inlineStops && (!stackTimelineText || !clockBadge) && styles.titleRowWithDisclosure,
                                 ]}
                             >
-                                {!!pointLabel && (
+                                {!!pointLabel && !tightInlineRail && (
                                     <View style={[styles.pointBadge, compact && styles.pointBadgeCompact, { backgroundColor: stepColor }]}>
                                         <Text style={[styles.pointBadgeText, compact && styles.pointBadgeTextCompact, { color: routeColorInk(stepColor) }]}>{pointLabel}</Text>
                                     </View>
@@ -684,13 +695,14 @@ export default function RouteStepTimeline({
                                 style={[
                                     styles.title,
                                     compact && styles.titleCompact,
+                                    tightInlineRail && styles.titleInlineCompact,
                                     stackTimelineText && styles.titleExpanded,
                                     { color: primaryColor },
                                 ]}
                             >
                                     {stepTitle}
                                     {compact && hasBadge && (
-                                        <Text style={[styles.titleSuffix, { color: secondaryColor }]}> 승차</Text>
+                                        <Text style={[styles.titleSuffix, tightInlineRail && styles.titleSuffixInlineCompact, { color: secondaryColor }]}> 승차</Text>
                                     )}
                                 </Text>
                             </TitleRow>}
@@ -713,9 +725,9 @@ export default function RouteStepTimeline({
                                             {!!stationArrivalLabel && (
                                                 <Text style={[styles.rideAssistText, { color: secondaryColor }]}>{stationArrivalLabel}</Text>
                                             )}
-                                            {!!boardingDescription && (
-                                                <Text numberOfLines={stackTimelineText || intercityRide ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.description, styles.descriptionCompact, { color: secondaryColor }]}>
-                                                    {boardingDescription}
+                                            {!!displayedBoardingDescription && (
+                                                <Text numberOfLines={stackTimelineText || intercityRide ? undefined : 1} lineBreakStrategyIOS="hangul-word" style={[styles.description, styles.descriptionCompact, tightInlineRail && styles.descriptionInlineCompact, { color: secondaryColor }]}>
+                                                    {displayedBoardingDescription}
                                                 </Text>
                                             )}
                                             {!!rideDirectionLabel && (
@@ -729,7 +741,7 @@ export default function RouteStepTimeline({
                                                 </Text>
                                             )}
                                         </View>
-                                        {!usesScheduledClock && <View style={[styles.rideActionStack, stackTimelineText && styles.rideActionStackExpanded]}>
+                                        {!usesScheduledClock && (!inlineStationRail || stackTimelineText || !arrivalPresentation.showArrivalCard) && <View style={[styles.rideActionStack, stackTimelineText && styles.rideActionStackExpanded]}>
                                             <View style={styles.rideActionRow}>
                                                 <View style={[styles.rideActionChip, { borderColor: isDark ? "rgba(255,255,255,0.16)" : "#D1D5DB" }]}>
                                                     <Text style={[styles.rideActionText, { color: primaryColor }]}>
@@ -766,10 +778,15 @@ export default function RouteStepTimeline({
                                             ))}
                                         </View>
                                     )}
+                                    {inlineStationRail && !stackTimelineText && arrivalPresentation.showArrivalCard && (
+                                        <Text testID={`route-step-live-context-${step.id}`} style={[styles.inlineArrivalContext, { color: secondaryColor }]}>
+                                            {inlineArrivalContext}
+                                        </Text>
+                                    )}
                                     {arrivalPresentation.showArrivalCard ? (
                                         <Reanimated.View
                                             entering={arrivalCardEntrance}
-                                            style={[styles.arrivalCard, { borderColor: isDark ? "rgba(255,255,255,0.16)" : "#D1D5DB" }]}
+                                            style={[styles.arrivalCard, inlineStationRail && !stackTimelineText && styles.inlineArrivalCard, { borderColor: isDark ? "rgba(255,255,255,0.16)" : "#D1D5DB" }]}
                                         >
                                         {step.type === "BUS" ? (
                                             <>
@@ -790,7 +807,7 @@ export default function RouteStepTimeline({
                                                                 <View style={styles.arrivalAttributeList}>
                                                                     {attributeLabels.map((label) => (
                                                                         <View key={label} style={[styles.arrivalAttributeBadge, { borderColor: stepColor }]}>
-                                                                            <Text style={[styles.arrivalAttributeText, { color: stepColor }]}>{label}</Text>
+                                                                            <Text style={[styles.arrivalAttributeText, tightInlineRail && styles.badgeTextInlineCompact, { color: tightInlineRail ? routeColorForCaption(stepColor, isDark) : stepColor }]}>{label}</Text>
                                                                         </View>
                                                                     ))}
                                                                 </View>
@@ -820,7 +837,7 @@ export default function RouteStepTimeline({
                                                             <View style={styles.arrivalAttributeList}>
                                                                 {attributeLabels.map((label) => (
                                                                     <View key={label} style={[styles.arrivalAttributeBadge, { borderColor: stepColor }]}>
-                                                                        <Text style={[styles.arrivalAttributeText, { color: stepColor }]}>{label}</Text>
+                                                                        <Text style={[styles.arrivalAttributeText, tightInlineRail && styles.badgeTextInlineCompact, { color: tightInlineRail ? routeColorForCaption(stepColor, isDark) : stepColor }]}>{label}</Text>
                                                                     </View>
                                                                 ))}
                                                             </View>
@@ -832,11 +849,11 @@ export default function RouteStepTimeline({
                                         </Reanimated.View>
                                     ) : arrivalInlineMessage ? (
                                         <View style={styles.arrivalInlineRow}>
-                                            <Ionicons
-                                                name={arrivalPresentation.showLoadingIcon ? "sync-outline" : "information-circle-outline"}
+                                            {arrivalPresentation.showLoadingIcon ? <LoadingIndicator size="inline" delayMs={150} /> : <Ionicons
+                                                name="information-circle-outline"
                                                 size={15}
                                                 color={secondaryColor}
-                                            />
+                                            />}
                                             <Text lineBreakStrategyIOS="hangul-word" style={[styles.arrivalInlineText, { color: secondaryColor }]}>
                                                 {arrivalInlineMessage}
                                             </Text>
@@ -845,7 +862,7 @@ export default function RouteStepTimeline({
                                 </>
                             )}
                             {!hasBadge && stepDescription && (
-                                <Text numberOfLines={stackTimelineText ? undefined : 2} lineBreakStrategyIOS="hangul-word" style={[styles.description, compact && styles.descriptionCompact, { color: secondaryColor }]}>
+                                <Text numberOfLines={stackTimelineText ? undefined : 2} lineBreakStrategyIOS="hangul-word" style={[styles.description, compact && styles.descriptionCompact, tightInlineRail && styles.descriptionInlineCompact, { color: secondaryColor }]}>
                                     {stepDescription}
                                 </Text>
                             )}
@@ -866,7 +883,7 @@ export default function RouteStepTimeline({
                                 </Pressable>
                             )}
                             {inlineStops && firstVisibleStopIndex === -1 && stopSummaryParts.length > 0 && (
-                                <Text style={[styles.description, styles.descriptionCompact, { color: secondaryColor }]}>{stopSummary}</Text>
+                                <Text style={[styles.description, styles.descriptionCompact, tightInlineRail && styles.descriptionInlineCompact, { color: secondaryColor }]}>{stopSummary}</Text>
                             )}
                             {!prioritizeStops && stopList}
                             {alightingName && (
@@ -903,7 +920,7 @@ export default function RouteStepTimeline({
                                                 testID={`route-step-alighting-clock-${step.id}`}
                                                 accessibilityLabel={`${routeInfo.timeBasis === "provider_schedule" ? "시간표" : "예상"} 하차 ${alightingClock}`}
                                                 maxFontSizeMultiplier={stackTimelineText ? undefined : 1.3}
-                                                style={[styles.timelineClockText, { color: isDark ? "#D7D7DA" : "#374151" }]}
+                                                style={[styles.timelineClockText, tightInlineRail && styles.badgeTextInlineCompact, { color: isDark ? "#D7D7DA" : "#374151" }]}
                                             >
                                                 {alightingClock}
                                             </Text>
@@ -970,6 +987,7 @@ export default function RouteStepTimeline({
                         style={[
                             styles.item,
                             compact && styles.itemCompact,
+                            tightInlineRail && isLast && !!clockBadge && styles.timedEndpointRow,
                             selectedStyle,
                         ]}
                     >

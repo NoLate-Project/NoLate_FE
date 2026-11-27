@@ -1,7 +1,7 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps, ComponentRef, Ref } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   Text,
   TextInput,
@@ -154,12 +154,13 @@ export function DefaultOriginPicker({
           onPress={onSearch}
           style={({ pressed }) => [
             styles.originSearchButton,
-            (searching || !query.trim()) && styles.disabled,
-            pressed && styles.pressed,
+            !query.trim() && styles.disabled,
+            searching && styles.originSearchButtonPending,
+            pressed && !searching && styles.pressed,
           ]}
         >
           {searching ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
+            <BrandedLoader size="inline" startup accessibilityLabel="장소 검색 중" />
           ) : (
             <Text style={styles.originSearchButtonText}>검색</Text>
           )}
@@ -310,7 +311,7 @@ export function PrimaryButton({
         {label}
       </Text>
       {loading ? (
-        <ActivityIndicator size="small" color="#FFFFFF" />
+        <BrandedLoader size="inline" accessibilityLabel={label} />
       ) : (
         <Ionicons accessible={false} importantForAccessibility="no"
           name="arrow-forward-outline"

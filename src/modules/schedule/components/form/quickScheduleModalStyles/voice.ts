@@ -10,6 +10,13 @@ export function createVoiceStyles(options: QuickScheduleModalStylesOptions) {
         VOICE_SPECTRUM_SIZE,
     } = options;
     return StyleSheet.create({
+        voicePanelFlat: { minHeight: 0, borderWidth: 0, borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, backgroundColor: "transparent" },
+        voiceRecordControlFlat: { paddingTop: 16, paddingBottom: 20 },
+        voiceOrbWrapFlat: { height: 64 },
+        voiceOrbFlat: { width: 48, height: 48, borderRadius: 24, borderWidth: 0, shadowOpacity: 0 },
+        voiceTranscriptWrapFlat: { borderWidth: 0, borderRadius: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, backgroundColor: "transparent" },
+        voiceTranscriptLabelFlat: { fontSize: 13, lineHeight: 18, fontWeight: "500", marginBottom: 8 },
+        voiceTranscriptInputFlat: { minHeight: 144, maxHeight: 180, marginTop: 0, borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12 },
         voicePanel: {
         minHeight: 322,
         borderRadius: 15,

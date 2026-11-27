@@ -1,6 +1,5 @@
 import React, { ReactNode } from "react";
 import {
-    ActivityIndicator,
     Image,
     Keyboard,
     KeyboardAvoidingView,
@@ -18,6 +17,7 @@ import {
     View,
     ViewStyle,
 } from "react-native";
+import NoLateLoadingMark from "../../../ui/NoLateLoadingMark";
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,7 +35,7 @@ const APP_LOGO = require("../../../../assets/icon.png");
 
 type AuthScreenProps = {
     title?: string;
-    subtitle: string;
+    subtitle?: string;
     children: ReactNode;
     footer?: ReactNode;
     onBack?: () => void;
@@ -174,7 +174,7 @@ export function AuthScreen({
                                     </View>
                                 </View>
                                 {title ? <Text accessibilityRole="header" lineBreakStrategyIOS="hangul-word" style={styles.signupTitle}>{title}</Text> : null}
-                                <Text style={styles.signupSubtitle}>{subtitle}</Text>
+                                {subtitle ? <Text style={styles.signupSubtitle}>{subtitle}</Text> : null}
                             </View>
                         ) : (
                             <View style={styles.hero}>
@@ -185,7 +185,7 @@ export function AuthScreen({
                                     <Text style={styles.heroBrandText}>NoLate</Text>
                                 </View>
                                 {title ? <Text accessibilityRole="header" style={styles.title}>{title}</Text> : null}
-                                <Text style={styles.subtitle}>{subtitle}</Text>
+                                {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
                             </View>
                         )}
 
@@ -357,7 +357,7 @@ export function AuthPrimaryButton({
             </Text>
             <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.primaryAccessory}>
                 {loading
-                    ? reduceMotion ? null : <ActivityIndicator size="small" color={colors.selectedDayText} />
+                    ? <NoLateLoadingMark size={20} delayMs={0} />
                     : <Ionicons name="arrow-forward-outline" size={18} color={colors.selectedDayText} />}
             </View>
         </Pressable>

@@ -327,15 +327,14 @@ describe("CustomDay stack indicators", () => {
         expect(findViewsByTestId(root, "detail-event-markers")).toHaveLength(1);
     });
 
-    test("상세형은 세 개 마커 뒤에 남은 일정 수를 표시한다", async () => {
+    test("상세형은 일정이 많아도 작은 표시 하나만 남긴다", async () => {
         const root = await renderDay({
             viewMode: "detail",
             eventCount: 7,
         });
-        const [overflow] = findTextsByTestId(root, "detail-event-overflow");
-
-        expect(findViewsByTestId(root, "mock-ionicon")).toHaveLength(1);
-        expect(overflow.props.children).toEqual(["+", 4, "개"]);
+        expect(findViewsByTestId(root, "mock-ionicon")).toHaveLength(0);
+        expect(findViewsByTestId(root, "detail-event-dot")).toHaveLength(1);
+        expect(findTextsByTestId(root, "detail-event-overflow")).toHaveLength(0);
     });
 
     test("상세형은 일정이 세 개면 초과 개수를 표시하지 않는다", async () => {

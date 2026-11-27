@@ -22,7 +22,7 @@ import {
   travelModeLabel,
 } from './scheduleDetailModel';
 import type { ScheduleDetailController } from './useScheduleDetailController';
-import { getTransitEtaTrustPresentation, SAVED_TRANSIT_ESTIMATE_WARNING } from '../../modules/schedule/transitEtaTrustPresentation';
+import { getTransitEtaTrustPresentation } from '../../modules/schedule/transitEtaTrustPresentation';
 import { getFutureTimetableArrivalSummary } from '../../modules/schedule/effectiveTransitRoutePresentation';
 import { formatTransitWalkingSummary, getTransitRouteWalkingMinutes } from '../../modules/schedule/transitRouteProgress';
 
@@ -163,10 +163,11 @@ export function buildScheduleDetailPresentation(
     intercityJourneySelected: Boolean(routeDetailInfo?.intercityJourney),
     intercityTicketSelected: routeDetailInfo?.intercityJourney?.service.timingBasis === "TICKET",
   });
-  // 저장만 한 경로의 반복 안내는 줄이되, 실제 조회가 실패한 사실까지 숨기지 않는다.
-  // 다른 참여자의 경로에는 현재 사용자의 조회 실패를 적용하지 않는다.
-  const hasFailedTimingLookup = !inspectedTravelPlan && Boolean(controller.departureStatus?.failureReason);
-  const isSavedRouteEstimate = etaTrust.warning === SAVED_TRANSIT_ESTIMATE_WARNING && !hasFailedTimingLookup;
+  const isSavedRouteEstimate = etaTrust.departureLabel === '예상 출발' && !etaTrust.warning;
+  const estimate = controller.currentTransitEstimate;
+  const currentTransitClock = estimate?.providerDepartureAt && estimate.providerArrivalAt
+    ? `${hhmmText(new Date(estimate.providerDepartureAt))} 출발 기준 · ${hhmmText(new Date(estimate.providerArrivalAt))} 도착 예상`
+    : undefined;
   const routeDetailMeta = [
     hasDetailedRoute
       ? isSavedRouteEstimate ? undefined : etaTrust.warning ?? (effectiveTransitRoutePresentation
@@ -182,7 +183,7 @@ export function buildScheduleDetailPresentation(
     .filter(Boolean)
     .join(' · ');
   const routeSummaryTitle = hasDetailedRoute
-    ? etaTrust.warning || effectiveTransitRoutePresentation
+    ? isSavedRouteEstimate || etaTrust.warning || effectiveTransitRoutePresentation
       ? '저장한 경로'
       : '최적 경로'
     : routeSummaryKind === 'duration_only'
@@ -193,9 +194,12 @@ export function buildScheduleDetailPresentation(
       ? `${currentTravelMinutes}분`
       : routeNumberText(routeOption)
     : '미설정';
+  const displayedRouteMinutes = routeDetailInfo?.matchedTimeline
+    ? routeDetailInfo.totalDurationMinutes
+    : savedDisplayTravelMinutes;
   const routeDurationLabel = hasRouteSummary
-    ? typeof savedDisplayTravelMinutes === 'number'
-      ? `${savedDisplayTravelMinutes}분`
+    ? typeof displayedRouteMinutes === 'number'
+      ? `${displayedRouteMinutes}분`
       : routeNumberText(routeOption)
     : '미설정';
   const recordedDepartureAt = currentMemberDepartedAt && !inspectedTravelPlan
@@ -213,17 +217,22 @@ export function buildScheduleDetailPresentation(
     : scheduleCountdown.compactValue;
   const departureTimeLabel = recordedDepartureAt ? '실제 출발' : etaTrust.departureLabel;
   const repeatsHeaderDuration = showTopRouteBar && hasDetailedRoute &&
-    !effectiveTransitRoutePresentation && Boolean(savedDisplayTravelMinutes) &&
+    !effectiveTransitRoutePresentation && Boolean(displayedRouteMinutes) &&
     currentRouteDurationLabel === routeDurationLabel;
   const timetableArrival = displayTravelMode === 'TRANSIT' && !inspectedTravelPlan && !effectiveTransitRoutePresentation
     ? getFutureTimetableArrivalSummary(controller.departureStatus, nowMs) : undefined;
   const routeArrivalSummary = !hasRouteSummary
     ? scheduleRangeLabel
-    : isSavedRouteEstimate
-    ? undefined
-    : timetableArrival ?? etaTrust.warning ?? (repeatsHeaderDuration
+    : !controller.largeRouteHeader && hasDetailedRoute && displayTravelMode === 'TRANSIT' && !controller.navigationMode
+    ? timetableArrival ?? etaTrust.warning
+    : (controller.navigationMode ? currentTransitClock : undefined) ?? timetableArrival ?? etaTrust.warning
+      ?? (isSavedRouteEstimate ? currentTransitClock : repeatsHeaderDuration
       ? `일정 ${arrivalTimeLabel}`
       : `일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`);
+  const routePlanDeparture = routeDetailInfo?.departureTime && new Date(routeDetailInfo.departureTime);
+  const routePlanTimeLabel = routePlanDeparture && Number.isFinite(routePlanDeparture.getTime())
+    ? `${hhmmText(routePlanDeparture)} 출발 ${routeDetailInfo?.timeBasis === 'estimated' ? '계획' : '기준'}`
+    : undefined;
   const effectiveRouteAccessibilityLabel = effectiveTransitRoutePresentation
     ? [
         effectiveTransitRoutePresentation.guidanceTitle,
@@ -238,10 +247,11 @@ export function buildScheduleDetailPresentation(
   // A saved ODsay timetable keeps its verified walk lengths in the timeline steps.
   // Older routes can store a physical transfer walk as TRANSFER, which can also mean waiting.
   const transitLegs = routeOption?.transitLegs;
-  const timetableSteps = routeDetailInfo?.provider === 'odsay' && routeDetailInfo.timeBasis === 'provider_schedule' &&
-    routeDetailInfo.providerTimeBasis === 'timetable' ? routeDetailInfo.steps : undefined;
-  const routeWalkingMinutes = timetableSteps
-    ? getTransitRouteWalkingMinutes(timetableSteps.filter(step => step.type === 'WALK')
+  const verifiedSteps = routeDetailInfo?.matchedTimeline ||
+    (routeDetailInfo?.provider === 'odsay' && routeDetailInfo.timeBasis === 'provider_schedule' &&
+      routeDetailInfo.providerTimeBasis === 'timetable') ? routeDetailInfo.steps : undefined;
+  const routeWalkingMinutes = verifiedSteps
+    ? getTransitRouteWalkingMinutes(verifiedSteps.filter(step => step.type === 'WALK')
       .map(({ durationMinutes, durationSeconds }) => ({ kind: 'WALK', durationMinutes, durationSeconds })), undefined, true)
     : transitLegs?.length
     ? getTransitRouteWalkingMinutes(transitLegs)
@@ -270,6 +280,7 @@ export function buildScheduleDetailPresentation(
   return {
     ...controller,
     item,
+    displayedRouteMinutes,
     routeTitle,
     routeIdentityTitle,
     showRouteIdentityInSheet: !showTopRouteBar ||
@@ -306,7 +317,9 @@ export function buildScheduleDetailPresentation(
     departureDateLabel,
     departureRemainingLabel,
     recommendedDepartureTimeLabel,
+    currentTransitClock,
     routeArrivalSummary,
+    routePlanTimeLabel,
     effectiveRouteAccessibilityLabel,
     routeWalkingMinutes,
     compactRouteFactLabels,

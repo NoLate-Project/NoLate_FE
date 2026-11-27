@@ -120,9 +120,7 @@ export default function ScheduleCalendarSelectBox({
                 </Pressable>
             ) : selectedCalendar ? (
                 <Text style={[styles.hint, { color: colors.textSecondary }]}>이 캘린더는 {contentModeLabel(selectedCalendar)}로 공유돼요.</Text>
-            ) : (
-                <Text style={[styles.hint, { color: colors.textSecondary }]}>개인 캘린더에 저장해요.</Text>
-            )}
+            ) : null}
         </View>
     );
 }

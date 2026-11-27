@@ -1,4 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import type { DateData } from "react-native-calendars";
@@ -11,12 +10,10 @@ import { getStackEventBackground } from "./stackCalendarAppearance";
 import { getCalendarTodayAccent } from "./calendarTodayAccent";
 import { useCalendarYearDateTarget } from "./CalendarYearDateHandoff";
 import {
-    DETAIL_MONTH_EVENT_MARKER_LIMIT,
     DETAIL_MONTH_GRID_COLUMN_COUNT,
     DETAIL_MONTH_GRID_ROW_COUNT,
     getDetailMonthCellGeometry,
     getDetailMonthPageModel,
-    getDetailMonthTravelIconName,
     type DetailMonthCellGeometry,
     type DetailMonthPageModel,
     type DetailMonthPagerGridProps,
@@ -83,11 +80,6 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
     const hasHoliday = holidayNames.length > 0;
     const lunarText = formatLunarCalendarDay(metadata);
     const events = marking?.events ?? [];
-    const markerEvents = events.slice(0, DETAIL_MONTH_EVENT_MARKER_LIMIT);
-    const overflowCount = Math.max(
-        0,
-        events.length - DETAIL_MONTH_EVENT_MARKER_LIMIT
-    );
     const todayAccent = getCalendarTodayAccent(colorMode);
     const holidayAccent = colorMode === "dark" ? "#ff6961" : "#d92d20";
     const weekendDateColor = colorMode === "dark"
@@ -234,39 +226,13 @@ export const DetailMonthGridCell = React.memo(function DetailMonthGridCell({
                             { top: markerTop },
                         ]}
                     >
-                        {markerEvents.map((event) => event.travelMode ? (
-                            <Ionicons
-                                accessible={false}
-                                key={event.id}
-                                name={getDetailMonthTravelIconName(
-                                    event.travelMode
-                                )}
-                                size={8}
-                                color={event.color}
-                                style={styles.detailMonthGridTravelMarker}
-                            />
-                        ) : (
-                            <View
-                                key={event.id}
-                                style={[
-                                    styles.detailMonthGridDot,
-                                    { backgroundColor: event.color },
-                                ]}
-                            />
-                        ))}
-                        {overflowCount > 0 ? (
-                            <Text
-                                accessible={false}
-                                testID="detail-event-overflow"
-                                numberOfLines={1}
-                                style={[
-                                    styles.detailMonthGridEventMore,
-                                    { color: textSecondary },
-                                ]}
-                            >
-                                +{overflowCount}개
-                            </Text>
-                        ) : null}
+                        <View
+                            testID="detail-event-dot"
+                            style={[
+                                styles.detailMonthGridDot,
+                                { backgroundColor: events[0].color },
+                            ]}
+                        />
                     </View>
                 ) : null}
         </Pressable>

@@ -7,23 +7,24 @@ import { getIntercityCities, getIntercityServices, getIntercityStops, type Inter
 import { ticketRideService, type ImportedTrainTicket, type IntercityRideService } from '../../importedTicket';
 import type { IntercitySelection } from "../../intercityJourney";
 import { isIntercityBufferMinutes, isServiceDate, koreaServiceDate, serviceTime, serviceTimeRange, timetableStatusMessage } from "../../intercityTimetableModel";
-import TrainBookingAction from './TrainBookingAction';
-import BusBookingAction from './BusBookingAction';
 import BrandedLoader from '../../../../ui/BrandedLoader';
 import LoadingIndicator from '../../../../ui/LoadingIndicator';
 import { useTimetablePanelMotion } from './useTimetablePanelMotion';
 
 const KINDS: { kind: IntercityKind; label: string }[] = [{ kind: "TRAIN", label: "기차" }, { kind: "EXPRESS_BUS", label: "고속버스" }, { kind: "INTERCITY_BUS", label: "시외버스" }];
-const INTERCITY_BUS_DATE_NOTICE = "시외버스 공공 시간표는 당일 배차만 제공합니다.";
-type Props = { importedTicket?: ImportedTrainTicket; kind?: IntercityKind; departureName?: string; arrivalName?: string; date: Date; targetArrivalAt?: Date; dark: boolean; visible?: boolean; onClose: () => void; onDismiss?: () => void; onSelect?: (selection: IntercitySelection, isCurrent: () => boolean) => Promise<void> };
+const INTERCITY_BUS_DATE_NOTICE = "시외버스 시간표는 오늘 운행편만 조회할 수 있어요.";
+type Props = { importedTicket?: ImportedTrainTicket; kind?: IntercityKind | "COACH"; departureName?: string; arrivalName?: string; date: Date; targetArrivalAt?: Date; dark: boolean; visible?: boolean; onClose: () => void; onDismiss?: () => void; onSelect?: (selection: IntercitySelection, isCurrent: () => boolean) => Promise<void> };
 
 /** Lookup is read-only until the user confirms station mapping and applies a service. */
 export default function IntercityTimetableSheet(props: Props) {
     const insets = useSafeAreaInsets();
     const { fontScale } = useWindowDimensions();
     const standardText = fontScale <= 1.35;
-    const [kind, setKind] = useState<IntercityKind | undefined>(props.kind);
-    const [date, setDate] = useState(props.importedTicket?.departureAt.slice(0, 10) ?? koreaServiceDate(props.date));
+    const [kind, setKind] = useState<IntercityKind | undefined>(props.kind === "COACH" ? undefined : props.kind);
+    const canChooseKind = !props.kind || props.kind === "COACH";
+    const availableKinds = props.kind === "COACH" ? KINDS.filter(item => item.kind !== "TRAIN") : KINDS;
+    const ticket = props.importedTicket?.kind === kind ? props.importedTicket : undefined;
+    const [date, setDate] = useState(ticket?.departureAt.slice(0, 10) ?? koreaServiceDate(props.date));
     const [dateDraft, setDateDraft] = useState<Date>();
     const [departure, setDeparture] = useState<IntercityStop>();
     const [arrival, setArrival] = useState<IntercityStop>();
@@ -38,10 +39,11 @@ export default function IntercityTimetableSheet(props: Props) {
     const [filterBySchedule, setFilterBySchedule] = useState(true);
     const [selected, setSelected] = useState<IntercityRideService>();
     const [confirmed, setConfirmed] = useState(false);
-    const [boardingBuffer, setBoardingBuffer] = useState("15");
-    const [alightingBuffer, setAlightingBuffer] = useState(props.importedTicket ? "0" : "5");
+    const [boardingBuffer, setBoardingBuffer] = useState("0");
+    const [alightingBuffer, setAlightingBuffer] = useState("0");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [buffersOpen, setBuffersOpen] = useState(false);
     const [editingBuffer, setEditingBuffer] = useState(false);
     const [loadingAction, setLoadingAction] = useState<"lookup" | "connect">();
     const [serviceResultRevision, setServiceResultRevision] = useState(0);
@@ -72,7 +74,7 @@ export default function IntercityTimetableSheet(props: Props) {
     const arrivalField = useRef<React.ElementRef<typeof Pressable>>(null);
     const boardingMinutes = Number(boardingBuffer);
     const alightingMinutes = Number(alightingBuffer);
-    const boardingValid = /^\d+$/.test(boardingBuffer) && isIntercityBufferMinutes(boardingMinutes, 5);
+    const boardingValid = /^\d+$/.test(boardingBuffer) && isIntercityBufferMinutes(boardingMinutes, 0);
     const alightingValid = /^\d+$/.test(alightingBuffer) && isIntercityBufferMinutes(alightingMinutes, 0);
     const canConnect = !!props.onSelect && confirmed && boardingValid && alightingValid;
     const epoch = useRef(0);
@@ -136,7 +138,7 @@ export default function IntercityTimetableSheet(props: Props) {
         }
     };
     const button = (label: string, onPress: () => void, active = false, disabled = false, focusKey?: string, pendingLabel?: string, accessibilityLabel = label) => {
-        const isKind = KINDS.some(item => item.label === label);
+        const isKind = availableKinds.some(item => item.label === label);
         const backgroundColor = isKind
             ? active ? props.dark ? "#343B46" : "#FFFFFF" : "transparent"
             : active ? "#2457C5" : palette.card;
@@ -235,7 +237,7 @@ export default function IntercityTimetableSheet(props: Props) {
             try {
                 await props.onSelect?.({
                     service: selected,
-                    fetchedAt: selected.timingBasis === "TICKET" ? props.importedTicket?.confirmedAt ?? "" : services?.fetchedAt ?? "",
+                    fetchedAt: selected.timingBasis === "TICKET" ? ticket?.confirmedAt ?? "" : services?.fetchedAt ?? "",
                     boardingBufferMinutes: boardingMinutes,
                     alightingBufferMinutes: alightingMinutes,
                     mappingConfirmed: confirmed,
@@ -255,10 +257,9 @@ export default function IntercityTimetableSheet(props: Props) {
         setConfirmed(false);
         setEditingBuffer(false);
     };
-    const title = selected ? "운행편 연결 확인" : target ? `${target === "departure" ? "출발" : "도착"} 역·터미널 선택` : "운행 시간표";
+    const title = selected ? "운행편 연결 확인" : target ? `${target === "departure" ? "출발" : "도착"} 역·터미널 선택` : kind ? `${KINDS.find(item => item.kind === kind)?.label} 운행 시간표` : props.kind === "COACH" ? "버스 운행 시간표" : "운행 시간표";
     const showLookup = !selected && !target;
     const emptyStops = !!stops && (stops.status === "AVAILABLE" || stops.status === "NO_SERVICES") && stops.items.length === 0;
-    const busTerminalMissing = !!target && kind !== "TRAIN" && emptyStops && !stops?.hasMore;
     const deadline = props.targetArrivalAt?.getTime();
     const now = Date.now();
     const allServices = services?.items ?? [];
@@ -293,9 +294,9 @@ export default function IntercityTimetableSheet(props: Props) {
                 <View style={s.heading}>
                     <Text accessibilityRole="header" style={[s.title, textStyle]}>{title}</Text>
                     <Text style={[s.note, { color: palette.sub }]}>
-                        {selected ? "장소와 여유 시간을 확인한 뒤 경로에 연결합니다."
+                        {selected ? "승하차 장소를 확인한 뒤 경로에 연결합니다."
                             : target ? "같은 이름의 역·터미널은 지역과 식별 번호를 확인해 선택하세요."
-                            : "공공 운행 시간표 · 예매 미확인"}
+                            : "공공 운행 시간표"}
                     </Text>
                 </View>
                 <Pressable accessibilityRole="button" accessibilityLabel="시간표 닫기" onPress={close}
@@ -306,18 +307,14 @@ export default function IntercityTimetableSheet(props: Props) {
             <ScrollView ref={scroll} testID="intercity-timetable-scroll" keyboardShouldPersistTaps="handled"
                 style={s.scroll} contentContainerStyle={s.content} scrollEventThrottle={16}
                 onScroll={event => { currentOffset.current = event.nativeEvent.contentOffset.y; }}>
-                {showLookup && props.importedTicket && <>
-                    <Text style={[s.subtitle, textStyle]}>가져온 {props.importedTicket.kind === 'TRAIN' ? '기차' : '버스'} 승차권</Text>
-                    <Text style={[s.body, textStyle]}>{props.importedTicket.departureName} → {props.importedTicket.arrivalName} · {props.importedTicket.departureAt.slice(0, 10)} {serviceTimeRange(props.importedTicket)} · {props.importedTicket.trainNumber ? `${props.importedTicket.trainNumber}편` : props.importedTicket.grade}</Text>
-                    <Text style={[s.note, { color: palette.sub }]}>사용자가 확인한 입력 정보입니다. 예매 상태는 검증되지 않았으며, 실제 승차권은 예매처에서 제시하세요. 하차역이 최종 목적지이면 하차 후 여유를 0분으로 설정할 수 있습니다.</Text>
-                    {button("가져온 승차권으로 연결", () => selectService(ticketRideService(props.importedTicket!)), true, Date.parse(props.importedTicket.departureAt) <= Date.now(), props.importedTicket.id)}
-                </>}
+                {showLookup && ticket && button("가져온 승차 시각 적용", () => selectService(ticketRideService(ticket)),
+                    false, Date.parse(ticket.departureAt) <= Date.now(), ticket.id)}
                 <Animated.View style={[s.panel, panelAnimatedStyle]}>
                 {selected ? <>
                     <View style={[s.service, { backgroundColor: palette.card }]}>
                         <Text style={[s.subtitle, textStyle]}>{serviceTimeRange(selected)}</Text>
                         <Text style={[s.body, textStyle]}>{selected.departureName} → {selected.arrivalName} · {[selected.grade, selected.trainNumber].filter(Boolean).join(" ")}</Text>
-                        <Text style={[s.note, { color: palette.sub }]}>{selected.serviceDate} · {selected.timingBasis === "TICKET" ? "가져온 승차권" : "공공 시간표"} · 예매 미확인</Text>
+                        <Text style={[s.note, { color: palette.sub }]}>{selected.serviceDate} · {selected.timingBasis === "TICKET" ? "입력한 운행 시각" : "공공 시간표"}</Text>
                     </View>
                     <Text style={[s.body, textStyle]}>현재 경로: {props.departureName} → {props.arrivalName}</Text>
                     <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: confirmed, disabled: loading }}
@@ -326,9 +323,15 @@ export default function IntercityTimetableSheet(props: Props) {
                         <Ionicons accessible={false} name={confirmed ? "checkbox-outline" : "square-outline"} size={20} color={palette.text} />
                         <Text style={[s.body, s.heading, textStyle]}>같은 승하차 장소입니다</Text>
                     </Pressable>
-                    <View style={[s.buffers, fontScale > 1.35 && s.stackedBuffers]}>
+                    <Pressable accessibilityRole="button" accessibilityLabel="여유시간 설정"
+                        accessibilityState={{ expanded: buffersOpen }} onPress={() => setBuffersOpen(value => !value)}
+                        style={s.confirmPoint}>
+                        <Text style={[s.body, { color: palette.sub }]}>여유시간{boardingMinutes + alightingMinutes > 0 ? ` ${boardingMinutes + alightingMinutes}분` : ' 추가'}</Text>
+                        <Ionicons accessible={false} name={buffersOpen ? "chevron-up-outline" : "chevron-down-outline"} size={16} color={palette.sub} />
+                    </Pressable>
+                    {buffersOpen && <View style={[s.buffers, fontScale > 1.35 && s.stackedBuffers]}>
                         {([
-                            { label: "탑승 준비시간", range: "5~120분", value: boardingBuffer, valid: boardingValid, update: setBoardingBuffer },
+                            { label: "출발 전 여유", range: "0~120분", value: boardingBuffer, valid: boardingValid, update: setBoardingBuffer },
                             { label: "하차 후 여유", range: "0~120분", value: alightingBuffer, valid: alightingValid, update: setAlightingBuffer },
                         ] as const).map(({ label, range, value, valid, update }) => (
                             <View key={label} style={s.heading}>
@@ -340,21 +343,21 @@ export default function IntercityTimetableSheet(props: Props) {
                                 {!valid && <Text accessibilityRole="alert" style={[s.note, { color: palette.error }]}>{range}으로 입력해 주세요.</Text>}
                             </View>
                         ))}
-                    </View>
+                    </View>}
                     {editingBuffer && (
                         <Pressable accessibilityRole="button" onPress={Keyboard.dismiss} style={s.keyboardDone}>
                             <Text style={[s.buttonText, { color: props.dark ? "#9FC8FF" : "#185ACC" }]}>입력 완료</Text>
                         </Pressable>
                     )}
-                    <Text style={[s.note, { color: palette.sub }]}>운행편 시각은 유지하고 역·터미널까지 오가는 경로를 다시 조회합니다. 예매는 예매처에서 확인해 주세요.</Text>
+                    <Text style={[s.note, { color: palette.sub }]}>운행편 시각은 유지하고 역·터미널까지 오가는 경로를 다시 조회합니다.</Text>
                 </> : !target ? <>
-                    <View style={[s.row, { backgroundColor: palette.card }]}>{KINDS.map(item => <View key={item.kind} style={s.kindOption}>{button(item.label, () => {
+                    {canChooseKind && <View style={[s.row, { backgroundColor: palette.card }]}>{availableKinds.map(item => <View key={item.kind} style={s.kindOption}>{button(item.label, () => {
                         if (kind === item.kind) return;
                         setDateDraft(undefined);
                         stationSearchDrafts.current = {};
                         invalidate(); setKind(item.kind); setDeparture(undefined); setArrival(undefined); setServices(undefined); setCity(undefined); setCities([]);
-                    }, kind === item.kind)}</View>)}</View>
-                    {!kind && <Text style={[s.body, textStyle]}>장거리 버스의 종류를 선택해 주세요.</Text>}
+                    }, kind === item.kind)}</View>)}</View>}
+                    {!kind && <Text style={[s.body, textStyle]}>{props.kind === "COACH" ? "버스 종류를 선택해 주세요." : "교통수단을 선택해 주세요."}</Text>}
                     <View style={[s.pointGroup, { backgroundColor: palette.card }]}>
                         {pointField("departure", departure)}
                         {pointField("arrival", arrival)}
@@ -411,7 +414,7 @@ export default function IntercityTimetableSheet(props: Props) {
                         {services.status !== "AVAILABLE" && (
                             <Text accessibilityRole="alert" style={[s.body, textStyle]}>
                                 {unsupportedBusDate
-                                    ? `${INTERCITY_BUS_DATE_NOTICE} 다른 날짜는 예매처에서 확인해 주세요.`
+                                    ? INTERCITY_BUS_DATE_NOTICE
                                     : timetableStatusMessage(services.status, services.message)}
                             </Text>
                         )}
@@ -439,7 +442,7 @@ export default function IntercityTimetableSheet(props: Props) {
                                 <Text style={[s.body, textStyle]}>{[item.grade, item.trainNumber && `${item.trainNumber}편`, item.fare && `${item.fare.toLocaleString()}원`].filter(Boolean).join(" · ")}</Text>
                                 {departed && <Text style={[s.note, { color: palette.sub }]}>예정 출발 시각 지남</Text>}
                                 {arrivesLate && <Text style={[s.note, { color: palette.sub }]}>일정 시각 이후 도착</Text>}
-                                <Text style={[s.note, { color: palette.sub }]}>시간표 · 예매 미확인</Text>
+                                <Text style={[s.note, { color: palette.sub }]}>시간표</Text>
                                 {props.onSelect && button(label, () => selectService(item), false, departed || arrivesLate, item.id)}
                             </View>;
                         })}
@@ -511,18 +514,13 @@ export default function IntercityTimetableSheet(props: Props) {
                         }}>
                         <Text style={[s.subtitle, textStyle]}>{item.name}</Text><Text style={[s.note, { color: palette.sub }]}>{item.cityName} {item.id}</Text>
                     </Pressable>)}
-                    {emptyStops && <Text style={[s.body, textStyle]}>{busTerminalMissing
-                        ? "공공 시간표 목록에서 이 터미널을 찾지 못했어요. 예매처에서 운행편을 확인해 주세요."
-                        : `일치하는 역·터미널이 없습니다.${stops?.hasMore ? " 다음 목록도 확인해 주세요." : ""}`}</Text>}
+                    {emptyStops && <Text style={[s.body, textStyle]}>{`일치하는 역·터미널이 없습니다.${stops?.hasMore ? " 다음 목록도 확인해 주세요." : ""}`}</Text>}
                     {stops?.hasMore && button("다음 역 터미널 보기", () => findStops(stops.page + 1))}
                 </>}
                 </Animated.View>
                 {loading && target && <BrandedLoader size="button" accessibilityLabel="역·터미널 조회 중" />}
                 {!target && !!error && <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
                     style={[s.note, { color: palette.error }]}>{error}</Text>}
-                {(showLookup || busTerminalMissing) && <View style={[s.booking, { borderTopColor: dividerColor }]}>
-                    {kind === "TRAIN" ? <TrainBookingAction dark={props.dark} /> : <BusBookingAction kind={kind ?? "INTERCITY_BUS"} dark={props.dark} />}
-                </View>}
             </ScrollView>
             {!target && <View style={[s.footer, { borderTopColor: dividerColor }]}>
                 {selected
@@ -566,6 +564,5 @@ const s = StyleSheet.create({
     errorRow: { gap: 8 },
     stationRetry: { alignItems: "center" },
     footer: { paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth },
-    booking: { marginTop: 8, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth },
     note: { fontSize: 13, lineHeight: 20 }, service: { borderRadius: 12, padding: 14, gap: 5 }, cities: { maxHeight: 180, borderRadius: 12 },
 });

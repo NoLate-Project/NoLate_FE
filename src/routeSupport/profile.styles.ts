@@ -39,7 +39,7 @@ const styles = StyleSheet.create({
     },
     compactContent: {
         paddingTop: 4,
-        gap: 18,
+        gap: 24,
     },
     compactIdentity: {
         minHeight: 72,
@@ -206,6 +206,25 @@ const styles = StyleSheet.create({
         borderRadius: 14,
     },
     accountNoticeText: { flex: 1, fontSize: 14, fontWeight: "700" },
+    flatSurface: { borderWidth: 0, borderRadius: 0, padding: 0, paddingHorizontal: 0, paddingVertical: 0, backgroundColor: "transparent", shadowOpacity: 0, elevation: 0, minHeight: 0 },
+    compactProfileName: { fontSize: 20, fontWeight: "600" },
+    compactProfileMeta: { fontSize: 12, fontWeight: "400" },
+    compactAccountRow: { minHeight: 50, paddingVertical: 10 },
+    compactAccountRowMain: { flexDirection: "row", alignItems: "center", gap: 12 },
+    compactAccountLabel: { fontSize: 15, fontWeight: "400", flexShrink: 0 },
+    compactAccountValue: { flex: 1, marginTop: 0, fontSize: 12, lineHeight: 18, fontWeight: "400", textAlign: "right" },
+    compactCalendarEmpty: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 56, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+    compactCalendarEmptyText: { flex: 1, fontSize: 14 },
+    compactImportText: { flex: 0, fontSize: 13, fontWeight: "500" },
+    compactThemeHeading: { paddingTop: 16 },
+    compactSettingsList: { gap: 0 },
+    compactSettingRow: { minHeight: 52, paddingHorizontal: 0, borderBottomWidth: StyleSheet.hairlineWidth },
+    compactSettingTitle: { fontSize: 15, fontWeight: "400" },
+    compactAccountActions: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+    compactAccountActionSurface: { marginTop: 0 },
+    compactAccountActionButton: { minHeight: 44, paddingHorizontal: 2 },
+    compactSignOutText: { fontSize: 14, fontWeight: "400" },
+    compactWithdrawText: { fontSize: 12, fontWeight: "400" },
     section: {
         gap: 8,
     },
@@ -356,7 +375,7 @@ const styles = StyleSheet.create({
         gap: 13,
     },
     compactCalendarConnection: {
-        padding: 14,
+        padding: 0,
         gap: 8,
     },
     calendarConnectionHeader: {
@@ -455,7 +474,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 8,
     },
-    compactCalendarAction: { borderWidth: 0, borderRadius: 12 },
+    compactCalendarAction: { minHeight: 44, borderWidth: 0, borderRadius: 12, paddingHorizontal: 12, flexShrink: 0 },
     compactCalendarHistory: {
         borderWidth: 0,
         borderTopWidth: StyleSheet.hairlineWidth,

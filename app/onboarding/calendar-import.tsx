@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
 import {
-  ActivityIndicator,
   Animated,
   KeyboardAvoidingView,
   Platform,
@@ -350,10 +349,7 @@ export default function CalendarImportOnboarding() {
                   accessibilityLiveRegion="polite"
                   style={styles.categoryStatus}
                 >
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.textSecondary}
-                  />
+                  <BrandedLoader size="inline" accessibilityLabel="카테고리 불러오는 중" />
                   <Text style={styles.categoryStatusText}>
                     카테고리를 불러오는 중이에요
                   </Text>

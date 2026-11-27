@@ -1,6 +1,7 @@
+import BrandedLoader from "../../../../ui/BrandedLoader";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, ActivityIndicator, Animated, Easing, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { AccessibilityInfo, Animated, Easing, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { NOLATE_ALARM_SOUNDS, type NoLateAlarmSoundId } from "../../../notification/customAlarmSounds";
@@ -251,9 +252,9 @@ export default function AlarmSoundPickerSheet({
                         accessibilityState={{ busy: applying, disabled: applying }}
                         disabled={applying}
                         onPress={onApply}
-                        style={({ pressed }) => [styles.applyButton, { backgroundColor: applyBackground }, pressed && styles.pressed]}
+                        style={({ pressed }) => [styles.applyButton, { backgroundColor: applying ? selectionBackground : applyBackground }, pressed && styles.pressed]}
                     >
-                        {applying ? <ActivityIndicator color={applyInk} /> : (
+                        {applying ? <BrandedLoader startup size="inline" accessibilityLabel="알람 소리 적용 중" /> : (
                             <Text style={[styles.applyLabel, { color: applyInk }]}>적용</Text>
                         )}
                     </Pressable>

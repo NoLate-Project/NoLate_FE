@@ -71,7 +71,7 @@ export async function buildIntercityJourney({ option, legIndex, origin, destinat
     if (original.kind !== service.kind && !(original.kind === 'COACH' && service.kind !== 'TRAIN')) fail('현재 경로와 같은 교통수단의 운행편을 선택해 주세요.');
     if (!selection.mappingConfirmed) fail('선택한 역·터미널이 현재 경로의 승하차 지점과 같은 곳인지 확인해 주세요.');
     if (!validCoord(original.startCoord) || !validCoord(original.endCoord) || !validCoord(asCoord(origin)) || !validCoord(asCoord(destination))) fail('승하차 지점의 지도 좌표가 없어 연결할 수 없습니다.');
-    if (!isIntercityBufferMinutes(selection.boardingBufferMinutes, 5) || !isIntercityBufferMinutes(selection.alightingBufferMinutes, 0)) fail('탑승 준비는 5~120분, 하차 후 여유는 0~120분으로 입력해 주세요.');
+    if (!isIntercityBufferMinutes(selection.boardingBufferMinutes, 0) || !isIntercityBufferMinutes(selection.alightingBufferMinutes, 0)) fail('여유시간은 0~120분으로 입력해 주세요.');
     const ticket = getImportedTicket(option);
     if (ticket) assertTicketService(ticket, service);
     else if (service.timingBasis === 'TICKET') fail('확인한 승차권 정보가 없습니다.');
@@ -111,7 +111,7 @@ export async function buildIntercityJourney({ option, legIndex, origin, destinat
     const accessLegs = access ? connectionLegs(access) : [];
     const legs: TransitLegDetail[] = [
         ...accessLegs,
-        wait(`탑승 준비·대기 (준비 ${selection.boardingBufferMinutes}분 포함)`, accessArrival, dep, original.startCoord),
+        ...(dep > accessArrival ? [wait('출발 전 여유', accessArrival, dep, original.startCoord)] : []),
         // Clear provider-specific boarding advice/IDs; it belonged to a different estimated service.
         { kind: service.kind, label: [service.grade, service.trainNumber && `${service.trainNumber}편`].filter(Boolean).join(' · ') || transitModeLabel(service.kind), lineName: [service.grade, service.trainNumber && `${service.trainNumber}편`].filter(Boolean).join(' · '), durationSeconds: (arr - dep) / 1000, durationMinutes: (arr - dep) / 60000, startName: service.departureName, endName: service.arrivalName, startCoord: original.startCoord, endCoord: original.endCoord, pathCoords: original.pathCoords, pathCoordsIsExact: false, pathGeometrySource: "UNKNOWN", distanceMeters: original.distanceMeters, startDateTime: service.departureAt, endDateTime: service.arrivalAt, intercityService: { ...service } },
         ...(selection.alightingBufferMinutes ? [wait('하차 후 여유', arr, egressDeparture, original.endCoord)] : []),

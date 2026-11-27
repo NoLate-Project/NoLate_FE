@@ -388,3 +388,20 @@ for incompleteRows in [
   precondition(uncertain.departureName.isEmpty && uncertain.arrivalName.isEmpty)
 }
 precondition(TrainTicketDraft.parse(([railDay, railRoute, railService] + railClocks).joined(separator: "\n")).departureName.isEmpty)
+
+// A ticket screen can hide its journey while still exposing the phone clock
+// and a footer timestamp. Neither is a departure or arrival field.
+for timestamp in ["2026-11-27 09:52:45", "2026-11-27 09:52:06"] {
+  let protectedScreen = TrainTicketDraft.parse(
+    "9:52\n승차권\n6일 전\n차내시설\n열차 위치\n승차권변경\n전달하기\n환불받기\n" + timestamp
+  )
+  precondition(protectedScreen.departureName.isEmpty && protectedScreen.arrivalName.isEmpty)
+  precondition(protectedScreen.trainNumber.isEmpty)
+  precondition(protectedScreen.departureTime.isEmpty && protectedScreen.arrivalTime.isEmpty)
+}
+let ticketWithFooterTimestamp = TrainTicketDraft.parse(
+  "승차권\n2026-12-03\n서울 → 동대구\nKTX 255\n06:43\n08:32\n2026-12-03 05:52:45"
+)
+precondition(ticketWithFooterTimestamp.departureTime == "2026-12-03 06:43")
+precondition(ticketWithFooterTimestamp.arrivalTime == "2026-12-03 08:32")
+print("Screen footer timestamps stay separate from ticket departure and arrival")

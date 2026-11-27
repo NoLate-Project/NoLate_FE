@@ -89,7 +89,7 @@ export function presentSavedJourneyStage(snapshot: AutomaticJourneySnapshot | nu
         const remainingStops = segment.totalStops - segment.fromStopIndex - 1;
         const nextLine = verifiedLineName(i + 2);
         const action = remainingStops === 1
-            ? `다음 ${segment.toStopName} 하차 · ${nextLine ? nextLine + ' 환승' : '하차 준비'}`
+            ? nextLine ? `다음 ${segment.toStopName} 하차 · ${nextLine} 환승` : '다음 역에서 내리세요'
             : `다음 ${segment.toStopName} · ${remainingStops}개 역 남음`;
         return {title:`${segment.fromStopName} → ${segment.toStopName}`, action, activeLegIndex:i};
     }
@@ -100,7 +100,7 @@ export function presentSavedJourneyStage(snapshot: AutomaticJourneySnapshot | nu
             const action = remainingStops === 0
                 ? nextLine ? `하차 후 ${nextLine} 환승` : '하차역 도착 · 하차 확인 중'
                 : remainingStops === 1
-                    ? nextLine ? `다음 ${nextStopName} 하차 · ${nextLine} 환승` : '다음 역 하차 · 하차 준비'
+                    ? nextLine ? `다음 ${nextStopName} 하차 · ${nextLine} 환승` : `${nextStopName ?? '다음 역'}에서 내리세요`
                     : `다음 ${nextStopName} · ${remainingStops}개 역 남음`;
             return { title: currentStopName, action, activeLegIndex: i };
         }

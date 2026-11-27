@@ -205,6 +205,8 @@ export function DrivingNavigationScreen({
   const color = isDark ? '#F8FAFD' : '#151B24';
   const secondary = isDark ? '#BFCCD9' : '#536172';
   const instruction = next?.instruction ?? status;
+  const title = next ? drivingTurnTitle(next) : status;
+  const roadName = next?.roadName;
   const [voiceEnabled, setVoiceEnabled] = useState(readDrivingVoicePreference);
   useDrivingPublication(scheduleId, destinationLabel, route, view, voiceEnabled);
 
@@ -263,10 +265,10 @@ export function DrivingNavigationScreen({
                     {distance(view.metersToNext)}
                   </Text>
                 )}
-                <Text style={styles.turnTitle}>{next ? drivingTurnTitle(next) : status}</Text>
-                {next?.roadName && (
+                <Text style={styles.turnTitle}>{title}</Text>
+                {roadName && !title.includes(roadName) && (
                   <Text style={styles.road} numberOfLines={2}>
-                    {next.roadName}
+                    {roadName}
                   </Text>
                 )}
               </View>

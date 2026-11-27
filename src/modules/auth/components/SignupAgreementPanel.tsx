@@ -1,6 +1,7 @@
+import BrandedLoader from "../../../ui/BrandedLoader";
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { AccessibilityInfo, Pressable, StyleSheet, Text, View } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
@@ -135,7 +136,7 @@ export default function SignupAgreementPanel({
 
             {policyLoading ? (
                 <View style={styles.policyStatus} accessibilityLiveRegion="polite">
-                    <ActivityIndicator size="small" color={colors.textSecondary} />
+                    <BrandedLoader size="inline" accessibilityLabel="최신 약관 확인 중" />
                     <Text style={[styles.policyStatusText, { color: colors.textSecondary }]}>최신 약관 확인 중</Text>
                 </View>
             ) : usingFallbackPolicy ? (

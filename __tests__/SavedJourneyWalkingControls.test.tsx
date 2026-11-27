@@ -26,6 +26,23 @@ beforeEach(()=>{jest.clearAllMocks();mockBinding.mockReturnValue(null);mockConte
 const schedule={scheduleId:'9001',memberId:7};
 const ownedBinding={scheduleId:'9001',sessionId:'synthetic',syncScope:'AUTHENTICATED',
     savedRouteValidated:true,guidanceEnabled:true,authMemberId:7};
+test.each([false, true])('unsupported ride shows its route without offering live guidance (departure=%s)', async departure => {
+    const fixture = setup();
+    const legs = fixture.input.legs.map((leg, index) => index === 1 ? {...leg, kind: 'ETC' as const} : leg);
+    mockTrial.mockReturnValue({snapshot: {status: 'IDLE', enabled: true}, sync: {}, running: false, pending: false});
+    const request = {scope: 'saved', signal: new AbortController().signal, claimed: false};
+    let view!: ReactTestRenderer;
+    await act(async () => {
+        view = TestRenderer.create(<SavedJourneyTrialControls input={{...fixture.input, legs}} savedRoute={fixture.route}
+            authenticatedSchedule={schedule} autoPrepareRoute={departure} departureRequest={departure ? request : undefined} />);
+    });
+    expect(view.root.findAllByProps({testID: 'saved-detail-starting'})).toHaveLength(0);
+    expect(JSON.stringify(view.toJSON())).toContain('이 경로는 실시간 길안내를 지원하지 않아요.');
+    expect(JSON.stringify(view.toJSON())).not.toContain('이동하면 출발을 감지');
+    expect(view.root.findAllByProps({testID: 'saved-detail-guidance-heading'})).toHaveLength(0);
+    expect(mockContext).not.toHaveBeenCalled();
+    act(() => view.unmount());
+});
 test.each([false, true])('walking retry resumes only an outstanding explicit departure (cancelled=%s)', async cancelled => {
     const fixture = setup();
     mockIssue.mockRejectedValueOnce(new Error('PROVIDER_BUSY')).mockResolvedValueOnce(fixture.snapshot);
@@ -98,6 +115,9 @@ test('an existing checkpoint protects the owned walking route and requires expli
     await act(async()=>{view=TestRenderer.create(render());});
     expect(mockContext).not.toHaveBeenCalled();expect(mockIssue).not.toHaveBeenCalled();
     expect(view.root.findAllByProps({testID:'saved-detail-prepare'})).toHaveLength(0);
+    expect(view.root.findByProps({testID:'saved-detail-restore-consent'}).props.accessibilityLabel)
+        .toBe('길안내 중 위치 사용에 동의합니다');
+    expect(JSON.stringify(view.toJSON())).not.toContain('이 일정의 이전 안내를 이어갈 수 있어요.');
     await act(async()=>view.root.findByProps({testID:'saved-detail-restore'}).props.onPress());
     expect(restoreSaved).not.toHaveBeenCalled();
     await act(async()=>view.root.findByProps({testID:'saved-detail-restore-consent'}).props.onPress());

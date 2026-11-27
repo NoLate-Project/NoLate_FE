@@ -245,8 +245,6 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
       minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center',
     },
     transitStartButton: { minWidth: 0, marginBottom: 0, flexShrink: 1, alignSelf: 'center' },
-    departureButtonCopy: { flexShrink: 1, alignItems: 'center' },
-    transitStartCaption: { color: '#FFFFFF', fontSize: 11, fontWeight: '500', marginTop: 1, textAlign: 'center' },
     sheetDepartureActionInline: {
       alignSelf: 'center',
       marginBottom: 0,

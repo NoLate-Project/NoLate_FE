@@ -40,46 +40,16 @@ export function createPhotoStyles(options: QuickScheduleModalStylesOptions) {
         width: "100%",
         height: "100%",
     },
-        photoEmptyPanel: {
-        minHeight: 152,
-        borderRadius: 15,
-        borderWidth: 1,
-        borderStyle: "dashed",
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: 22,
+    photoEmptyAction: {
+        minHeight: 56,
+        paddingHorizontal: 16,
         paddingVertical: 12,
-    },
-        photoEmptyIcon: {
-        width: 38,
-        height: 24,
-        borderRadius: 8,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: 6,
-    },
-        photoEmptyTitle: {
-        fontSize: 15,
-        lineHeight: 20,
-        fontWeight: "800",
-        textAlign: "center",
-    },
-        photoEmptyMeta: {
-        marginTop: 4,
-        fontSize: 12,
-        lineHeight: 17,
-        fontWeight: "500",
-        textAlign: "center",
-    },
-        photoEmptyAction: {
-        minHeight: 44,
-        minWidth: 104,
-        marginTop: 9,
-        borderRadius: 11,
-        borderWidth: StyleSheet.hairlineWidth,
-        justifyContent: "center",
-        paddingHorizontal: 12,
-        paddingVertical: 5,
+        gap: 8,
     },
         photoEmptyActionText: {
         fontSize: 13,
@@ -132,29 +102,8 @@ export function createPhotoStyles(options: QuickScheduleModalStylesOptions) {
         lineHeight: 18,
         fontWeight: "800",
     },
-        photoReadingPlaceholder: {
-        minHeight: 72,
-        justifyContent: "center",
-        gap: 9,
-        marginTop: 10,
-        paddingHorizontal: 3,
-    },
         truncatedRecognitionText: {
         color: "#F59E0B",
-    },
-        photoReadingLine: {
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: "rgba(126,145,171,0.14)",
-    },
-        photoReadingLineLong: {
-        width: "92%",
-    },
-        photoReadingLineMedium: {
-        width: "72%",
-    },
-        photoReadingLineShort: {
-        width: "46%",
     },
         photoTranscriptInputWrap: {
         gap: 4,
@@ -193,11 +142,6 @@ export function createPhotoStyles(options: QuickScheduleModalStylesOptions) {
         fontSize: 12,
         lineHeight: 17,
         fontWeight: "800",
-    },
-        photoRecognitionErrorText: {
-        fontSize: 11,
-        lineHeight: 16,
-        fontWeight: "600",
     },
         photoRecognitionRetry: {
         minHeight: 44,

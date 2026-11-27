@@ -18,10 +18,11 @@ type Props = {
     sessionId?: string;
     onStop?: () => Promise<void>;
     onPrepare?: () => void;
+    onChangeRoute?: () => void;
 };
 
 /** Mounted on explicit menu entry. Reading the saved choice never requests permission. */
-export function JourneyNavigationOptions({ dark, onClose, sessionId, onStop, onPrepare }: Props) {
+export function JourneyNavigationOptions({ dark, onClose, sessionId, onStop, onPrepare, onChangeRoute }: Props) {
     const { bottom } = useSafeAreaInsets();
     const reduceMotion = useSystemReduceMotion();
     const [mode, setMode] = useState<string>();
@@ -101,12 +102,18 @@ export function JourneyNavigationOptions({ dark, onClose, sessionId, onStop, onP
                         <Ionicons name="chevron-forward-outline" size={16} color={muted}/>
                     </Pressable>}
                     {!!feedback && <Text accessibilityLiveRegion="polite" style={{color: muted}}>{feedback}</Text>}
-                    {(onStop || onPrepare) && <View style={[styles.bottom, {borderTopColor: border}]}>
+                    {(onStop || onPrepare || onChangeRoute) && <View style={[styles.bottom, {borderTopColor: border}]}>
                         {onStop ? <Pressable testID="saved-detail-stop" accessibilityRole="button" accessibilityLabel="길안내 종료"
                             disabled={busy} onPress={() => void act(onStop)}
                             style={({pressed}) => [styles.action, {backgroundColor: dark ? '#322528' : '#FFF1F0', opacity: pressed ? 0.7 : 1}]}>
                             <Ionicons name="stop-circle-outline" color={dark ? '#FFAAA6' : '#A42A24'} size={20}/>
                             <Text style={[styles.actionText, {color: dark ? '#FFAAA6' : '#A42A24'}]}>길안내 종료</Text>
+                        </Pressable> : onChangeRoute ? <Pressable testID="journey-options-change-route" accessibilityRole="button"
+                            accessibilityLabel="다른 경로 찾기" disabled={busy} onPress={onChangeRoute}
+                            style={[styles.action, {backgroundColor: dark ? '#283442' : '#F1F4F8'}]}>
+                            <Ionicons name="map-outline" color={muted} size={18}/>
+                            <Text style={[styles.actionText, {color: ink}]}>다른 경로 찾기</Text>
+                            <Ionicons name="chevron-forward-outline" color={muted} size={18}/>
                         </Pressable> : <Pressable testID="journey-options-prepare" accessibilityRole="button" onPress={onPrepare}
                             disabled={busy} style={[styles.action, {backgroundColor: dark ? '#283442' : '#F1F4F8'}]}>
                             <Text style={[styles.actionText, {color: ink}]}>출발 전 경로 설정</Text>

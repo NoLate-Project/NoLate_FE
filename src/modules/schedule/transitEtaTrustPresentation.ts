@@ -2,8 +2,6 @@ import type { ScheduleDepartureStatus } from '../../api/schedule';
 import type { TravelMode } from './types';
 import { getFreshDepartureTiming } from './effectiveTransitRoutePresentation';
 
-export const SAVED_TRANSIT_ESTIMATE_WARNING = '운행시각 미확인 · 저장 경로 기준';
-
 /** 저장된 역산값은 유지하되, 운행·시간표 검증이 끝난 ETA처럼 안내하지 않는다. */
 export function getTransitEtaTrustPresentation({
   travelMode,
@@ -23,8 +21,8 @@ export function getTransitEtaTrustPresentation({
   if (travelMode !== 'TRANSIT') return { departureLabel: '권장 출발' };
   // 다른 참여자의 경로를 볼 때 현재 사용자의 정상 ETA를 빌려 쓰지 않는다.
   const ownStatus = isInspectingTravelPlan ? undefined : status;
-  if (intercityTicketSelected) return { departureLabel: '연결 경로 예상 출발', warning: '승차권 입력 시각 · 앞뒤 이동 예상 · 예매 상태 미검증' };
-  if (intercityJourneySelected) return { departureLabel: '연결 경로 예상 출발', warning: '선택 편 시간표 · 앞뒤 운행·예매 미확인' };
+  if (intercityTicketSelected) return { departureLabel: '연결 경로 예상 출발', warning: '입력한 운행 시각 · 앞뒤 이동 예상' };
+  if (intercityJourneySelected) return { departureLabel: '연결 경로 예상 출발', warning: '운행 시간표 · 앞뒤 이동 예상' };
   if (ownStatus?.plannedJourneyArrivalPrediction) {
     return { departureLabel: '기존 출발 안내', warning: '계획 경로의 잠정 도착 · 실제 탑승 미확인' };
   }
@@ -49,7 +47,7 @@ export function getTransitEtaTrustPresentation({
   const apiTimeout = ownStatus?.failureReason?.startsWith('TRANSIT_ARRIVAL_API_TIMEOUT:');
   const apiError = ownStatus?.failureReason?.startsWith('TRANSIT_ARRIVAL_API_ERROR:');
   const warning = intercityUnverified
-      ? '시외 운행시각 미확인 · 예매편 확인 필요'
+      ? '운행 시간표를 확인해 주세요'
       : onTimeUnavailable
       ? '현재 확인된 경로로 정시 도착 불가'
       : missedTransfer
@@ -74,10 +72,10 @@ export function getTransitEtaTrustPresentation({
       ? '실시간 도착정보 없음 · 저장 경로 기준'
       : arrivalOutOfHorizon
       ? '실시간 조회 범위 밖 · 저장 경로 기준'
-      : SAVED_TRANSIT_ESTIMATE_WARNING;
+      : undefined;
   return {
     departureLabel: '예상 출발',
-    warning: preservingEarlierDeparture && !isInspectingTravelPlan
+    warning: warning && preservingEarlierDeparture && !isInspectingTravelPlan
       ? `출발 시각 안전 유지 · ${warning}` : warning,
   };
 }

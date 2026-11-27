@@ -25,8 +25,9 @@ describe('visible pre-mounted detail ETA refresh', () => {
     source: 'TIMETABLE_PROVIDER', stale: true, failureReason,
     nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
   } as ScheduleDepartureStatus);
-  function Probe() {
+  function Probe({startAt}: {startAt?: string}) {
     result = useScheduleDepartureStatusController({
+      startAt,
       scheduleId: '363', previewEnabled: false, routeSavePending: false,
     });
     return null;
@@ -90,5 +91,18 @@ describe('visible pre-mounted detail ETA refresh', () => {
     mockIsFocused.mockReturnValue(true);
     await act(async () => { renderer.update(<Probe />); });
     expect(mockGetStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops the previous departure estimate when a saved appointment is rescheduled', async () => {
+    mockIsFocused.mockReturnValue(true);
+    let finish!: (status: ScheduleDepartureStatus) => void;
+    mockGetStatus.mockResolvedValueOnce(diagnostic('previous appointment'))
+      .mockReturnValueOnce(new Promise<ScheduleDepartureStatus>(resolve => { finish = resolve; }));
+    await act(async () => { renderer = TestRenderer.create(<Probe startAt="2026-11-27T02:55:00+09:00" />); });
+    expect(result.departureStatus?.failureReason).toBe('previous appointment');
+    await act(async () => { renderer.update(<Probe startAt="2026-11-27T03:44:00+09:00" />); });
+    expect(result.departureStatus).toBeUndefined();
+    await act(async () => { finish(diagnostic('updated appointment')); });
+    expect(result.departureStatus?.failureReason).toBe('updated appointment');
   });
 });

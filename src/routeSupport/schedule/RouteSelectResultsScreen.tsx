@@ -18,8 +18,6 @@ import TransitRouteProgressBar from "../../modules/schedule/components/route/Tra
 import { DottedWalkingRail } from "../../modules/schedule/components/route/DottedWalkingRail";
 import { DisclosureChevron } from "../../modules/schedule/components/route/RouteStepTimeline.helpers";
 import IntercityTimetableSheet from "../../modules/schedule/components/route/IntercityTimetableSheet";
-import BusBookingAction from "../../modules/schedule/components/route/BusBookingAction";
-import TrainBookingAction from "../../modules/schedule/components/route/TrainBookingAction";
 import { isIntercityBusKind, isIntercityRideKind, isTransitRideKind, transitModeLabel } from "../../modules/map/transitModes";
 import { getTransitRouteSummaryAccessibilityLabel } from "../../modules/schedule/transitRouteProgress";
 import type { TransitLegDetail, RouteAlternativeOption } from "../../modules/map/tmapApiCore";
@@ -284,7 +282,7 @@ export function RouteSelectResultsScreen({
         >
             <StatusBar barStyle={statusBarStyle} />
             {timetableLeg && <IntercityTimetableSheet importedTicket={importedTicket} visible={timetableVisible}
-                kind={timetableLeg.leg.kind === "COACH" ? undefined : timetableLeg.leg.kind as "TRAIN" | "EXPRESS_BUS" | "INTERCITY_BUS"}
+                kind={timetableLeg.leg.kind as "TRAIN" | "EXPRESS_BUS" | "INTERCITY_BUS" | "COACH"}
                 departureName={timetableLeg.leg.startName} arrivalName={timetableLeg.leg.endName}
                 date={routeDepartureAt ?? new Date()} targetArrivalAt={routeTargetArrivalAt} dark={isDark}
                 onSelect={async (selection, isCurrent) => {
@@ -813,8 +811,6 @@ export function RouteSelectResultsScreen({
                                             </Text>
                                         </Pressable>
                                     ))}
-                                    {selected && option.transitLegs?.some(leg => leg.kind === 'TRAIN') && <TrainBookingAction dark={isDark} />}
-                                    {selected && option.transitLegs?.filter(leg => ['EXPRESS_BUS', 'INTERCITY_BUS', 'COACH'].includes(leg.kind)).slice(0, 1).map(leg => <BusBookingAction key={leg.kind} kind={leg.kind} dark={isDark} />)}
                                     {shouldShowRequiredMapAttribution(option) && !!option.attributionText && !!option.attributionUrl && (
                                         <Pressable
                                             accessibilityRole="link"

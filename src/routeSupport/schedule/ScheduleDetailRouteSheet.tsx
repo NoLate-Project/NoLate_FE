@@ -1,4 +1,5 @@
-import ImportedTicketSummary from '../../modules/schedule/components/detail/ImportedTicketSummary';
+import { getImportedTicket } from '../../modules/schedule/importedTicket';
+import { ImportedTicketDisclosure } from '../../modules/schedule/components/detail/ImportedTicketSummary';
 import ScheduleSharingInformation from '../../modules/schedule/components/detail/ScheduleSharingInformation';
 import React, { useMemo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Reanimated, { Easing, FadeIn, FadeOut, Keyframe, ReduceMotion } from 'react-native-reanimated';
@@ -33,6 +34,7 @@ import type { ScheduleDetailPresentation } from './scheduleDetailPresentationMod
 import { ScheduleRouteFacts } from './ScheduleRouteFacts';
 import { ScheduleDetailRouteQuickSummary } from './ScheduleDetailRouteQuickSummary';
 import { SavedJourneyInstruction } from '../../modules/journey/SavedJourneyGuidanceCard';
+import { RouteSheetOverview } from './RouteSheetOverview';
 import { presentPlannedJourneyRouteLayout } from '../../modules/journey/savedJourneyRouteLayout';
 import { JourneyNavigationOptions } from '../../modules/journey/JourneyNavigationOptions';
 import { SavedJourneyRouteBar } from '../../modules/journey/SavedJourneyRouteBar';
@@ -113,6 +115,7 @@ export function ScheduleDetailRouteSheet({
     canRetryRouteSave,
     retryRouteSave,
     routeSummaryTitle,
+    routePlanTimeLabel,
     selectedRoutePassStop,
     selectedRouteStepId,
     secondaryText,
@@ -176,7 +179,7 @@ export function ScheduleDetailRouteSheet({
   const departureFailed = departureSubmissionStatus === 'failed' && !departureCompleted && !journeyGuidanceAvailable;
   const departureActionDisabled = departureActionPending || routeSavePending;
   const sharedDeparture = companionCount > 1;
-  const departureActionLabel = departureCompleted ? '길안내 보기' : '지금 출발';
+  const departureActionLabel = departureCompleted ? '길안내 보기' : onStartDriving ? '지금 출발' : '안내 시작';
   const routeSaveSucceeded = routeSaveConfirmed && !routeSavePending && !canRetryRouteSave;
   const expanded = sheetMode === 'expanded';
   const { value: guidanceValue, stage: guidanceStage, position: guidancePosition, layout: guidanceLayout } = guidance;
@@ -224,16 +227,22 @@ export function ScheduleDetailRouteSheet({
   const [optionsKey, setOptionsKey] = useState<string | null>(null);
   const activeMenuKey = showNavigationDock && guidance.snapshot?.sessionId === guidanceSessionId && guidanceSessionId
     ? JSON.stringify([departureScope, guidanceSessionId, guidanceBinding?.generation]) : null;
-  const idleMenuKey = departureScope && !navigationMode && !automaticGuidanceActive ? departureScope : null;
+  const idleMenuKey = authenticatedGuidanceEntry && !navigationMode && !automaticGuidanceActive
+    ? departureScope ?? item.id : null;
   const visibleMenuKey = presentation.scheduleScreenVisible ? activeMenuKey ?? idleMenuKey : null;
   useEffect(() => { setOptionsKey(current => current === visibleMenuKey ? current : null); }, [visibleMenuKey]);
   const [dockRowHeight, setDockRowHeight] = useState(52);
-  const dockReserve = showNavigationDock ? dockRowHeight : 0;
+  const browseRoute = hasDetailedRoute && displayTravelMode === 'TRANSIT' && !largeRouteHeader
+    && !inspectedTravelPlan && !navigationMode && !automaticGuidanceActive;
+  const showBrowseDock = browseRoute && journeyGuidanceAvailable && authenticatedGuidanceEntry;
+  const [browseDockRowHeight, setBrowseDockRowHeight] = useState(64);
+  const dockReserve = showNavigationDock ? dockRowHeight : showBrowseDock ? browseDockRowHeight : 0;
   const coveredBottom = sheetBottomPadding + dockReserve;
   const actionInSummary = !expanded && !navigationHeroActive;
-  const showDepartureInHeader = expanded && hasDetailedRoute && !navigationHeroActive && !inspectedTravelPlan;
+  const showDepartureInHeader = expanded && hasDetailedRoute && !navigationHeroActive && !inspectedTravelPlan && !browseRoute;
   const [openedGuidanceSchedule, setOpenedGuidanceSchedule] = useState<string>();
-  const keepsGuidanceControls = authenticatedGuidanceEntry && (expanded || showNavigationDock || openedGuidanceSchedule === String(item.id));
+  const keepsGuidanceControls = authenticatedGuidanceEntry && (navigationMode || largeRouteHeader
+    && (expanded || showNavigationDock || openedGuidanceSchedule === String(item.id)));
   const showGuidanceControlsFirst = navigationMode || navigationHeroActive || !hasDetailedRoute;
   useEffect(() => {
     if (expanded && authenticatedGuidanceEntry) setOpenedGuidanceSchedule(String(item.id));
@@ -241,6 +250,12 @@ export function ScheduleDetailRouteSheet({
   const { height: windowHeight } = useWindowDimensions();
   const scrollOffset = useRef(0);
   const busBoardingOffset = useRef(new Animated.Value(0)).current;
+  useLayoutEffect(() => {
+    if (!navigationMode) return;
+    scrollOffset.current = 0;
+    busBoardingOffset.setValue(0);
+    sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [navigationMode, busBoardingOffset, sheetScrollRef]);
   const revealRequest = useRef(0);
   const sheetHeader = useRef<View>(null);
   const shouldRevealCompanion = useRef(false);
@@ -383,6 +398,7 @@ export function ScheduleDetailRouteSheet({
       style={({ pressed }) => [
         styles.sheetDepartureAction,
         offersTransitStart ? styles.transitStartButton : largeRouteHeader ? styles.sheetDepartureActionLarge : (actionInSummary || showDepartureInHeader) && styles.sheetDepartureActionInline,
+        browseRoute && navigationStyles.browseStartButton,
         {
           backgroundColor: departureCompleted
             ? isDark ? 'rgba(41,121,255,0.20)' : 'rgba(41,121,255,0.12)'
@@ -392,18 +408,16 @@ export function ScheduleDetailRouteSheet({
       ]}
     >
       <Ionicons name="navigate-outline" size={16} color={departureCompleted ? topCardAccentText : '#FFFFFF'} />
-      <View style={styles.departureButtonCopy}><Text
+      <Text
         maxFontSizeMultiplier={2}
         lineBreakStrategyIOS="hangul-word"
         style={[styles.sheetDepartureActionText, { color: departureCompleted ? topCardAccentText : '#FFFFFF' }]}
       >
         {departureActionLabel}
       </Text>
-        {offersTransitStart && <Text style={styles.transitStartCaption}>위치 사용 · 최대 2시간</Text>}
-      </View>
     </Pressable>
   ) : null;
-  const departureAction = offersTransitStart && departureButton ? (
+  const departureAction = offersTransitStart && departureButton && largeRouteHeader ? (
     <View style={[styles.transitDepartureActions, largeRouteHeader && styles.sheetDepartureActionLarge]}>
       <Pressable testID="schedule-route-guidance-settings" accessibilityRole="button" accessibilityLabel="길안내 설정"
         accessibilityHint="출발 전에 음성과 알림 방식을 선택합니다." onPress={() => setOptionsKey(idleMenuKey)}
@@ -413,6 +427,42 @@ export function ScheduleDetailRouteSheet({
       {departureButton}
     </View>
   ) : departureButton;
+
+  const showRouteActions = hasDetailedRoute && !largeRouteHeader && !inspectedTravelPlan
+    && !navigationMode && !automaticGuidanceActive;
+  const routeActions = showRouteActions ? (
+    <View testID="schedule-route-secondary-actions" style={styles.routeSecondaryActions}>
+      <Pressable ref={routePlannerButton}
+        accessibilityRole="button" accessibilityLabel="길찾기에서 경로 보기"
+        accessibilityState={{ busy: routeSavePending, disabled: routeSavePending }}
+        disabled={routeSavePending}
+        onPress={() => openCurrentRoutePlanner(() => {
+          if (routePlannerButton.current) AccessibilityInfo.sendAccessibilityEvent?.(routePlannerButton.current, 'focus');
+        })}
+        style={({ pressed }) => [styles.routeSecondaryAction, { opacity: routeSavePending ? 0.35 : pressed ? 0.58 : 1 }]}
+      >
+        {routeSavePending ? <LoadingIndicator size="inline" delayMs={150} />
+          : <Ionicons name="map-outline" size={16} color={secondaryText} />}
+        <Text style={[styles.routeSecondaryActionLabel, { color: secondaryText }]}>길찾기</Text>
+      </Pressable>
+      {!browseRoute && offersTransitStart && departureButton && <Pressable
+        testID="schedule-route-guidance-settings" accessibilityRole="button" accessibilityLabel="안내 설정"
+        accessibilityHint="출발 전에 음성과 알림 방식을 선택합니다."
+        accessibilityState={{ disabled: departureActionDisabled, expanded: !!idleMenuKey && optionsKey === idleMenuKey }}
+        onPress={() => setOptionsKey(idleMenuKey)} disabled={departureActionDisabled}
+        style={({ pressed }) => [styles.routeSecondaryAction, { opacity: departureActionDisabled ? 0.35 : pressed ? 0.58 : 1 }]}
+      >
+        <Ionicons name="options-outline" size={16} color={secondaryText} />
+        <Text style={[styles.routeSecondaryActionLabel, { color: secondaryText }]}>안내 설정</Text>
+      </Pressable>}
+    </View>
+  ) : null;
+
+  const overview = browseRoute ? <RouteSheetOverview minutes={presentation.displayedRouteMinutes}
+    fallback={routeDurationLabel} departureClock={recommendedDepartureTimeLabel}
+    departureDate={departureDateLabel} departed={departureCompleted}
+    primary={primaryText} secondary={secondaryText}
+    warning={routeDetailInfo?.intercityJourney ? undefined : routeArrivalSummary} /> : null;
 
   const departureAlertEnabled = item.myTravelPlan?.notificationEnabled ?? item.notificationEnabled;
   const canRecordDeparture = !journeyGuidanceAvailable && !guidancePrepared && (
@@ -463,8 +513,8 @@ export function ScheduleDetailRouteSheet({
   ) : null;
 
   const showDepartureInBody = !navigationHeroActive && !showDepartureInHeader;
-  const showExpandedStatus = showDepartureInBody || showRouteIdentityInSheet ||
-    Boolean(arrivalSummary || (!sharedDeparture && manualDeparture));
+  const showExpandedStatus = !browseRoute && (showDepartureInBody || showRouteIdentityInSheet ||
+    Boolean(arrivalSummary || (!sharedDeparture && manualDeparture)));
   const departureContext = (
     <View style={styles.expandedDepartureContext}>
       <Reanimated.View
@@ -635,14 +685,15 @@ export function ScheduleDetailRouteSheet({
               <Ionicons name="chevron-up-outline" size={15} color={secondaryText} />
             </Pressable>
           )}
-          {showDepartureInHeader ? (
+          {browseRoute && expanded && overview}
+          {!browseRoute && (showDepartureInHeader ? (
             <View style={[styles.expandedDepartureHeader, largeRouteHeader && styles.expandedDepartureHeaderLarge]}>
               <Reanimated.View entering={departureContextIn} style={!largeRouteHeader && styles.expandedDepartureHeaderCopy}>
                 {departureContext}
               </Reanimated.View>
               {departureAction}
             </View>
-          ) : !actionInSummary && departureAction}
+          ) : !actionInSummary && departureAction)}
           {(routeSavePending || routeSaveConfirmed || canRetryRouteSave) && (
             <Reanimated.View
               entering={routeSaveFeedbackIn}
@@ -713,9 +764,11 @@ export function ScheduleDetailRouteSheet({
           automaticRouteSummary={!showNavigationDock && navigationHeroActive && displayedGuidanceInput && (
             <SavedJourneyRouteBar input={displayedGuidanceInput} position={expanded ? null : guidancePosition}
               layout={guidanceLayout ?? plannedGuidanceLayout} compact isDark={isDark} showCopy={false} recovery={positionRecovered}
-              navigation={navigationMode} />
+              navigation={navigationMode} trackingLocation={!endedGuidance} />
           )}
           departureAction={actionInSummary ? departureAction : null}
+          secondaryActions={actionInSummary && !browseRoute ? routeActions : null}
+          overview={actionInSummary ? overview : undefined}
         />
         <Animated.ScrollView
           ref={sheetScrollRef}
@@ -740,7 +793,6 @@ export function ScheduleDetailRouteSheet({
           accessibilityElementsHidden={!expanded}
           importantForAccessibility={expanded ? 'auto' : 'no-hide-descendants'}
         >
-          <ImportedTicketSummary route={item.route} showBooking={sheetMode === 'expanded'} />
           {showGuidanceControlsFirst && guidanceControls}
           <View
             onLayout={handleExpandedContentLayout}
@@ -901,10 +953,11 @@ export function ScheduleDetailRouteSheet({
             ) : null}
 
             <>
-              <View
+              {!browseRoute && <View
                 collapsable={false}
                 style={[
                   styles.sheetRouteSummary,
+                  !largeRouteHeader && styles.compactRouteSectionSpacing,
                   { borderBottomColor: sheetBorder },
                 ]}
               >
@@ -916,7 +969,7 @@ export function ScheduleDetailRouteSheet({
                         testID="schedule-route-timeline-heading"
                         lineBreakStrategyIOS="hangul-word"
                         maxFontSizeMultiplier={2.25}
-                        style={[styles.sheetRouteTitle, { color: primaryText }]}
+                        style={[styles.sheetRouteTitle, !largeRouteHeader && styles.compactRouteSheetHeading, { color: primaryText }]}
                       >
                         {routeSummaryTitle}
                       </Text>
@@ -949,7 +1002,7 @@ export function ScheduleDetailRouteSheet({
                       </>
                     )}
                   </View>
-                  {!hasDetailedRoute || !inspectedTravelPlan ? (
+                  {!hasDetailedRoute || (!inspectedTravelPlan && !showRouteActions) ? (
                     <View style={styles.sheetRouteActions}>
                       {!hasDetailedRoute ? (
                         <Text
@@ -982,7 +1035,7 @@ export function ScheduleDetailRouteSheet({
                             styles.sheetRouteMapButton,
                             hasDetailedRoute && styles.sheetRouteMapButtonLabeled,
                             {
-                              backgroundColor: hasDetailedRoute || pressed
+                              backgroundColor: pressed || (hasDetailedRoute && largeRouteHeader)
                                 ? topCardControlBg
                                 : 'transparent',
                               opacity: routeSavePending
@@ -991,12 +1044,13 @@ export function ScheduleDetailRouteSheet({
                                 ? 0.58
                                 : 1,
                             },
+                            hasDetailedRoute && !largeRouteHeader && styles.compactRoutePlannerLink,
                           ]}
                         >
                           {routeSavePending ? (
                             <LoadingIndicator size="inline" delayMs={150} />
                           ) : (
-                            <Ionicons
+                            (largeRouteHeader || !hasDetailedRoute) && <Ionicons
                               name="map-outline"
                               size={hasDetailedRoute ? 17 : 21}
                               color={hasDetailedRoute ? topCardAccentText : primaryText}
@@ -1014,13 +1068,19 @@ export function ScheduleDetailRouteSheet({
                       )}
                     </View>
                   ) : null}
+                  {!actionInSummary && routeActions}
                 </View>
-                {hasDetailedRoute && routeDetailInfo && inspectedTravelPlan ? (
+                {!largeRouteHeader && hasDetailedRoute && routePlanTimeLabel && (
+                  <Text testID="schedule-route-plan-time" style={[styles.routePlanTimeText, { color: secondaryText }]}>
+                    {routePlanTimeLabel}
+                  </Text>
+                )}
+                {hasDetailedRoute && routeDetailInfo && inspectedTravelPlan && largeRouteHeader ? (
                   <Text style={[styles.routeDetailBaseTimeText, { color: secondaryText }]}>
                     {hhmmText(fromISO(routeDetailInfo.departureTime))} 출발 기준
                   </Text>
                 ) : null}
-              </View>
+              </View>}
 
               {hasDetailedRoute && routeDetailInfo ? (
                 <SavedJourneyRouteTimeline
@@ -1044,7 +1104,7 @@ export function ScheduleDetailRouteSheet({
                   secondaryTextColor={secondaryText}
                   compact
                   inlineStationRail
-                  showEstimatedClockHeading={!largeRouteHeader && displayTravelMode === 'TRANSIT'}
+                  showEstimatedClockHeading={false}
                   busBoardingScroll={expanded && !largeRouteHeader ? {
                     ref: sheetScrollRef,
                     offset: busBoardingOffset,
@@ -1132,10 +1192,29 @@ export function ScheduleDetailRouteSheet({
             </>
           </View>
           {!showGuidanceControlsFirst && guidanceControls}
+          {!navigationMode && sheetMode === 'expanded' && getImportedTicket(item.route) && (
+            <ImportedTicketDisclosure key={item.id} route={item.route} />
+          )}
         </Animated.ScrollView>
         </View>
       </View>
     </Animated.View>
+    {showBrowseDock && departureButton && <View testID="route-browse-action-dock"
+      style={[navigationStyles.dock, { paddingBottom: presentation.insets.bottom, borderColor: sheetBorder,
+        backgroundColor: isDark ? '#171A20' : '#F6F8FA' }]}>
+      <View style={navigationStyles.browseDockRow}
+        onLayout={event => setBrowseDockRowHeight(Math.ceil(event.nativeEvent.layout.height))}>
+        <Pressable ref={routePlannerButton} testID="schedule-route-guidance-settings" accessibilityRole="button"
+          accessibilityLabel="안내 설정" accessibilityHint="출발 전에 음성과 알림 방식을 선택합니다."
+          disabled={departureActionDisabled} accessibilityState={{ disabled: departureActionDisabled }}
+          onPress={() => setOptionsKey(idleMenuKey)}
+          style={({ pressed }) => [styles.routeSecondaryAction, { opacity: pressed || departureActionDisabled ? 0.5 : 1 }]}>
+          <Ionicons name="options-outline" size={17} color={secondaryText} />
+          <Text style={[styles.routeSecondaryActionLabel, { color: secondaryText }]}>안내 설정</Text>
+        </Pressable>
+        <View style={navigationStyles.browseDeparture}>{departureButton}</View>
+      </View>
+    </View>}
     {showNavigationDock && displayedGuidanceInput && (
       <View style={[navigationStyles.dock, {paddingBottom: presentation.insets.bottom, borderColor: sheetBorder,
         backgroundColor: isDark ? '#13171D' : '#FFFFFF'}]}>
@@ -1160,7 +1239,14 @@ export function ScheduleDetailRouteSheet({
     )}
     {idleMenuKey && optionsKey === idleMenuKey && presentation.scheduleScreenVisible &&
       <JourneyNavigationOptions dark={isDark} onClose={() => setOptionsKey(null)}
-        onPrepare={() => { setOptionsKey(null); void completeDeparture(); }}/>}
+        onChangeRoute={browseRoute ? () => {
+          setOptionsKey(null);
+          openCurrentRoutePlanner(() => {
+            if (routePlannerButton.current) AccessibilityInfo.sendAccessibilityEvent?.(routePlannerButton.current, 'focus');
+          });
+        } : undefined}
+        onPrepare={browseRoute ? undefined : () => { setOptionsKey(null); void completeDeparture(); }}/>
+}
     </>
   ) : null;
 }
@@ -1192,6 +1278,9 @@ const styles = createScheduleDetailStyles({
 });
 
 const navigationStyles = StyleSheet.create({
+  browseDockRow: { minHeight: 64, paddingHorizontal: 20, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  browseDeparture: { flex: 1, alignItems: 'stretch' },
+  browseStartButton: { alignSelf: 'stretch', minHeight: 48, marginBottom: 0, borderRadius: 12 },
   dock: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 29, borderTopWidth: StyleSheet.hairlineWidth },
   dockRow: { minHeight: 52, paddingHorizontal: 12, paddingVertical: 3, flexDirection: 'row', alignItems: 'center' },
   dockRail: { flex: 1, minWidth: 0 },

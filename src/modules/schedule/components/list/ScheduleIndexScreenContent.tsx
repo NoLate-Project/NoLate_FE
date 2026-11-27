@@ -2,7 +2,7 @@ import { createScheduleIndexStyles } from '../../../../routeSupport/schedule/ind
 import React from 'react';
 import { AGENDA_WEEK_HEIGHT } from '../calendar/viewMode';
 import { Animated, StatusBar, type Text, View, useWindowDimensions } from 'react-native';
-import Reanimated from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import CalendarWrapper from '../calendar/CalendarWrapper';
 import CalendarYearOverviewModal from '../calendar/CalendarYearOverviewModal';
 import { CalendarYearDateHandoff, CalendarYearDateTargets, type CalendarDatePoint } from '../calendar/CalendarYearDateHandoff';
@@ -44,7 +44,7 @@ function sanitizeCalendarTransitionError(error?: string | null) {
   return getCalendarErrorMessage(error) ?? null;
 }
 
-const CALENDAR_CONTEXT_HEIGHT = 24;
+const CALENDAR_CONTEXT_HEIGHT = 0;
 
 const STICKY_MONTH_HEADER_HEIGHT = 50;
 
@@ -185,9 +185,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     monthAgendaPanelOpacity,
     monthAgendaSwapOutgoingOpacity,
     monthAgendaSwapIncomingOpacity,
-    monthCalendarAnimatedStyle,
-    monthAgendaSlotAnimatedStyle,
-    monthCalendarTargetLayerStyle,
+    monthCalendarTargetHeight,
     handleMonthDisplayLayout,
     calendarContentTranslateX,
     yearOverviewTranslateX,
@@ -236,8 +234,24 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
   } = controller;
   const { fontScale } = useWindowDimensions();
   const [weekExpanded, setWeekExpanded] = React.useState(false);
+  const [categoryBannerHeight, setCategoryBannerHeight] = React.useState(54);
+  const categoryBannerInset = categoryError ? categoryBannerHeight + 10 : 0;
   const showAgendaWeek = weekExpanded && calendarViewMode === 'detail' && calendarDepth === 'month';
   const weekHeight = calendarHeaderOffset + AGENDA_WEEK_HEIGHT;
+  const monthCalendarAnimatedStyle = useAnimatedStyle(() => {
+    const height = showAgendaWeek ? weekHeight : monthCalendarAnimatedHeight.value;
+    return height > 0 ? { height } : {};
+  });
+  const monthAgendaSlotAnimatedStyle = useAnimatedStyle(() => {
+    const top = showAgendaWeek ? weekHeight : monthCalendarAnimatedHeight.value;
+    return { top: Math.max(0, top), opacity: top > 0 ? 1 : 0 };
+  });
+  const monthCalendarTargetLayerStyle = useAnimatedStyle(() => {
+    const height = showAgendaWeek ? weekHeight : detailMonthMotionActive.value
+      ? monthCalendarAnimatedHeight.value : monthCalendarTargetHeight.value;
+    return height > 0 ? { height } : {};
+  });
+
   React.useEffect(() => {
     if (calendarViewMode !== 'detail' || calendarDepth !== 'month') setWeekExpanded(false);
   }, [calendarViewMode, calendarDepth]);
@@ -268,6 +282,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
 
       {categoryError ? (
         <View
+          onLayout={event => setCategoryBannerHeight(event.nativeEvent.layout.height)}
           accessibilityElementsHidden={calendarOverlayOwnsAccessibility}
           importantForAccessibility={
             calendarOverlayOwnsAccessibility ? 'no-hide-descendants' : 'auto'
@@ -310,7 +325,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         style={styles.toolbarLayer}
       >
         <ScheduleIndexCalendarPrimaryLayer controller={controller} />
-        <ScheduleIndexCalendarOverlayMenus controller={controller} />
+        <ScheduleIndexCalendarOverlayMenus controller={controller} categoryBannerInset={categoryBannerInset} />
       </View>
 
       <Animated.View
@@ -321,6 +336,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
         style={[
           styles.calendarContent,
           {
+            marginTop: categoryBannerInset,
             opacity: calendarContentTodayOpacity,
             transform: [
               { translateX: calendarContentTranslateX },
@@ -365,12 +381,12 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
           >
             <Reanimated.View
               collapsable={false}
-              style={[styles.monthCalendarFrame, showAgendaWeek ? { height: weekHeight } : monthCalendarAnimatedStyle]}
+              style={[styles.monthCalendarFrame, monthCalendarAnimatedStyle]}
             >
               <Reanimated.View
                 style={[
                   styles.monthCalendarIncomingLayer,
-                  showAgendaWeek ? { height: weekHeight } : monthCalendarTargetLayerStyle,
+                  monthCalendarTargetLayerStyle,
                 ]}
               >
                 <View
@@ -421,7 +437,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
             {(monthAgendaIsOpen || isMonthViewTransitionActive) && (
               <Reanimated.View
                 collapsable={false}
-                style={[styles.monthAgendaSlot, showAgendaWeek ? { top: weekHeight } : monthAgendaSlotAnimatedStyle]}
+                style={[styles.monthAgendaSlot, monthAgendaSlotAnimatedStyle]}
               >
                 <Animated.View
                   pointerEvents={
@@ -551,7 +567,7 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
           selectedDay={selectedDay}
           firstDay={firstDay}
           items={yearOverviewItems}
-          topInset={insets.top + CALENDAR_CONTEXT_HEIGHT}
+          topInset={insets.top + CALENDAR_CONTEXT_HEIGHT + categoryBannerInset}
           presentationRequest={yearOverviewPresentationRequest}
           todayRequest={yearTodayRequest}
           visible={yearOverviewVisible}

@@ -36,7 +36,7 @@ type QuickSchedulePresentationOptions = {
   text: string;
   voiceDurationMillis: number;
   voiceMeterHistory: number[];
-  voicePermissionDenied: boolean;
+  voiceNeedsManualInput: boolean;
   voiceStatusMessage: string;
   voiceTranscript: string;
   voiceUri: string | null;
@@ -59,7 +59,7 @@ export function buildQuickSchedulePresentation({
   text,
   voiceDurationMillis,
   voiceMeterHistory,
-  voicePermissionDenied,
+  voiceNeedsManualInput,
   voiceStatusMessage,
   voiceTranscript,
   voiceUri,
@@ -131,9 +131,9 @@ export function buildQuickSchedulePresentation({
             : "일정 미리보기";
   const inputModeDescription =
     inputMode === "photo"
-      ? "안내문이나 초대장을 불러올 수 있어요."
+      ? "안내문이나 초대장에서 날짜와 장소를 읽어요."
       : inputMode === "voice"
-        ? voicePermissionDenied
+        ? voiceNeedsManualInput
           ? "날짜와 장소를 직접 적어 주세요."
           : "날짜와 장소를 말하거나 적어 주세요."
         : "일정 문장을 붙여넣거나 직접 적어 주세요.";
@@ -148,7 +148,6 @@ export function buildQuickSchedulePresentation({
     photoErrorSurface: isDark
       ? "rgba(255,69,58,0.13)"
       : "rgba(239,68,68,0.065)",
-    photoErrorTextColor: isDark ? "#FFB2AD" : "#9F3A36",
     photoErrorTitleColor: isDark ? "#FF8A84" : "#B42318",
     photoNeedsReview,
     photoScanFrameStyle,

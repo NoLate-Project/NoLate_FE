@@ -5,7 +5,6 @@ import {
     Text,
     Pressable,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import Reanimated, {
     useAnimatedStyle,
     type SharedValue,
@@ -80,16 +79,6 @@ type Props = {
     stackEventTop?: number;
     hideStackEventLabels?: boolean;
 };
-
-const DETAIL_EVENT_MARKER_LIMIT = 3;
-
-function travelIconName(mode: TravelMode): keyof typeof Ionicons.glyphMap {
-    if (mode === "TRANSIT") return "bus-outline";
-    if (mode === "CAR") return "car-outline";
-    if (mode === "WALK") return "walk-outline";
-    if (mode === "BIKE") return "bicycle-outline";
-    return "navigate-outline";
-}
 
 // 캘린더의 하루 셀을 선택 상태와 일정 마커에 맞춰 렌더링한다.
 function CustomDay({
@@ -390,11 +379,6 @@ function CustomDay({
     const hasPeriods = !!(marking?.periods && marking.periods.length > 0);
     const hasDots = !!(marking?.dots && marking.dots.length > 0);
     const events = marking?.events ?? [];
-    const detailMarkerEvents = events.slice(0, DETAIL_EVENT_MARKER_LIMIT);
-    const detailOverflowCount = Math.max(
-        0,
-        events.length - DETAIL_EVENT_MARKER_LIMIT
-    );
     const fallbackStackPresentation: StackDayPresentation = {
         lanes: events.slice(0, 2).map((event, lane): StackEventPresentation => ({
             ...event,
@@ -607,36 +591,10 @@ function CustomDay({
                         animatedDetailMarkersStyle,
                     ]}
                 >
-                    {detailMarkerEvents.map((event) => (
-                        event.travelMode ? (
-                            <Ionicons
-                                accessible={false}
-                                key={event.id}
-                                name={travelIconName(event.travelMode)}
-                                size={8}
-                                color={event.color}
-                                style={styles.detailTravelMarker}
-                            />
-                        ) : (
-                            <View
-                                key={event.id}
-                                style={[styles.detailDot, { backgroundColor: event.color }]}
-                            />
-                        )
-                    ))}
-                    {detailOverflowCount > 0 ? (
-                        <Text
-                            accessible={false}
-                            testID="detail-event-overflow"
-                            numberOfLines={1}
-                            style={[
-                                styles.detailEventMore,
-                                { color: colors.textSecondary },
-                            ]}
-                        >
-                            +{detailOverflowCount}개
-                        </Text>
-                    ) : null}
+                    <View
+                        testID="detail-event-dot"
+                        style={[styles.detailDot, { backgroundColor: events[0].color }]}
+                    />
                 </Reanimated.View>
             )}
 

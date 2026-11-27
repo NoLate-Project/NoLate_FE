@@ -4,7 +4,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import { getBusArrivals, getSubwayArrivals } from "../src/api/transitArrivals";
 import RouteStepTimeline from "../src/modules/schedule/components/route/RouteStepTimeline";
-import { getArrivalClockText, getArrivalWaitText } from "../src/modules/schedule/components/route/RouteStepTimeline.helpers";
+import { buildRideDescription, getArrivalClockText, getArrivalWaitText } from "../src/modules/schedule/components/route/RouteStepTimeline.helpers";
 import type { RouteInfo, RouteStep } from "../src/modules/schedule/routeInfo";
 
 jest.mock("@expo/vector-icons", () => ({
@@ -27,6 +27,11 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
 }));
 
 type StepDuration = Pick<RouteStep, "durationMinutes" | "durationSeconds">;
+
+it.each(["예매 미확인", "예매 상태 미검증"])("omits the old booking note from a saved coach leg without service metadata (%s)", note => {
+    const detail = "공주까지 · 90분 · 시간표 06:45 → 08:15";
+    expect(buildRideDescription({ id: "coach", type: "COACH", title: "서울경부", description: `${detail} · ${note}` })).toBe(detail);
+});
 
 function buildRouteInfo(durations: StepDuration[]): RouteInfo {
     return {
@@ -94,7 +99,21 @@ describe("RouteStepTimeline timing", () => {
         expect(description?.props.numberOfLines).toBeUndefined();
     });
 
-    it("uses a clock for a terminal buffer and omits the transfer arrow from the walking rail", async () => {
+    it("shows intercity boarding and alighting clocks once instead of repeating the range", async () => {
+        const route = buildRouteInfo([]);
+        route.steps.splice(1, 0, { id: "train", type: "TRAIN", title: "서울", lineName: "KTX 1",
+            alightingName: "부산", durationMinutes: 85, description: "부산까지 · 85분 · 시간표 11:05 → 12:30" });
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact inlineStationRail realtimeArrivalsActive={false} />);
+        });
+        const text = renderer!.root.findByProps({ testID: "route-step-row-train" }).findAllByType(Text).map(node => node.props.children);
+        expect(text).toContain("KTX 1 · 85분");
+        expect(text).toContain("11:05");
+        expect(text).toContain("12:30");
+        expect(text).not.toContain("KTX 1 · 85분 · 시간표 11:05 → 12:30");
+    });
+
+    it("hides legacy planning margins without shifting the boarding clock", async () => {
         const route = buildRouteInfo([]);
         route.steps.splice(1, 0,
             { id: "transfer", type: "TRANSFER", title: "환승", durationMinutes: 3 },
@@ -108,12 +127,9 @@ describe("RouteStepTimeline timing", () => {
         const transfer = renderer!.root.findByProps({ testID: "route-step-row-transfer" });
         expect(transfer.findAllByType("Ionicons" as never).map(icon => icon.props.name))
             .not.toContain("swap-horizontal-outline");
-        const buffer = renderer!.root.findByProps({ testID: "route-step-row-buffer" });
-        expect(buffer.findAllByType("Ionicons" as never).map(icon => icon.props.name)).toContain("time-outline");
-        const bufferText = renderer!.root.findByProps({ testID: "route-step-row-buffer" })
-            .findAllByType(Text).map(node => node.props.children);
-        expect(bufferText).not.toContain("우등 타는 곳까지");
-        expect(bufferText).not.toContain("20분");
+        expect(renderer!.root.findAllByProps({ testID: "route-step-row-buffer" })).toHaveLength(0);
+        const bus = renderer!.root.findByProps({ testID: "route-step-row-bus" });
+        expect(bus.findAllByType(Text).map(node => node.props.children)).toContain("11:28");
     });
 
     it("uses the predicted clock to age a delayed station response", () => {
@@ -398,14 +414,15 @@ describe("RouteStepTimeline timing", () => {
         expectStepClock("leg-1", "11:21");
     });
 
-    it("preserves the ticket label and both fixed train clocks in the rendered row", async () => {
+    it("shows the input train clocks without ticket or booking text in the route row", async () => {
         const route = buildRouteInfo([{ durationSeconds: 3120, durationMinutes: 52 }]);
         route.steps[1] = { ...route.steps[1], type: "TRAIN", title: "수서", description: "공주까지 · 52분 · 승차권 입력 12:20 → 13:12 · 예매 상태 미검증" };
         await renderTimeline(route, () => undefined);
         const label = renderer!.root.findByProps({ testID: "route-step-row-leg-0" }).props.accessibilityLabel;
-        expect(label).toContain("승차권 입력 12:20");
+        expect(label).toContain("입력 시각 12:20");
+        expect(label).not.toContain("승차권");
         expect(label).toContain("13:12");
-        expect(label).toContain("예매 상태 미검증");
+        expect(label).not.toContain("예매 상태 미검증");
     });
 
     it("keeps minute-based timing for legacy steps without raw seconds", async () => {

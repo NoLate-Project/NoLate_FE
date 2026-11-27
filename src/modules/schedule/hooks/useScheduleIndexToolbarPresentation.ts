@@ -12,7 +12,7 @@ import type { ToolbarMenu } from './useScheduleIndexToolbarActions';
 type CalendarDepth = 'year' | 'month' | 'day';
 
 const CALENDAR_TOOLBAR_HEIGHT = 56;
-const CALENDAR_CONTEXT_HEIGHT = 24;
+const CALENDAR_CONTEXT_HEIGHT = 0;
 const STICKY_MONTH_HEADER_HEIGHT = 50;
 const STICKY_WEEKDAY_HEADER_HEIGHT = 18;
 const STICKY_CALENDAR_HEADER_HEIGHT =

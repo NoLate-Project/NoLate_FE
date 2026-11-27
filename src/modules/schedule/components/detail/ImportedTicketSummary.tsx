@@ -1,5 +1,6 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../../theme/ThemeContext';
 import { serviceTimeRange } from '../../intercityTimetableModel';
 import { getImportedTicket } from '../../importedTicket';
@@ -19,4 +20,24 @@ export default function ImportedTicketSummary({ route, showBooking = true }: { r
         {showBooking && (ticket.kind === 'TRAIN' ? <TrainBookingAction dark={mode === 'dark'} /> : <BusBookingAction kind={ticket.kind} dark={mode === 'dark'} />)}
     </View>;
 }
-const styles = StyleSheet.create({ card: { padding: 16, borderWidth: 1, borderRadius: 16, gap: 6 }, title: { fontSize: 16, fontWeight: '600' }, note: { fontSize: 13, lineHeight: 20 } });
+export function ImportedTicketDisclosure({ route, showBooking = false }: { route: unknown; showBooking?: boolean }) {
+    const { colors } = useTheme();
+    const [expanded, setExpanded] = useState(false);
+    if (!getImportedTicket(route)) return null;
+    const label = expanded ? '승차권 접기' : '가져온 승차권 보기';
+    return <View>
+        <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ expanded }}
+            onPress={() => setExpanded(!expanded)} style={styles.disclosure}>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>{label}</Text>
+            <Ionicons name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'} size={18} color={colors.textSecondary} />
+        </Pressable>
+        {expanded && <ImportedTicketSummary route={route} showBooking={showBooking} />}
+    </View>;
+}
+
+const styles = StyleSheet.create({
+    card: { padding: 16, borderWidth: 1, borderRadius: 16, gap: 6 },
+    title: { fontSize: 16, fontWeight: '600' },
+    note: { fontSize: 13, lineHeight: 20 },
+    disclosure: { minHeight: 48, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+});

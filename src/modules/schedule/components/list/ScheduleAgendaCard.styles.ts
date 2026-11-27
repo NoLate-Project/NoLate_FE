@@ -57,6 +57,13 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   departureText: { fontWeight: '600' },
+  routeSetupActionText: { flex: 0 },
+  routeSetupAction: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
   badgesRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -34,6 +34,12 @@ export function createHeaderStyles(options: ScheduleDetailStylesOptions) {
         borderBottomRightRadius: 0,
         paddingBottom: 10,
     },
+        compactRouteHeaderSurface: { minHeight: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, paddingBottom: 8 },
+        compactRouteHeaderTitle: { fontSize: 16, fontWeight: "600" },
+        compactRouteHeaderContext: { flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: 4, minHeight: 28 },
+        compactRouteHeaderDate: { flexShrink: 0, fontSize: 12, lineHeight: 17 },
+        compactRouteHeaderDestination: { flex: 1, minWidth: 0 },
+        compactRouteHeaderPlace: { fontSize: 12, lineHeight: 17, textAlign: "right" },
         topHeaderRow: {
         flexDirection: "row",
         alignItems: "center",

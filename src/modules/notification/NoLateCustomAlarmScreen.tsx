@@ -1,3 +1,4 @@
+import BrandedLoader from "../../ui/BrandedLoader";
 import styles, {
     BACKGROUND,
     PRIMARY_BUTTON_FOREGROUND,
@@ -10,7 +11,6 @@ import { useKeepAwake } from "expo-keep-awake";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
     AppState,
     Image,
     Pressable,
@@ -343,7 +343,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                         ]}
                     >
                         {audioLoading && !stopped ? (
-                            <ActivityIndicator color={TEXT_PRIMARY} size="small" />
+                            <BrandedLoader size="inline" accessibilityLabel="알람 소리 준비 중" />
                         ) : (
                             <Ionicons
                                 accessible={false}
@@ -414,12 +414,14 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel={completed && showRouteAction ? "경로 보기" : "알람 화면 닫기"}
-                            accessibilityState={{ disabled: pendingAction !== null }}
+                            accessibilityState={{ busy: pendingAction === "route", disabled: pendingAction !== null }}
                             disabled={pendingAction !== null}
                             onPress={() => void (completed && showRouteAction ? openRoute() : close())}
                             style={({ pressed }) => [styles.departButton, pressed && styles.pressed]}
                         >
-                            {completed && showRouteAction && <Ionicons accessible={false} name="map-outline" size={21} color={PRIMARY_BUTTON_FOREGROUND} />}
+                            {completed && showRouteAction && (pendingAction === "route"
+                                ? <BrandedLoader startup size="inline" accessibilityLabel="경로 여는 중" />
+                                : <Ionicons accessible={false} name="map-outline" size={21} color={PRIMARY_BUTTON_FOREGROUND} />)}
                             <Text style={styles.primaryButtonText}>{completed && showRouteAction ? "경로 보기" : "닫기"}</Text>
                         </Pressable>
                     ) : showDepartureAction ? (
@@ -442,7 +444,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                             ]}
                         >
                             {pendingAction === "depart" ? (
-                                <ActivityIndicator color={PRIMARY_BUTTON_FOREGROUND} size="small" />
+                                <BrandedLoader size="inline" accessibilityLabel="출발 기록 중" />
                             ) : (
                                 <Ionicons
                                     accessible={false}
@@ -488,7 +490,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                                             ? "일정의 경로 상세 화면을 엽니다"
                                             : "연결된 경로 정보가 없습니다"
                                     }
-                                    accessibilityState={{ disabled: routeDisabled }}
+                                    accessibilityState={{ busy: pendingAction === "route", disabled: routeDisabled }}
                                     disabled={routeDisabled}
                                     onPress={() => {
                                         openRoute().catch(() => undefined);
@@ -504,7 +506,7 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                                     ]}
                                 >
                                     {pendingAction === "route" ? (
-                                        <ActivityIndicator color={TEXT_PRIMARY} size="small" />
+                                        <BrandedLoader startup size="inline" accessibilityLabel="경로 여는 중" />
                                     ) : (
                                         <Ionicons accessible={false} name="map-outline" size={21} color={TEXT_PRIMARY} />
                                     )}

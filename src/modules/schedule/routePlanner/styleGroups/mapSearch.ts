@@ -223,11 +223,6 @@ export function createMapSearchStyles(options: RoutePlannerStyleOptions) {
         maxWidth: 340,
         gap: 8,
     },
-        routeMapLoadingStatus: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
         routeMapLoadingTitle: {
         fontSize: 16,
         fontWeight: "700",
