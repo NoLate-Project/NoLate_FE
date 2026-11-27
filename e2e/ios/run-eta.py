@@ -259,7 +259,8 @@ if args.real_isolated:
                  'board': clock(s['rideTiming']['predictedBoardingAt'], '%H:%M'),
                  'alight': clock(s['rideTiming']['predictedArrivalAt'], '%H:%M'),
                  'boardSeconds': clock(s['rideTiming']['predictedBoardingAt'], '%H:%M:%S'),
-                 'alightSeconds': clock(s['rideTiming']['predictedArrivalAt'], '%H:%M:%S')}
+                 'alightSeconds': clock(s['rideTiming']['predictedArrivalAt'], '%H:%M:%S'),
+                 'alightingLabel': '하차역 도착 보고' if s['rideTiming'].get('reportedAlightingAt') else '예상 하차'}
                 for s in shown_route['segments'] if s['kind'] == 'SUBWAY'])
     if args.only == 'testVerifyIsolatedRealProviderObservationExpiry':
         if args.real_isolated_evidence is None:

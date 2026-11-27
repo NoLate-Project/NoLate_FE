@@ -125,6 +125,37 @@ describe("RouteStepTimeline timing", () => {
         expect(getBusArrivals).toHaveBeenCalledWith(expect.objectContaining({ cityCode: "1000", cityCodeNamespace: "ODSAY_CID" }));
     });
 
+    it.each([
+        { vehicle: "SUBWAY" as const, provider: "seoul-openapi", age: 100, ttl: 120, untilArrival: 510 },
+        { vehicle: "BUS" as const, provider: "seoul-bus", age: 30, ttl: 45, untilArrival: 83 },
+    ])("expires a cached $vehicle forecast before its expected arrival without another request", async ({ vehicle, provider, age, ttl, untilArrival }) => {
+        const source = Date.parse("2026-11-20T02:39:35Z");
+        const at = (offset: number) => new Date(source + offset * 1000).toISOString();
+        jest.useFakeTimers().setSystemTime(new Date(at(age)));
+        try {
+            const route = buildRouteInfo([{ durationMinutes: 12 }]);
+            if (vehicle === "BUS") {
+                route.steps[1] = { ...route.steps[1], type: "BUS", lineName: "N37", boardingBusArrival: {
+                    arsId: "01001", cityCode: "1000", cityCodeNamespace: "ODSAY_CID", providerCode: "4",
+                } };
+            }
+            const lookup = jest.mocked(vehicle === "BUS" ? getBusArrivals : getSubwayArrivals);
+            lookup.mockReset().mockResolvedValueOnce([{ provider, kind: vehicle, arrivalStatus: "IN_TRANSIT",
+                destinationName: "검증 대상", sourceUpdatedAt: at(0), observedAt: at(age), expectedAt: at(untilArrival) }]);
+            await act(async () => { renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact />); });
+            const rendered = () => renderer!.root.findAllByType(Text).map(node => node.props.children).flat().join(" ");
+            expect(rendered()).toContain("검증 대상행");
+            await act(async () => { jest.advanceTimersByTime((ttl - age) * 1000 + 1); });
+            expect(rendered()).not.toContain("검증 대상행");
+            expect(rendered()).toContain("새 도착 정보를 기다리고 있어요.");
+            expect(lookup).toHaveBeenCalledTimes(1);
+        } finally {
+            await act(async () => { renderer?.unmount(); });
+            renderer = undefined;
+            jest.useRealTimers();
+        }
+    });
+
     it("keeps the intercity mode badge and service grade readable on separate lines", async () => {
         const route = buildRouteInfo([]);
         route.steps.splice(1, 0, {
@@ -268,7 +299,7 @@ describe("RouteStepTimeline timing", () => {
     it("renders delayed data using its source time even when the response just arrived", async () => {
         const source = new Date(2026, 9, 4, 11, 0);
         const expected = new Date(2026, 9, 4, 11, 5);
-        const receipt = new Date(2026, 9, 4, 11, 3, 10);
+        const receipt = new Date(2026, 9, 4, 11, 1, 45);
         const now = jest.spyOn(Date, "now").mockReturnValue(receipt.getTime());
         jest.mocked(getSubwayArrivals).mockResolvedValueOnce([{
             provider: "seoul-openapi", kind: "SUBWAY", waitMinutes: 5,
@@ -281,7 +312,7 @@ describe("RouteStepTimeline timing", () => {
                 );
             });
             const row = renderer!.root.findByProps({ testID: "route-step-row-leg-0" });
-            for (const text of ["11:05", "2분", "갱신 지연", "3분 전 갱신"]) {
+            for (const text of ["11:05", "4분", "갱신 지연", "1분 전 갱신"]) {
                 expect(row.findAll(node => node.props.children === text).length).toBeGreaterThan(0);
             }
         } finally {

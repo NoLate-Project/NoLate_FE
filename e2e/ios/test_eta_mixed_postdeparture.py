@@ -21,11 +21,12 @@ def fixture(order, stage):
     bus = {'sequence': bus_index, 'kind': 'BUS', 'lineName': '402', 'fromName': '승차', 'toName': '하차',
            'busRidePrediction': {'boardingAt': at(bus_board), 'alightingAt': at(bus_alight), 'sourceUpdatedAt': at(-5)}}
     train = {'sequence': train_index, 'kind': 'SUBWAY', 'lineName': '4호선', 'fromName': '동작', 'toName': '사당',
+             'orderedStopNames': ['동작', '총신대입구', '사당'],
              'rideTiming': {'basis': 'TIMETABLE', 'predictedBoardingAt': at(train_board),
                             'predictedArrivalAt': at(train_alight),
                             'timetable': {'provider': 'seoul-timetable', 'serviceDate': '2026-11-27', 'line': 'LINE_4',
                                           'directionCode': 'DOWN', 'serviceClass': 'LOCAL', 'trainNumber': '4703',
-                                          'fromStationCode': '0431', 'toStationCode': '0433'}}}
+                                          'fromStationCode': '0431', 'toStationCode': '0433', 'terminalName': '오이도'}}}
     legs = sorted([*walk, bus, train], key=lambda leg: leg['sequence'])
     legs[3]['transferTiming'] = {'walkingSeconds': 30, 'previousArrivalAt': at(260), 'physicalReadyAt': at(290),
                                  'confidenceReadyAt': at(350), 'boardingAt': at(360), 'requiredMarginSeconds': 60,
@@ -110,6 +111,28 @@ class MixedPostdepartureEvidenceTest(unittest.TestCase):
         self.assertIsNone(qualifying_mixed_observation(worker))
         worker = fixture('rail-bus', 'INBOUND_CONNECTION')
         worker['mixedPredictionAtEvaluation']['effectiveTransitRoute']['segments'][2]['durationSeconds'] = 10
+        self.assertIsNone(qualifying_mixed_observation(worker))
+
+    def test_a_new_final_train_report_requires_the_same_train_and_egress(self):
+        worker = fixture('bus-rail', 'FINAL_ALIGHTING')
+        update = worker['effectiveSnapshot']['plannedRouteUpdate']
+        prediction = worker['mixedPredictionAtEvaluation']
+        prediction.update(basis='FINAL_TRAIN_ALIGHTING_REPORTED', predictedArrivalAt=at(550))
+        for route in (update['route'], prediction['effectiveTransitRoute']):
+            route['arrivalAt'] = at(550)
+            train = route['segments'][3]['rideTiming']
+            del train['observationSourceUpdatedAt']
+            train.update(basis='PLANNED_RIDE_BASELINE', predictedArrivalAt=at(490), reportedAlightingAt=at(490))
+        service = {'provider': 'seoul-openapi', 'line': 'LINE_4', 'serviceDate': '2026-11-27', 'trainNumber': '4703',
+                   'directionCode': 'DOWN', 'serviceClass': 'LOCAL', 'terminalName': '오이도',
+                   'boardingStationName': '동작', 'alightingStationName': '사당'}
+        update['reportedAlightings'] = [{'segmentSequence': 3, 'routeIdentity': update['routeIdentity'],
+            'routeDepartureAt': at(0), 'sourceUpdatedAt': at(490), 'checkedAt': at(500), 'recordedAt': at(498),
+            'service': service}]
+        result = qualifying_mixed_observation(worker)
+        self.assertEqual(result['mixedStage'], 'FINAL_ALIGHTING')
+        self.assertEqual(result['alightingEvidence'], 'STOP_REPORTED')
+        service['trainNumber'] = '4704'
         self.assertIsNone(qualifying_mixed_observation(worker))
 
     def test_windows_follow_saved_next_check_and_reconnected_final_vehicle(self):

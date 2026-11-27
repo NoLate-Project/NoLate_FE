@@ -205,6 +205,36 @@ describe("effective transit route presentation", () => {
         predictedBoardingAt: "2026-08-10T09:30:13+09:00", predictedArrivalAt: "2026-08-10T09:50:44+09:00",
         basis: "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE",
     });
+
+    it.each([false, true])("keeps the terminal train report during the last walk (bus first %s)", busFirst => {
+        const reportedAt = "2026-08-10T09:51:04+09:00";
+        const arrivalAt = "2026-08-10T09:54:04+09:00";
+        const now = Date.parse("2026-08-10T09:53:30+09:00");
+        const timing: EffectiveTransitRideTiming = { ...rideTiming(), basis: "PLANNED_RIDE_BASELINE",
+            predictedArrivalAt: reportedAt, reportedAlightingAt: reportedAt };
+        const bus = { sequence: 1, kind: "BUS" as const, lineName: "461", durationMinutes: 10,
+            busRidePrediction: { boardingAt: "2026-08-10T09:14:00+09:00", alightingAt: "2026-08-10T09:24:00+09:00",
+                sourceUpdatedAt: "2026-08-10T09:09:00+09:00" } };
+        const route = { provider: "odsay", identity: "a".repeat(64), departureAt: "2026-08-10T09:10:00+09:00",
+            arrivalAt, totalMinutes: 45, segments: [...(busFirst ? [bus] : []),
+                { sequence: 3, kind: "SUBWAY" as const, durationMinutes: 22, rideTiming: timing },
+                { sequence: 4, kind: "WALK" as const, durationMinutes: 3, durationSeconds: 180, walkingScope: "EGRESS" as const },
+            ] };
+        const prediction = { routeIdentity: route.identity, predictedArrivalAt: arrivalAt, sourceUpdatedAt: reportedAt,
+            presentedAt: "2026-08-10T09:53:20+09:00", basis: "FINAL_TRAIN_ALIGHTING_REPORTED" as const,
+            effectiveTransitRoute: route };
+        const status = departureStatus({ effectiveTransitRoute: null, plannedJourneyArrivalPrediction: prediction });
+        const presentation = buildPlannedJourneyArrivalPresentation(status, now);
+        expect(presentation?.summary).toBe("09:54 도착 예상 · 총 45분");
+        expect(presentation?.itinerary).toContain("09:51:04 하차역 도착 보고");
+        expect(presentation?.itinerary).toContain("도착 도보 · 약 3분");
+        expect(presentation?.waitMeta).toContain("실제 탑승·환승 여부는 확인하지 못했어요");
+        expect(buildPlannedJourneyArrivalPresentation(status, Date.parse(arrivalAt))).toBeUndefined();
+        expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
+            ...prediction, sourceUpdatedAt: "2026-08-10T09:51:05+09:00",
+        } }, now)).toBeUndefined();
+    });
+
     function statusWithTiming(timing: EffectiveTransitRideTiming | null = rideTiming()) {
         const status = departureStatus({ routeChanged: false });
         status.effectiveTransitRoute!.segments[0].rideTiming = timing;

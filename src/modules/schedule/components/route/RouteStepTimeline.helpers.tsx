@@ -408,20 +408,21 @@ function getExpectedArrivalTime(arrival: TransitArrivalInfo): number | undefined
 }
 
 export function getStationArrivalExpiry(arrival: TransitArrivalInfo, now: number): number {
-  if (arrival.arrivalStatus !== 'ARRIVED') return Infinity;
+  if (arrival.arrivalStatus === 'DEPARTED') return -Infinity;
+  const arrived = arrival.arrivalStatus === 'ARRIVED';
+  const expected = arrived ? Infinity : getExpectedArrivalTime(arrival) ?? Infinity;
   const maxAgeMs = arrival.provider === 'seoul-openapi' ? 120_000
     : arrival.provider === 'seoul-bus' ? 45_000 : undefined;
-  if (maxAgeMs === undefined) return Infinity;
-
+  if (maxAgeMs === undefined) return expected;
   const source = Date.parse(arrival.sourceUpdatedAt ?? '');
-  return Number.isFinite(source) && source <= now + 5_000 ? source + maxAgeMs : -Infinity;
+  if (arrived && !Number.isFinite(source)) return -Infinity;
+  const evidenceTime = Number.isFinite(source) ? source : Date.parse(arrival.observedAt ?? '');
+  if (!Number.isFinite(evidenceTime)) return expected;
+  return evidenceTime <= now + 5_000 ? Math.min(expected, evidenceTime + maxAgeMs) : -Infinity;
 }
 
 export function isDisplayableStationArrival(arrival: TransitArrivalInfo, now: number): boolean {
-  if (arrival.arrivalStatus === 'DEPARTED') return false;
-  if (arrival.arrivalStatus === 'ARRIVED') return now <= getStationArrivalExpiry(arrival, now);
-  const expected = getExpectedArrivalTime(arrival);
-  return expected === undefined || expected >= now;
+  return now <= getStationArrivalExpiry(arrival, now);
 }
 
 /** 도착 예정 초를 분·초 기반의 짧은 대기 문구로 변환합니다. */

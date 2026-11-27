@@ -5762,11 +5762,16 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                 let alightSeconds = try XCTUnwrap(ride["alightSeconds"])
                 let board = try XCTUnwrap(ride["board"])
                 let alight = try XCTUnwrap(ride["alight"])
+                let alightingLabel = ride["alightingLabel"] ?? "예상 하차"
                 let firstWait = index == 0 ? environment["E2E_REAL_FIRST_WAIT"] : nil
                 if index == 0 && plannedBus == nil { try verifyRideIntervals(in: guidance.label) }
                 try require(guidance.label.contains(train + "열차") &&
                             guidance.label.contains(boardSeconds) && guidance.label.contains(alightSeconds),
                             "Real route card must show each Worker's updated train and clocks")
+                if alightingLabel == "하차역 도착 보고" {
+                    try require(guidance.label.contains(alightSeconds + " " + alightingLabel),
+                                "A past station report must keep its own label and exact source clock")
+                }
                 if let plannedBus {
                     let trainPosition = try XCTUnwrap(steps.firstIndex { step in
                         step.contains(train + "열차") && step.contains(boardSeconds) && step.contains(alightSeconds)
@@ -5782,7 +5787,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                 if let firstWait {
                     try require(row.label.contains(firstWait), "The saved rail must show the same first boarding interval")
                 }
-                try require(row.label.contains(board) && row.label.contains(alight + " 예상 하차") &&
+                try require(row.label.contains(board) && row.label.contains(alight + " " + alightingLabel) &&
                             row.label.contains("계획 경로의 잠정 시각 기준"),
                             "Real route rail must match the updated API itinerary")
             }

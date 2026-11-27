@@ -240,7 +240,8 @@ export type ScheduleDepartureStatus = {
         predictedArrivalAt: string;
         presentedAt: string;
         routeIdentity: string;
-        basis: "LAST_ACCEPTED_PLAN" | "MATCHED_TRAIN_REALTIME" | "MATCHED_BUS_REALTIME" | "FINAL_BUS_ALIGHTING_REPORTED" | "MATCHED_TRAIN_AND_BUS_REALTIME" |
+        basis: "LAST_ACCEPTED_PLAN" | "MATCHED_TRAIN_REALTIME" | "MATCHED_BUS_REALTIME" |
+            "FINAL_BUS_ALIGHTING_REPORTED" | "FINAL_TRAIN_ALIGHTING_REPORTED" | "MATCHED_TRAIN_AND_BUS_REALTIME" |
             "MATCHED_RIDE_AND_ONWARD_TIMETABLE" | "OBSERVED_SERVICE_CONNECTION";
         effectiveTransitRoute?: EffectiveTransitRoute | null;
         sourceUpdatedAt?: string | null;

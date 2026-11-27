@@ -3,6 +3,7 @@ import datetime as dt
 import re
 
 from eta_planned_route_evidence import _ride_times, _time
+from eta_observed_service import observed_service
 
 
 def _legs(route, order):
@@ -66,7 +67,8 @@ def qualifying_mixed_observation(worker):
         identity, departure = original['identity'], _time(original['departureAt'])
         now, source = _time(worker['evaluatedAt']), _time(update['sourceUpdatedAt'])
         basis = prediction['basis']
-        max_age = {'FINAL_BUS_ALIGHTING_REPORTED': 1200, 'MATCHED_TRAIN_REALTIME': 120}.get(basis, 45)
+        max_age = {'FINAL_BUS_ALIGHTING_REPORTED': 1200, 'FINAL_TRAIN_ALIGHTING_REPORTED': 1200,
+                   'MATCHED_TRAIN_REALTIME': 120}.get(basis, 45)
         if (update.get('failure') or update['routeIdentity'] != identity or prediction['routeIdentity'] != identity or
                 _time(prediction['sourceUpdatedAt']) != source or _time(prediction['presentedAt']) != now or
                 not 0 <= (now - source).total_seconds() <= max_age or now < departure or
@@ -118,6 +120,26 @@ def qualifying_mixed_observation(worker):
                     prior_bus.get('reportedAlightingAt') is not None or _time(bus['reportedAlightingAt']) != reported or
                     reported != source or final_alight != reported or not final_board < reported <= checked <= now or
                     (checked - reported).total_seconds() > 45 or bus.get('alightingObservationSourceUpdatedAt') is not None):
+                return None
+            stage, evidence_kind = 'FINAL_ALIGHTING', 'STOP_REPORTED'
+        elif basis == 'FINAL_TRAIN_ALIGHTING_REPORTED' and train_index == 3:
+            report, = (row for row in update['reportedAlightings'] if row['segmentSequence'] == train_index)
+            reported, checked, received = (_time(report[key]) for key in ('sourceUpdatedAt', 'checkedAt', 'recordedAt'))
+            reported_service = observed_service({**legs[train_index],
+                'rideTiming': {**train, 'observedService': report['service']}})
+            table = train['timetable']
+            observed = train.get('observedService')
+            same_train = (reported_service == observed if observed else
+                          reported_service['trainNumber'] in {table['trainNumber'], table.get('realtimeTrainNumber')})
+            if (service != old_service or not same_train or train.get('observedService') != prior_train.get('observedService') or
+                    table != prior_train['timetable'] or train['predictedBoardingAt'] != prior_train['predictedBoardingAt'] or
+                    report['routeIdentity'] != identity or _time(report['routeDepartureAt']) != departure or
+                    prior_train.get('reportedAlightingAt') is not None or train['basis'] != 'PLANNED_RIDE_BASELINE' or
+                    train.get('observationSourceUpdatedAt') is not None or
+                    _time(public_legs[train_index]['rideTiming']['reportedAlightingAt']) != reported or
+                    _time(train['reportedAlightingAt']) != reported or reported != source or final_alight != reported or
+                    not final_board < reported <= checked <= now or not reported <= received <= min(checked + dt.timedelta(seconds=5),
+                        reported + dt.timedelta(seconds=120)) or (checked - reported).total_seconds() > 120):
                 return None
             stage, evidence_kind = 'FINAL_ALIGHTING', 'STOP_REPORTED'
         elif basis == 'MATCHED_BUS_REALTIME' and service == old_service:
