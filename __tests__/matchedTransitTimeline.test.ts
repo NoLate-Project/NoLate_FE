@@ -84,6 +84,13 @@ test("shows only verified rail and walking clocks while the onward bus is pendin
     expect(bus?.matchedTimeline ?? bus?.scheduledRide ?? bus?.durationMinutes ?? bus?.description).toBeUndefined();
     expect(saved.steps.find(step => step.id === "bus")?.durationMinutes).toBe(4);
 
+    Object.assign(route.segments[1].rideTiming!, { basis: "PLANNED_RIDE_BASELINE", reportedAlightingAt: at(30) });
+    const reported = applyMatchedTransitTimeline(saved, pending, Date.parse(at(32)));
+    expect(reported?.steps.find(step => step.id === "first")?.matchedTimeline)
+        .toMatchObject({ endAt: at(30), endsWithReportedStationArrival: true });
+    expect(reported?.steps.find(step => step.id === "bus")?.matchedTimeline).toBeUndefined();
+    expect(applyMatchedTransitTimeline(saved, pending, now)?.steps.every(step => !step.matchedTimeline)).toBe(true);
+
     route.segments[1].fromName = "다른 역";
     const mismatched = applyMatchedTransitTimeline(saved, pending, now);
     expect(mismatched?.steps.some(step => step.matchedTimeline || step.scheduledRide)).toBe(false);
@@ -173,6 +180,18 @@ test("shows the updated bus-to-train times and keeps the current evidence on the
         .toMatchObject({ startAt: seconds(500), endAt: seconds(760), transferWaitSeconds: 80 });
 
     delete bus.busRidePrediction!.alightingObservationSourceUpdatedAt;
+    bus.busRidePrediction!.reportedAlightingAt = seconds(390);
+    Object.assign(updated.plannedJourneyArrivalPrediction!, { basis: "LAST_ACCEPTED_PLAN", presentedAt: seconds(480),
+        sourceUpdatedAt: null });
+    const afterBusReport = Date.parse(seconds(480));
+    const reportedItinerary = buildPlannedJourneyArrivalPresentation(updated, afterBusReport)?.itinerary;
+    expect(reportedItinerary).toContain("하차 정류장 도착 보고");
+    expect(reportedItinerary).toContain("2014열차 · 시간표");
+    expect(applyMatchedTransitTimeline(saved, updated, afterBusReport)?.steps[2].matchedTimeline)
+        .toMatchObject({ endAt: seconds(390), endsWithReportedStationArrival: true });
+    bus.busRidePrediction!.reportedAlightingAt = seconds(391);
+    expect(buildPlannedJourneyArrivalPresentation(updated, afterBusReport)).toBeUndefined();
+    bus.busRidePrediction!.reportedAlightingAt = seconds(390);
     train.rideTiming!.predictedArrivalAt = seconds(790);
     train.rideTiming!.basis = "PLANNED_RIDE_ALIGHTING_REALTIME";
     train.rideTiming!.observationSourceUpdatedAt = seconds(598);
@@ -181,11 +200,27 @@ test("shows the updated bus-to-train times and keeps the current evidence on the
     Object.assign(updated.plannedJourneyArrivalPrediction!, { basis: "MATCHED_TRAIN_REALTIME", presentedAt: seconds(600),
         sourceUpdatedAt: seconds(598), predictedArrivalAt: route.arrivalAt });
     const afterTrain = Date.parse(seconds(650));
-    expect(buildPlannedJourneyArrivalPresentation(updated, afterTrain)?.itinerary).toContain("2014열차 · 하차역 실시간");
-    expect(buildPlannedJourneyArrivalPresentation(updated, afterTrain)?.itinerary).not.toContain("같은 버스 하차 예보");
+    const delayedPresentation = buildPlannedJourneyArrivalPresentation(updated, afterTrain);
+    expect(delayedPresentation?.itinerary).toContain("2014열차 · 하차역 실시간");
+    expect(delayedPresentation?.itinerary).toContain("하차 정류장 도착 보고");
+    expect(delayedPresentation?.itinerary).not.toContain("같은 버스 하차 예보");
     expect(applyMatchedTransitTimeline(saved, updated, afterTrain)?.arrivalTime).toBe(seconds(850));
     expect(updated.recommendedDepartureAt).toBe(at(0));
     expect(applyMatchedTransitTimeline(saved, updated, Date.parse(seconds(719)))).toBe(saved);
+
+    train.rideTiming!.predictedArrivalAt = new Date(Date.parse(seconds(767)) + 250).toISOString();
+    train.rideTiming!.observationSourceUpdatedAt = seconds(659);
+    route.arrivalAt = new Date(Date.parse(seconds(827)) + 250).toISOString();
+    route.totalMinutes = 14;
+    Object.assign(updated.plannedJourneyArrivalPrediction!, { presentedAt: seconds(660), sourceUpdatedAt: seconds(659),
+        predictedArrivalAt: route.arrivalAt });
+    const recoveryAt = Date.parse(seconds(665));
+    const recoveredPresentation = buildPlannedJourneyArrivalPresentation(updated, recoveryAt);
+    expect(recoveredPresentation?.itinerary).toContain("2014열차 · 하차역 실시간");
+    expect(recoveredPresentation?.itinerary).toContain("환승 대기 약 1분 20초");
+    expect(recoveredPresentation?.itinerary).toContain("승차역부터 하차역까지 약 4분 27초");
+    expect(recoveredPresentation?.compactSummary).not.toBe(delayedPresentation?.compactSummary);
+    expect(applyMatchedTransitTimeline(saved, updated, recoveryAt)).toMatchObject({ departureTime: at(0), arrivalTime: route.arrivalAt });
 });
 
 test("shows a train-to-bus connection with actionable transfer slack and expires both live sources together", () => {
@@ -222,6 +257,22 @@ test("shows a train-to-bus connection with actionable transfer slack and expires
     expect(applyMatchedTransitTimeline(saved, updated, Date.parse(seconds(191)))).toBe(saved);
     bus.transferTiming!.confidenceReadyAt = seconds(481);
     expect(buildPlannedJourneyArrivalPresentation(updated, now)).toBeUndefined();
+
+    Object.assign(train.rideTiming!, { basis: "PLANNED_RIDE_BASELINE", observationSourceUpdatedAt: null,
+        reportedAlightingAt: seconds(390) });
+    Object.assign(bus.busRidePrediction!, { boardingAt: seconds(490), sourceUpdatedAt: seconds(477) });
+    Object.assign(bus.transferTiming!, { boardingAt: seconds(490), confidenceReadyAt: seconds(480), remainingSlackSeconds: 10 });
+    const prediction = updated.plannedJourneyArrivalPrediction!;
+    prediction.presentedAt = seconds(480);
+    prediction.sourceUpdatedAt = seconds(477);
+    const later = Date.parse(seconds(480));
+    const afterReport = buildPlannedJourneyArrivalPresentation(updated, later);
+    expect(afterReport?.itinerary).toContain("하차역 도착 보고");
+    expect(afterReport?.itinerary).toContain("환승 대기 약 1분 10초");
+    expect(applyMatchedTransitTimeline(saved, updated, later)?.steps[4].matchedTimeline)
+        .toMatchObject({ startAt: seconds(490), endAt: seconds(760), transferWaitSeconds: 70 });
+    prediction.sourceUpdatedAt = seconds(476);
+    expect(buildPlannedJourneyArrivalPresentation(updated, later)).toBeUndefined();
 });
 
 test("separates the Sadang transfer walk, wait and ride in both views from the same station clocks", () => {
@@ -246,6 +297,16 @@ test("separates the Sadang transfer walk, wait and ride in both views from the s
         description: "신림역까지 · 7분 30초",
         matchedTimeline: { transferWaitSeconds: 113, movementSeconds: 450 },
     });
+
+    const reportedEnd = new Date(Date.parse(at(6)) + 250).toISOString();
+    first.rideTiming!.timetable.arrivalAt = first.rideTiming!.predictedArrivalAt = reportedEnd;
+    const readyMs = Date.parse(reportedEnd) + 157_000;
+    second.transferTiming = { previousArrivalAt: reportedEnd, walkingSeconds: 157,
+        physicalReadyAt: new Date(readyMs).toISOString(), boardingAt: boarding, bufferSeconds: 60,
+        confidenceMarginSeconds: 60, requiredMarginSeconds: 60,
+        confidenceReadyAt: new Date(readyMs + 60_000).toISOString(), remainingSlackSeconds: 52 };
+    expect(buildEffectiveTransitRoutePresentation(data)?.itinerary).toContain("환승 대기 약 1분 53초 · 승차역부터 하차역까지 약 7분 30초");
+    expect(applyMatchedTransitTimeline(info, data)?.steps[3].matchedTimeline?.transferWaitSeconds).toBe(112.75);
 });
 
 test.each(["rounded walk", "wrong walk scope", "inconsistent transfer", "sequence gap", "invalid previous clock"])(

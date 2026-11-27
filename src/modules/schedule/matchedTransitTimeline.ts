@@ -68,6 +68,7 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
         const transferWaitSeconds = transitTransferWaitSeconds(segments, index);
         let startsWithStationArrivalPrediction = false;
         let startsWithReportedStationArrival = false;
+        let endsWithReportedStationArrival = false;
         if (segment.kind === "WALK") {
             const seconds = segment.walkingTiming?.movementSeconds ?? segment.durationSeconds ?? segment.durationMinutes * 60;
             if (!Number.isSafeInteger(seconds) || seconds < 0) return fallback;
@@ -79,6 +80,11 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
             from = Date.parse(bus.boardingAt);
             const alight = Date.parse(bus.alightingAt);
             if (!Number.isFinite(from) || !Number.isFinite(alight) || from < cursor || alight <= from) return fallback;
+            if (bus.reportedAlightingAt != null) {
+                if (bus.alightingObservationSourceUpdatedAt != null ||
+                    Date.parse(bus.reportedAlightingAt) !== alight || alight > nowMs) return fallback;
+                endsWithReportedStationArrival = true;
+            }
             cursor = alight;
         } else {
             const timing = segment.rideTiming;
@@ -92,6 +98,11 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
             startsWithStationArrivalPrediction = !startsWithReportedStationArrival && isBoardingStationArrivalPrediction(timing);
             const alight = Date.parse(timing.predictedArrivalAt);
             if (!Number.isFinite(from) || !Number.isFinite(alight) || from < cursor || alight <= from) return fallback;
+            if (timing.reportedAlightingAt != null) {
+                if (timing.basis !== "PLANNED_RIDE_BASELINE" || timing.observationSourceUpdatedAt != null ||
+                    Date.parse(timing.reportedAlightingAt) !== alight || alight > nowMs) return fallback;
+                endsWithReportedStationArrival = true;
+            }
             cursor = alight;
         }
         if (cursor > end) return fallback;
@@ -103,6 +114,7 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
             ...(transferWaitSeconds !== undefined && transferWaitSeconds > 0 ? { transferWaitSeconds } : {}),
             ...(startsWithStationArrivalPrediction ? { startsWithStationArrivalPrediction: true } : {}),
             ...(startsWithReportedStationArrival ? { startsWithReportedStationArrival: true } : {}),
+            ...(endsWithReportedStationArrival ? { endsWithReportedStationArrival: true } : {}),
             ...(basis ? { provisionalPlan: true } : {}),
         });
     }

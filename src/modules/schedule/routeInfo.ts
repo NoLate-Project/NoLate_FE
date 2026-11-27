@@ -52,6 +52,7 @@ export interface RouteStep {
         transferWaitSeconds?: number;
         startsWithStationArrivalPrediction?: true;
         startsWithReportedStationArrival?: true;
+        endsWithReportedStationArrival?: true;
         provisionalPlan?: true;
     };
     scheduledRide?: { boardingAt: string; arrivalAt: string };
@@ -214,14 +215,15 @@ export function formatRouteDuration(minutes?: number): string {
 }
 
 export function formatRouteDurationSeconds(seconds: number): string {
-    const minutes = Math.floor(seconds / 60);
-    const remainder = seconds % 60;
+    const displaySeconds = Math.round(seconds);
+    const minutes = Math.floor(displaySeconds / 60);
+    const remainder = displaySeconds % 60;
     if (!minutes) return `${remainder}초`;
     return remainder ? `${minutes}분 ${remainder}초` : `${minutes}분`;
 }
 
 export function rideMovementDurationLabel(minutes?: number, matchedSeconds?: number): string | undefined {
-    if (typeof matchedSeconds === "number" && Number.isSafeInteger(matchedSeconds) && matchedSeconds > 0) {
+    if (typeof matchedSeconds === "number" && Number.isFinite(matchedSeconds) && matchedSeconds > 0) {
         return formatRouteDurationSeconds(matchedSeconds);
     }
     return typeof minutes === "number" ? `${minutes}분` : undefined;
@@ -229,7 +231,7 @@ export function rideMovementDurationLabel(minutes?: number, matchedSeconds?: num
 
 export function firstBoardingIntervalLabel(seconds: number | undefined, stationArrival = false,
                                           vehicle: "BUS" | "SUBWAY" = "SUBWAY"): string | undefined {
-    if (typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds <= 0) return undefined;
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return undefined;
     const timing = vehicle === "BUS" ? "버스 도착" : stationArrival ? "열차 도착" : "열차 출발";
     return `첫 승차 대기 약 ${formatRouteDurationSeconds(seconds)} (${timing} 기준)`;
 }

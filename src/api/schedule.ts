@@ -95,6 +95,8 @@ export type EffectiveTransitRideTiming = {
     predictedArrivalAt: string;
     observationSourceUpdatedAt?: string | null;
     boardingObservationSourceUpdatedAt?: string | null;
+    /** Historical time when the provider reported this train at the alighting station. */
+    reportedAlightingAt?: string | null;
     plannedBoardingIsStationArrival?: boolean | null;
     /** Actual vehicle identified at both endpoints. timetable remains a separate comparison reference. */
     observedService?: {
@@ -141,6 +143,7 @@ export type EffectiveTransitRouteSegment = {
         alightingAt: string;
         sourceUpdatedAt: string;
         alightingObservationSourceUpdatedAt?: string | null;
+        reportedAlightingAt?: string | null;
     } | null;
     walkingScope?: "ACCESS" | "TRANSFER" | "EGRESS" | "UNKNOWN" | null;
     /** Original WALK seconds, not inferred from rounded minutes. */

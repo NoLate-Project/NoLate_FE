@@ -223,6 +223,24 @@ describe("effective transit route presentation", () => {
         expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
             ...mixedSources, sourceUpdatedAt: nextRide.observationSourceUpdatedAt,
         } }, nowMs)).toBeUndefined();
+
+        const reportedAt = "2026-08-10T09:40:00+09:00";
+        const historicalAlighting: EffectiveTransitRideTiming = { ...olderFirstStation, basis: "PLANNED_RIDE_BASELINE",
+            predictedArrivalAt: reportedAt, reportedAlightingAt: reportedAt, observationSourceUpdatedAt: null };
+        const afterAlighting = { ...twoRides, segments: [
+            { ...twoRides.segments[0], rideTiming: historicalAlighting }, twoRides.segments[1],
+        ] };
+        const afterAlightingStatus = { ...status, plannedJourneyArrivalPrediction: { ...mixedSources,
+            sourceUpdatedAt: nextRide.observationSourceUpdatedAt, effectiveTransitRoute: afterAlighting } };
+        const historicalResult = buildPlannedJourneyArrivalPresentation(afterAlightingStatus, nowMs);
+        expect(historicalResult?.itinerary).toContain("09:40:00 하차역 도착 보고");
+        expect(historicalResult?.itinerary).toContain("2014열차 · 승차역 실시간");
+        expect(historicalResult?.itinerary).not.toContain("09:40:00 하차 예측");
+        historicalAlighting.predictedArrivalAt = "2026-08-10T09:46:00+09:00";
+        expect(buildPlannedJourneyArrivalPresentation(afterAlightingStatus, nowMs)).toBeUndefined();
+        historicalAlighting.reportedAlightingAt = historicalAlighting.predictedArrivalAt;
+        expect(buildPlannedJourneyArrivalPresentation(afterAlightingStatus, nowMs)).toBeUndefined();
+
         expect(getFreshDepartureTiming(status)).toBeUndefined();
         expect(buildPlannedJourneyArrivalPresentation({ ...status, plannedJourneyArrivalPrediction: {
             ...status.plannedJourneyArrivalPrediction!, sourceUpdatedAt: "2026-08-10T09:42:59+09:00",

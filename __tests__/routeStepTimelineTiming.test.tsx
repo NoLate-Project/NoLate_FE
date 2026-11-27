@@ -63,6 +63,10 @@ describe("RouteStepTimeline timing", () => {
         route.matchedTimeline = true;
         route.matchedTimelineBasis = "PENDING_TRANSFER";
         route.arrivalTime = "";
+        route.steps[1] = { ...route.steps[1], alightingName: "사당", matchedTimeline: {
+            startAt: route.departureTime, endAt: new Date(Date.parse(route.departureTime) + 720_000).toISOString(),
+            movementSeconds: 720, provisionalPlan: true, endsWithReportedStationArrival: true,
+        } };
         route.steps[2] = { ...route.steps[2], type: "WALK", title: "도보",
             matchedTimeline: { startAt: route.departureTime, endAt: new Date(Date.parse(route.departureTime) + 30_000).toISOString(), movementSeconds: 30 } };
         route.steps[3] = { ...route.steps[3], type: "BUS", lineName: "402", boardingBusArrival: {
@@ -71,11 +75,13 @@ describe("RouteStepTimeline timing", () => {
         const previousLookups = jest.mocked(getBusArrivals).mock.calls.length;
 
         await act(async () => {
-            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact />);
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact inlineStationRail />);
         });
 
         const transfer = renderer!.root.findByProps({ testID: "route-step-row-leg-1" });
         expect(transfer.props.accessibilityLabel).toContain("환승 도보 30초");
+        const alighting = renderer!.root.findByProps({ testID: "route-step-alighting-clock-leg-0" });
+        expect(alighting.props.accessibilityLabel).toContain("하차역 도착 보고");
         const bus = renderer!.root.findByProps({ testID: "route-step-row-leg-2" });
         expect(bus.findAllByType(Text).map(node => node.props.children)).not.toContain("미지원");
         expect(bus.props.accessibilityLabel).not.toContain("도착 정보를 확인할 수 없어요");

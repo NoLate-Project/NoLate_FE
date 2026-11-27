@@ -412,11 +412,15 @@ export default function RouteStepTimeline({
                 const transferWaitSeconds = matched?.transferWaitSeconds;
                 const boardingIntervalLabel = firstBoardingIntervalLabel(matched?.firstBoardingIntervalSeconds,
                     matched?.startsWithStationArrivalPrediction, step.type === "BUS" ? "BUS" : "SUBWAY") ?? (typeof transferWaitSeconds === "number" &&
-                    transferWaitSeconds > 0 && Number.isSafeInteger(transferWaitSeconds)
+                    transferWaitSeconds > 0 && Number.isFinite(transferWaitSeconds)
                     ? `환승 대기 예상 ${formatRouteDurationSeconds(transferWaitSeconds)}` : undefined);
                 const alightingClock = !alightingName ? undefined : hasExactTimeline
                     ? exactAlighting && formatArrivalClock(exactAlighting, 0)
                     : endOffset === undefined ? undefined : formatArrivalClock(routeInfo.departureTime, endOffset / 60);
+                const reportedAlighting = matched?.endsWithReportedStationArrival === true;
+                const reportedAlightingLabel = step.type === "BUS" ? "하차 정류장 도착 보고" : "하차역 도착 보고";
+                const alightingClockLabel = hasExactTimeline && alightingClock
+                    ? `${alightingClock} ${reportedAlighting ? reportedAlightingLabel : "예상 하차"}` : undefined;
                 const repeatsAlightingClock = (step.type === "WALK" || step.type === "TRANSFER") && previousAlightingClock !== undefined &&
                     timelineClockText === previousAlightingClock;
                 previousAlightingClock = alightingClock;
@@ -687,7 +691,7 @@ export default function RouteStepTimeline({
                                 accessibilityState={inlineStops && stepPressEnabled ? { selected } : undefined}
                                 accessibilityLabel={inlineStops && stepPressEnabled
                                     ? [step.badgeText ?? step.lineName, stepTitle, stationArrivalLabel ? undefined : "승차", clockAccessibilityLabel,
-                                        hasExactTimeline && alightingClock ? `${alightingClock} 예상 하차` : undefined,
+                                        alightingClockLabel,
                                         current ? "현재 구간" : undefined].filter(Boolean).join(" ")
                                     : undefined}
                                 onPress={inlineStops && stepPressEnabled ? () => onStepPress?.(step) : undefined}
@@ -924,7 +928,9 @@ export default function RouteStepTimeline({
                                             <Ionicons accessible={false} name={alightingIntoTransfer ? "walk-outline" : "checkmark-outline"} size={14} color={isDark ? "#F5F7FA" : "#334155"} />
                                         </View>
                                     </View>
-                                    <Text style={[styles.inlineDisclosureText, { color: primaryColor }]}>{`${alightingName} 하차`}</Text>
+                                    <Text style={[styles.inlineDisclosureText, { color: primaryColor }]}>
+                                        {`${alightingName} ${reportedAlighting ? reportedAlightingLabel : "하차"}`}
+                                    </Text>
                                     {alightingClock && (
                                         <View style={[
                                             styles.timelineClockBadge,
@@ -933,7 +939,8 @@ export default function RouteStepTimeline({
                                         ]}>
                                             <Text
                                                 testID={`route-step-alighting-clock-${step.id}`}
-                                                accessibilityLabel={`${routeInfo.timeBasis === "provider_schedule" ? "시간표" : "예상"} 하차 ${alightingClock}`}
+                                                accessibilityLabel={reportedAlighting ? alightingClockLabel
+                                                    : `${routeInfo.timeBasis === "provider_schedule" ? "시간표" : "예상"} 하차 ${alightingClock}`}
                                                 maxFontSizeMultiplier={stackTimelineText ? undefined : 1.3}
                                                 style={[styles.timelineClockText, tightInlineRail && styles.badgeTextInlineCompact, { color: isDark ? "#D7D7DA" : "#374151" }]}
                                             >
@@ -974,7 +981,7 @@ export default function RouteStepTimeline({
                         stepTitle,
                         hasBadge ? rideDescription : stepDescription,
                         clockAccessibilityLabel,
-                        hasExactTimeline && alightingClock ? `${alightingClock} 예상 하차` : undefined,
+                        alightingClockLabel,
                         compact ? boardingIntervalLabel : undefined,
                         compact && hasBadge && !arrivalPresentation.showArrivalCard ? arrivalInlineMessage : undefined,
                         arrivalPresentation.showArrivalCard ? arrivalStatusLabel : undefined,
