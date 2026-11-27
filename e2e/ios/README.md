@@ -417,6 +417,14 @@ python3 e2e/ios/verify-eta-comparison.py e2e/evidence/2026-10-05-future-2000-com
 운행일은 `YYYY-MM-DD`이며, 사업자/원천별 번호 체계가 다르면 임의로 접두사를 없애
 같은 열차로 만들지 않는다. 지도에 번호가 보이지 않으면 승차시각에서 번호를 추정하지 않는다.
 
+서울 시내버스는 `mode: BUS`, `line: SEOUL_BUS:<노선 ID>`와 순서가 포함된 승하차 정류장
+`<stationId>:<ARS ID>:<순번>`으로 대조한다. Worker가 채택한 여정과 정류장 근거가 같은
+경로·출발시각·승차 순서에 묶여 있을 때만 이 값을 추출한다. 지도에서 버스 번호나 정류장
+이름만 확인되면 해당 ID는 `UNKNOWN`으로 두고 같은 경로 비교에서 제외한다. 내부 차량 식별값은
+내보내지 않으며 버스가 포함된 경우 동일 차량 시각 비교는 `BUS_VEHICLE_IDENTITY_UNCONFIRMED`로
+남는다. 버스 접근 예보의 첫 시각은 `STATION_ARRIVAL_PREDICTION`이며 지도에 안내된 승차시각으로
+취급하지 않는다. 전체 여정 비교에는 기존대로 같은 출발 입력·노선·도보 범위가 필요하다.
+
 최종 도착시각에는 `arrivalClockEvidence: {resolutionSeconds, rounding, evidence}`를 넣는다.
 `EXACT`는 초 단위 계산 결과(`resolutionSeconds=1`), `TRUNCATED`는 버림,
 `NEAREST`는 반올림 계약이 확인된 표시 시각이다. 단순히 분 단위로 보인다는 이유만으로
@@ -429,7 +437,10 @@ python3 e2e/ios/verify-eta-comparison.py e2e/evidence/2026-10-05-future-2000-com
 실제 격리 실행기는 채택 회차마다 `prediction-observation-N.json`을 자동 생성한다.
 비교 출발은 이번 `effectiveTransitRoute.departureAt`이며 보호된 이전 알람 시각은
 별도 `protectedAlarmDepartureAt`으로만 보존한다. 열차별 보정 시각을 정수 분으로
-바꾸지 않으며, 역 내부 도보·승강장 경계는 계속 UNKNOWN이다. 독립 감사는 이 파일을
+바꾸지 않으며, 역 내부 도보·승강장 경계는 계속 UNKNOWN이다. `providerAccessComponents`와
+`providerTransferComponents`에 도보와 다음 승차 시각까지의 간격을 따로 기록한다. 도보 입력이
+분 단위 추정치인 경우 별도로 표시하며, 스냅샷의 여유 초와 비교할 때만 Java `Duration.seconds`와
+같이 내림한다. 독립 감사는 이 파일을
 동일 Worker·공개 API·실제 화면 검증 회차와 대조한다. 과거 실행은 다음처럼 읽기만 해
 추출할 수 있으며, 재생/추출을 새로운 실제 공급자 호출이나 E2E로 세지 않는다.
 
@@ -443,6 +454,12 @@ python3 e2e/ios/verify-real-isolated-eta.py --require-comparison-evidence '/priv
 공급자 응답·열차 선택·계산 결과를 고정하지 않는다. 실제 계산 경로의 출발이 지도 요청과
 달라지면 같은 조건의 정상 비교로 판정하지 않는다. `journeyTimingTrace`는 각 검색 후보의
 시간표 연결 결과를 수동 HTTP 추가 없이 관찰하며 정상 채택 여부를 대신하지 않는다.
+
+`run-eta-real-isolated.py`의 `--mixed-route-order bus-rail` 또는 `rail-bus`는 같은 격리 환경에서
+ODsay가 실제로 반환한 서울 시내버스 한 구간과 지하철 한 구간을 지정한 순서로 선택한다.
+서울 버스 노선·정류장 식별자를 원본에서 확인할 수 없거나 해당 경로가 없으면 실행을 종료한다.
+채택한 경우 공개 상태 API와 설치 앱에서 두 구간의 도착 예보와 환승 대기를 확인한다. 이 옵션은
+출발 전 검증이며, 출발 후 갱신이나 실제 이동 정확도를 통과시키는 조건으로 사용하지 않는다.
 
 `verify-eta-map-display.py`는 별도 화면 표시 진단이다. 같은 요청 좌표·현재 계산 출발시각·
 노선 순서와 5분 이내 관측을 확인하고 앱/API가 채택한 도착과 네이버 공개 화면의 도착

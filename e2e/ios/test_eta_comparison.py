@@ -397,6 +397,114 @@ class ComparisonTest(unittest.TestCase):
         path = Path(__file__).parents[1] / 'evidence/2026-10-12-tmap-final-evaluation-3.json'
         return json.loads(path.read_text())
 
+    def mixed_worker_fixture(self, bus_first):
+        # Substitutes a synthetic bus for one of the rides to exercise both data shapes.
+        # This is not a mixed-route provider capture.
+        worker = self.recorded_worker()
+        snapshot = worker['effectiveSnapshot']
+        route = snapshot['effectiveTransitRoute']
+        route['provider'] = 'odsay'
+        index = 1 if bus_first else 3
+        timing = route['segments'][index].pop('rideTiming')
+        board, alight = timing['predictedBoardingAt'], timing['predictedArrivalAt']
+        board = comparison.instant(board) + comparison.dt.timedelta(milliseconds=250)
+        route['segments'][index].update(kind='BUS', busRidePrediction={
+            'boardingAt': board.isoformat(), 'alightingAt': alight, 'sourceUpdatedAt': worker['evaluatedAt']})
+        service = {'routeId': '100100585', 'direction': '서대문 방면', 'vehicleKey': 'a' * 64,
+                   'boarding': {'stationId': '100000111', 'arsId': '01011', 'order': 75},
+                   'alighting': {'stationId': '100000222', 'arsId': '01012', 'order': 76}}
+        snapshot['lastAcceptedSeoulBusJourney'] = {'routeIdentity': route['identity'],
+            'departureAt': route['departureAt'], 'rides': [{'sequence': index, 'service': service}]}
+        previous = comparison.instant(route['segments'][1]['busRidePrediction']['alightingAt'] if bus_first
+                                      else route['segments'][1]['rideTiming']['predictedArrivalAt'])
+        onward = comparison.instant(route['segments'][3]['rideTiming']['predictedBoardingAt']) if bus_first else board
+        walk = route['segments'][2]['durationSeconds']
+        ready = previous + comparison.dt.timedelta(seconds=walk)
+        route['segments'][3]['transferTiming'] = {'previousArrivalAt': previous.isoformat(),
+            'physicalReadyAt': ready.isoformat(), 'boardingAt': onward.isoformat(), 'walkingSeconds': walk,
+            'requiredMarginSeconds': 60, 'remainingSlackSeconds': 37}
+        return worker
+
+    def test_mixed_worker_export_keeps_public_stop_occurrences_and_separates_each_wait(self):
+        for bus_first in (True, False):
+            with self.subTest(bus_first=bus_first):
+                result = comparison.worker_prediction(self.mixed_worker_fixture(bus_first), 'synthetic-mixed-worker')
+                bus = result['rides'][0 if bus_first else 1]
+                self.assertEqual((bus['mode'], bus['line'], bus['from'], bus['to']),
+                                 ('BUS', 'SEOUL_BUS:100100585', '100000111:01011:75', '100000222:01012:76'))
+                self.assertIn('.250000', bus['boardingAt'])
+                self.assertEqual(bus['boardingClockKind'], 'STATION_ARRIVAL_PREDICTION')
+                self.assertNotIn('vehicleKey', json.dumps(result))
+                self.assertNotIn('a' * 64, json.dumps(result))
+                self.assertIsNone(comparison.train_identities(result))
+                budget = comparison.timeline_budget(result)
+                access = budget['providerAccessComponents']
+                self.assertEqual(access['walkingSeconds'], 111)
+                self.assertEqual(access['waitAfterWalkingSeconds'], 155.25 if bus_first else 155)
+                transfer, = budget['providerTransferComponents']
+                self.assertEqual(transfer['walkingSeconds'], 243)
+                self.assertEqual(transfer['waitAfterWalkingSeconds'], 97 if bus_first else 97.25)
+                self.assertEqual(transfer['remainingSlackSeconds'], 37)
+                self.assertEqual(transfer['waitEndsAt'], 'BOARDING' if bus_first else 'STATION_ARRIVAL_PREDICTION')
+
+    def test_mixed_worker_export_rejects_unbound_route_and_wrong_fractional_slack(self):
+        for field in ('routeIdentity', 'departureAt', 'sequence', 'stopOrder', 'slack'):
+            with self.subTest(field=field):
+                worker = self.mixed_worker_fixture(False)
+                snapshot = worker['effectiveSnapshot']
+                binding = snapshot['lastAcceptedSeoulBusJourney']
+                ride = binding['rides'][0]
+                if field == 'routeIdentity': binding['routeIdentity'] = 'b' * 64
+                elif field == 'departureAt': binding['departureAt'] = '2026-10-12T03:59:25Z'
+                elif field == 'sequence': ride['sequence'] = 1
+                elif field == 'stopOrder': ride['service']['boarding']['order'] = 76
+                else: snapshot['effectiveTransitRoute']['segments'][3]['transferTiming']['remainingSlackSeconds'] = 38
+                with self.assertRaises(ValueError):
+                    comparison.worker_prediction(worker, 'contradictory-bus-route')
+
+    def test_mixed_map_comparison_requires_exact_topology_and_does_not_identify_bus_vehicle(self):
+        prediction = comparison.worker_prediction(self.mixed_worker_fixture(False), 'synthetic-mixed-worker')
+        pins = {'origin': {'lat': 37.655, 'lng': 127.061}, 'destination': {'lat': 37.485, 'lng': 126.93},
+                'evidence': 'exact synthetic pins'}
+        prediction['requestedCoordinateEvidence'] = pins
+        prediction['observedAt'] = '2026-10-12T03:57:00Z'
+        prediction['walkingCoverageEvidence'] = [{'scope': scope, 'included': True, 'evidence': 'synthetic visible walk'}
+                                                for scope in ('ACCESS', 'TRANSFER', 'EGRESS')]
+        reference = copy.deepcopy(prediction)
+        reference.update(id='map-synthetic-mixed', kind='MAP_PREDICTION',
+                         displayedArrivalEvidence={'arrivalAt': '2026-10-12T05:07:00Z',
+                                                   'scope': 'REQUESTED_DESTINATION', 'evidence': 'synthetic map clock'})
+        reference['rides'][1].update(boardingClockKind='BOARDING', boardingAt='2026-10-12T04:57:00Z',
+                                     publishedClockEvidence={'boardingAt': 'synthetic shown boarding'})
+        strict = comparison.compare(prediction, reference)
+        self.assertIn('BUS_VEHICLE_IDENTITY_UNCONFIRMED', strict['exclusionReasons'])
+        self.assertIsNone(strict['rideDiagnostics'][1]['boardingDeltaSeconds'])
+        self.assertIsNone(strict['rideDiagnostics'][1]['rideDurationDeltaSeconds'])
+        paired = {'walkingComparisonScope': 'WHOLE_JOURNEY',
+                  'samples': [{'id': 'synthetic-trip', 'before': prediction, 'after': prediction, 'naver': reference}]}
+        report = comparison.paired_map_report(paired)
+        self.assertEqual(report['comparableCount'], 1)
+        self.assertIsNone(next(row for row in report['samples'][0]['after']['routeClockComparison']
+                               if row['event'] == 'RIDE_2_BOARDING')['appMinusMapMinutes'])
+        reference['rides'][1]['from'] = '100000111:01011:74'
+        report = comparison.paired_map_report(paired)
+        self.assertEqual(report['comparableCount'], 0)
+        self.assertIn('VISIBLE_ROUTE_TOPOLOGY_UNCONFIRMED', report['samples'][0]['after']['exclusionReasons'])
+
+    def test_mixed_walking_boundary_requires_the_same_ordered_bus_stop(self):
+        prediction = comparison.worker_prediction(self.mixed_worker_fixture(False), 'synthetic-mixed-worker')
+        bus = prediction['rides'][1]
+        access, transfer, egress = prediction['walkingBoundaryEvidence']
+        access.update(to={'kind': 'STATION_PLATFORM', 'id': 'platform-in'}, stationInteriorCoverage='INCLUDED_TO_PLATFORM')
+        transfer.update(**{'from': {'kind': 'STATION_PLATFORM', 'id': 'platform-out'},
+                           'to': {'kind': 'BUS_STOP', 'id': bus['from']},
+                           'stationInteriorCoverage': 'INCLUDED_TO_PLATFORM'})
+        egress.update(**{'from': {'kind': 'BUS_STOP', 'id': bus['to']}, 'stationInteriorCoverage': 'EXCLUDED'})
+        self.assertIsNotNone(comparison.walking_boundaries(prediction))
+        transfer['to']['id'] = '100000111:01011:74'
+        self.assertIsNone(comparison.walking_boundaries(prediction))
+        self.assertIsNone(comparison.walking_boundaries(prediction, require_platform_coverage=False))
+
     def test_worker_export_keeps_current_departure_separate_from_protected_alarm(self):
         worker = self.recorded_worker()
         worker['comparisonRequestedDepartureAt'] = worker['recommendedDepartureAt']

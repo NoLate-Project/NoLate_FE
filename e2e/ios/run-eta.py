@@ -10,7 +10,7 @@ import urllib.request
 from eta_fixture_scope import DATED_TIMETABLE_API_BASES, INCIDENT_API_BASE, PRIVATE_API_BASE, QUOTA_ALTERNATE_API_BASE, REAL_ALTERNATE_API_BASE, require_memory_fixture_api
 from eta_timetable_preview import preview_exclusion
 from eta_diagnostic_warning import diagnostic_warning
-from eta_planned_route_evidence import accepted_departure_plan, first_ride_intervals, transfer_ride_labels, qualifying_planned_observation, verified_timetable_plan
+from eta_planned_route_evidence import accepted_departure_plan, accepted_ride_labels, first_ride_intervals, transfer_ride_labels, qualifying_planned_observation, verified_timetable_plan
 from eta_observed_service import selected_train_number
 
 def set_real_ride_intervals(expected, route):
@@ -345,34 +345,23 @@ if args.real_isolated:
                          'TEST_RUNNER_E2E_REAL_ARRIVAL_CLOCK': dt.datetime.fromisoformat(isolated['predictedArrivalAt']).astimezone(
                              dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
                          'TEST_RUNNER_E2E_REAL_MINUTES': str(isolated['travelMinutes'])}
-        rides = [s['rideTiming'] for s in isolated['effectiveSnapshot']['effectiveTransitRoute']['segments'] if s['kind'] == 'SUBWAY']
-        if len(rides) < 2:
-            parser.error('Actual first and transfer timetable evidence is required')
-        ride_basis_labels = {
-            'TIMETABLE': '시간표',
-            'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE': '첫 승차 실시간 반영',
-            'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE': '환승역 실시간 반영',
-            'TRANSFER_ALIGHTING_REALTIME': '하차역 실시간 예측',
-            'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME': '승하차역 실시간 예측',
-            'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING': '승차역 실시간 · 하차역 시간표',
-            'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING': '승차역 실시간 · 하차역 시간표',
-        }
+        effective_snapshot = isolated['effectiveSnapshot']
+        route = effective_snapshot['effectiveTransitRoute']
+        try:
+            labels = accepted_ride_labels(route)
+        except (KeyError, TypeError, ValueError):
+            parser.error('Actual first and transfer ride clocks are required')
+        if len(labels) < 2:
+            parser.error('Actual first and transfer ride clocks are required')
+        real_expected['TEST_RUNNER_E2E_REAL_RIDE_TEXT'] = json.dumps(labels, ensure_ascii=False)
         def boarding_clock_label(timing):
             if timing['basis'] in ('FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME',
                                    'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
                                    'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING'):
                 return '승차역 열차 도착 예측'
             return '승차'
-        real_expected['TEST_RUNNER_E2E_REAL_RIDE_TEXT'] = json.dumps([
-            timing['timetable']['trainNumber'] + '열차 · ' +
-            ride_basis_labels[timing['basis']] + ' · ' +
-            dt.datetime.fromisoformat(timing['predictedBoardingAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S') +
-            ' ' + boarding_clock_label(timing) + ' → ' +
-            dt.datetime.fromisoformat(timing['predictedArrivalAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M:%S') +
-            ' 하차 예측' for timing in rides], ensure_ascii=False)
-        effective_snapshot = isolated['effectiveSnapshot']
         if effective_snapshot.get('routeChanged') is False:
-            set_real_ride_intervals(real_expected, effective_snapshot['effectiveTransitRoute'])
+            set_real_ride_intervals(real_expected, route)
         if (args.api_base == REAL_ALTERNATE_API_BASE and isolated.get('journeyProvider') == 'odsay'
                 and effective_snapshot.get('routeChanged') is False):
             station_zone = dt.timezone(dt.timedelta(hours=9))

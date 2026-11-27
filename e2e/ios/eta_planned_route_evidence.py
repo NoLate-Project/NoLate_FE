@@ -1,5 +1,6 @@
 """Read bounded post-departure evidence without treating a cached plan as realtime."""
 import datetime as dt
+import math
 from eta_observed_service import observed_service, selected_train_number, reported_boarding_evidence
 from copy import deepcopy
 
@@ -45,8 +46,49 @@ def accepted_departure_plan(snapshot):
 
 
 def _duration(value):
-    minutes, seconds = divmod(int(value), 60)
+    minutes, seconds = divmod(math.floor(value + .5), 60)
     return ' '.join(part for part in (f'{minutes}분' if minutes else '', f'{seconds}초' if seconds else '') if part)
+
+
+def _ride_times(segment):
+    if segment['kind'] == 'BUS' and (bus := segment.get('busRidePrediction')):
+        return _time(bus['boardingAt']), _time(bus['alightingAt'])
+    if segment['kind'] == 'SUBWAY' and (rail := segment.get('rideTiming')):
+        return _time(rail['predictedBoardingAt']), _time(rail['predictedArrivalAt'])
+    return None
+
+
+def accepted_ride_labels(route):
+    """Exact station clocks expected on the installed app for a fresh accepted route."""
+    rail_labels = {
+        'TIMETABLE': '시간표',
+        'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE': '첫 승차 실시간 반영',
+        'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE': '환승역 실시간 반영',
+        'TRANSFER_ALIGHTING_REALTIME': '하차역 실시간 예측',
+        'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME': '승하차역 실시간 예측',
+        'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING': '승차역 실시간 · 하차역 시간표',
+        'TRANSFER_BOARDING_REALTIME_TIMETABLE_ALIGHTING': '승차역 실시간 · 하차역 시간표',
+    }
+    seoul = dt.timezone(dt.timedelta(hours=9))
+    labels = []
+    for segment in route['segments']:
+        if segment['kind'] == 'WALK':
+            continue
+        times = _ride_times(segment)
+        if times is None or not times[0] < times[1]:
+            raise ValueError('Every accepted ride needs chronological station clocks')
+        board, alight = [value.astimezone(seoul).strftime('%H:%M:%S') for value in times]
+        if segment['kind'] == 'BUS':
+            bus = segment['busRidePrediction']
+            if bus.get('reportedAlightingAt') or bus.get('alightingObservationSourceUpdatedAt'):
+                raise ValueError('An in-progress bus update cannot satisfy departure acceptance')
+            labels.append(f'{board} 승차 정류장 도착 예측 → {alight} 하차 정류장 도착 예측')
+        else:
+            timing = segment['rideTiming']
+            basis = rail_labels[timing['basis']]
+            start = '승차' if timing['basis'] in ('TIMETABLE', 'TRANSFER_ALIGHTING_REALTIME') else '승차역 열차 도착 예측'
+            labels.append(f"{selected_train_number(segment)}열차 · {basis} · {board} {start} → {alight} 하차 예측")
+    return labels
 
 
 def transfer_ride_labels(route):
@@ -58,22 +100,31 @@ def transfer_ride_labels(route):
     rides = [i for i, leg in enumerate(legs) if leg['kind'] != 'WALK']
     for prev, nxt in zip(rides, rides[1:]):
         first, second = legs[prev], legs[nxt]
-        if any(leg['kind'] != 'SUBWAY' or not leg.get('rideTiming') for leg in (first, second)):
+        first_clocks, second_clocks = _ride_times(first), _ride_times(second)
+        if first_clocks is None or second_clocks is None:
             continue
         walks = legs[prev + 1:nxt]
-        if not walks or any(w.get('walkingScope') not in (None, 'TRANSFER') or
+        if audit := second.get('transferTiming'):
+            walk_seconds = audit['walkingSeconds']
+            if (_time(audit['previousArrivalAt']) != first_clocks[1] or
+                    _time(audit['boardingAt']) != second_clocks[0] or
+                    _time(audit['physicalReadyAt']) != first_clocks[1] + dt.timedelta(seconds=walk_seconds)):
+                continue
+        elif not walks or any(w.get('walkingScope') not in (None, 'TRANSFER') or
                             type(w.get('durationSeconds')) is not int or w['durationSeconds'] < 0 or
                             (w['durationSeconds'] + 59) // 60 != w['durationMinutes'] or
                             (w.get('walkingTiming') or {}).get('source') == 'ROUTE_MINUTES' for w in walks):
             continue
-        timing = second['rideTiming']
-        board = _time(timing['predictedBoardingAt'])
-        elapsed = (board - _time(first['rideTiming']['predictedArrivalAt'])).total_seconds()
-        wait = elapsed - sum(w['durationSeconds'] for w in walks)
-        movement = (_time(timing['predictedArrivalAt']) - board).total_seconds()
-        if wait > 0 and movement > 0 and wait.is_integer() and movement.is_integer():
-            labels.append(f"환승 대기 약 {_duration(wait)} · 승차역부터 하차역까지 약 {_duration(movement)} · "
-                          f"{selected_train_number(second)}열차")
+        else:
+            walk_seconds = sum(w['durationSeconds'] for w in walks)
+        board, alight = second_clocks
+        wait = (board - first_clocks[1]).total_seconds() - walk_seconds
+        movement = (alight - board).total_seconds()
+        if wait >= .5 and movement >= .5:
+            bus = second['kind'] == 'BUS'
+            scope = '승차 정류장부터 하차 정류장까지' if bus else '승차역부터 하차역까지'
+            suffix = '' if bus else f" · {selected_train_number(second)}열차"
+            labels.append(f"환승 대기 약 {_duration(wait)} · {scope} 약 {_duration(movement)}{suffix}")
     return labels
 
 
@@ -91,13 +142,18 @@ def first_ride_intervals(route):
                 return None
             ready += dt.timedelta(seconds=seconds)
             continue
-        timing = segment.get('rideTiming')
-        if segment['kind'] != 'SUBWAY' or not timing:
+        clocks = _ride_times(segment)
+        if clocks is None:
             return None
-        board, alight = _time(timing['predictedBoardingAt']), _time(timing['predictedArrivalAt'])
+        board, alight = clocks
         wait, ride = (board - ready).total_seconds(), (alight - board).total_seconds()
-        if min(wait, ride) <= 0 or not wait.is_integer() or not ride.is_integer():
+        if min(wait, ride) < .5:
             return None
+        if segment['kind'] == 'BUS':
+            return {'wait': f'첫 승차 대기 약 {_duration(wait)} (버스 도착 기준)',
+                    'ride': f'승차 정류장부터 하차 정류장까지 약 {_duration(ride)}',
+                    'inclusiveMinutes': math.ceil((wait + ride) / 60)}
+        timing = segment['rideTiming']
         station_arrival = (timing['basis'] in (
             'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE', 'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
             'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME', 'PLANNED_RIDE_BOARDING_REALTIME',
@@ -105,7 +161,7 @@ def first_ride_intervals(route):
             'REPORTED_BOARDING_AND_ALIGHTING_REALTIME') or timing.get('plannedBoardingIsStationArrival') is True)
         event = '도착' if station_arrival else '출발'
         return {'wait': f'첫 승차 대기 약 {_duration(wait)} (열차 {event} 기준)',
-                'ride': f'승차역부터 하차역까지 약 {_duration(ride)}', 'inclusiveMinutes': (int(wait + ride) + 59) // 60}
+                'ride': f'승차역부터 하차역까지 약 {_duration(ride)}', 'inclusiveMinutes': math.ceil((wait + ride) / 60)}
     return None
 
 

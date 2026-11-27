@@ -162,24 +162,43 @@ def verify_diagnostic_values(worker, public, seed, selected):
             'acceptedEtaVerified': False, 'stationInteriorCoverageVerified': False}
 
 
-def verify_odsay_selection(seed, selected, route=None):
+def verify_odsay_selection(seed, selected, route=None, *, bus_binding=None):
     assert seed['provider'] == selected['provider'] == selected['routeInfo']['provider'] == 'odsay'
     assert selected['providerTimeBasis'] == 'route_estimate'
-    rides = [leg for leg in seed['legs'] if leg['mode'] == 'SUBWAY']
-    saved = [leg for leg in selected['transitLegs'] if leg['kind'] == 'SUBWAY']
+    rides = [leg for leg in seed['legs'] if leg['mode'] != 'WALK']
+    saved = [leg for leg in selected['transitLegs'] if leg['kind'] != 'WALK']
     assert len(rides) == len(saved) == 2
-    assert [(leg['from']['name'], leg['to']['name']) for leg in rides] in (
-        [('노원', '사당'), ('사당', '신림')], [('동작', '사당'), ('사당', '신림')])
+    modes = [leg['mode'] for leg in rides]
+    assert modes == [leg['kind'] for leg in saved]
+    if 'BUS' in modes:
+        assert modes in (['BUS', 'SUBWAY'], ['SUBWAY', 'BUS']) and route is not None and bus_binding
+        bus, = (leg for leg in rides if leg['mode'] == 'BUS')
+        bound, = bus_binding['rides']
+        assert bus_binding['routeIdentity'] == route['identity'] and bus_binding['departureAt'] == route['departureAt']
+        assert bound['sequence'] == bus['sequence']
+        service = bound['service']
+        assert service['routeId'] == bus['line']['localRouteId']
+        for place, stop in (('from', 'boarding'), ('to', 'alighting')):
+            assert service[stop]['stationId'] == bus[place]['localStopId']
+            assert not bus[place].get('arsId') or service[stop]['arsId'] == bus[place]['arsId']
+    else:
+        assert modes == ['SUBWAY', 'SUBWAY']
+        assert [(leg['from']['name'], leg['to']['name']) for leg in rides] in (
+            [('노원', '사당'), ('사당', '신림')], [('동작', '사당'), ('사당', '신림')])
     for before, after in zip(rides, saved):
         assert before['from']['providerStopId'] == after['startID']
         assert before['to']['providerStopId'] == after['endID']
         assert before['line']['providerRouteId'] == after['providerRouteId']
     if route is not None:
-        effective = [s for s in route['segments'] if s['kind'] == 'SUBWAY']
+        effective = [s for s in route['segments'] if s['kind'] != 'WALK']
         assert route['provider'] == 'odsay' and len(effective) == len(rides)
         for before, after in zip(rides, effective):
+            assert before['mode'] == after['kind']
             assert (after['fromName'], after['toName']) == (before['from']['name'], before['to']['name'])
             assert after['lineName'] == before['line']['name']
+            if after['kind'] == 'BUS':
+                assert after['sequence'] == before['sequence']
+                continue
             table = after['rideTiming']['timetable']
             assert table['line'] == before['line']['seoulSubwayLine']
             if before['directionCode'] is not None:
@@ -247,6 +266,21 @@ def verify_values(worker, public):
     assert instant(worker['predictedArrivalAt']) == instant(public['predictedArrivalAt']) == instant(route['arrivalAt'])
     assert instant(worker['predictedArrivalAt']) <= instant(worker['targetArrivalAt'])
     assert worker['travelMinutes'] == public['travelMinutes'] == route['totalMinutes']
+    ride_segments = [segment for segment in route['segments'] if segment['kind'] != 'WALK']
+    ride_modes = [segment['kind'] for segment in ride_segments]
+    mixed = 'BUS' in ride_modes
+    bus_first = ride_modes[0] == 'BUS'
+    if mixed:
+        assert provider == 'odsay' and ride_modes in (['BUS', 'SUBWAY'], ['SUBWAY', 'BUS'])
+        assert snapshot['transitRouteProvenance'] == 'SELECTED_ROUTE_PRESERVED' and snapshot['routeChanged'] is False
+        assert journey_basis == ('FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE' if bus_first else 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED')
+        bus, = [segment for segment in ride_segments if segment['kind'] == 'BUS']
+        bus_timing = bus['busRidePrediction']
+        bus_board = instant(bus_timing['boardingAt'])
+        bus_source = instant(bus_timing['sourceUpdatedAt'])
+        assert bus_source <= bus_board < instant(bus_timing['alightingAt'])
+        assert -5 <= (instant(worker['evaluatedAt']) - bus_source).total_seconds() <= 120
+        assert not bus_timing.get('reportedAlightingAt') and not bus_timing.get('alightingObservationSourceUpdatedAt')
     observation = snapshot['firstBoardingObservation']
     # The Worker may retain an earlier safe alert time instead of postponing it.
     # Do not conflate that alert recommendation with the new journey's departure.
@@ -254,13 +288,20 @@ def verify_values(worker, public):
     recommendation = instant(worker['recommendedDepartureAt'])
     assert recommendation <= route_departure
     assert route_departure == instant(observation['departureAt'])
-    assert observation['provider'] == 'seoul-openapi' and observation['trainNumber']
+    assert observation['provider'] == 'seoul-openapi'
+    if bus_first:
+        assert not observation.get('trainNumber') and observation['stationName'] == bus['fromName']
+        assert observation['lineName'] == bus['lineName']
+        assert instant(observation['expectedBoardingAt']) == bus_board
+        assert instant(observation['sourceUpdatedAt']) == bus_source
+    else:
+        assert observation['trainNumber']
     age = (instant(observation['evaluatedAt']) - instant(observation['sourceUpdatedAt'])).total_seconds()
     assert -60 <= age <= 120
     assert instant(observation['readyAt']) <= instant(observation['expectedBoardingAt'])
     assert instant(observation['evaluatedAt']) <= instant(worker['evaluatedAt']) + dt.timedelta(seconds=15)
     rides = [s['rideTiming'] for s in route['segments'] if s['kind'] == 'SUBWAY']
-    assert len(rides) >= 2
+    assert len(rides) == 1 if mixed else len(rides) >= 2
     for index, timing in enumerate(rides):
         table = timing['timetable']
         assert table['provider'] == 'seoul-timetable' and table['trainNumber']
@@ -270,7 +311,7 @@ def verify_values(worker, public):
         boarding, arrival = instant(timing['predictedBoardingAt']), instant(timing['predictedArrivalAt'])
         raw_boarding, raw_arrival = instant(table['boardingAt']), instant(table['arrivalAt'])
         assert raw_arrival > raw_boarding
-        if index == 0:
+        if index == 0 and not bus_first:
             assert timing['basis'] in ('FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
                                        'FIRST_BOARDING_REALTIME_TIMETABLE_ALIGHTING',
                                        'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME')
@@ -302,7 +343,7 @@ def verify_values(worker, public):
                 assert timing['basis'] == 'TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE'
                 origin = instant(table.get('boardingStationArrivalAt') or table['boardingAt'])
                 assert origin <= raw_boarding and boarding > origin and arrival - raw_arrival == boarding - origin
-    if journey_basis == 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED':
+    if journey_basis == 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED' and not mixed:
         assert any(t['basis'] != 'TIMETABLE' for t in rides[1:]) or rides[0]['basis'] == 'FIRST_RIDE_BOARDING_AND_ALIGHTING_REALTIME'
     walks = [s for s in route['segments'] if s['kind'] == 'WALK']
     assert {s['walkingScope'] for s in walks} == {'ACCESS', 'TRANSFER', 'EGRESS'}
@@ -324,7 +365,7 @@ def verify_values(worker, public):
             'effectiveRouteDepartureAt': route['departureAt'],
             'recommendationLeadSeconds': (route_departure - recommendation).total_seconds(),
             'predictedArrivalAt': worker['predictedArrivalAt'], 'travelMinutes': worker['travelMinutes'],
-            'trainNumber': observation['trainNumber'], 'sourceAgeSeconds': age, 'rides': rides,
+            'trainNumber': observation.get('trainNumber'), 'sourceAgeSeconds': age, 'rides': rides,
             'journeyProvider': provider,
             'walkingMetadataPreserved': True, 'stationInteriorCoverageVerified': False,
             'walkingBoundaryAudit': walking}
@@ -356,8 +397,9 @@ def verify_odsay_minute_walking(route):
     segments = route['segments']
     assert [s['sequence'] for s in segments] == list(range(len(segments)))
     cursor = instant(route['departureAt'])
-    ride_indices = [i for i, s in enumerate(segments) if s['kind'] == 'SUBWAY']
+    ride_indices = [i for i, s in enumerate(segments) if s['kind'] in ('SUBWAY', 'BUS')]
     assert len(ride_indices) >= 2
+    mixed = any(segments[i]['kind'] == 'BUS' for i in ride_indices)
     walking_minutes = 0
     refined_seconds = []
     boundary_seconds = []
@@ -427,11 +469,17 @@ def verify_odsay_minute_walking(route):
             pending_walk += seconds
             walking_minutes += minutes
         else:
-            assert segment['kind'] == 'SUBWAY'
-            timing = segment['rideTiming']
-            boarding, arrival = instant(timing['predictedBoardingAt']), instant(timing['predictedArrivalAt'])
+            if segment['kind'] == 'BUS':
+                timing = segment['busRidePrediction']
+                boarding, arrival = instant(timing['boardingAt']), instant(timing['alightingAt'])
+            else:
+                assert segment['kind'] == 'SUBWAY'
+                timing = segment['rideTiming']
+                boarding, arrival = instant(timing['predictedBoardingAt']), instant(timing['predictedArrivalAt'])
             assert boarding >= cursor + dt.timedelta(seconds=60) and arrival > boarding
             audit = segment.get('transferTiming')
+            if mixed and previous_arrival is not None:
+                assert audit is not None
             if previous_arrival is not None and audit is not None:
                 assert instant(audit['previousArrivalAt']) == previous_arrival
                 assert audit['walkingSeconds'] == pending_walk
@@ -440,7 +488,7 @@ def verify_odsay_minute_walking(route):
                 assert instant(audit['physicalReadyAt']) == cursor
                 assert instant(audit['confidenceReadyAt']) == cursor + dt.timedelta(seconds=margin)
                 assert instant(audit['boardingAt']) == boarding
-                assert audit['remainingSlackSeconds'] == (boarding - instant(audit['confidenceReadyAt'])).total_seconds()
+                assert audit['remainingSlackSeconds'] == (boarding - instant(audit['confidenceReadyAt'])) // dt.timedelta(seconds=1)
             cursor = arrival
             previous_arrival = arrival
             pending_walk = 0
@@ -463,7 +511,8 @@ def verify_odsay_minute_walking(route):
 
 def verify_comparison_export(worker, prediction):
     """Independently bind exported clocks/IDs to this accepted Worker evaluation."""
-    route = worker['effectiveSnapshot']['effectiveTransitRoute']
+    snapshot = worker['effectiveSnapshot']
+    route = snapshot['effectiveTransitRoute']
     assert prediction['kind'] == 'APP_PREDICTION' and prediction['mocked'] is False
     assert prediction['id'] == f"worker-{worker['scheduleId']}-{worker['latestHistoryId']}"
     assert prediction['observedAt'] == worker['evaluatedAt']
@@ -480,9 +529,32 @@ def verify_comparison_export(worker, prediction):
         coordinate = (walk.get('walkingGeometry') or {}).get(endpoint)
         expected = f"coordinate:{coordinate['lat']},{coordinate['lng']}" if coordinate else 'UNKNOWN'
         assert prediction[field] == expected
-    rides = [s['rideTiming'] for s in route['segments'] if s['kind'] == 'SUBWAY']
+    rides = [segment for segment in route['segments'] if segment['kind'] != 'WALK']
+    bus_sequences = [segment['sequence'] for segment in rides if segment['kind'] == 'BUS']
+    bus_services = {}
+    if bus_sequences:
+        binding = snapshot['lastAcceptedSeoulBusJourney']
+        assert route['provider'] == 'odsay' and binding['routeIdentity'] == route['identity']
+        assert instant(binding['departureAt']) == instant(route['departureAt'])
+        assert [item['sequence'] for item in binding['rides']] == bus_sequences
+        bus_services = {item['sequence']: item['service'] for item in binding['rides']}
     assert len(prediction['rides']) == len(rides) > 0
-    for ride, timing in zip(prediction['rides'], rides):
+    for ride, segment in zip(prediction['rides'], rides):
+        assert ride.get('mode', 'SUBWAY') == segment['kind']
+        if segment['kind'] == 'BUS':
+            service = bus_services[segment['sequence']]
+            board, alight = service['boarding'], service['alighting']
+            timing = segment['busRidePrediction']
+            assert timing.get('reportedAlightingAt') is None
+            assert ride == {'mode': 'BUS', 'line': 'SEOUL_BUS:' + service['routeId'],
+                            'from': ':'.join(str(board[key]) for key in ('stationId', 'arsId', 'order')),
+                            'to': ':'.join(str(alight[key]) for key in ('stationId', 'arsId', 'order')),
+                            'serviceClass': 'CITY_BUS', 'direction': service['direction'],
+                            'boardingClockKind': 'STATION_ARRIVAL_PREDICTION',
+                            'boardingAt': timing['boardingAt'], 'arrivalAt': timing['alightingAt']}
+            continue
+        assert segment['kind'] == 'SUBWAY'
+        timing = segment['rideTiming']
         table = timing['timetable']
         assert ride['boardingAt'] == timing['predictedBoardingAt']
         station_arrival = timing['basis'] in (
@@ -555,7 +627,8 @@ def verify(root, require_comparison_evidence=False, api_base=PRIVATE_API_BASE):
             record['comparisonExportAudit'] = verify_comparison_export(worker, json.loads(prediction_path.read_text()))
         if record['journeyProvider'] == 'odsay':
             verify_odsay_selection(json.loads((root / 'odsay-seed-journey.json').read_text()),
-                json.loads((root / 'selected-route.json').read_text()), public['effectiveTransitRoute'])
+                json.loads((root / 'selected-route.json').read_text()), public['effectiveTransitRoute'],
+                bus_binding=worker['effectiveSnapshot'].get('lastAcceptedSeoulBusJourney'))
             record['selectedProviderIdsPreserved'] = True
         summary = json.loads(subprocess.check_output(['xcrun', 'xcresulttool', 'get', 'test-results',
                                                       'summary', '--path', str(ui / 'result.xcresult')]))

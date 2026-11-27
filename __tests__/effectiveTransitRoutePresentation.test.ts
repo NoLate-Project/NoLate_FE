@@ -91,10 +91,10 @@ describe("effective transit route presentation", () => {
         };
         ride.busRidePrediction = paired;
         expect(buildEffectiveTransitRoutePresentation(status)?.itinerary)
-            .toContain("09:24:02 승차 → 09:26:18 하차 예측");
+            .toContain("09:24:02 승차 정류장 도착 예측 → 09:26:18 하차 정류장 도착 예측");
         expect(buildEffectiveTransitRoutePresentation({ ...status, stale: true })).toBeUndefined();
         ride.busRidePrediction = { ...paired, boardingAt: paired.alightingAt };
-        expect(buildEffectiveTransitRoutePresentation(status)?.itinerary).not.toContain("하차 예측");
+        expect(buildEffectiveTransitRoutePresentation(status)?.itinerary).not.toContain("하차 정류장 도착 예측");
     });
 
     it("keeps an in-progress planned arrival provisional and separate from departure timing", () => {

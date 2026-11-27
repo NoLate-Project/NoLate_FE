@@ -202,6 +202,8 @@ def main():
                         help='Bound actual provider calls; fewer than two accepted UI cases remains PARTIAL')
     parser.add_argument('--journey-provider', choices=('odsay', 'tmap'), default='odsay',
                         help='Defaults to a fresh ODsay selected route; choose Tmap explicitly for legacy route verification')
+    parser.add_argument('--mixed-route-order', choices=('bus-rail', 'rail-bus'),
+                        help='Select a matching ODsay journey with one Seoul bus and one subway ride')
     parser.add_argument('--target-lead-minutes', type=int, choices=(70, 75, 90), default=75,
                         help='Future test appointment only; real clock and provider acceptance remain unchanged')
     parser.add_argument('--planned-departure-at',
@@ -250,6 +252,10 @@ def main():
                         help='Compare the live bus preview on the private Gangnam–Yeoksam schedule with the saved route')
     args = parser.parse_args()
     args.verify_planned_postdeparture |= args.verify_timetable_planned_postdeparture
+    if args.mixed_route_order and (args.journey_provider != 'odsay' or args.api_port != 5523
+            or args.verify_short_first_ride or args.verify_odsay_timetable_selection
+            or args.verify_planned_postdeparture or args.verify_observation_expiry):
+        parser.error('Mixed routes use the isolated ODsay departure check on port 5523')
     if args.verify_observed_service_connection and not observed_service_scope_valid(
             timetable=args.verify_timetable_planned_postdeparture,
             positions=args.observe_train_positions, max_evaluations=args.max_evaluations):
@@ -406,6 +412,8 @@ def main():
               'physicalIphone': 'DEFERRED_BY_USER', 'fcmDeliveryVerified': False,
               'mapAccuracyWithinTwoMinutesVerified': False, 'actualTripAccuracyVerified': False}
     report['journeyProvider'] = args.journey_provider
+    if args.mixed_route_order:
+        report['mixedRouteOrder'] = args.mixed_route_order
     report['publicStationFixture'] = args.public_nowon_sillim
     report['apiBase'] = base
     report['targetLeadMinutes'] = args.target_lead_minutes
@@ -570,6 +578,8 @@ def main():
                 dated_option.append('-Dnolate.eta.real-isolated.seolleung-access=true')
             if args.without_station_timetable:
                 dated_option.append('-Dnolate.eta.real-isolated.omit-station-timetable=true')
+            if args.mixed_route_order:
+                dated_option.append('-Dnolate.eta.real-isolated.mixed-order=' + args.mixed_route_order)
             server = subprocess.Popen([args.java, '-Xmx1536m', '-Dnolate.eta.real-isolated=true',
                 f'-Dnolate.eta.real-isolated.port={args.api_port}'] + dated_option + ['-classpath',
                 (root / 'classpath.txt').read_text(), 'com.noLate.eta.simulator.EtaRealProviderSimulatorServer',
@@ -583,6 +593,8 @@ def main():
         assert prepared['providersMocked'] is False and prepared['database'] == 'H2_MEMORY_ONLY'
         assert prepared['alertMode'] == 'STANDARD' and prepared['nativeAlarmDeliveryTest'] is False
         assert prepared['journeyProvider'] == args.journey_provider
+        if args.mixed_route_order:
+            assert prepared['mixedRouteOrder'] == args.mixed_route_order
         if args.public_nowon_sillim:
             assert prepared['publicStationFixture'] is True and prepared['copiedFromScheduleId'] is None
             assert prepared['requestedCoordinates'] == {
@@ -1027,7 +1039,7 @@ def main():
                 accepted_streak += 1
                 if args.verify_planned_postdeparture:
                     initial_plan = accepted_departure_plan(value['effectiveSnapshot'])
-            elif args.journey_provider == 'odsay':
+            elif args.journey_provider == 'odsay' and not args.mixed_route_order:
                 timetable_plan = verified_timetable_plan(value) if args.verify_timetable_planned_postdeparture and index == 1 else None
                 if timetable_plan:
                     initial_plan = timetable_plan

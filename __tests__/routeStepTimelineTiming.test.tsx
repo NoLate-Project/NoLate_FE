@@ -58,6 +58,22 @@ function buildRouteInfo(durations: StepDuration[]): RouteInfo {
 }
 
 describe("RouteStepTimeline timing", () => {
+    it("describes matched bus clocks as forecasts at the boarding and alighting stops", async () => {
+        const route = buildRouteInfo([{ durationMinutes: 12 }]);
+        route.matchedTimeline = true;
+        route.steps[1] = { ...route.steps[1], type: "BUS", lineName: "402", alightingName: "도착 정류장", matchedTimeline: {
+            startAt: route.departureTime, endAt: route.arrivalTime, movementSeconds: 720,
+            startsWithStationArrivalPrediction: true,
+        } };
+        await act(async () => {
+            renderer = TestRenderer.create(<RouteStepTimeline routeInfo={route} compact inlineStationRail />);
+        });
+        const row = renderer!.root.findByProps({ testID: "route-step-row-leg-0" });
+        expect(row.props.accessibilityLabel).toContain("버스 도착 예측");
+        expect(renderer!.root.findByProps({ testID: "route-step-alighting-clock-leg-0" }).props.accessibilityLabel)
+            .toContain("하차 정류장 도착 예측");
+    });
+
     it("shows exact transfer walking seconds and keeps a pending bus distinct from an unsupported stop", async () => {
         const route = buildRouteInfo([{ durationMinutes: 12 }, { durationMinutes: 1 }, {}]);
         route.matchedTimeline = true;

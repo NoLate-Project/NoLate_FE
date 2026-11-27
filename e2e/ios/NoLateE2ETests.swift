@@ -5655,15 +5655,14 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     "A rejected ETA must not look accepted")
         let rideData = try XCTUnwrap(environment["E2E_REAL_RIDE_TEXT"]?.data(using: .utf8))
         let rides = try XCTUnwrap(try JSONSerialization.jsonObject(with: rideData) as? [String])
-        try require(rides.count >= 2 && rides.allSatisfy { summary.label.contains($0) },
-                    "Actual first and transfer train clocks differ from the accepted Worker")
+        try require(rides.count >= 2, "Expected first and transfer ride clocks")
+        try verifyOrderedRideClocks(rides, in: summary.label)
         // 펼치면 요약 버튼이 사라진다. 검증한 문자열을 보관해 로그가 재조회 실패를 만들지 않게 한다.
         let verifiedSummary = summary.label
         try tap(summary)
         let guidance = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "현재 보정 여정,")).firstMatch
-        try require(waitForVisibleRealRouteText(guidance) &&
-                    rides.allSatisfy { guidance.label.contains($0) },
-                    "Expanded actual-provider evidence must retain per-train clocks and timing basis")
+        try require(waitForVisibleRealRouteText(guidance), "Expanded actual-provider evidence must show the accepted route")
+        try verifyOrderedRideClocks(rides, in: guidance.label)
         let walkData = try XCTUnwrap(environment["E2E_REAL_WALK_TEXT"]?.data(using: .utf8))
         let walking = try XCTUnwrap(try JSONSerialization.jsonObject(with: walkData) as? [[String]])
         try require(walking.allSatisfy { tokens in (2...3).contains(tokens.count) &&
@@ -5941,8 +5940,16 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         if let value = environment["E2E_REAL_TRANSFER_INTERVALS"] {
             let expected = try JSONDecoder().decode([String].self, from: Data(value.utf8))
             for transfer in expected {
-                try require(label.contains(transfer), "Transfer wait and ride duration must match the same train: " + transfer)
+                try require(label.contains(transfer), "Transfer wait and ride duration must match the accepted route: " + transfer)
             }
+        }
+    }
+
+    private func verifyOrderedRideClocks(_ rides: [String], in label: String) throws {
+        var remaining = label[...]
+        for ride in rides {
+            let match = try XCTUnwrap(remaining.range(of: ride), "Missing or out-of-order ride clocks: " + ride)
+            remaining = remaining[match.upperBound...]
         }
     }
 

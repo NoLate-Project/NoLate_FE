@@ -426,8 +426,8 @@ function rideTimingLabel(segment: EffectiveTransitRouteSegment, timeZone?: strin
             if (bus.alightingObservationSourceUpdatedAt != null && (!direct || direct < boarding || direct > alighting)) {
                 return undefined;
             }
-            const boardingLabel = direct ? "승차 계획" : "승차";
-            const alightingLabel = direct ? "같은 버스 하차 예보" : "하차 예측";
+            const boardingLabel = direct ? "승차 계획" : "승차 정류장 도착 예측";
+            const alightingLabel = direct ? "같은 버스 하차 예보" : "하차 정류장 도착 예측";
             return `${formatClock(bus.boardingAt, timeZone, true)} ${boardingLabel} → ${formatClock(bus.alightingAt, timeZone, true)} ${alightingLabel}`;
         }
     }

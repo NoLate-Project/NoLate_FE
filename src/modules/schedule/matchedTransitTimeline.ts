@@ -85,6 +85,7 @@ export function applyMatchedTransitTimeline(info: RouteInfo | undefined, status?
                     Date.parse(bus.reportedAlightingAt) !== alight || alight > nowMs) return fallback;
                 endsWithReportedStationArrival = true;
             }
+            startsWithStationArrivalPrediction = !endsWithReportedStationArrival && bus.alightingObservationSourceUpdatedAt == null;
             cursor = alight;
         } else {
             const timing = segment.rideTiming;

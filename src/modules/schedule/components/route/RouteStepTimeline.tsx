@@ -419,8 +419,9 @@ export default function RouteStepTimeline({
                     : endOffset === undefined ? undefined : formatArrivalClock(routeInfo.departureTime, endOffset / 60);
                 const reportedAlighting = matched?.endsWithReportedStationArrival === true;
                 const reportedAlightingLabel = step.type === "BUS" ? "하차 정류장 도착 보고" : "하차역 도착 보고";
+                const estimatedAlightingLabel = step.type === "BUS" && matched ? "하차 정류장 도착 예측" : "예상 하차";
                 const alightingClockLabel = hasExactTimeline && alightingClock
-                    ? `${alightingClock} ${reportedAlighting ? reportedAlightingLabel : "예상 하차"}` : undefined;
+                    ? `${alightingClock} ${reportedAlighting ? reportedAlightingLabel : estimatedAlightingLabel}` : undefined;
                 const repeatsAlightingClock = (step.type === "WALK" || step.type === "TRANSFER") && previousAlightingClock !== undefined &&
                     timelineClockText === previousAlightingClock;
                 previousAlightingClock = alightingClock;
@@ -463,9 +464,10 @@ export default function RouteStepTimeline({
                     step.type !== "WALK" ||
                     (index > 1 && !isLast)
                 );
+                const vehicle = step.type === "BUS" ? "버스" : "열차";
                 const stationArrivalLabel = shouldShowTimelineClock && routeInfo.matchedTimeline
                     ? step.matchedTimeline?.startsWithReportedStationArrival ? "열차 도착 관측"
-                        : step.matchedTimeline?.startsWithStationArrivalPrediction ? "열차 도착 예측"
+                        : step.matchedTimeline?.startsWithStationArrivalPrediction ? `${vehicle} 도착 예측`
                         : step.matchedTimeline?.provisionalPlan && step.type === "SUBWAY" ? "승차 계획" : undefined
                     : undefined;
                 const clockAccessibilityLabel = shouldShowTimelineClock
@@ -939,7 +941,7 @@ export default function RouteStepTimeline({
                                         ]}>
                                             <Text
                                                 testID={`route-step-alighting-clock-${step.id}`}
-                                                accessibilityLabel={reportedAlighting ? alightingClockLabel
+                                                accessibilityLabel={reportedAlighting || (step.type === "BUS" && matched) ? alightingClockLabel
                                                     : `${routeInfo.timeBasis === "provider_schedule" ? "시간표" : "예상"} 하차 ${alightingClock}`}
                                                 maxFontSizeMultiplier={stackTimelineText ? undefined : 1.3}
                                                 style={[styles.timelineClockText, tightInlineRail && styles.badgeTextInlineCompact, { color: isDark ? "#D7D7DA" : "#374151" }]}

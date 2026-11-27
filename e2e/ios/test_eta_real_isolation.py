@@ -273,9 +273,9 @@ class RealIsolationVerifierTest(unittest.TestCase):
             'effectiveSnapshot': {'accepted': True, 'effectiveTransitRoute': {
                 'departureAt': '2026-10-12T04:00:26Z', 'arrivalAt': arrival,
                 'segments': [
-                    {'kind': 'WALK', 'walkingScope': 'ACCESS', 'durationMinutes': 2, 'walkingGeometry': {
+                    {'kind': 'WALK', 'sequence': 0, 'walkingScope': 'ACCESS', 'durationMinutes': 2, 'walkingGeometry': {
                         'from': {'lat': 37.65, 'lng': 127.06}}},
-                    {'kind': 'SUBWAY', 'rideTiming': {
+                    {'kind': 'SUBWAY', 'sequence': 1, 'rideTiming': {
                         'basis': 'FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
                         'predictedBoardingAt': '2026-10-12T04:03:13Z',
                         'predictedArrivalAt': '2026-10-12T04:18:00Z',
@@ -283,7 +283,7 @@ class RealIsolationVerifierTest(unittest.TestCase):
                             'fromStationCode': '0411', 'toStationCode': '0433',
                             'directionCode': 'DOWN', 'serviceClass': 'LOCAL',
                             'serviceDate': '2026-10-12', 'trainNumber': '4012'}}},
-                    {'kind': 'WALK', 'walkingScope': 'EGRESS', 'durationMinutes': 3, 'walkingGeometry': {
+                    {'kind': 'WALK', 'sequence': 2, 'walkingScope': 'EGRESS', 'durationMinutes': 3, 'walkingGeometry': {
                         'to': {'lat': 37.48, 'lng': 126.93}}},
                 ]}}}
         export_spec = importlib.util.spec_from_file_location('comparison_export', Path(__file__).with_name('verify-eta-comparison.py'))
@@ -302,6 +302,25 @@ class RealIsolationVerifierTest(unittest.TestCase):
                 elif mutation == 'precision': changed['arrivalClockEvidence']['resolutionSeconds'] = 60
                 elif mutation == 'coordinate': changed['originBoundary'] = 'coordinate:37.5,127.0'
                 else: changed['realWorldAccuracyVerified'] = True
+                verifier.verify_comparison_export(worker, changed)
+
+        snapshot = worker['effectiveSnapshot']
+        route = snapshot['effectiveTransitRoute']
+        route.update(provider='odsay', identity='b' * 64)
+        ride = route['segments'][1]
+        ride.pop('rideTiming')
+        ride.update(kind='BUS', busRidePrediction={'boardingAt': '2026-10-12T04:03:13Z',
+            'alightingAt': '2026-10-12T04:18:00Z', 'sourceUpdatedAt': worker['evaluatedAt']})
+        snapshot['lastAcceptedSeoulBusJourney'] = {'routeIdentity': route['identity'], 'departureAt': route['departureAt'],
+            'rides': [{'sequence': 1, 'service': {'routeId': '100100585', 'direction': '서대문 방면',
+                'boarding': {'stationId': '100000111', 'arsId': '01011', 'order': 75},
+                'alighting': {'stationId': '100000222', 'arsId': '01012', 'order': 76}, 'vehicleKey': 'a' * 64}}]}
+        bus_export = exporter.worker_prediction(worker, 'synthetic-comparison-export-regression-bus')
+        self.assertEqual(verifier.verify_comparison_export(worker, bus_export)['result'], 'PASSED')
+        for field, value in {'from': '100000111:01011:74', 'vehicleKey': 'a' * 64, 'boardingClockKind': 'BOARDING'}.items():
+            with self.subTest(bus_field=field), self.assertRaises(AssertionError):
+                changed = copy.deepcopy(bus_export)
+                changed['rides'][0][field] = value
                 verifier.verify_comparison_export(worker, changed)
 
     def test_expired_future_preview_must_be_hidden_not_promoted(self):
@@ -406,6 +425,73 @@ class RealIsolationVerifierTest(unittest.TestCase):
         worker, public = self.sample()
         self.assertEqual(verifier.verify_values(worker, public)['sourceAgeSeconds'], 40)
         self.assertEqual(verifier.verify_values(worker, public)['walkingBoundaryAudit']['timingResult'], 'PASSED')
+
+    def test_mixed_eta_checks_bus_freshness_and_transfer_even_when_api_matches_worker(self):
+        from eta_planned_route_evidence import accepted_ride_labels, transfer_ride_labels
+
+        for bus_first in (True, False):
+            with self.subTest(bus_first=bus_first):
+                worker, public = self.sample()
+                worker['journeyProvider'] = 'odsay'
+                snapshot = worker['effectiveSnapshot']
+                route = snapshot['effectiveTransitRoute']
+                route['provider'] = 'odsay'
+                route['identity'] = 'b' * 64
+                for segment in route['segments']:
+                    if segment['kind'] == 'WALK':
+                        segment.update(durationMinutes=2, durationSeconds=None, walkingGeometry=None)
+                basis = 'FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE' if bus_first else 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED'
+                snapshot.update(transitTimingBasis=basis, transitRouteProvenance='SELECTED_ROUTE_PRESERVED', routeChanged=False)
+                bus = route['segments'][1 if bus_first else 3]
+                clocks = bus.pop('rideTiming')
+                source = '2026-10-08T01:59:20Z'
+                bus.update(kind='BUS', lineName='N37', fromName='첫 정류장', toName='다음 정류장', busRidePrediction={
+                    'boardingAt': clocks['predictedBoardingAt'], 'alightingAt': clocks['predictedArrivalAt'], 'sourceUpdatedAt': source})
+                if bus_first:
+                    snapshot['firstBoardingObservation'].update(trainNumber=None, stationName='첫 정류장', lineName='N37')
+                route['segments'][3]['transferTiming'] = {
+                    'walkingSeconds': 120, 'previousArrivalAt': '2026-10-08T02:44:00Z', 'boardingAt': '2026-10-08T02:50:00Z',
+                    'physicalReadyAt': '2026-10-08T02:46:00Z', 'confidenceReadyAt': '2026-10-08T02:47:00Z',
+                    'bufferSeconds': 0, 'requiredMarginSeconds': 60, 'confidenceMarginSeconds': 60, 'remainingSlackSeconds': 180}
+                public.update(effectiveTransitRoute=copy.deepcopy(route), transitTimingBasis=basis)
+                self.assertEqual(verifier.verify_values(worker, public)['walkingBoundaryAudit']['timingResult'], 'PASSED')
+                ride_label = accepted_ride_labels(route)[0 if bus_first else 1]
+                self.assertIn('승차 정류장 도착 예측 →', ride_label)
+                self.assertIn('하차 정류장 도착 예측', ride_label)
+                self.assertIn('환승 대기 약 4분', transfer_ride_labels(route)[0])
+                for fault in ('stale-bus', 'invalid-transfer', 'reported-as-departure'):
+                    changed = copy.deepcopy(worker)
+                    changed_route = changed['effectiveSnapshot']['effectiveTransitRoute']
+                    changed_bus = changed_route['segments'][bus['sequence']]['busRidePrediction']
+                    if fault == 'stale-bus': changed_bus['sourceUpdatedAt'] = '2026-10-08T01:57:59Z'
+                    elif fault == 'invalid-transfer': changed_route['segments'][3]['transferTiming']['physicalReadyAt'] = '2026-10-08T02:46:01Z'
+                    else: changed_bus['reportedAlightingAt'] = changed_bus['alightingAt']
+                    with self.subTest(fault=fault), self.assertRaises(AssertionError):
+                        verifier.verify_values(changed, {**public, 'effectiveTransitRoute': changed_route})
+
+    def test_mixed_odsay_audit_rejects_a_different_bus_stop_from_the_provider_seed(self):
+        bus = {'sequence': 1, 'mode': 'BUS', 'from': {'name': '첫 정류장', 'providerStopId': 'a', 'localStopId': '100000111', 'arsId': '01011'},
+               'to': {'name': '다음 정류장', 'providerStopId': 'b', 'localStopId': '100000222', 'arsId': '01012'},
+               'line': {'name': 'N37', 'providerRouteId': '3211', 'localRouteId': '100100585'}}
+        train = {'sequence': 3, 'mode': 'SUBWAY', 'from': {'name': '사당', 'providerStopId': '226'},
+                 'to': {'name': '신림', 'providerStopId': '230'}, 'directionCode': 'DOWN',
+                 'line': {'name': '2호선', 'providerRouteId': '1000:2', 'seoulSubwayLine': 'LINE_2', 'serviceClass': 'LOCAL'}}
+        workers = [{'kind': leg['mode'], 'sequence': leg['sequence'], 'fromName': leg['from']['name'],
+                    'toName': leg['to']['name'], 'lineName': leg['line']['name']} for leg in (bus, train)]
+        workers[1]['rideTiming'] = {'timetable': {'line': 'LINE_2', 'directionCode': 'DOWN', 'serviceClass': 'LOCAL'}}
+        route = {'provider': 'odsay', 'identity': 'b' * 64, 'departureAt': '2026-10-08T02:00:00Z', 'segments': workers}
+        saved = {'provider': 'odsay', 'providerTimeBasis': 'route_estimate', 'routeInfo': {'provider': 'odsay'},
+                 'transitLegs': [{'kind': leg['mode'], 'startID': leg['from']['providerStopId'],
+                                  'endID': leg['to']['providerStopId'], 'providerRouteId': leg['line']['providerRouteId']}
+                                 for leg in (bus, train)]}
+        binding = {'routeIdentity': route['identity'], 'departureAt': route['departureAt'], 'rides': [{'sequence': 1,
+            'service': {'routeId': '100100585', 'boarding': {'stationId': '100000111', 'arsId': '01011'},
+                        'alighting': {'stationId': '100000222', 'arsId': '01012'}}}]}
+        seed = {'provider': 'odsay', 'legs': [bus, train]}
+        verifier.verify_odsay_selection(seed, saved, route, bus_binding=binding)
+        binding['rides'][0]['service']['boarding']['stationId'] = '100000333'
+        with self.assertRaises(AssertionError):
+            verifier.verify_odsay_selection(seed, saved, route, bus_binding=binding)
 
     def test_accepted_early_transfer_needs_station_evidence_and_keeps_scheduled_alighting(self):
         for fault in (None, 'stale', 'shifted_alighting', 'missing_station_clock', 'wrong_journey_basis', 'no_observation'):

@@ -8,8 +8,12 @@ import argparse
 import datetime as dt
 import json
 import math
+import re
 from statistics import median
 from pathlib import Path
+
+SEOUL_BUS_LINE = re.compile(r'SEOUL_BUS:[1-9][0-9]{8}')
+SEOUL_BUS_STOP = re.compile(r'([1-9][0-9]{8}):([0-9]{5}):([1-9][0-9]{0,2})')
 
 
 def instant(value):
@@ -41,6 +45,11 @@ def validate(observation, *, require_ride_clocks=True):
         for name in ('line', 'from', 'to', 'serviceClass', 'direction'):
             if not isinstance(ride.get(name), str) or not ride[name].strip():
                 raise ValueError(f'Missing ride {name}')
+        mode = ride.get('mode', 'SUBWAY')
+        if mode == 'BUS':
+            validate_bus_topology(ride)
+        elif mode != 'SUBWAY':
+            raise ValueError('Unsupported comparison ride mode')
         if boarding_clock_kind(ride) not in ('BOARDING', 'STATION_ARRIVAL_PREDICTION', 'UNKNOWN'):
             raise ValueError('Invalid boarding clock kind')
         if not require_ride_clocks and (ride.get('boardingAt') is None or ride.get('arrivalAt') is None):
@@ -62,7 +71,26 @@ def validate(observation, *, require_ride_clocks=True):
 def boarding_clock_kind(ride):
     # Legacy observations recorded a boarding clock. Exported live observations
     # identify the station-arrival clock when the provider basis proves it.
-    return ride.get('boardingClockKind', 'BOARDING')
+    return ride.get('boardingClockKind', 'UNKNOWN' if ride.get('mode') == 'BUS' else 'BOARDING')
+
+
+def validate_bus_topology(ride):
+    if ride['serviceClass'] not in ('CITY_BUS', 'UNKNOWN'):
+        raise ValueError('Unsupported bus service class')
+    if ride['line'] != 'UNKNOWN' and not SEOUL_BUS_LINE.fullmatch(ride['line']):
+        raise ValueError('Bus line needs the namespaced provider route ID')
+    occurrences = []
+    for field in ('from', 'to'):
+        if ride[field] == 'UNKNOWN':
+            continue
+        match = SEOUL_BUS_STOP.fullmatch(ride[field])
+        if match is None or match[2] == '00000':
+            raise ValueError('Bus stop needs the provider station ID, ARS ID and route order')
+        occurrences.append((match[1], int(match[3])))
+    if len(occurrences) == 2:
+        (start, start_order), (end, end_order) = occurrences
+        if start == end or start_order >= end_order:
+            raise ValueError('Invalid ordered bus stop occurrences')
 
 
 def worker_boarding_clock_kind(timing):
@@ -92,8 +120,8 @@ def walking_boundaries(observation, *, require_platform_coverage=True):
         return None
     result = []
     unknown = False
-    kinds = ('STREET_COORDINATE', 'STATION_ENTRANCE', 'STATION_PLATFORM', 'UNKNOWN')
-    for item, scope in zip(items, expected):
+    kinds = ('STREET_COORDINATE', 'STATION_ENTRANCE', 'STATION_PLATFORM', 'BUS_STOP', 'UNKNOWN')
+    for i, (item, scope) in enumerate(zip(items, expected)):
         if not isinstance(item, dict) or item.get('scope') != scope:
             raise ValueError('Walking scope/order mismatch')
         if not isinstance(item.get('evidence'), str) or not item['evidence'].strip():
@@ -110,11 +138,20 @@ def walking_boundaries(observation, *, require_platform_coverage=True):
                 raise ValueError('Walking endpoint ID is required')
             unknown |= endpoint['kind'] == 'UNKNOWN' or endpoint['id'] == 'UNKNOWN'
             endpoints.append((endpoint['kind'], endpoint['id']))
-        # A nominal station coordinate/entrance is not the train's boarding platform.
+        ride_ends = []
+        if scope != 'ACCESS':
+            ride_ends.append((endpoints[0], observation['rides'][i - 1], 'to'))
+        if scope != 'EGRESS':
+            ride_ends.append((endpoints[1], observation['rides'][i], 'from'))
+        needs_platform = False
+        for endpoint, ride, field in ride_ends:
+            if ride.get('mode') == 'BUS':
+                unknown |= endpoint != ('BUS_STOP', ride[field])
+            else:
+                needs_platform = True
+                unknown |= require_platform_coverage and endpoint[0] != 'STATION_PLATFORM'
         if require_platform_coverage:
-            for index in ([1] if scope == 'ACCESS' else [0] if scope == 'EGRESS' else [0, 1]):
-                unknown |= endpoints[index][0] != 'STATION_PLATFORM'
-            unknown |= coverage != 'INCLUDED_TO_PLATFORM'
+            unknown |= coverage != ('INCLUDED_TO_PLATFORM' if needs_platform else 'EXCLUDED')
         else:
             unknown |= coverage == 'UNKNOWN'
         result.append((scope, *endpoints, coverage))
@@ -132,22 +169,24 @@ def train_identities(observation):
     """
     identities = []
     for ride in observation['rides']:
+        if ride.get('mode') == 'BUS':
+            continue
         item = ride.get('trainIdentity')
         if item is None:
-            return None
+            continue
         if not isinstance(item, dict):
             raise ValueError('Train identity must be an object')
         keys = ('namespace', 'serviceDate', 'number', 'evidence')
         if any(not isinstance(item.get(key), str) or not item[key].strip()
                or item[key] == 'UNKNOWN' for key in keys):
-            return None
+            continue
         date = dt.date.fromisoformat(item['serviceDate'])
         if date.isoformat() != item['serviceDate']:
             raise ValueError('Canonical service date required')
         if ride['line'] == 'UNKNOWN':
-            return None
+            continue
         identities.append((ride['line'], *(item[key] for key in ('namespace', 'serviceDate', 'number'))))
-    return identities
+    return identities if len(identities) == len(observation['rides']) else None
 
 
 def arrival_clock_bounds(observation):
@@ -198,37 +237,77 @@ def requested_pins(value):
     return (origin, destination) if origin and destination else None
 
 
-def worker_transfer_components(segments, evidence):
+def worker_wait_components(segments, departure_at, evidence):
     """Use the same walk and readiness budget as the Worker, without inventing map wait data."""
-    result = []
+    access = None
+    transfers = []
     previous = None
     walk_seconds = 0
-    for segment in segments:
+    has_minute_walk = False
+    for segment, ride in segments:
         if segment['kind'] == 'WALK':
             seconds = segment.get('durationSeconds')
+            has_minute_walk |= seconds is None
             walk_seconds += segment['durationMinutes'] * 60 if seconds is None else seconds
             continue
-        onward = segment['rideTiming']
+        boarding = instant(ride['boardingAt'])
+        precision = 'INCLUDES_ROUTE_MINUTES' if has_minute_walk else 'ROUTE_SECONDS'
         transfer = segment.get('transferTiming')
-        if previous is not None and transfer is not None:
-            alight, boarding = instant(previous['predictedArrivalAt']), instant(onward['predictedBoardingAt'])
+        if previous is None:
+            gap = (boarding - departure_at).total_seconds() - walk_seconds
+            if gap >= 0:
+                access = {'walkingSeconds': walk_seconds, 'waitAfterWalkingSeconds': gap,
+                          'walkingInputPrecision': precision, 'waitEndsAt': boarding_clock_kind(ride),
+                          'evidence': evidence + '#effectiveSnapshot.effectiveTransitRoute'}
+        elif transfer is not None:
+            alight = instant(previous['arrivalAt'])
             walking, margin = transfer['walkingSeconds'], transfer['requiredMarginSeconds']
             if any(type(value) is not int or value < 0 for value in (walking, margin)):
                 raise ValueError('Invalid transfer walk or confidence margin')
             ready = alight + dt.timedelta(seconds=walking)
-            wait = (boarding - ready).total_seconds()
+            wait = boarding - ready
+            slack = wait - dt.timedelta(seconds=margin)
+            # The Worker publishes Java Duration.seconds, which floors fractional slack.
+            whole_slack = slack // dt.timedelta(seconds=1)
             if (walking != walk_seconds or alight != instant(transfer['previousArrivalAt']) or boarding != instant(transfer['boardingAt'])
-                    or ready != instant(transfer['physicalReadyAt']) or wait < margin
-                    or wait - margin != transfer['remainingSlackSeconds']):
+                    or ready != instant(transfer['physicalReadyAt']) or whole_slack < 0
+                    or whole_slack != transfer['remainingSlackSeconds']):
                 raise ValueError('Transfer components must match the accepted Worker timeline')
-            result.append({'beforeRideSequence': segment['sequence'], 'walkingSeconds': walking,
-                           'waitAfterWalkingSeconds': wait, 'requiredMarginSeconds': margin,
-                           'remainingSlackSeconds': wait - margin,
-                           'waitEndsAt': worker_boarding_clock_kind(onward),
-                           'evidence': evidence + f"#segments[{segment['sequence']}].transferTiming"})
-        previous = onward
+            transfers.append({'beforeRideSequence': segment['sequence'], 'walkingSeconds': walking,
+                              'waitAfterWalkingSeconds': wait.total_seconds(), 'requiredMarginSeconds': margin,
+                              'remainingSlackSeconds': whole_slack, 'walkingInputPrecision': precision,
+                              'waitEndsAt': boarding_clock_kind(ride),
+                              'evidence': evidence + f"#segments[{segment['sequence']}].transferTiming"})
+        previous = ride
         walk_seconds = 0
-    return result
+        has_minute_walk = False
+    return access, transfers
+
+
+def worker_bus_services(snapshot, route, sequences):
+    binding = snapshot.get('lastAcceptedSeoulBusJourney') or {}
+    if (route['provider'] != 'odsay' or binding.get('routeIdentity') != route['identity']
+            or not binding.get('departureAt') or instant(binding['departureAt']) != instant(route['departureAt'])):
+        raise ValueError('Bus route identity and departure must match the accepted Worker binding')
+    rides = binding['rides']
+    if [item['sequence'] for item in rides] != sequences:
+        raise ValueError('Bus segment order must match the accepted Worker binding')
+    return {item['sequence']: item['service'] for item in rides}
+
+
+def worker_bus_ride(segment, service):
+    timing = segment['busRidePrediction']
+    if timing.get('reportedAlightingAt') is not None:
+        raise ValueError('The prediction exporter does not accept past bus arrival reports')
+    def stop(field):
+        item = service[field]
+        return f"{item['stationId']}:{item['arsId']}:{item['order']}"
+
+    # Only the public route and stop occurrence are exported. The internal
+    # vehicle correlation does not prove a match against a public map ride.
+    return {'mode': 'BUS', 'line': f"SEOUL_BUS:{service['routeId']}", 'from': stop('boarding'), 'to': stop('alighting'),
+            'direction': service['direction'], 'serviceClass': 'CITY_BUS', 'boardingAt': timing['boardingAt'],
+            'boardingClockKind': 'STATION_ARRIVAL_PREDICTION', 'arrivalAt': timing['alightingAt']}
 
 
 def worker_prediction(document, evidence):
@@ -249,21 +328,26 @@ def worker_prediction(document, evidence):
     if instant(route['arrivalAt']) != instant(document['predictedArrivalAt']):
         raise ValueError('Current route and prediction arrival must agree')
     segments = route['segments']
-    if any(item['kind'] not in ('WALK', 'SUBWAY') for item in segments):
-        raise ValueError('Only subway comparison export is supported')
-    rides = []
+    if any(item['kind'] not in ('WALK', 'SUBWAY', 'BUS') for item in segments):
+        raise ValueError('Unsupported Worker segment in prediction export')
+    sequences = [item['sequence'] for item in segments]
+    if any(type(sequence) is not int or sequence < 0 for sequence in sequences) or sequences != sorted(set(sequences)):
+        raise ValueError('Worker segment sequences must be ordered and unique')
+    bus_sequences = [item['sequence'] for item in segments if item['kind'] == 'BUS']
+    buses = worker_bus_services(snapshot, route, bus_sequences) if bus_sequences else {}
+    rides_by_sequence = {}
     for item in segments:
-        if item['kind'] != 'SUBWAY':
-            continue
-        timing = item['rideTiming']
-        table = timing['timetable']
-        rides.append({'line': table['line'], 'from': table['fromStationCode'],
-            'to': table['toStationCode'], 'direction': table['directionCode'],
-            'serviceClass': table['serviceClass'], 'boardingAt': timing['predictedBoardingAt'],
-            'boardingClockKind': worker_boarding_clock_kind(timing),
-            'arrivalAt': timing['predictedArrivalAt'],
-            'trainIdentity': {'namespace': table['provider'], 'serviceDate': table['serviceDate'],
-                              'number': table['trainNumber'], 'evidence': evidence}})
+        if item['kind'] == 'BUS':
+            rides_by_sequence[item['sequence']] = worker_bus_ride(item, buses[item['sequence']])
+        elif item['kind'] == 'SUBWAY':
+            timing = item['rideTiming']
+            table = timing['timetable']
+            rides_by_sequence[item['sequence']] = {'line': table['line'], 'from': table['fromStationCode'],
+                'to': table['toStationCode'], 'direction': table['directionCode'],
+                'serviceClass': table['serviceClass'], 'boardingAt': timing['predictedBoardingAt'],
+                'boardingClockKind': worker_boarding_clock_kind(timing), 'arrivalAt': timing['predictedArrivalAt'],
+                'trainIdentity': {'namespace': table['provider'], 'serviceDate': table['serviceDate'],
+                                  'number': table['trainNumber'], 'evidence': evidence}}
     walks = [item for item in segments if item['kind'] == 'WALK']
     if not walks or walks[0].get('walkingScope') != 'ACCESS' or walks[-1].get('walkingScope') != 'EGRESS':
         raise ValueError('Explicit endpoint walking evidence required')
@@ -290,7 +374,7 @@ def worker_prediction(document, evidence):
         'observedAt': document['evaluatedAt'], 'requestedDepartureAt': route['departureAt'],
         'departureAt': route['departureAt'], 'arrivalAt': route['arrivalAt'],
         'originBoundary': origin, 'destinationBoundary': destination,
-        'walkingBoundaryEvidence': boundary_evidence, 'rides': rides,
+        'walkingBoundaryEvidence': boundary_evidence, 'rides': list(rides_by_sequence.values()),
         'arrivalClockEvidence': {'resolutionSeconds': 1, 'rounding': 'EXACT',
             'evidence': evidence + '#effectiveSnapshot.effectiveTransitRoute.arrivalAt'},
         'protectedAlarmDepartureAt': document.get('recommendedDepartureAt'),
@@ -319,9 +403,12 @@ def worker_prediction(document, evidence):
             'requestedStart': query.get('start'), 'requestedEnd': query.get('end')})
     if path_endpoints:
         observation['providerWalkingPathEndpoints'] = path_endpoints
-    components = worker_transfer_components(segments, evidence)
-    if components:
-        observation['providerTransferComponents'] = components
+    access, transfers = worker_wait_components(
+        ((item, rides_by_sequence.get(item['sequence'])) for item in segments), instant(route['departureAt']), evidence)
+    if access is not None:
+        observation['providerAccessComponents'] = access
+    if transfers:
+        observation['providerTransferComponents'] = transfers
     validate(observation)
     train_identities(observation)
     return observation
@@ -337,6 +424,7 @@ def timeline_budget(observation):
         'suggestedDepartureOffsetSeconds': (departure - requested).total_seconds(),
         'rideStartClockKinds': [boarding_clock_kind(ride) for ride in rides],
         'accessAndFirstWaitSeconds': (instant(rides[0]['boardingAt']) - departure).total_seconds(),
+        'providerAccessComponents': observation.get('providerAccessComponents'),
         'rideSeconds': [(instant(ride['arrivalAt']) - instant(ride['boardingAt'])).total_seconds()
                         for ride in rides],
         'transferAndWaitSeconds': [(instant(b['boardingAt']) - instant(a['arrivalAt'])).total_seconds()
@@ -350,6 +438,8 @@ def timeline_budget(observation):
 def fixed_departure_diagnostic(document, evidence):
     """Recover a complete timetable candidate at the original comparison input."""
     accepted = worker_prediction(document, evidence)
+    if any(ride.get('mode') == 'BUS' for ride in accepted['rides']):
+        raise ValueError('Fixed-departure timetable diagnostics require a subway-only route')
     requested_at = instant(accepted['comparisonRequestedDepartureAt'])
     trace = document['journeyTimingTrace']
     if (trace.get('classification') != 'PASSIVE_REAL_JOURNEY_TIMING_TRACE'
@@ -495,7 +585,8 @@ def comparison_input_reasons(left, right, lt, rt):
 
 
 def topology(item):
-    return [tuple(ride[key] for key in ('line', 'from', 'to', 'direction')) for ride in item['rides']]
+    return [(ride.get('mode', 'SUBWAY'), *(ride[key] for key in ('line', 'from', 'to', 'direction')))
+            for ride in item['rides']]
 
 
 def compare(left, right, scope='SAME_SERVICE_TIMING'):
@@ -513,8 +604,7 @@ def compare(left, right, scope='SAME_SERVICE_TIMING'):
         reasons.append('WALKING_BOUNDARIES_UNCONFIRMED')
     elif left_walk != right_walk:
         reasons.append('WALKING_BOUNDARY_MISMATCH')
-    route_keys = ('line', 'from', 'to', 'serviceClass', 'direction')
-    route = lambda item: [tuple(ride[key] for key in route_keys) for ride in item['rides']]
+    route = lambda item: [(*legs, ride['serviceClass']) for legs, ride in zip(topology(item), item['rides'])]
     same_topology = topology(left) == topology(right)
     if route(left) != route(right):
         reasons.append('RIDE_ROUTE_MISMATCH')
@@ -522,7 +612,9 @@ def compare(left, right, scope='SAME_SERVICE_TIMING'):
         reasons.append('RIDE_IDENTITY_UNCONFIRMED')
     left_trains, right_trains = train_identities(left), train_identities(right)
     train_reasons = []
-    if left_trains is None or right_trains is None:
+    if any(ride.get('mode') == 'BUS' for item in (left, right) for ride in item['rides']):
+        train_reasons.append('BUS_VEHICLE_IDENTITY_UNCONFIRMED')
+    elif left_trains is None or right_trains is None:
         train_reasons.append('TRAIN_IDENTITY_UNCONFIRMED')
     elif left_trains != right_trains:
         train_reasons.append('TRAIN_SELECTION_MISMATCH')

@@ -253,7 +253,7 @@ test("shows a train-to-bus connection with actionable transfer slack and expires
     expect(presentation?.itinerary).toContain("환승 도보 · 약 30초");
     expect(presentation?.itinerary).toContain("환승 대기 약 1분");
     expect(applyMatchedTransitTimeline(saved, updated, now)?.steps[4].matchedTimeline)
-        .toMatchObject({ startAt: seconds(480), endAt: seconds(760), transferWaitSeconds: 60 });
+        .toMatchObject({ startAt: seconds(480), endAt: seconds(760), transferWaitSeconds: 60, startsWithStationArrivalPrediction: true });
     expect(applyMatchedTransitTimeline(saved, updated, Date.parse(seconds(191)))).toBe(saved);
     bus.transferTiming!.confidenceReadyAt = seconds(481);
     expect(buildPlannedJourneyArrivalPresentation(updated, now)).toBeUndefined();
